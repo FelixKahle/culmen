@@ -8,20 +8,23 @@ use core::fmt;
 use super::context::{
     CutContext, HeuristicContext, LazyContext, LogContext, PollContext, ProgressContext, SolutionContext,
 };
-use crate::{Events, Lp, Settings, Solved};
+use crate::{Events, Lp, ModelClasses, Settings, Solved};
 
 /// A solver culmen can drive: it loads an [`Lp`], solves it under [`Settings`], and calls a [`Callback`] as the
 /// search goes.
 ///
 /// The trait is open: any crate may implement it for its solver. Each associated context type implements the
 /// solver-neutral trait of its event and may offer more as inherent methods; an event the solver cannot deliver
-/// takes [`Unsupported`](crate::Unsupported) and is left out of [`Backend::EVENTS`].
+/// takes [`Unsupported`](crate::Unsupported) and is left out of [`Backend::EVENTS`]. The classes of program it
+/// solves are [`Backend::CLASSES`].
 ///
 /// # Contract
 ///
+/// - [`Solver::new`](crate::Solver::new) calls [`Backend::load`] only with an LP whose
+///   [`class`](Lp::class) is in [`Backend::CLASSES`], so `load` need not check it.
 /// - [`Backend::solve`] solves the last LP [`Backend::load`] accepted, and its [`Solved`] reads with that LP's
 ///   handles: a [`Solution`](crate::Solution) holds one value per column, every objective value and bound
-///   includes the LP's offset.
+///   includes the LP's quadratic part and offset.
 /// - It calls a callback method only for an event in both [`Backend::EVENTS`] and the callback's
 ///   [`Callback::events`], and only while `solve` runs; it never calls two callback methods at once.
 /// - A panic in a callback stops the solve as soon as the solver allows and then continues unwinding out of
@@ -52,7 +55,13 @@ pub trait Backend: Sized {
     /// The events this backend delivers.
     const EVENTS: Events;
 
+    /// The classes of program this backend solves; [`Solver::new`](crate::Solver::new) refuses any other.
+    const CLASSES: ModelClasses;
+
     /// Loads an LP, replacing the one before.
+    ///
+    /// Called by [`Solver::new`](crate::Solver::new) only with an LP of a class in [`Backend::CLASSES`]; called
+    /// directly with another, it may refuse the LP or fail to solve it.
     ///
     /// # Errors
     ///

@@ -38,6 +38,12 @@ serde = { version = "1.0", default-features = false, features = ["derive", "std"
 # `Clone` and `Debug` on the borrowing iterators of generic families without bounding their key and handle types,
 # which std's derives would add.
 derive-where = { version = "1.7", default-features = false }
+# Iterator adaptors std lacks: merging sorted quadratic terms, joined `Display` of class sets.
+itertools = { version = "0.15", default-features = false, features = ["use_std"] }
+# The Cholesky factorization behind the convexity check of a quadratic objective: a dense factorization whose
+# failure on a non-positive pivot is the test, which is error-prone numerics best left to an established crate.
+# `std` gives it floating-point square roots without `libm`; its macros are not used.
+nalgebra = { version = "0.35", default-features = false, features = ["std"] }
 
 # The raw C API of HiGHS 1.15. Its default `build` feature compiles the bundled HiGHS sources with cmake, so no
 # system HiGHS is needed; `highs_release` builds HiGHS optimised and without its debug assertions.

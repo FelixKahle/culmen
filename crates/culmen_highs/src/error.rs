@@ -12,7 +12,7 @@ use crate::{ModelStatus, OptionValue};
 pub enum HighsError {
     /// A solve was asked for before an LP was loaded.
     NotLoaded,
-    /// The LP has more columns, rows or entries than HiGHS's 32-bit indices hold.
+    /// The LP has more columns, rows, entries or Hessian entries than HiGHS's 32-bit indices hold.
     TooLarge {
         /// What overflowed.
         what: Dimension,
@@ -55,6 +55,15 @@ pub enum HighsError {
         /// HiGHS's last error line, if it wrote one.
         message: Option<String>,
     },
+    /// HiGHS's QP solver reported an ending that its own measures or the model contradict: an optimum whose relative
+    /// primal-dual objective error exceeds `1e-5`, at a point that need not be feasible, or unboundedness although
+    /// every column is bounded. HiGHS 1.15's QP solver can end so after its iterates turned NaN.
+    UnsoundQp {
+        /// The model status HiGHS reported.
+        status: ModelStatus,
+        /// HiGHS's relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`; `None` when it computed none.
+        primal_dual_objective_error: Option<f64>,
+    },
 }
 
 impl fmt::Display for HighsError {
@@ -71,6 +80,20 @@ impl fmt::Display for HighsError {
             Self::OptionName { name } => write!(f, "HiGHS: option name {name:?} holds a NUL byte"),
             Self::OptionString { name } => write!(f, "HiGHS: the value of option `{name}` holds a NUL byte"),
             Self::Run { status, message: m } => write!(f, "HiGHS: the run failed ({status}){}", message(m)),
+            Self::UnsoundQp {
+                status,
+                primal_dual_objective_error: Some(error),
+            } => write!(
+                f,
+                "HiGHS: the QP solver reported {status} with the primal-dual objective error {error}, which is unsound"
+            ),
+            Self::UnsoundQp {
+                status,
+                primal_dual_objective_error: None,
+            } => write!(
+                f,
+                "HiGHS: the QP solver reported {status}, which its bounded columns contradict"
+            ),
         }
     }
 }
@@ -91,6 +114,8 @@ pub enum Dimension {
     Rows,
     /// The matrix's nonzero entries.
     Entries,
+    /// The nonzero entries of the Hessian's lower triangle.
+    HessianEntries,
 }
 
 impl fmt::Display for Dimension {
@@ -99,6 +124,7 @@ impl fmt::Display for Dimension {
             Self::Columns => "columns",
             Self::Rows => "rows",
             Self::Entries => "entries",
+            Self::HessianEntries => "Hessian entries",
         })
     }
 }

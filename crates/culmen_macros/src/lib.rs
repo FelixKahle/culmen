@@ -12,8 +12,8 @@
 //!   l)], Bin)`: one variable or a family, bound to a local of the same name and named after it.
 //! - `constraint!(lhs <= rhs)`, `constraint!(m, lhs <= rhs)`, `constraint!(m, name, lhs == rhs)`,
 //!   `constraint!(m, name[i in I], lo <= body <= hi)`: a constraint as a value, added, added by name, or a family.
-//! - `objective!(m, Min, expr)` and `objective!(m, Max, expr)`.
-//! - `sum!(body for i in I, j in J if cond)`: a sum over a loop nest.
+//! - `objective!(m, Min, expr)` and `objective!(m, Max, expr)`, linear or quadratic.
+//! - `sum!(body for i in I, j in J if cond)`: a sum over a loop nest, linear or quadratic as its body is.
 //!
 //! Inside every macro, `x[i, j]` is `x[(i.clone(), j.clone())]`: a family indexed by a tuple key. A comma inside a
 //! subscript is a syntax error for every other type, so nothing else changes.
@@ -51,14 +51,15 @@ pub fn constraint(input: TokenStream) -> TokenStream {
 }
 
 /// The objective: `objective!(model, Min, expr)` or `objective!(model, Max, expr)`, also spelled `Minimize` and
-/// `Maximize`. Expands to `Model::set_objective`.
+/// `Maximize`; `expr` is linear or quadratic. Expands to `Model::set_objective`.
 #[proc_macro]
 pub fn objective(input: TokenStream) -> TokenStream {
     expand(input, objective_tokens)
 }
 
-/// The sum of `body` over a loop nest: `sum!(body for i in I, j in J if cond)`. Expands to a `LinExpr` built by
-/// `+=` in `for` loops.
+/// The sum of `body` over a loop nest: `sum!(body for i in I, j in J if cond)`. Expands to `for` loops adding each
+/// body with `Summand::add_into` to a sum that starts empty: a `LinExpr` for a linear body, a `QuadExpr` for a
+/// quadratic one.
 #[proc_macro]
 pub fn sum(input: TokenStream) -> TokenStream {
     expand(input, sum_tokens)
@@ -298,9 +299,14 @@ fn sum_tokens(root: &TokenStream2, input: TokenStream2) -> syn::Result<TokenStre
     }
     let body = rewrite_indices(body);
     let total = Ident::new("total", Span::mixed_site());
-    let loops = nest(root, &loops(nest_tokens)?, &quote!(#total += #body;));
+    let loops = nest(
+        root,
+        &loops(nest_tokens)?,
+        &quote!(#root::Summand::add_into(#body, &mut #total);),
+    );
+    // The sum's type is the body's `Summand::Sum`, which the call in the loop settles.
     Ok(quote!({
-        let mut #total = #root::LinExpr::new();
+        let mut #total = ::core::default::Default::default();
         #loops
         #total
     }))

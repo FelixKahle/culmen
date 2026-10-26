@@ -20,6 +20,7 @@ fn unchecked() -> Lp {
         row_starts: Default::default(),
         entry_cols: Default::default(),
         entry_values: Default::default(),
+        quadratic: Default::default(),
     }
 }
 

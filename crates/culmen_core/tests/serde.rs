@@ -13,8 +13,9 @@ use core::fmt::Debug;
 use core::time::Duration;
 
 use culmen_core::{
-    AbsoluteGap, Bounds, Col, Integrality, Linear, Lp, LpPlan, Model, Outcome, Phase, Progress, RelativeGap, Row,
-    Sense, Settings, Solution, Solved, StopReason, Var, absolute_gap, bounds, relative_gap, threads,
+    AbsoluteGap, Bounds, Col, Integrality, Linear, Lp, LpError, LpPlan, Model, ModelClass, ModelClasses, Outcome,
+    Phase, Progress, RelativeGap, Row, Sense, Settings, Solution, Solved, StopReason, Var, absolute_gap, bounds,
+    relative_gap, threads,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -35,6 +36,14 @@ fn sample_lp() -> Lp {
     m.build().unwrap()
 }
 
+/// A QP: the sample LP with a concave quadratic part, so it is maximized.
+fn sample_qp() -> Lp {
+    let mut plan = LpPlan::from(sample_lp());
+    let (x, y) = (Col::new(0), Col::new(1));
+    plan.quadratic = vec![(x, x, -1.0), (y, x, 0.5), (y, y, -2.0)];
+    plan.build().unwrap()
+}
+
 #[test]
 fn test_plain_data_round_trips() {
     round_trip(&bounds!(-1.0, 2.0));
@@ -47,6 +56,12 @@ fn test_plain_data_round_trips() {
     round_trip(&absolute_gap!(2.0));
     round_trip(&sample_lp());
     round_trip(&LpPlan::from(sample_lp()));
+    round_trip(&sample_qp());
+    round_trip(&LpPlan::from(sample_qp()));
+    round_trip(&ModelClass::Miqp);
+    round_trip(&ModelClasses::of(&[ModelClass::Lp, ModelClass::Qp]));
+    round_trip(&ModelClasses::NONE);
+    round_trip(&ModelClasses::ALL);
     round_trip(&Settings {
         time_limit: Some(Duration::from_millis(1500)),
         threads: Some(threads!(2)),
@@ -94,4 +109,28 @@ fn test_checked_types_are_checked_as_they_are_read() {
         serde_json::from_str::<Lp>(&json).is_err(),
         "a term on an unknown column is refused"
     );
+}
+
+#[test]
+fn test_the_quadratic_part_is_checked_as_it_is_read() {
+    assert_eq!(
+        serde_json::to_string(&ModelClasses::of(&[ModelClass::Milp, ModelClass::Lp])).unwrap(),
+        r#"["Lp","Milp"]"#
+    );
+    let mut plan = LpPlan::from(sample_qp());
+    plan.sense = Sense::Minimize;
+    let json = serde_json::to_string(&plan).unwrap();
+    let error = serde_json::from_str::<Lp>(&json).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .starts_with("Lp: the quadratic objective is not convex"),
+        "{error}"
+    );
+    assert!(matches!(plan.build(), Err(LpError::NonConvexObjective { .. })));
+    // An LP written before quadratic objectives, without the field, reads as linear.
+    let mut value: serde_json::Value = serde_json::to_value(sample_lp()).unwrap();
+    value.as_object_mut().unwrap().remove("quadratic");
+    let lp: Lp = serde_json::from_value(value).unwrap();
+    assert_eq!(lp, sample_lp());
 }

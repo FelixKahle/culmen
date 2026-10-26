@@ -7,6 +7,7 @@
 mod error;
 mod expr;
 mod keyed;
+mod quad;
 
 use core::hash::Hash;
 
@@ -17,9 +18,10 @@ pub use expr::{Constraint, LinExpr, Linear, Term};
 pub use keyed::{
     ConstraintMap, Handles, IndexSet, Keyed, KeyedIter, Keys, Members, Product, Values, VarMap, product, set,
 };
+pub use quad::{QuadExpr, QuadTerm, Quadratic, Summand};
 
-use crate::lp::merge_terms;
-use crate::{Bounds, Col, Integrality, Lp, LpColumn, LpPlan, LpRow, Row, Sense};
+use crate::lp::{check_convex, merge_pairs, merge_terms};
+use crate::{Bounds, Col, Integrality, Lp, LpColumn, LpPlan, LpRow, QuadObjective, Row, Sense};
 
 /// A variable to add to a [`Model`]: its integrality, bounds and name.
 ///
@@ -121,7 +123,11 @@ struct Named {
     name: Option<String>,
 }
 
-/// A linear or mixed-integer model, written with handles, expressions and constraints and built into an [`Lp`].
+/// A linear, mixed-integer or convex quadratic model, written with handles, expressions and constraints and built
+/// into an [`Lp`].
+///
+/// Constraints are linear; the objective is linear or quadratic, and a quadratic objective must be convex to
+/// minimize or concave to maximize.
 ///
 /// Every number is stored as given and checked once, by [`Model::build`], whose error names the variable or
 /// constraint at fault. The handles the model returns are the columns and rows of the LP it builds, so a solution
@@ -149,7 +155,7 @@ pub struct Model {
     vars: TiVec<Col, Var>,
     rows: TiVec<Row, Named>,
     sense: Sense,
-    objective: LinExpr,
+    objective: QuadExpr,
 }
 
 impl Model {
@@ -160,7 +166,7 @@ impl Model {
             vars: TiVec::new(),
             rows: TiVec::new(),
             sense: Sense::Minimize,
-            objective: LinExpr::new(),
+            objective: QuadExpr::new(),
         }
     }
 
@@ -259,19 +265,31 @@ impl Model {
         map
     }
 
-    /// Sets the objective, replacing any before.
-    pub fn set_objective(&mut self, sense: Sense, objective: impl Linear) {
+    /// Sets the objective, linear or quadratic, replacing any before.
+    ///
+    /// ```
+    /// use culmen_core::{Model, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::free());
+    /// let y = m.add_var(Var::free());
+    /// m.minimize(x * x + 2.0 * x * y + 2.0 * y * y - 4.0 * x + 3.0);
+    /// let lp = m.build()?;
+    /// assert_eq!(lp.quadratic().entries().collect::<Vec<_>>(), [(x, x, 1.0), (x, y, 2.0), (y, y, 2.0)]);
+    /// assert_eq!((lp.columns()[x].cost, lp.offset()), (-4.0, 3.0));
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    pub fn set_objective(&mut self, sense: Sense, objective: impl Quadratic) {
         self.sense = sense;
-        self.objective = objective.into_expr();
+        self.objective = objective.into_quad_expr();
     }
 
     /// Sets the objective to minimize `objective`.
-    pub fn minimize(&mut self, objective: impl Linear) {
+    pub fn minimize(&mut self, objective: impl Quadratic) {
         self.set_objective(Sense::Minimize, objective);
     }
 
     /// Sets the objective to maximize `objective`.
-    pub fn maximize(&mut self, objective: impl Linear) {
+    pub fn maximize(&mut self, objective: impl Quadratic) {
         self.set_objective(Sense::Maximize, objective);
     }
 
@@ -307,7 +325,8 @@ impl Model {
     /// # Errors
     ///
     /// [`ModelError`] naming the first variable or constraint at fault: invalid bounds, a non-finite objective or
-    /// constraint coefficient, or a handle the model did not hand out.
+    /// constraint coefficient, a handle the model did not hand out, or a quadratic objective that is not convex to
+    /// minimize or concave to maximize, as [`Lp::CONVEXITY_TOLERANCE`] states.
     pub fn build(&self) -> Result<Lp, ModelError> {
         let mut plan = LpPlan {
             sense: self.sense,
@@ -330,17 +349,35 @@ impl Model {
             plan.rows.push(self.build_row(row, named)?);
         }
         // The checks above are the LP's own, made in the model's terms: every bound is a `Bounds`, every cost and
-        // the offset finite, and every row's terms known and finite as given and as merged the way the LP merges.
+        // the offset finite, every row's and the objective's terms known and finite as given and as merged the way
+        // the LP merges, and the quadratic part convex as the LP checks it.
         Ok(Lp::from_plan_unchecked(plan))
     }
 
-    /// Writes the objective's coefficients and constant into the plan.
+    /// Writes the objective's coefficients, constant and quadratic terms into the plan.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelError::UnknownVar`], [`ModelError::ObjectiveCoefficient`], [`ModelError::ObjectiveConstant`],
+    /// [`ModelError::ObjectiveQuadCoefficient`] or [`ModelError::NonConvexObjective`].
+    fn build_objective(&self, plan: &mut LpPlan) -> Result<(), ModelError> {
+        self.build_linear_objective(plan)?;
+        plan.quadratic = self.quadratic_terms()?;
+        let quadratic = QuadObjective::from_terms(plan.quadratic.iter().copied());
+        check_convex(self.sense, &quadratic, self.vars.len()).map_err(|col| ModelError::NonConvexObjective {
+            sense: self.sense,
+            var: self.model_var(col),
+        })
+    }
+
+    /// Writes the objective's linear coefficients and constant into the plan.
     ///
     /// # Errors
     ///
     /// [`ModelError::UnknownVar`], [`ModelError::ObjectiveCoefficient`] or [`ModelError::ObjectiveConstant`].
-    fn build_objective(&self, plan: &mut LpPlan) -> Result<(), ModelError> {
-        for term in &self.objective.terms {
+    fn build_linear_objective(&self, plan: &mut LpPlan) -> Result<(), ModelError> {
+        let linear = &self.objective.linear;
+        for term in &linear.terms {
             let column = plan.columns.get_mut(term.col).ok_or(ModelError::UnknownVar {
                 place: ExprPlace::Objective,
                 col: term.col,
@@ -354,13 +391,53 @@ impl Model {
                 });
             }
         }
-        if !self.objective.constant.is_finite() {
-            return Err(ModelError::ObjectiveConstant {
-                value: self.objective.constant,
-            });
+        if !linear.constant.is_finite() {
+            return Err(ModelError::ObjectiveConstant { value: linear.constant });
         }
-        plan.offset = self.objective.constant;
+        plan.offset = linear.constant;
         Ok(())
+    }
+
+    /// The objective's quadratic terms as plan terms, each known and finite as given and as merged.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelError::UnknownVar`] or [`ModelError::ObjectiveQuadCoefficient`] for the first defective term.
+    fn quadratic_terms(&self) -> Result<Vec<(Col, Col, f64)>, ModelError> {
+        let terms: Vec<(Col, Col, f64)> = self
+            .objective
+            .terms
+            .iter()
+            .map(|t| (t.first, t.second, t.coefficient))
+            .collect();
+        for &(first, second, value) in &terms {
+            if let Some(col) = [first, second].into_iter().find(|col| col.index() >= self.vars.len()) {
+                return Err(ModelError::UnknownVar {
+                    place: ExprPlace::Objective,
+                    col,
+                });
+            }
+            self.check_quad_coefficient(first, second, value)?;
+        }
+        // The LP adds repeated pairs up the same way, so a sum that passes here passes there.
+        merge_pairs(terms.iter().copied())
+            .into_iter()
+            .try_for_each(|(first, second, value)| self.check_quad_coefficient(first, second, value))?;
+        Ok(terms)
+    }
+
+    /// # Errors
+    ///
+    /// [`ModelError::ObjectiveQuadCoefficient`] when `value` is NaN or infinite.
+    fn check_quad_coefficient(&self, first: Col, second: Col, value: f64) -> Result<(), ModelError> {
+        if value.is_finite() {
+            return Ok(());
+        }
+        Err(ModelError::ObjectiveQuadCoefficient {
+            first: self.model_var(first),
+            second: self.model_var(second),
+            value,
+        })
     }
 
     /// One constraint as a checked plan row, its constant moved into its bounds and its repeated columns merged.

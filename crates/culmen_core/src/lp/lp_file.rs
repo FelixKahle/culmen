@@ -12,7 +12,8 @@ impl Lp {
     ///
     /// The output is meant for debugging: names are reduced to the characters the format allows, an unnamed column
     /// is written `x<index>` and an unnamed row `r<index>`, and a ranged row becomes two rows suffixed `_lo` and
-    /// `_hi`. Distinct names that reduce to the same text are not told apart.
+    /// `_hi`. Distinct names that reduce to the same text are not told apart. A quadratic part is written in the
+    /// format's brackets halved, `[ 2 x ^ 2 + 4 x * y ] / 2` for `x² + 2xy`.
     ///
     /// ```
     /// use culmen_core::{LpColumn, LpPlan, Sense, bounds};
@@ -21,8 +22,14 @@ impl Lp {
     /// plan.sense = Sense::Maximize;
     /// let x = plan.col(LpColumn::binary(3.0));
     /// plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]);
-    /// let text = plan.build()?.to_lp_string();
+    /// let text = plan.clone().build()?.to_lp_string();
     /// assert!(text.starts_with("Maximize\n obj: 3 x0\nSubject To\n r0: 2 x0 <= 1\n"));
+    ///
+    /// plan.sense = Sense::Minimize;
+    /// let y = plan.col(LpColumn::continuous(0.0, bounds!(0.0, 1.0)));
+    /// plan.quadratic = vec![(x, x, 1.0), (x, y, -1.5), (y, y, 1.0)];
+    /// let text = plan.build()?.to_lp_string();
+    /// assert!(text.starts_with("Minimize\n obj: 3 x0 + [ 2 x0 ^ 2 - 3 x0 * x1 + 2 x1 ^ 2 ] / 2\n"));
     /// # Ok::<(), culmen_core::LpError>(())
     /// ```
     #[must_use]
@@ -39,26 +46,8 @@ impl Lp {
     ///
     /// The writer's error.
     pub fn write_lp(&self, out: &mut impl fmt::Write) -> fmt::Result {
-        out.write_str(match self.sense {
-            Sense::Minimize => "Minimize\n",
-            Sense::Maximize => "Maximize\n",
-        })?;
-        out.write_str(" obj:")?;
-        let costs = self
-            .columns
-            .iter_enumerated()
-            .map(|(col, c)| (col, c.cost))
-            .filter(|&(_, c)| c != 0.0);
-        self.write_terms(out, costs)?;
-        if self.offset != 0.0 {
-            write!(
-                out,
-                " {} {}",
-                if self.offset < 0.0 { '-' } else { '+' },
-                self.offset.abs()
-            )?;
-        }
-        out.write_str("\nSubject To\n")?;
+        self.write_objective(out)?;
+        out.write_str("Subject To\n")?;
         for row in self.rows() {
             self.write_row(out, row)?;
         }
@@ -74,6 +63,59 @@ impl Lp {
             }
         }
         out.write_str("End\n")
+    }
+
+    /// Writes the sense and the objective: its linear terms, its quadratic part and its offset.
+    ///
+    /// # Errors
+    ///
+    /// The writer's error.
+    fn write_objective(&self, out: &mut impl fmt::Write) -> fmt::Result {
+        out.write_str(match self.sense {
+            Sense::Minimize => "Minimize\n",
+            Sense::Maximize => "Maximize\n",
+        })?;
+        out.write_str(" obj:")?;
+        let costs = self
+            .columns
+            .iter_enumerated()
+            .map(|(col, c)| (col, c.cost))
+            .filter(|&(_, c)| c != 0.0);
+        let linear = costs.clone().next().is_some();
+        if linear || self.quadratic.is_empty() {
+            self.write_terms(out, costs)?;
+        }
+        if !self.quadratic.is_empty() {
+            self.write_quadratic(out, linear)?;
+        }
+        if self.offset != 0.0 {
+            write!(
+                out,
+                " {} {}",
+                if self.offset < 0.0 { '-' } else { '+' },
+                self.offset.abs()
+            )?;
+        }
+        out.write_str("\n")
+    }
+
+    /// Writes the quadratic part doubled in brackets halved, ` + [ 2 x ^ 2 + 4 x * y ] / 2`, without the leading
+    /// `+` when nothing comes before it.
+    ///
+    /// # Errors
+    ///
+    /// The writer's error.
+    fn write_quadratic(&self, out: &mut impl fmt::Write, after_terms: bool) -> fmt::Result {
+        out.write_str(if after_terms { " + [" } else { " [" })?;
+        for (k, (i, j, q)) in self.quadratic.entries().enumerate() {
+            let product = if i == j {
+                format!("{} ^ 2", self.col_label(i))
+            } else {
+                format!("{} * {}", self.col_label(i), self.col_label(j))
+            };
+            write_signed(out, k == 0, 2.0 * q, &product)?;
+        }
+        out.write_str(" ] / 2")
     }
 
     /// Writes one row, as two when it is ranged; a free row is skipped.
@@ -132,14 +174,7 @@ impl Lp {
     fn write_terms(&self, out: &mut impl fmt::Write, terms: impl Iterator<Item = (Col, f64)>) -> fmt::Result {
         let mut first = true;
         for (col, value) in terms {
-            let sign = if value < 0.0 { "-" } else { "+" };
-            if first && value >= 0.0 {
-                write!(out, " {} {}", value, self.col_label(col))?;
-            } else if first {
-                write!(out, " -{} {}", value.abs(), self.col_label(col))?;
-            } else {
-                write!(out, " {sign} {} {}", value.abs(), self.col_label(col))?;
-            }
+            write_signed(out, first, value, &self.col_label(col))?;
             first = false;
         }
         if first {
@@ -154,6 +189,21 @@ impl Lp {
 
     fn row_label(&self, row: Row) -> String {
         label(self.row_names[row].as_deref(), 'r', row.index())
+    }
+}
+
+/// Writes ` c what` for the first term of a sum and ` + c what` or ` - c what` for any other, `-c` first when
+/// negative.
+///
+/// # Errors
+///
+/// The writer's error.
+fn write_signed(out: &mut impl fmt::Write, first: bool, value: f64, what: &str) -> fmt::Result {
+    match (first, value < 0.0) {
+        (true, false) => write!(out, " {value} {what}"),
+        (true, true) => write!(out, " -{} {what}", value.abs()),
+        (false, false) => write!(out, " + {value} {what}"),
+        (false, true) => write!(out, " - {} {what}", value.abs()),
     }
 }
 

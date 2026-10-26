@@ -61,7 +61,10 @@ pub use callback::{
     Cut, CutPool, HighsHeuristic, HighsLog, HighsLogType, HighsMipProgress, HighsNative, HighsPoll, HighsSolution,
     MipData, PollSource, QueryOrigin, ReducedCol, RootNodePoint,
 };
-use culmen_core::{Backend, Callback, Events, Lp, Outcome, Sense, Settings, Solution, Solved, StopReason, Unsupported};
+use culmen_core::{
+    Backend, Callback, Events, Lp, ModelClass, ModelClasses, Outcome, QuadObjective, Sense, Settings, Solution, Solved,
+    StopReason, TiSlice, Unsupported,
+};
 pub use error::{Dimension, HighsError};
 pub use options::{
     EdgeWeight, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OnOff, OptionValue, RawOption, ScaleStrategy,
@@ -76,17 +79,24 @@ use instance::Instance;
 const DEFAULT_RELATIVE_GAP: f64 = 1e-4;
 /// HiGHS's default absolute MIP gap.
 const DEFAULT_ABSOLUTE_GAP: f64 = 1e-6;
+/// The largest relative primal-dual objective error at which a QP optimum HiGHS reports is taken as optimal.
+///
+/// HiGHS 1.15's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
+/// percent, after its iterates turned NaN, and that point need not even be feasible; on random convex QPs its
+/// correct optima stay below 1e-6.
+const QP_OBJECTIVE_ERROR: f64 = 1e-5;
 
 /// The HiGHS backend: one HiGHS instance and the options every solve applies.
 ///
 /// ```
-/// use culmen_core::{Backend, Events};
+/// use culmen_core::{Backend, Events, ModelClass};
 /// use culmen_highs::{Highs, HighsOptions, Switch};
 ///
 /// let highs = Highs::with_options(HighsOptions { presolve: Some(Switch::Off), ..HighsOptions::default() });
 /// assert_eq!(highs.options().presolve, Some(Switch::Off));
 /// assert!(Highs::EVENTS.contains(Events::HEURISTIC));
 /// assert!(!Highs::EVENTS.contains(Events::LAZY), "HiGHS 1.15 never calls its lazy-constraint callback");
+/// assert!(!Highs::CLASSES.contains(ModelClass::Miqp), "HiGHS 1.15 refuses to solve a MIQP");
 /// ```
 #[derive(Debug)]
 pub struct Highs {
@@ -100,6 +110,9 @@ pub struct Highs {
 pub(crate) struct Loaded {
     /// The cost of each column, one per column of the LP.
     pub(crate) costs: Vec<f64>,
+    pub(crate) quadratic: QuadObjective,
+    /// Whether every column has two finite bounds.
+    pub(crate) bounded: bool,
     pub(crate) is_mip: bool,
     pub(crate) offset: f64,
     pub(crate) sense: Sense,
@@ -109,6 +122,11 @@ impl Loaded {
     fn of(lp: &Lp) -> Self {
         Self {
             costs: lp.columns().iter().map(|c| c.cost).collect(),
+            quadratic: lp.quadratic().clone(),
+            bounded: lp
+                .columns()
+                .iter()
+                .all(|c| c.bounds.lower().is_finite() && c.bounds.upper().is_finite()),
             is_mip: lp.is_mip(),
             offset: lp.offset(),
             sense: lp.sense(),
@@ -119,9 +137,14 @@ impl Loaded {
         self.costs.len()
     }
 
-    /// The objective value of a point with one value per column, offset included.
+    /// The objective value of a point with one value per column, quadratic part and offset included.
+    ///
+    /// # Panics
+    ///
+    /// When `values` has fewer values than the LP has columns.
     pub(crate) fn objective(&self, values: &[f64]) -> f64 {
-        self.offset + self.costs.iter().zip(values).map(|(c, x)| c * x).sum::<f64>()
+        let linear = self.costs.iter().zip(values).map(|(c, x)| c * x).sum::<f64>();
+        self.offset + linear + self.quadratic.value(TiSlice::from_ref(values))
     }
 }
 
@@ -185,6 +208,11 @@ impl Highs {
             mip_nodes: count(self.instance.info_i64(c"mip_node_count")),
             simplex_iterations: count(self.instance.info_int(c"simplex_iteration_count").map(i64::from)),
             ipm_iterations: count(self.instance.info_int(c"ipm_iteration_count").map(i64::from)),
+            qp_iterations: count(self.instance.info_int(c"qp_iteration_count").map(i64::from)),
+            primal_dual_objective_error: self
+                .instance
+                .info_double(c"primal_dual_objective_error")
+                .filter(|e| e.is_finite() && *e >= 0.0),
             last_error,
         }
     }
@@ -193,7 +221,9 @@ impl Highs {
     ///
     /// # Errors
     ///
-    /// [`HighsError::Run`] when HiGHS failed, or reports an optimum without a solution.
+    /// [`HighsError::Run`] when HiGHS failed, or reports an optimum without a solution; [`HighsError::UnsoundQp`]
+    /// when it reports a QP optimal with a primal-dual objective error above [`QP_OBJECTIVE_ERROR`], or unbounded
+    /// although every column is bounded.
     fn outcome(&self, loaded: &Loaded, settings: &Settings, status: &HighsStatus) -> Result<Outcome, HighsError> {
         let failed = || HighsError::Run {
             status: status.model,
@@ -201,6 +231,12 @@ impl Highs {
         };
         if status.run == CallStatus::Error {
             return Err(failed());
+        }
+        if unsound_qp(loaded, status) {
+            return Err(HighsError::UnsoundQp {
+                status: status.model,
+                primal_dual_objective_error: status.primal_dual_objective_error,
+            });
         }
         let best = (status.primal == SolutionStatus::Feasible).then(|| Solution {
             objective: self.instance.objective(),
@@ -264,6 +300,21 @@ impl Highs {
 impl Default for Highs {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Whether HiGHS reports a QP optimal at a point its own primal-dual objective error does not support, or
+/// unbounded although every column is bounded, so the objective is bounded on the feasible set.
+fn unsound_qp(loaded: &Loaded, status: &HighsStatus) -> bool {
+    if loaded.quadratic.is_empty() {
+        return false;
+    }
+    match status.model {
+        ModelStatus::Optimal => status
+            .primal_dual_objective_error
+            .is_some_and(|error| error > QP_OBJECTIVE_ERROR),
+        ModelStatus::Unbounded => loaded.bounded,
+        _ => false,
     }
 }
 
@@ -397,6 +448,10 @@ impl Backend for Highs {
         .union(Events::HEURISTIC)
         .union(Events::NATIVE);
 
+    /// HiGHS 1.15 solves LPs, MILPs and convex QPs; `Highs::run` refuses a QP with integer columns ("Cannot solve
+    /// MIQP problems with HiGHS").
+    const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp, ModelClass::Qp]);
+
     fn load(&mut self, lp: &Lp) -> Result<(), HighsError> {
         self.loaded = None;
         self.instance.pass(lp)?;
@@ -473,6 +528,19 @@ mod tests {
     use core::num::NonZeroUsize;
 
     use super::*;
+
+    #[test]
+    fn test_a_supplied_solution_is_valued_with_the_quadratic_part() {
+        // The heuristic context values a supplied solution with `Loaded::objective`: (1 + 2)² + 3·1 - 2 + 2 = 12.
+        let mut m = culmen_core::Model::new();
+        let x = m.add_var(culmen_core::Var::continuous());
+        let y = m.add_var(culmen_core::Var::integer());
+        m.minimize(x * x + 2.0 * x * y + y * y + 3.0 * x - y + 2.0);
+        let lp = m.build().unwrap();
+        let values = [1.0, 2.0];
+        assert_eq!(Loaded::of(&lp).objective(&values), 12.0);
+        assert_eq!(lp.objective_value(TiSlice::from_ref(&values)), 12.0);
+    }
 
     #[test]
     fn test_seeds_and_thread_counts_beyond_highs_integers_are_refused() {

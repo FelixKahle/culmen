@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use crate::{Col, InvalidBounds, Row};
+use crate::{Col, InvalidBounds, Row, Sense};
 
 /// A variable of a [`Model`](crate::Model): its column and the name the model gave it.
 ///
@@ -94,6 +94,23 @@ pub enum ModelError {
         /// The constant.
         value: f64,
     },
+    /// A quadratic objective coefficient is NaN or infinite, as given or added up over its pair of variables.
+    ObjectiveQuadCoefficient {
+        /// The first variable of the product.
+        first: ModelVar,
+        /// The second variable of the product.
+        second: ModelVar,
+        /// The coefficient.
+        value: f64,
+    },
+    /// The quadratic objective is not convex to minimize, or not concave to maximize, within
+    /// [`Lp::CONVEXITY_TOLERANCE`](crate::Lp::CONVEXITY_TOLERANCE).
+    NonConvexObjective {
+        /// The objective's sense.
+        sense: Sense,
+        /// The first variable of the first block of the objective's Hessian that fails the check.
+        var: ModelVar,
+    },
     /// A constraint's coefficient is NaN or infinite, as given or added up.
     Coefficient {
         /// The constraint.
@@ -130,6 +147,26 @@ impl fmt::Display for ModelError {
                 )
             }
             Self::ObjectiveConstant { value } => write!(f, "Model: the objective constant {value} is not finite"),
+            Self::ObjectiveQuadCoefficient { first, second, value } => {
+                write!(
+                    f,
+                    "Model: the objective coefficient {value} of {first} · {second} is not finite"
+                )
+            }
+            Self::NonConvexObjective {
+                sense: Sense::Minimize,
+                var,
+            } => write!(
+                f,
+                "Model: the objective is not convex, as minimizing needs, in the block of variable {var}"
+            ),
+            Self::NonConvexObjective {
+                sense: Sense::Maximize,
+                var,
+            } => write!(
+                f,
+                "Model: the objective is not concave, as maximizing needs, in the block of variable {var}"
+            ),
             Self::Coefficient { constraint, var, value } => {
                 write!(
                     f,

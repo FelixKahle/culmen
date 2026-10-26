@@ -4,9 +4,11 @@
 //! The LP as data: a checked, immutable value with typed handles.
 
 mod bounds;
+mod class;
 mod ids;
 mod lp_file;
 mod plan;
+mod quad;
 mod row;
 
 use core::fmt;
@@ -16,16 +18,22 @@ use serde::{Deserialize, Serialize};
 use typed_index_collections::{TiSlice, TiVec};
 
 pub use bounds::{Bounds, Integrality, InvalidBounds, Sense};
+pub use class::{ModelClass, ModelClasses, ModelClassesIter};
 pub use ids::{Col, Cols, Row, Rows};
 pub use plan::{LpColumn, LpPlan, LpRow};
+pub use quad::{HessianEntries, QuadEntries, QuadObjective};
+pub(crate) use quad::{check_convex, merge_pairs};
 pub use row::{RowEntries, RowView};
 
-/// A linear or mixed-integer program: minimize or maximize `cost · x + offset` over `x` with every column in its
-/// bounds, the integer columns whole, and every row's activity in its bounds.
+/// A linear, mixed-integer or convex quadratic program: minimize or maximize
+/// `cost · x + Σ q · xᵢ · xⱼ + offset` over `x` with every column in its bounds, the integer columns whole, and
+/// every row's activity in its bounds.
 ///
 /// An `Lp` is built once, by value, from an [`LpPlan`] or a [`Model`](crate::Model), and every number in it was
-/// checked then: costs, coefficients and the offset are finite, and each row holds each column at most once, with
-/// a non-zero coefficient. It is plain data a [`Backend`](crate::Backend) loads; it holds no solver state.
+/// checked then: costs, coefficients and the offset are finite, each row holds each column at most once, with a
+/// non-zero coefficient, and the quadratic part ([`QuadObjective`]) is canonical and passes the convexity check of
+/// [`Lp::CONVEXITY_TOLERANCE`]. Its constraints are linear; [`Lp::class`] names the kind of program it is. It is
+/// plain data a [`Backend`](crate::Backend) loads; it holds no solver state.
 ///
 /// ```
 /// use culmen_core::{Bounds, LpColumn, LpPlan, Sense, bounds};
@@ -56,6 +64,7 @@ pub struct Lp {
     row_starts: Vec<usize>,
     entry_cols: Vec<Col>,
     entry_values: Vec<f64>,
+    quadratic: QuadObjective,
 }
 
 /// The constraint matrix of an [`Lp`] in compressed row form: row `r`'s entries are
@@ -71,6 +80,16 @@ pub struct RowMatrix<'a> {
 }
 
 impl Lp {
+    /// The tolerance of the convexity check, relative to the largest Hessian value of each block.
+    ///
+    /// The Hessian `H` of the quadratic part (see [`QuadObjective`]) splits into blocks of columns joined by its
+    /// entries. An `Lp` is built only when, for every block, `s · H + δ · I` has a Cholesky factor in floating
+    /// point, where `s` is `1` for minimizing and `-1` for maximizing and `δ` is this tolerance times the block's
+    /// largest `|Hᵢⱼ|`. So every eigenvalue of `s · H` on a block is at least about `-δ`: the objective is convex
+    /// for minimizing and concave for maximizing up to that tolerance and the factorization's rounding. A block
+    /// costs a dense factorization, cubic in its number of columns.
+    pub const CONVEXITY_TOLERANCE: f64 = quad::CONVEXITY_TOLERANCE;
+
     /// Whether the objective is minimized or maximized.
     #[must_use]
     pub const fn sense(&self) -> Sense {
@@ -105,6 +124,36 @@ impl Lp {
     #[must_use]
     pub fn is_mip(&self) -> bool {
         self.columns.iter().any(|c| c.integrality == Integrality::Integer)
+    }
+
+    /// The quadratic part of the objective, empty for a linear objective.
+    #[must_use]
+    pub const fn quadratic(&self) -> &QuadObjective {
+        &self.quadratic
+    }
+
+    /// The kind of program: whether it has integer columns and whether its objective has a quadratic part.
+    ///
+    /// ```
+    /// use culmen_core::{Model, ModelClass, Var};
+    ///
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous());
+    /// let n = m.add_var(Var::integer());
+    /// m.minimize(x + n);
+    /// assert_eq!(m.build()?.class(), ModelClass::Milp);
+    /// m.minimize(x * x + n);
+    /// assert_eq!(m.build()?.class(), ModelClass::Miqp);
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    #[must_use]
+    pub fn class(&self) -> ModelClass {
+        match (self.is_mip(), self.quadratic.is_empty()) {
+            (false, true) => ModelClass::Lp,
+            (true, true) => ModelClass::Milp,
+            (false, false) => ModelClass::Qp,
+            (true, false) => ModelClass::Miqp,
+        }
     }
 
     /// Every column, in order.
@@ -155,19 +204,19 @@ impl Lp {
         }
     }
 
-    /// The objective value of a point, offset included.
+    /// The objective value of a point, quadratic part and offset included.
     ///
     /// # Panics
     ///
     /// When `values` holds fewer values than the LP has columns.
     #[must_use]
     pub fn objective_value(&self, values: &TiSlice<Col, f64>) -> f64 {
-        self.offset
-            + self
-                .columns
-                .iter_enumerated()
-                .map(|(col, c)| c.cost * values[col])
-                .sum::<f64>()
+        let linear = self
+            .columns
+            .iter_enumerated()
+            .map(|(col, c)| c.cost * values[col])
+            .sum::<f64>();
+        self.offset + linear + self.quadratic.value(values)
     }
 
     /// The largest amount by which a point violates a bound, a row or integrality, zero for a feasible point.
@@ -195,8 +244,10 @@ impl Lp {
     /// Checks a plan and builds the LP from it.
     ///
     /// The plan is accepted when its offset and costs are finite, every term names a column of the plan with a
-    /// finite coefficient, and in every row the coefficients of each column, added up in the order given, are
-    /// finite.
+    /// finite coefficient, in every row the coefficients of each column, added up in the order given, are finite,
+    /// every quadratic term names columns of the plan with a finite coefficient, the coefficients of each unordered
+    /// pair of columns, added up in the order given, are finite, and the quadratic part passes the convexity check
+    /// of [`Lp::CONVEXITY_TOLERANCE`] under the plan's sense.
     ///
     /// # Errors
     ///
@@ -219,6 +270,7 @@ impl Lp {
             entry_cols: Vec::new(),
             entry_values: Vec::new(),
             columns: plan.columns,
+            quadratic: QuadObjective::from_terms(plan.quadratic),
         };
         lp.row_starts.push(0);
         for data in plan.rows {
@@ -261,7 +313,39 @@ fn check_plan(plan: &LpPlan) -> Result<(), LpError> {
             return Err(LpError::NonFiniteCoefficient { row, col, value });
         }
     }
-    Ok(())
+    check_quadratic(plan)
+}
+
+/// Checks a plan's quadratic terms as [`Lp::from_plan`] states.
+///
+/// # Errors
+///
+/// [`LpError::UnknownQuadColumn`] or [`LpError::NonFiniteQuadCoefficient`] for the first defective term, as given
+/// or merged, or [`LpError::NonConvexObjective`].
+fn check_quadratic(plan: &LpPlan) -> Result<(), LpError> {
+    let num_cols = plan.columns.len();
+    for &(first, second, value) in &plan.quadratic {
+        if let Some(col) = [first, second].into_iter().find(|col| col.index() >= num_cols) {
+            return Err(LpError::UnknownQuadColumn { col });
+        }
+        finite_quad(first, second, value)?;
+    }
+    merge_pairs(plan.quadratic.iter().copied())
+        .into_iter()
+        .try_for_each(|(first, second, value)| finite_quad(first, second, value))?;
+    let quadratic = QuadObjective::from_terms(plan.quadratic.iter().copied());
+    check_convex(plan.sense, &quadratic, num_cols).map_err(|col| LpError::NonConvexObjective { sense: plan.sense, col })
+}
+
+/// # Errors
+///
+/// [`LpError::NonFiniteQuadCoefficient`] when `value` is NaN or infinite.
+fn finite_quad(first: Col, second: Col, value: f64) -> Result<(), LpError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(LpError::NonFiniteQuadCoefficient { first, second, value })
+    }
 }
 
 /// Checks a row's terms as given: known columns, finite coefficients.
@@ -310,6 +394,7 @@ impl From<Lp> for LpPlan {
             offset: lp.offset,
             columns: lp.columns,
             rows,
+            quadratic: lp.quadratic.entries().collect(),
         }
     }
 }
@@ -353,6 +438,28 @@ pub enum LpError {
         /// The column named.
         col: Col,
     },
+    /// A quadratic term names a column the plan does not have.
+    UnknownQuadColumn {
+        /// The column named.
+        col: Col,
+    },
+    /// A quadratic coefficient is NaN or infinite, as given or after the terms of its pair were added up.
+    NonFiniteQuadCoefficient {
+        /// The first column of the pair.
+        first: Col,
+        /// The second column of the pair.
+        second: Col,
+        /// The coefficient.
+        value: f64,
+    },
+    /// The quadratic part is not convex for minimizing, or not concave for maximizing, within
+    /// [`Lp::CONVEXITY_TOLERANCE`].
+    NonConvexObjective {
+        /// The objective's sense.
+        sense: Sense,
+        /// The smallest column of the first block of the Hessian that fails the check.
+        col: Col,
+    },
 }
 
 impl fmt::Display for LpError {
@@ -364,6 +471,23 @@ impl fmt::Display for LpError {
                 write!(f, "Lp: the coefficient {value} of {col:?} in {row:?} is not finite")
             }
             Self::UnknownColumn { row, col } => write!(f, "Lp: {row:?} names {col:?}, which the plan does not have"),
+            Self::UnknownQuadColumn { col } => {
+                write!(f, "Lp: a quadratic term names {col:?}, which the plan does not have")
+            }
+            Self::NonFiniteQuadCoefficient { first, second, value } => {
+                write!(
+                    f,
+                    "Lp: the quadratic coefficient {value} of {first:?} · {second:?} is not finite"
+                )
+            }
+            Self::NonConvexObjective {
+                sense: Sense::Minimize,
+                col,
+            } => write!(f, "Lp: the quadratic objective is not convex in the block of {col:?}"),
+            Self::NonConvexObjective {
+                sense: Sense::Maximize,
+                col,
+            } => write!(f, "Lp: the quadratic objective is not concave in the block of {col:?}"),
         }
     }
 }
@@ -387,7 +511,8 @@ mod tests {
         ]
     }
 
-    /// A plan of up to three columns and three rows whose terms name up to four columns.
+    /// A plan of up to three columns and three rows whose terms name up to four columns, minimizing an objective
+    /// with up to three squares of up to four columns.
     fn plan() -> impl Strategy<Value = LpPlan> {
         let row = prop::collection::vec((0..4usize, number()), 0..5).prop_map(|terms| LpRow {
             bounds: Bounds::FREE,
@@ -395,30 +520,47 @@ mod tests {
             name: None,
         });
         let columns = prop::collection::vec(number(), 0..4);
-        (number(), columns, prop::collection::vec(row, 0..4)).prop_map(|(offset, costs, rows)| LpPlan {
+        let squares = prop::collection::vec((0..4usize, number()), 0..4);
+        let parts = (number(), columns, prop::collection::vec(row, 0..4), squares);
+        parts.prop_map(|(offset, costs, rows, squares)| LpPlan {
             offset,
             columns: costs
                 .into_iter()
                 .map(|cost| LpColumn::continuous(cost, Bounds::FREE))
                 .collect(),
             rows: rows.into(),
+            quadratic: squares
+                .into_iter()
+                .map(|(i, q)| (Col::new(i), Col::new(i), q))
+                .collect(),
             ..LpPlan::new()
         })
     }
 
     /// Whether the plan meets `Lp::from_plan`'s precondition, read from its prose: each row's coefficients are
-    /// summed per column in a map, in the order given.
+    /// summed per column in a map, in the order given, and so are the squares' coefficients, whose sums a convex
+    /// objective of squares alone has non-negative.
     fn accepted(plan: &LpPlan) -> bool {
+        let num_cols = plan.columns.len();
         let finite = plan.offset.is_finite() && plan.columns.iter().all(|c| c.cost.is_finite());
-        finite
-            && plan.rows.iter().all(|row| {
-                let mut sums = BTreeMap::new();
-                let terms_ok = row.terms.iter().all(|&(col, value)| {
-                    *sums.entry(col).or_insert(0.0) += value;
-                    col.index() < plan.columns.len() && value.is_finite()
-                });
-                terms_ok && sums.values().all(|sum: &f64| sum.is_finite())
-            })
+        let rows_ok = plan
+            .rows
+            .iter()
+            .all(|row| sums(row.terms.iter().copied(), num_cols).is_some());
+        let squares = sums(plan.quadratic.iter().map(|&(i, _, q)| (i, q)), num_cols);
+        finite && rows_ok && squares.is_some_and(|sums| sums.values().all(|&sum| sum >= 0.0))
+    }
+
+    /// The coefficients summed per column, when every term names one of `num_cols` columns with a finite
+    /// coefficient and every sum is finite.
+    fn sums(terms: impl Iterator<Item = (Col, f64)>, num_cols: usize) -> Option<BTreeMap<Col, f64>> {
+        let mut sums = BTreeMap::new();
+        let mut terms = terms;
+        let terms_ok = terms.all(|(col, value)| {
+            *sums.entry(col).or_insert(0.0) += value;
+            col.index() < num_cols && value.is_finite()
+        });
+        (terms_ok && sums.values().all(|sum: &f64| sum.is_finite())).then_some(sums)
     }
 
     proptest! {

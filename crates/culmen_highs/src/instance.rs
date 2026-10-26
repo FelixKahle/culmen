@@ -7,14 +7,14 @@ use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr::{self, NonNull};
 use std::ffi::CString;
 
-use culmen_core::{Integrality, Lp, Sense};
+use culmen_core::{Col, Integrality, Lp, Sense};
 use highs_sys::{
     Highs_create, Highs_destroy, Highs_getDoubleInfoValue, Highs_getInt64InfoValue, Highs_getIntInfoValue,
     Highs_getModelStatus, Highs_getNumCol, Highs_getObjectiveValue, Highs_getSolution, Highs_passModel,
     Highs_resetOptions, Highs_run, Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue,
     Highs_setIntOptionValue, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_zeroAllClocks,
-    HighsCCallbackType, HighsInt, kHighsMatrixFormatRowwise, kHighsObjSenseMaximize, kHighsObjSenseMinimize,
-    kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger,
+    HighsCCallbackType, HighsInt, kHighsHessianFormatTriangular, kHighsMatrixFormatRowwise, kHighsObjSenseMaximize,
+    kHighsObjSenseMinimize, kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger,
 };
 
 use crate::{CallStatus, Dimension, HighsError, ModelStatus, OptionValue};
@@ -66,12 +66,14 @@ impl Instance {
     /// [`HighsError::TooLarge`] when a count exceeds HiGHS's 32-bit indices, [`HighsError::Load`] when HiGHS
     /// refuses the LP.
     pub(crate) fn pass(&mut self, lp: &Lp) -> Result<(), HighsError> {
+        let a = Arrays::of(lp);
         let (num_col, num_row) = (
             index(lp.num_cols(), Dimension::Columns)?,
-            index(lp.num_rows(), Dimension::Rows)?,
+            index(a.row_lower.len(), Dimension::Rows)?,
         );
         let num_nz = index(lp.num_entries(), Dimension::Entries)?;
-        let a = Arrays::of(lp);
+        let q_num_nz = index(lp.quadratic().len(), Dimension::HessianEntries)?;
+        let q = Hessian::of(lp);
         let sense = match lp.sense() {
             Sense::Minimize => kHighsObjSenseMinimize,
             Sense::Maximize => kHighsObjSenseMaximize,
@@ -81,25 +83,40 @@ impl Instance {
         } else {
             ptr::null()
         };
-        let (no_int, no_double) = (ptr::null(), ptr::null());
+        let (q_format, q_start, q_index, q_value) = if q_num_nz == 0 {
+            (0, ptr::null(), ptr::null(), ptr::null())
+        } else {
+            (
+                kHighsHessianFormatTriangular,
+                q.starts.as_ptr(),
+                q.rows.as_ptr(),
+                q.values.as_ptr(),
+            )
+        };
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
             a.agrees_with(lp),
             "Instance: the arrays passed to HiGHS do not match the LP's counts"
         );
+        debug_assert!(
+            q.agrees_with(lp),
+            "Instance: the Hessian passed to HiGHS does not match the LP's quadratic part"
+        );
         // SAFETY: the instance is live and borrowed exclusively. The column arrays hold `num_col` values, the row
         // bounds `num_row`, `starts` holds `num_row + 1` row starts (HiGHS reads the first `num_row`), `cols` and
-        // the values hold `num_nz` entries, and `integrality` is null or holds `num_col` values. There is no
-        // Hessian: its count is zero and its arrays null. HiGHS copies every array before returning.
+        // the values hold `num_nz` entries, and `integrality` is null or holds `num_col` values. Without a quadratic
+        // part the Hessian's count is zero and its arrays null; with one, `q_start` holds `num_col + 1` column
+        // starts (HiGHS reads the first `num_col`) and `q_index` and `q_value` hold `q_num_nz` entries of the lower
+        // triangle, column-wise. HiGHS copies every array before returning.
         let status = unsafe {
             Highs_passModel(
                 self.raw(),
                 num_col,
                 num_row,
                 num_nz,
-                0,
+                q_num_nz,
                 kHighsMatrixFormatRowwise,
-                0,
+                q_format,
                 sense,
                 lp.offset(),
                 a.costs.as_ptr(),
@@ -110,9 +127,9 @@ impl Instance {
                 a.starts.as_ptr(),
                 a.cols.as_ptr(),
                 lp.matrix().values.as_ptr(),
-                no_int,
-                no_int,
-                no_double,
+                q_start,
+                q_index,
+                q_value,
                 integrality,
             )
         };
@@ -296,6 +313,11 @@ impl core::fmt::Debug for Instance {
 }
 
 /// An LP's arrays in the layout `Highs_passModel` reads.
+///
+/// A QP without rows gets one free row without entries. HiGHS 1.15 solves a QP without rows from the
+/// unconstrained minimizer clamped into the bounds, and can report that point optimal after no iteration when it
+/// is not; with a row it finds its starting point with its LP solver and solves correctly. A free row constrains
+/// nothing, and the backend reads no row values.
 struct Arrays {
     costs: Vec<f64>,
     lower: Vec<f64>,
@@ -308,19 +330,35 @@ struct Arrays {
 }
 
 impl Arrays {
-    /// The arrays of `lp`, whose counts the caller checked against HiGHS's index type.
+    /// The arrays of `lp`, with a free row for a QP without rows.
     fn of(lp: &Lp) -> Self {
         let columns = lp.columns();
         let matrix = lp.matrix();
+        let free_row = needs_free_row(lp);
         // Every start is at most the entry count and every column below the column count, both checked by the
-        // caller, so the conversions are exact.
+        // caller before it passes the arrays, so the conversions it passes are exact.
         Self {
             costs: columns.iter().map(|c| c.cost).collect(),
             lower: columns.iter().map(|c| c.bounds.lower()).collect(),
             upper: columns.iter().map(|c| c.bounds.upper()).collect(),
-            row_lower: lp.row_bounds().iter().map(|b| b.lower()).collect(),
-            row_upper: lp.row_bounds().iter().map(|b| b.upper()).collect(),
-            starts: matrix.starts.iter().map(|&s| s as HighsInt).collect(),
+            row_lower: lp
+                .row_bounds()
+                .iter()
+                .map(|b| b.lower())
+                .chain(free_row.then_some(f64::NEG_INFINITY))
+                .collect(),
+            row_upper: lp
+                .row_bounds()
+                .iter()
+                .map(|b| b.upper())
+                .chain(free_row.then_some(f64::INFINITY))
+                .collect(),
+            starts: matrix
+                .starts
+                .iter()
+                .map(|&s| s as HighsInt)
+                .chain(free_row.then_some(0))
+                .collect(),
             cols: matrix.cols.iter().map(|c| c.index() as HighsInt).collect(),
             integrality: columns
                 .iter()
@@ -334,10 +372,12 @@ impl Arrays {
 }
 
 impl Arrays {
-    /// Whether every array holds the length `Highs_passModel` reads for `lp`: one value per column or row, one
-    /// start per row and one more, one column per entry.
+    /// Whether every array holds the length `Highs_passModel` reads for `lp`: one value per column, one per row
+    /// (the LP's rows, and the free row a QP without rows gets), one start per row and one more, one column per
+    /// entry.
     fn agrees_with(&self, lp: &Lp) -> bool {
-        let (cols, rows, entries) = (lp.num_cols(), lp.num_rows(), lp.num_entries());
+        let (cols, entries) = (lp.num_cols(), lp.num_entries());
+        let rows = lp.num_rows() + usize::from(needs_free_row(lp));
         [&self.costs, &self.lower, &self.upper].iter().all(|a| a.len() == cols)
             && self.integrality.len() == cols
             && [&self.row_lower, &self.row_upper].iter().all(|a| a.len() == rows)
@@ -345,6 +385,48 @@ impl Arrays {
             && self.cols.len() == entries
             && lp.matrix().values.len() == entries
     }
+}
+
+/// The Hessian of an LP's quadratic part in the layout `Highs_passModel` reads: its lower triangle in compressed
+/// column form, `rows[starts[c]..starts[c + 1]]` with `values` alike for column `c`, the diagonal first, as
+/// [`QuadObjective::hessian`](culmen_core::QuadObjective::hessian) gives it for HiGHS's `½ xᵀQx`.
+struct Hessian {
+    starts: Vec<HighsInt>,
+    rows: Vec<HighsInt>,
+    values: Vec<f64>,
+}
+
+impl Hessian {
+    /// The Hessian of `lp`, whose counts the caller checked against HiGHS's index type.
+    fn of(lp: &Lp) -> Self {
+        let entries: Vec<(Col, Col, f64)> = lp.quadratic().hessian().collect();
+        // Every start is at most the entry count and every row below the column count, both checked by the
+        // caller before it passes the arrays, so the conversions it passes are exact.
+        Self {
+            starts: (0..=lp.num_cols())
+                .map(|col| entries.partition_point(|e| e.0.index() < col) as HighsInt)
+                .collect(),
+            rows: entries.iter().map(|e| e.1.index() as HighsInt).collect(),
+            values: entries.iter().map(|e| e.2).collect(),
+        }
+    }
+
+    /// Whether the arrays hold the length `Highs_passModel` reads for `lp`'s Hessian: one start per column and
+    /// one more, ending at the entry count, and one row and one value per entry.
+    fn agrees_with(&self, lp: &Lp) -> bool {
+        let entries = self.values.len();
+        self.starts.len() == lp.num_cols() + 1
+            && self.rows.len() == entries
+            && self
+                .starts
+                .last()
+                .is_some_and(|&end| usize::try_from(end).is_ok_and(|end| end == entries))
+    }
+}
+
+/// Whether `lp` is a QP without rows, which HiGHS 1.15 solves only with one free, empty row added.
+fn needs_free_row(lp: &Lp) -> bool {
+    lp.num_rows() == 0 && !lp.quadratic().is_empty()
 }
 
 /// A count as HiGHS's index type.
