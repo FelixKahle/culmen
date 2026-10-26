@@ -1,0 +1,63 @@
+# Copyright (c) 2026 Felix Kahle
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Every pull request and every push to main is formatted, linted, documented and tested on Linux. The jobs `lint`
+# and `test` are the status checks branch protection requires before anything merges into main.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  # The workspace's `rust-version`; CI builds with exactly that toolchain.
+  RUST_TOOLCHAIN: "1.99"
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # highs-sys compiles HiGHS with cmake and generates its bindings with libclang.
+      - name: Install cmake and libclang
+        run: sudo apt-get update && sudo apt-get install -y cmake libclang-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features
+      - name: Docs
+        run: cargo doc --workspace --no-deps --all-features
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cmake and libclang
+        run: sudo apt-get update && sudo apt-get install -y cmake libclang-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Test, every feature
+        run: cargo test --workspace --all-features
+      - name: Test, no default features
+        run: cargo test --workspace --no-default-features

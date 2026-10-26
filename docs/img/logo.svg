@@ -1,0 +1,66 @@
+<!-- Copyright (c) 2026 Felix Kahle -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="100%" height="100%">
+  <title>culmen</title>
+  <defs>
+    <style>
+      /* GitHub dark-mode background */
+      .bg { fill: #0d1117; }
+
+      /* Typography */
+      .text {
+        fill: #ffffff;
+        font-family: 'Montserrat', 'Jost', 'Helvetica Neue', sans-serif;
+        font-size: 115px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+      }
+
+      /* The feasible region: a polytope rising to its summit, faceted in three tones */
+      .facet-left  { fill: #1B998B; }
+      .facet-mid   { fill: #4361EE; }
+      .facet-right { fill: #118AB2; }
+      .edge { fill: none; stroke: #0d1117; stroke-width: 5; stroke-linejoin: round; }
+
+      /* The simplex path along the edges, and the optimum at the summit: bright gold */
+      .path { fill: none; stroke: #FFC300; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
+      .vertex { fill: #FFC300; }
+      .optimum { fill: #FFC300; }
+      .halo { fill: none; stroke: #FFC300; stroke-width: 4; opacity: 0.35; }
+
+      /* The objective's level line, touching the region only at the optimum */
+      .level { fill: none; stroke: #FFC300; stroke-width: 5; stroke-linecap: round; stroke-dasharray: 2 16; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="100%" height="100%" class="bg" />
+
+  <!-- Left side: the polytope and its optimal vertex -->
+  <g transform="translate(205, 150)">
+
+    <!-- Facets, fanned from the summit A(0,-100) -->
+    <polygon points="0,-100 -68,-38 -122,38 -78,100" class="facet-left" />
+    <polygon points="0,-100 -78,100 62,100" class="facet-mid" />
+    <polygon points="0,-100 62,100 118,58 74,-34" class="facet-right" />
+
+    <!-- Facet edges, drawn in the background colour so the facets read as cut faces -->
+    <polyline points="-78,100 0,-100 62,100" class="edge" />
+
+    <!-- The simplex walk: vertex to vertex, up to the summit -->
+    <polyline points="-78,100 -122,38 -68,-38 0,-100" class="path" />
+    <circle cx="-78" cy="100" r="8" class="vertex" />
+    <circle cx="-122" cy="38" r="8" class="vertex" />
+    <circle cx="-68" cy="-38" r="8" class="vertex" />
+
+    <!-- The level line of the objective, tangent at the optimum -->
+    <line x1="-128" y1="-100" x2="128" y2="-100" class="level" />
+
+    <!-- The optimum -->
+    <circle cx="0" cy="-100" r="27" class="halo" />
+    <circle cx="0" cy="-100" r="16" class="optimum" />
+  </g>
+
+  <!-- Right side: text -->
+  <text x="385" y="150" dominant-baseline="central" class="text">CULMEN</text>
+</svg>

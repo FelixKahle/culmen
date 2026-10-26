@@ -1,0 +1,52 @@
+# Copyright (c) 2026 Felix Kahle
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "culmen"
+description = "Linear and mixed-integer programming: models that read like the mathematics, a switchable backend, live observation and a cooperative stop."
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["highs"]
+# The HiGHS backend, `culmen::Highs`; builds HiGHS from source with cmake.
+highs = ["dep:culmen_highs"]
+# The modelling macros `variable!`, `constraint!`, `objective!` and `sum!`.
+macros = ["dep:culmen_macros"]
+# Serialize and deserialize the plain data, and the HiGHS options and statuses with `highs`.
+serde = ["culmen_core/serde", "culmen_highs?/serde"]
+
+[dependencies]
+culmen_core.workspace = true
+culmen_highs = { workspace = true, optional = true }
+culmen_macros = { workspace = true, optional = true }
+
+[dev-dependencies]
+culmen_testing.workspace = true
+ctrlc.workspace = true
+
+[[example]]
+name = "knapsack"
+required-features = ["highs"]
+
+[[example]]
+name = "knapsack_macros"
+required-features = ["highs", "macros"]
+
+[[example]]
+name = "warehouse"
+required-features = ["highs"]
+
+[[example]]
+name = "warehouse_macros"
+required-features = ["highs", "macros"]
+
+[lints]
+workspace = true

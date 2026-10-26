@@ -1,0 +1,104 @@
+# Copyright (c) 2026 Felix Kahle
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# culmen: linear and mixed-integer programming in Rust.
+#
+# The crates point down, never up:
+#
+#   culmen          the facade users depend on: re-exports, a prelude, the `highs` and `macros` features
+#   ├─ culmen_highs   the HiGHS backend over `highs-sys`; the only crate with `unsafe`
+#   ├─ culmen_macros  `variable!`, `constraint!`, `objective!` and `sum!`, expanding to culmen_core's methods
+#   └─ culmen_core    the LP as data, the modelling layer, the backend seam, the solve API; no `unsafe`
+#
+#   culmen_testing  dev-only: exact reference solvers and property-test strategies shared by the test suites
+[workspace]
+resolver = "3"
+members = ["crates/culmen", "crates/culmen_core", "crates/culmen_highs", "crates/culmen_macros", "crates/culmen_testing"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/FelixKahle/culmen"
+authors = ["Felix Kahle"]
+keywords = ["optimization", "linear-programming", "milp", "highs", "solver"]
+categories = ["mathematics", "science"]
+
+[workspace.dependencies]
+culmen_core = { path = "crates/culmen_core", version = "0.1.0" }
+culmen_highs = { path = "crates/culmen_highs", version = "0.1.0" }
+culmen_macros = { path = "crates/culmen_macros", version = "0.1.0" }
+culmen_testing = { path = "crates/culmen_testing" }
+
+# Vectors indexed by `Col` and `Row`, so a column table cannot be read with a row id.
+typed-index-collections = { version = "3.5", default-features = false, features = ["alloc", "std"] }
+# Serialization of the plain data behind the `serde` features.
+serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
+# `Clone` and `Debug` on the borrowing iterators of generic families without bounding their key and handle types,
+# which std's derives would add.
+derive-where = { version = "1.7", default-features = false }
+
+# The raw C API of HiGHS 1.15. Its default `build` feature compiles the bundled HiGHS sources with cmake, so no
+# system HiGHS is needed; `highs_release` builds HiGHS optimised and without its debug assertions.
+highs-sys = { version = "1.15.0" }
+
+# Token trees, quoting and spanned errors for the modelling macros: the standard proc-macro toolkit.
+proc-macro2 = { version = "1.0", default-features = false, features = ["proc-macro"] }
+quote = { version = "1.0", default-features = false, features = ["proc-macro"] }
+syn = { version = "2.0", default-features = false, features = ["parsing", "printing", "proc-macro"] }
+# Which name the calling crate gives `culmen` or `culmen_core`, read from its manifest, so the macros' paths
+# resolve under a renamed dependency.
+proc-macro-crate = { version = "3.5", default-features = false }
+
+# Dev-only. Property tests against reference models.
+proptest = { version = "1.11", default-features = false, features = ["std"] }
+# Dev-only. Exact rational arithmetic for the reference solver, so it shares no floating-point reasoning with the
+# solver under test.
+num-rational = { version = "0.4", default-features = false, features = ["num-bigint-std", "std"] }
+num-bigint = { version = "0.4", default-features = false, features = ["std"] }
+# Dev-only. `Zero`, `One` and `Signed` over the reference solver's rationals.
+num-traits = { version = "0.2", default-features = false, features = ["std"] }
+# Dev-only. Ctrl-C handling in the warehouse example, which std does not offer portably.
+ctrlc = { version = "3.4", default-features = false }
+# Dev-only. The one compile-fail fixture: checked values cannot be forged outside their constructors.
+trybuild = { version = "1.0", default-features = false }
+# Dev-only. The serde round trips run through JSON.
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+missing_panics_doc = "deny"
+missing_errors_doc = "deny"
+unnecessary_safety_comment = "deny"
+unnecessary_safety_doc = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+missing_crate_level_docs = "deny"
+bare_urls = "deny"
+invalid_codeblock_attributes = "deny"
+invalid_rust_codeblocks = "deny"
+
+# Own code stays debuggable in dev builds while dependencies are optimised.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only"
+
+[profile.bench]
+inherits = "release"
