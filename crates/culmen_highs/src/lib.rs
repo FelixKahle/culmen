@@ -282,10 +282,10 @@ impl Highs {
         if status.run == CallStatus::Error {
             return Err(run_failed(status));
         }
-        if let Some(why) = unsound_qp(loaded, status) {
+        let best = (status.primal == SolutionStatus::Feasible).then(|| self.solution(loaded));
+        if let Some(why) = unsound_qp(loaded, status, best.as_ref()) {
             return Err(HighsError::UnsoundQp(why));
         }
-        let best = (status.primal == SolutionStatus::Feasible).then(|| self.solution(loaded));
         let bound = self.mip_bound(loaded);
         match self.ending(settings, status) {
             Ending::Optimal => best
@@ -369,13 +369,16 @@ impl Default for Highs {
     }
 }
 
-/// Why HiGHS's ending of a QP is not trusted: an optimum its own primal-dual objective error does not support, or
-/// unboundedness although every column is bounded; `None` for an LP or a trusted ending.
-fn unsound_qp(loaded: &Loaded, status: &HighsStatus) -> Option<UnsoundQp> {
+/// Why HiGHS's ending of a QP is not trusted: an optimum at a point `best` holding NaN, an optimum its own primal-dual
+/// objective error does not support, or unboundedness although every column is bounded; `None` for an LP or a trusted
+/// ending.
+fn unsound_qp(loaded: &Loaded, status: &HighsStatus, best: Option<&Solution>) -> Option<UnsoundQp> {
     if loaded.quadratic.is_empty() {
         return None;
     }
+    let not_a_number = best.is_some_and(|best| best.values.iter().any(|v| v.is_nan()));
     match status.model {
+        ModelStatus::Optimal if not_a_number => Some(UnsoundQp::NotANumber),
         ModelStatus::Optimal => status
             .primal_dual_objective_error
             .filter(|&error| error > Highs::QP_OBJECTIVE_ERROR)

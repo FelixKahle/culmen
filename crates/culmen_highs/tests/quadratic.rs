@@ -216,6 +216,54 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
     }
 }
 
+#[test]
+fn test_a_qp_optimum_is_valued_as_its_point() {
+    // Found by the property test below: HiGHS 1.15 reports this QP optimal at a point holding NaN, with a NaN objective
+    // and no primal-dual objective error. The backend refuses such an ending; an optimum it reports is worth what it
+    // says at its own point.
+    let mut plan = ProgramPlan::new();
+    let boxes = [(1.0, 4.0, -5.0), (0.0, 3.0, -1.0), (-2.0, 2.0, -2.0), (-1.0, 0.0, 1.0)];
+    let x: Vec<Col> = boxes
+        .into_iter()
+        .map(|(lower, upper, cost)| plan.col(ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
+        .collect();
+    plan.row(
+        Bounds::new(-13.0, -11.0).unwrap(),
+        [(x[0], -3.0), (x[1], -3.0), (x[2], 3.0), (x[3], 2.0)],
+    );
+    plan.row(Bounds::new(0.0, 2.0).unwrap(), [(x[1], 1.0), (x[2], -1.0), (x[3], 3.0)]);
+    plan.quadratic = vec![
+        (x[0], x[0], 0.55),
+        (x[0], x[1], -1.0),
+        (x[0], x[2], 2.0),
+        (x[0], x[3], 1.0),
+        (x[1], x[1], 0.55),
+        (x[1], x[2], -2.0),
+        (x[1], x[3], -1.0),
+        (x[2], x[2], 2.05),
+        (x[2], x[3], 2.0),
+        (x[3], x[3], 0.55),
+    ];
+    let program = plan.build().unwrap();
+    match Solver::new(Highs::new(), program.clone())
+        .unwrap()
+        .solve(Request::new())
+    {
+        Ok(Solved {
+            outcome: Outcome::Optimal(best),
+            ..
+        }) => {
+            assert!(program.max_violation(&best.values) <= 1e-6, "{best:?}");
+            assert!(
+                close(program.objective_value(&best.values), best.objective, 1e-7),
+                "{best:?}"
+            );
+        }
+        Err(SolveError::Backend(HighsError::UnsoundQp(UnsoundQp::NotANumber))) => {}
+        other => panic!("{other:?}"),
+    }
+}
+
 /// min (x - 0.4)² + n with n integer in 0..=3.
 fn miqp() -> Program {
     let mut m = Model::new();

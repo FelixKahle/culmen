@@ -94,6 +94,8 @@ pub enum UnsoundQp {
     /// HiGHS reported the QP unbounded although every column has two finite bounds, so its objective is bounded
     /// on the feasible set.
     UnboundedInABox,
+    /// HiGHS reported an optimum whose point holds NaN, with a NaN objective and no primal-dual objective error.
+    NotANumber,
 }
 
 impl fmt::Display for UnsoundQp {
@@ -103,6 +105,7 @@ impl fmt::Display for UnsoundQp {
                 write!(f, "an optimum with the primal-dual objective error {error}")
             }
             Self::UnboundedInABox => write!(f, "unboundedness although every column is bounded"),
+            Self::NotANumber => write!(f, "an optimum at a point holding NaN"),
         }
     }
 }
