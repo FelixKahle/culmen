@@ -291,7 +291,7 @@ impl Program {
     }
 
     /// The largest amount by which a point violates a bound, a row, integrality or a semi column's choice between zero
-    /// and its bounds ([`Integrality::violation`]), zero for a feasible point.
+    /// and its bounds ([`Integrality::violation`]), zero for a feasible point and infinite for one holding NaN.
     ///
     /// # Panics
     ///

@@ -734,7 +734,9 @@ proptest! {
     /// (lower for a positive dual when minimizing, upper when maximizing, and the reverse) sums with the offset to
     /// the optimum exact enumeration finds; the line sits at that bound; and `c = Aᵀy + d` holds.
     #[test]
-    fn test_strong_duality_and_complementary_slackness(program in small_lp().prop_filter("an LP", |p| p.class() == ModelClass::Lp)) {
+    fn test_strong_duality_and_complementary_slackness(
+        program in small_lp().prop_filter("an LP", |p| p.class() == ModelClass::Lp)
+    ) {
         let Reference::Optimal(_) = solve(&program) else { return Ok(()) };
         let exact = solve(&program).objective().unwrap();
         let (solver, outcome, status) = solved(&program);
@@ -747,12 +749,22 @@ proptest! {
             let bound = if lower { bounds.lower() } else { bounds.upper() };
             (bound.is_finite() && (value - bound).abs() <= 1e-6).then_some(dual * bound)
         };
-        let rows: Option<f64> = program.rows().map(|r| at(duals.rows[r], program.row_bounds()[r], activities[r])).sum();
-        let cols: Option<f64> = program.cols().map(|c| at(duals.cols[c], program.columns()[c].bounds, solution.values[c])).sum();
-        let (Some(rows), Some(cols)) = (rows, cols) else { panic!("a dual at the wrong bound: {duals:?} {solution:?}") };
-        prop_assert!(close(program.offset() + rows + cols, exact, 1e-6), "dual {} vs exact {exact}", program.offset() + rows + cols);
+        let rows: Option<f64> = program
+            .rows()
+            .map(|r| at(duals.rows[r], program.row_bounds()[r], activities[r]))
+            .sum();
+        let cols: Option<f64> = program
+            .cols()
+            .map(|c| at(duals.cols[c], program.columns()[c].bounds, solution.values[c]))
+            .sum();
+        let (Some(rows), Some(cols)) = (rows, cols) else {
+            panic!("a dual at the wrong bound: {duals:?} {solution:?}")
+        };
+        let dual = program.offset() + rows + cols;
+        prop_assert!(close(dual, exact, 1e-6), "dual {dual} vs exact {exact}");
         for c in program.cols() {
-            let aty: f64 = program.rows().map(|r| duals.rows[r] * program.row(r).entries().filter(|e| e.0 == c).map(|e| e.1).sum::<f64>()).sum();
+            let coefficient = |r| program.row(r).entries().filter(|e| e.0 == c).map(|e| e.1).sum::<f64>();
+            let aty: f64 = program.rows().map(|r| duals.rows[r] * coefficient(r)).sum();
             prop_assert!((program.columns()[c].cost - aty - duals.cols[c]).abs() <= 1e-6, "c = Aᵀy + d fails at {c:?}");
         }
     }

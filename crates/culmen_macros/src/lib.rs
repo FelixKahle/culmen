@@ -126,38 +126,14 @@ fn spec(tokens: TokenStream2) -> syn::Result<(TokenStream2, Bounds)> {
     let (parts, relations) = split_relations(tokens);
     let rel: Vec<Relation> = relations.iter().map(|&(r, _)| r).collect();
     let span = relations.first().map_or_else(Span::call_site, |&(_, span)| span);
-    let bound = |b: &TokenStream2| Some(rewrite_indices(b.clone()));
     let (declared, bounds) = match (rel.as_slice(), parts.as_slice()) {
         ([], [x]) => (x, Bounds::default()),
-        ([Relation::Geq], [x, b]) | ([Relation::Leq], [b, x]) if is_head(x) => (
-            x,
-            Bounds {
-                lower: bound(b),
-                ..Bounds::default()
-            },
-        ),
-        ([Relation::Leq], [x, b]) | ([Relation::Geq], [b, x]) if is_head(x) => (
-            x,
-            Bounds {
-                upper: bound(b),
-                ..Bounds::default()
-            },
-        ),
-        ([Relation::Eq], [x, b]) if is_head(x) => (
-            x,
-            Bounds {
-                fixed: bound(b),
-                ..Bounds::default()
-            },
-        ),
-        ([Relation::Leq, Relation::Leq], [l, x, u]) | ([Relation::Geq, Relation::Geq], [u, x, l]) => (
-            x,
-            Bounds {
-                lower: bound(l),
-                upper: bound(u),
-                fixed: None,
-            },
-        ),
+        ([Relation::Geq], [x, b]) | ([Relation::Leq], [b, x]) if is_head(x) => (x, Bounds::lower(b)),
+        ([Relation::Leq], [x, b]) | ([Relation::Geq], [b, x]) if is_head(x) => (x, Bounds::upper(b)),
+        ([Relation::Eq], [x, b]) if is_head(x) => (x, Bounds::fixed(b)),
+        ([Relation::Leq, Relation::Leq], [l, x, u]) | ([Relation::Geq, Relation::Geq], [u, x, l]) => {
+            (x, Bounds::range(l, u))
+        }
         _ => {
             return Err(syn::Error::new(
                 span,
@@ -166,6 +142,41 @@ fn spec(tokens: TokenStream2) -> syn::Result<(TokenStream2, Bounds)> {
         }
     };
     Ok((declared.clone(), bounds))
+}
+
+impl Bounds {
+    /// A lower bound alone.
+    fn lower(b: &TokenStream2) -> Self {
+        Self {
+            lower: Some(rewrite_indices(b.clone())),
+            ..Self::default()
+        }
+    }
+
+    /// An upper bound alone.
+    fn upper(b: &TokenStream2) -> Self {
+        Self {
+            upper: Some(rewrite_indices(b.clone())),
+            ..Self::default()
+        }
+    }
+
+    /// A fixed value.
+    fn fixed(b: &TokenStream2) -> Self {
+        Self {
+            fixed: Some(rewrite_indices(b.clone())),
+            ..Self::default()
+        }
+    }
+
+    /// Both bounds.
+    fn range(l: &TokenStream2, u: &TokenStream2) -> Self {
+        Self {
+            lower: Some(rewrite_indices(l.clone())),
+            upper: Some(rewrite_indices(u.clone())),
+            fixed: None,
+        }
+    }
 }
 
 /// The `Var` a kind and bounds describe.

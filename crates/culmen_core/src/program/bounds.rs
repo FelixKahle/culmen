@@ -113,10 +113,12 @@ impl Bounds {
         self.lower <= value && value <= self.upper
     }
 
-    /// How far `value` lies outside the interval, zero inside it.
+    /// How far `value` lies outside the interval, zero inside it and infinite for NaN, which lies in no interval.
     #[must_use]
     pub const fn violation(self, value: f64) -> f64 {
-        if value < self.lower {
+        if value.is_nan() {
+            f64::INFINITY
+        } else if value < self.lower {
             self.lower - value
         } else if value > self.upper {
             value - self.upper
@@ -383,7 +385,8 @@ impl Integrality {
         !matches!(self, Self::Continuous)
     }
 
-    /// How far `value` lies from the values a column of this integrality in `bounds` takes, zero for one of them.
+    /// How far `value` lies from the values a column of this integrality in `bounds` takes, zero for one of them and
+    /// infinite for NaN.
     ///
     /// ```
     /// use culmen_core::{Integrality, bounds};

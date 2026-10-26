@@ -544,7 +544,8 @@ proptest! {
         }
         let program = plan.build().unwrap();
         prop_assert_eq!(program.features().iter().collect::<Vec<_>>(), expected);
-        prop_assert_eq!(program.objective_values(TiSlice::from_ref(&[2.0; 5][..program.num_cols()])).len(), 1 + further);
+        let point = TiSlice::from_ref(&[2.0; 5][..program.num_cols()]);
+        prop_assert_eq!(program.objective_values(point).len(), 1 + further);
     }
 
     /// A start fits a program of `num_cols` columns exactly when, read from its prose: a full start has `num_cols`

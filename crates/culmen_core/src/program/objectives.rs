@@ -291,10 +291,10 @@ pub struct Weighted {
 /// - [`Objectives::Blended`]: one objective is minimized, `Σ s · w · f` over every objective `f` with its weight `w`
 ///   and `s` one for minimizing, minus one for maximizing.
 ///
-/// A program with a further objective has a linear objective of its own: [`ProgramPlan::build`](super::ProgramPlan::build)
-/// refuses a quadratic part beside further objectives. Its solutions report the program's own objective in
-/// [`Solution::objective`](crate::Solution::objective); [`Program::objective_values`](super::Program::objective_values)
-/// gives every objective's value.
+/// A program with a further objective has a linear objective of its own:
+/// [`ProgramPlan::build`](super::ProgramPlan::build) refuses a quadratic part beside further objectives. Its
+/// solutions report the program's own objective in [`Solution::objective`](crate::Solution::objective);
+/// [`Program::objective_values`](super::Program::objective_values) gives every objective's value.
 #[derive(Clone, Debug, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Objectives {

@@ -235,46 +235,61 @@ pub(crate) fn bound_names(pattern: &TokenStream) -> syn::Result<Vec<Ident>> {
 }
 
 /// Adds the identifiers `tokens` binds to `names`, refusing what a key pattern cannot hold.
+///
+/// # Errors
+///
+/// For a constructor or path, `ref`, `mut`, `_`, or any token but a name, a comma or a parenthesised group.
 fn collect_names(tokens: TokenStream, names: &mut Vec<Ident>) -> syn::Result<()> {
     let mut tokens = tokens.into_iter().peekable();
     while let Some(token) = tokens.next() {
-        // A name followed by a group or a path is a constructor or a path, `Some(i)`, `Key { a }`, not a binding.
-        if let TokenTree::Ident(ident) = &token
-            && matches!(tokens.peek(), Some(TokenTree::Group(_) | TokenTree::Punct(_)))
-            && !matches!(tokens.peek(), Some(TokenTree::Punct(punct)) if punct.as_char() == ',')
-        {
-            return Err(syn::Error::new(
-                ident.span(),
-                "an index is a name or a tuple of names, such as `i` or `(i, j)`",
-            ));
-        }
-        match token {
-            TokenTree::Ident(ident) if ident == "ref" || ident == "mut" => {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    "an index binds its key by value: no `ref` or `mut`",
-                ));
-            }
-            TokenTree::Ident(ident) if ident == "_" => {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    "a family's index names its key: with `_`, its entries' names would collide",
-                ));
-            }
-            TokenTree::Ident(ident) => names.push(ident),
-            TokenTree::Group(group) if group.delimiter() == Delimiter::Parenthesis => {
-                collect_names(group.stream(), names)?;
-            }
-            TokenTree::Punct(punct) if punct.as_char() == ',' => {}
-            other => {
-                return Err(syn::Error::new(
-                    other.span(),
-                    "an index is a name or a tuple of names, such as `i` or `(i, j)`",
-                ));
-            }
-        }
+        refuse_constructor(&token, tokens.peek())?;
+        collect_token(token, names)?;
     }
     Ok(())
+}
+
+/// Refuses a name followed by a group or a path: a constructor or a path, `Some(i)`, `Key { a }`, not a binding.
+///
+/// # Errors
+///
+/// For such a name.
+fn refuse_constructor(token: &TokenTree, next: Option<&TokenTree>) -> syn::Result<()> {
+    match (token, next) {
+        (TokenTree::Ident(_), Some(TokenTree::Punct(punct))) if punct.as_char() == ',' => Ok(()),
+        (TokenTree::Ident(ident), Some(TokenTree::Group(_) | TokenTree::Punct(_))) => Err(syn::Error::new(
+            ident.span(),
+            "an index is a name or a tuple of names, such as `i` or `(i, j)`",
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Adds the name one token of a key pattern binds, or the names of a parenthesised group.
+///
+/// # Errors
+///
+/// For `ref`, `mut`, `_`, or any token but a name, a comma or a parenthesised group.
+fn collect_token(token: TokenTree, names: &mut Vec<Ident>) -> syn::Result<()> {
+    match token {
+        TokenTree::Ident(ident) if ident == "ref" || ident == "mut" => Err(syn::Error::new(
+            ident.span(),
+            "an index binds its key by value: no `ref` or `mut`",
+        )),
+        TokenTree::Ident(ident) if ident == "_" => Err(syn::Error::new(
+            ident.span(),
+            "a family's index names its key: with `_`, its entries' names would collide",
+        )),
+        TokenTree::Ident(ident) => {
+            names.push(ident);
+            Ok(())
+        }
+        TokenTree::Group(group) if group.delimiter() == Delimiter::Parenthesis => collect_names(group.stream(), names),
+        TokenTree::Punct(punct) if punct.as_char() == ',' => Ok(()),
+        other => Err(syn::Error::new(
+            other.span(),
+            "an index is a name or a tuple of names, such as `i` or `(i, j)`",
+        )),
+    }
 }
 
 /// The keywords after which a `[` opens an array or a slice pattern, not an index.

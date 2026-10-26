@@ -148,7 +148,7 @@ same with `GRBsetintparam` / `GRBsetdblparam` / `GRBsetstrparam`, and SCIP with 
 | `Infeasible` | `Infeasible` | `GRB_INFEASIBLE` | `INFEASIBLE` |
 | `Unbounded` | `Unbounded` | `GRB_UNBOUNDED` | `UNBOUNDED` |
 | `InfeasibleOrUnbounded` | `UnboundedOrInfeasible` | `GRB_INF_OR_UNBD` | `INFORUNBD` |
-| `Err(backend error)` | `NotSet`, `LoadError`, `ModelError`, `PresolveError`, `SolveError`, `PostsolveError`, or a failed run; for a QP also `Optimal` with a relative primal-dual objective error above `1e-5`, and `Unbounded` with every column bounded (`HighsError::UnsoundQp`) | `GRB_NUMERIC`, `GRB_LOADED` after optimize, an error code | `UNKNOWN` after solve, a `SCIP_RETCODE` error |
+| `Err(backend error)` | `NotSet`, `LoadError`, `ModelError`, `PresolveError`, `SolveError`, `PostsolveError`, or a failed run; for a QP also `Optimal` at a point holding NaN or with a relative primal-dual objective error above `1e-5`, and `Unbounded` with every column bounded (`HighsError::UnsoundQp`) | `GRB_NUMERIC`, `GRB_LOADED` after optimize, an error code | `UNKNOWN` after solve, a `SCIP_RETCODE` error |
 
 A `Stopped` outcome carries the best solution when the solver holds a feasible one, and the best bound for a MIP.
 `Solved::status` keeps the native status for diagnostics. For HiGHS that is `HighsStatus`: run status, model status,

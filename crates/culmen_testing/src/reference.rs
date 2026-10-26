@@ -94,33 +94,16 @@ fn chosen(program: &Program, semi: &[Col], on: u32) -> Program {
 
 /// Solves a tiny LP or MILP without semi columns exactly.
 fn solve_box(program: &Program) -> Reference {
-    let exact = |v: f64| BigRational::from_float(v).expect("a finite number");
     let ints: Vec<usize> = (0..program.num_cols()).filter(|&j| is_integer(program, j)).collect();
     let conts: Vec<usize> = (0..program.num_cols()).filter(|&j| !is_integer(program, j)).collect();
-    let ranges: Vec<(i64, i64)> = ints
-        .iter()
-        .map(|&j| {
-            let bounds = program.columns()[culmen_core::Col::new(j)].bounds;
-            let lower = exact(bounds.lower())
-                .ceil()
-                .to_integer()
-                .to_i64()
-                .expect("a small lower bound");
-            let upper = exact(bounds.upper())
-                .floor()
-                .to_integer()
-                .to_i64()
-                .expect("a small upper bound");
-            (lower, upper)
-        })
-        .collect();
+    let ranges = integer_ranges(program, &ints);
     let points: i64 = ranges.iter().map(|&(l, u)| (u - l + 1).max(0)).product();
     assert!(points <= 1_000_000, "the integer box is too large to enumerate");
-    let mut best: Option<BigRational> = None;
-    let mut point: Vec<i64> = ranges.iter().map(|&(l, _)| l).collect();
     if ranges.iter().any(|&(l, u)| l > u) {
         return Reference::Infeasible;
     }
+    let mut best: Option<BigRational> = None;
+    let mut point: Vec<i64> = ranges.iter().map(|&(l, _)| l).collect();
     loop {
         if let Some(value) = best_continuous(program, &ints, &point, &conts) {
             let better = best.as_ref().is_none_or(|b| match program.sense() {
@@ -136,6 +119,34 @@ fn solve_box(program: &Program) -> Reference {
         }
     }
     best.map_or(Reference::Infeasible, Reference::Optimal)
+}
+
+/// The whole values each integer column `ints` may take, as `(least, greatest)`.
+///
+/// # Panics
+///
+/// When a bound is infinite or beyond `i64`.
+fn integer_ranges(program: &Program, ints: &[usize]) -> Vec<(i64, i64)> {
+    let whole =
+        |v: f64, round: fn(&BigRational) -> BigRational| round(&exact(v)).to_integer().to_i64().expect("a small bound");
+    ints.iter()
+        .map(|&j| {
+            let bounds = program.columns()[Col::new(j)].bounds;
+            (
+                whole(bounds.lower(), BigRational::ceil),
+                whole(bounds.upper(), BigRational::floor),
+            )
+        })
+        .collect()
+}
+
+/// A finite number as an exact rational.
+///
+/// # Panics
+///
+/// When `v` is not finite.
+fn exact(v: f64) -> BigRational {
+    BigRational::from_float(v).expect("a finite number")
 }
 
 fn is_integer(program: &Program, j: usize) -> bool {
@@ -156,16 +167,41 @@ fn advance(point: &mut [i64], ranges: &[(i64, i64)]) -> bool {
 
 /// The best objective value over the continuous columns with the integer columns fixed at `point`, `None` when no
 /// continuous point is feasible.
+///
+/// # Panics
+///
+/// When a continuous column has an infinite bound.
 fn best_continuous(program: &Program, ints: &[usize], point: &[i64], conts: &[usize]) -> Option<BigRational> {
-    let exact = |v: f64| BigRational::from_float(v).expect("a finite number");
-    let fixed: Vec<Option<BigRational>> = (0..program.num_cols())
+    let fixed = fixed_values(program, ints, point);
+    let mut inequalities = row_inequalities(program, &fixed, conts);
+    inequalities.extend(column_inequalities(program, conts));
+    vertices(&inequalities, conts.len())
+        .into_iter()
+        .map(|x| objective_at(program, &fixed, conts, &x))
+        .reduce(|a, b| match program.sense() {
+            Sense::Minimize => a.min(b),
+            Sense::Maximize => a.max(b),
+        })
+}
+
+/// Each column's value when it is an integer column `ints`, fixed at `point`; `None` for a continuous column.
+fn fixed_values(program: &Program, ints: &[usize], point: &[i64]) -> Vec<Option<BigRational>> {
+    (0..program.num_cols())
         .map(|j| {
             ints.iter()
                 .position(|&i| i == j)
                 .map(|k| BigRational::from_integer(BigInt::from(point[k])))
         })
-        .collect();
-    let position = |j: usize| conts.iter().position(|&c| c == j);
+        .collect()
+}
+
+/// Every row's bounds as inequalities over the continuous columns `conts`, the fixed columns moved into constants.
+///
+/// # Panics
+///
+/// When a column is neither fixed nor in `conts`.
+fn row_inequalities(program: &Program, fixed: &[Option<BigRational>], conts: &[usize]) -> Vec<Inequality> {
+    let position = |j: usize| conts.iter().position(|&c| c == j).expect("a continuous column");
     let mut inequalities = Vec::new();
     for row in program.rows() {
         let mut a = vec![BigRational::zero(); conts.len()];
@@ -174,39 +210,46 @@ fn best_continuous(program: &Program, ints: &[usize], point: &[i64], conts: &[us
             let coefficient = exact(coefficient);
             match &fixed[col.index()] {
                 Some(value) => constant += &coefficient * value,
-                None => a[position(col.index()).expect("a continuous column")] += coefficient,
+                None => a[position(col.index())] += coefficient,
             }
         }
         push_bounds(&mut inequalities, &a, &constant, program.row_bounds()[row]);
     }
+    inequalities
+}
+
+/// Every continuous column's bounds as inequalities over the continuous columns `conts`.
+///
+/// # Panics
+///
+/// When a continuous column has an infinite bound.
+fn column_inequalities(program: &Program, conts: &[usize]) -> Vec<Inequality> {
+    let mut inequalities = Vec::new();
     for (k, &j) in conts.iter().enumerate() {
         let mut a = vec![BigRational::zero(); conts.len()];
         a[k] = BigRational::one();
-        let bounds = program.columns()[culmen_core::Col::new(j)].bounds;
+        let bounds = program.columns()[Col::new(j)].bounds;
         assert!(
             bounds.lower().is_finite() && bounds.upper().is_finite(),
             "every continuous column is bounded"
         );
         push_bounds(&mut inequalities, &a, &BigRational::zero(), bounds);
     }
-    let objective = |x: &[BigRational]| -> BigRational {
-        let mut value = exact(program.offset());
-        for j in 0..program.num_cols() {
-            let cost = exact(program.columns()[culmen_core::Col::new(j)].cost);
-            let x_j = fixed[j]
-                .clone()
-                .unwrap_or_else(|| x[position(j).expect("a continuous column")].clone());
-            value += cost * x_j;
-        }
-        value
-    };
-    vertices(&inequalities, conts.len())
-        .into_iter()
-        .map(|x| objective(&x))
-        .reduce(|a, b| match program.sense() {
-            Sense::Minimize => a.min(b),
-            Sense::Maximize => a.max(b),
-        })
+    inequalities
+}
+
+/// The program's linear objective, offset included, at the point whose fixed columns are `fixed` and whose
+/// continuous columns `conts` take `x`.
+///
+/// # Panics
+///
+/// When a column is neither fixed nor in `conts`.
+fn objective_at(program: &Program, fixed: &[Option<BigRational>], conts: &[usize], x: &[BigRational]) -> BigRational {
+    let position = |j: usize| conts.iter().position(|&c| c == j).expect("a continuous column");
+    (0..program.num_cols()).fold(exact(program.offset()), |value, j| {
+        let x_j = fixed[j].clone().unwrap_or_else(|| x[position(j)].clone());
+        value + exact(program.columns()[Col::new(j)].cost) * x_j
+    })
 }
 
 /// Adds `lower <= a · x + constant <= upper` as up to two inequalities `a · x <= b`.

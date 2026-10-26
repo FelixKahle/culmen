@@ -77,18 +77,26 @@ impl Instance {
     /// [`HighsError::TooLarge`] when a count exceeds HiGHS's 32-bit indices, [`HighsError::Load`] when HiGHS
     /// refuses the program.
     pub(crate) fn pass(&mut self, program: &Program, padding: Padding) -> Result<(), HighsError> {
-        let a = Arrays::of(program, padding);
-        let (num_col, num_row) = (
-            index(program.num_cols(), Dimension::Columns)?,
-            index(a.row_lower.len(), Dimension::Rows)?,
+        let arrays = Arrays::of(program, padding);
+        let counts = Counts::of(program, &arrays)?;
+        let hessian = Hessian::of(program);
+        debug_assert!(
+            arrays.agrees_with(program, padding),
+            "Instance: the arrays passed to HiGHS do not match the program's counts"
         );
-        let num_nz = index(program.num_entries(), Dimension::Entries)?;
-        let q_num_nz = index(program.quadratic().len(), Dimension::HessianEntries)?;
-        let q = Hessian::of(program);
-        let sense = match program.sense() {
-            Sense::Minimize => kHighsObjSenseMinimize,
-            Sense::Maximize => kHighsObjSenseMaximize,
-        };
+        debug_assert!(
+            hessian.agrees_with(program) && hessian.values.len() == program.quadratic().len(),
+            "Instance: the Hessian passed to HiGHS does not match the program's quadratic part"
+        );
+        match CallStatus::from_raw(self.pass_model(program, &arrays, &hessian, &counts)) {
+            CallStatus::Error => Err(HighsError::Load { message: None }),
+            CallStatus::Ok | CallStatus::Warning => Ok(()),
+        }
+    }
+
+    /// Hands HiGHS the model the arrays describe and returns `Highs_passModel`'s status; `arrays`, `hessian` and
+    /// `counts` are those of `program`.
+    fn pass_model(&mut self, program: &Program, a: &Arrays, q: &Hessian, counts: &Counts) -> HighsInt {
         let integrality = if program.is_mip() {
             a.integrality.as_ptr()
         } else {
@@ -96,30 +104,22 @@ impl Instance {
         };
         let (q_format, q_start, q_index, q_value) = q.raw();
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
-        debug_assert!(
-            a.agrees_with(program, padding),
-            "Instance: the arrays passed to HiGHS do not match the program's counts"
-        );
-        debug_assert!(
-            q.agrees_with(program) && q.values.len() == program.quadratic().len(),
-            "Instance: the Hessian passed to HiGHS does not match the program's quadratic part"
-        );
-        // SAFETY: the instance is live and borrowed exclusively. The column arrays hold `num_col` values, the row
-        // bounds `num_row`, `starts` holds `num_row + 1` row starts (HiGHS reads the first `num_row`), `cols` and
-        // the values hold `num_nz` entries, and `integrality` is null or holds `num_col` values. Without a quadratic
-        // part the Hessian's count is zero and its arrays null; with one, `q_start` holds `num_col + 1` column
-        // starts (HiGHS reads the first `num_col`) and `q_index` and `q_value` hold `q_num_nz` entries of the lower
-        // triangle, column-wise. HiGHS copies every array before returning.
-        let status = unsafe {
+        // SAFETY: the instance is live and borrowed exclusively. The column arrays hold `counts.cols` values, the row
+        // bounds `counts.rows`, `starts` holds `counts.rows + 1` row starts (HiGHS reads the first `counts.rows`),
+        // `cols` and the values hold `counts.entries` entries, and `integrality` is null or holds `counts.cols`
+        // values. Without a quadratic part the Hessian's count is zero and its arrays null; with one, `q_start` holds
+        // `counts.cols + 1` column starts (HiGHS reads the first `counts.cols`) and `q_index` and `q_value` hold
+        // `counts.hessian` entries of the lower triangle, column-wise. HiGHS copies every array before returning.
+        unsafe {
             Highs_passModel(
                 self.raw(),
-                num_col,
-                num_row,
-                num_nz,
-                q_num_nz,
+                counts.cols,
+                counts.rows,
+                counts.entries,
+                counts.hessian,
                 kHighsMatrixFormatRowwise,
                 q_format,
-                sense,
+                objective_sense(program.sense()),
                 program.offset(),
                 a.costs.as_ptr(),
                 a.lower.as_ptr(),
@@ -134,10 +134,6 @@ impl Instance {
                 q_value,
                 integrality,
             )
-        };
-        match CallStatus::from_raw(status) {
-            CallStatus::Error => Err(HighsError::Load { message: None }),
-            CallStatus::Ok | CallStatus::Warning => Ok(()),
         }
     }
 
@@ -478,16 +474,16 @@ impl Instance {
     /// extension, `.mps` or `.lp`.
     pub(crate) fn read_model(&mut self, path: &CStr) -> CallStatus {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
-        // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads during
-        // the call.
+        // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads
+        // during the call.
         CallStatus::from_raw(unsafe { Highs_readModel(self.raw(), path.as_ptr()) })
     }
 
     /// Writes the model HiGHS holds to the file at `path`; HiGHS picks the writer by the extension, `.mps` or `.lp`.
     pub(crate) fn write_model(&mut self, path: &CStr) -> CallStatus {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
-        // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads during
-        // the call.
+        // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads
+        // during the call.
         CallStatus::from_raw(unsafe { Highs_writeModel(self.raw(), path.as_ptr()) })
     }
 
@@ -555,23 +551,37 @@ impl Instance {
 
     /// The model HiGHS holds: its matrix row-wise, its Hessian's lower triangle column-wise.
     pub(crate) fn model(&self) -> RawModel {
+        let mut model = self.model_buffers();
+        self.fill(&mut model);
+        model
+    }
+
+    /// Buffers sized for the counts of the model HiGHS holds.
+    fn model_buffers(&self) -> RawModel {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live.
         let (num_nz, q_num_nz) = unsafe { (Highs_getNumNz(self.raw()), Highs_getHessianNumNz(self.raw())) };
-        let mut m = RawModel::sized(
+        RawModel::sized(
             self.num_col(),
             self.num_row(),
             usize::try_from(num_nz).unwrap_or(0),
             usize::try_from(q_num_nz).unwrap_or(0),
-        );
+        )
+    }
+
+    /// Copies the model HiGHS holds into `m`, made by [`Instance::model_buffers`] for it, and trims every buffer to
+    /// the counts HiGHS reports.
+    fn fill(&self, m: &mut RawModel) {
         let (mut num_col, mut num_row, mut nz, mut q_nz): (HighsInt, HighsInt, HighsInt, HighsInt) = (0, 0, 0, 0);
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
             m.fits(self.num_col(), self.num_row()),
             "Instance: the model buffers are too small"
         );
-        // SAFETY: the instance is live. Every buffer holds at least what HiGHS writes for the counts it reported just
-        // before: one value per column, per row, per matrix entry and per Hessian entry, one start per row and per
-        // column, and never less than one element, so no pointer is dangling. The counts are written to locals.
+        // SAFETY: the instance is live. Every buffer holds at least what HiGHS writes for the counts it reported when
+        // the buffers were made: one value per column, per row, per matrix entry and per Hessian entry, one start per
+        // row and per column, and never less than one element, so no pointer is dangling. The counts are written to
+        // locals.
         let _ = unsafe {
             Highs_getModel(
                 self.raw(),
@@ -598,7 +608,6 @@ impl Instance {
             )
         };
         m.trim(num_col, num_row, nz, q_nz);
-        m
     }
 }
 
@@ -847,6 +856,38 @@ pub(crate) const fn var_type(integrality: Integrality) -> HighsInt {
         Integrality::Integer => kHighsVarTypeInteger,
         Integrality::SemiContinuous => kHighsVarTypeSemiContinuous,
         Integrality::SemiInteger => kHighsVarTypeSemiInteger,
+    }
+}
+
+/// The counts `Highs_passModel` reads, each within HiGHS's index type.
+struct Counts {
+    cols: HighsInt,
+    rows: HighsInt,
+    entries: HighsInt,
+    hessian: HighsInt,
+}
+
+impl Counts {
+    /// The counts of `program` passed as `arrays`, whose rows may include the free row of a QP without rows.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::TooLarge`] naming the first count beyond HiGHS's 32-bit indices.
+    fn of(program: &Program, arrays: &Arrays) -> Result<Self, HighsError> {
+        Ok(Self {
+            cols: index(program.num_cols(), Dimension::Columns)?,
+            rows: index(arrays.row_lower.len(), Dimension::Rows)?,
+            entries: index(program.num_entries(), Dimension::Entries)?,
+            hessian: index(program.quadratic().len(), Dimension::HessianEntries)?,
+        })
+    }
+}
+
+/// HiGHS's number for an objective sense.
+const fn objective_sense(sense: Sense) -> HighsInt {
+    match sense {
+        Sense::Minimize => kHighsObjSenseMinimize,
+        Sense::Maximize => kHighsObjSenseMaximize,
     }
 }
 

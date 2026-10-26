@@ -234,12 +234,11 @@ trusted:
   with one free row without entries, which constrains nothing and makes HiGHS find its starting point with its LP
   solver.
 - **An unsound ending is an error.** On a small share of QPs, after its iterates turned NaN, HiGHS 1.15 reports an
-  optimum its own primal and dual objectives contradict, at a point that need not be feasible, or reports
-  unbounded a QP whose every column is bounded. The backend fails such a solve with
-  [`HighsError::UnsoundQp`](#errors): an optimum whose relative primal-dual objective error exceeds
-  `Highs::QP_OBJECTIVE_ERROR`, `1e-5` (correct optima stay below `1e-6`), or unboundedness with every column
-  bounded. An `Optimal` outcome of a QP is therefore
-  one HiGHS's own measures support.
+  optimum at a point holding NaN, an optimum its own primal and dual objectives contradict, at a point that need not
+  be feasible, or reports unbounded a QP whose every column is bounded. The backend fails such a solve with
+  [`HighsError::UnsoundQp`](#errors): an optimum at a point holding NaN, an optimum whose relative primal-dual
+  objective error exceeds `Highs::QP_OBJECTIVE_ERROR`, `1e-5` (correct optima stay below `1e-6`), or unboundedness
+  with every column bounded. An `Optimal` outcome of a QP is therefore one HiGHS's own measures support.
 - **It may not terminate.** On a rare QP HiGHS 1.15's QP solver iterates without end, its memory growing. A
   [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`; set one for any QP
   whose solve must end.
@@ -341,7 +340,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `OptionString { name }` | A string option's value holds a NUL byte. |
 | `OutOfRange { name, value }` | A seed or thread count is above `i32::MAX`, beyond HiGHS's integers. |
 | `Run { status, message }` | The run failed, as a thread-count conflict makes it; `message` is HiGHS's last error line. |
-| `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
+| `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `NotANumber`, `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
 | `Analysis(Analysis)` | HiGHS refused or failed an analysis, as a basis it finds singular ([Analysis](analysis.md#highs)). |
 | `AnalysisFeature { analysis, feature }` | HiGHS 1.15 gets the analysis wrong for a program with the feature, as a feasibility relaxation with semi columns ([Analysis](analysis.md#highs)). |
 
