@@ -9,8 +9,8 @@
 
 use culmen_core::{
     Bounds, Col, Constraint, ExprPlace, Integrality, InvalidBounds, LinExpr, Linear, Model, ModelConstraint,
-    ModelError, ModelVar, ProgramColumn, ProgramError, ProgramPlan, Row, Sense, Term, TiVec, Var, VarMap, bounds,
-    product, set,
+    ModelError, ModelVar, ProgramColumn, ProgramError, ProgramPlan, Row, Sense, Term, TiSlice, TiVec, Var, VarMap,
+    bounds, product, set,
 };
 use proptest::prelude::*;
 
@@ -488,4 +488,29 @@ proptest! {
         prop_assert_eq!(program.row(row).len(), forwards.len());
         prop_assert!(forwards.windows(2).all(|w| w[0].0 < w[1].0));
     }
+}
+
+#[test]
+fn test_a_point_with_a_nan_is_infinitely_far_from_feasible() {
+    // Found through HiGHS 1.15, which reported an optimal QP point holding a NaN: every comparison with NaN is
+    // false, so the point read as inside every bound.
+    assert_eq!(bounds!(0.0, 1.0).violation(f64::NAN), f64::INFINITY);
+    assert_eq!(
+        Integrality::Integer.violation(bounds!(0.0, 1.0), f64::NAN),
+        f64::INFINITY
+    );
+    assert_eq!(
+        Integrality::SemiContinuous.violation(bounds!(1.0, 2.0), f64::NAN),
+        f64::INFINITY
+    );
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1.0)));
+    let y = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1.0)));
+    plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0)]);
+    let program = plan.build().unwrap();
+    assert_eq!(
+        program.max_violation(TiSlice::from_ref(&[0.5, f64::NAN])),
+        f64::INFINITY
+    );
+    assert_eq!(program.max_violation(TiSlice::from_ref(&[0.5, 0.25])), 0.0);
 }
