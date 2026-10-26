@@ -180,14 +180,15 @@ impl Program {
     /// [`ProgramFeature::StartSolution`], which belongs to a solve.
     ///
     /// ```
-    /// use culmen_core::{Model, ProgramFeature, ProgramFeatures, Var};
+    /// use culmen_core::{Model, Objective, ProgramFeature, ProgramFeatures, Var};
     ///
     /// let mut m = Model::new();
     /// let x = m.add_var(Var::semi_continuous().bounds(2, 10));
     /// m.minimize(x);
     /// assert_eq!(m.build()?.features(), ProgramFeature::SemiContinuous.into());
-    /// m.add_var(Var::continuous());
-    /// assert_eq!(m.build()?.features(), ProgramFeatures::of(&[ProgramFeature::SemiContinuous]));
+    /// m.add_objective(Objective::maximize(x));
+    /// let both = ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::MultipleObjectives]);
+    /// assert_eq!(m.build()?.features(), both);
     /// # Ok::<(), culmen_core::ModelError>(())
     /// ```
     #[must_use]
