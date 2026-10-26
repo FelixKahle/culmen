@@ -15,7 +15,7 @@ use culmen_core::{
     Backend, Bounds, Col, Events, Linear, LoadError, Lp, LpColumn, LpPlan, Model, ModelClass, Outcome, Request, Sense,
     Solution, Solved, Solver, StopReason, TiVec, Var,
 };
-use culmen_highs::{Highs, HighsError, ModelStatus};
+use culmen_highs::{Highs, HighsError, UnsoundQp};
 use culmen_testing::reference::close;
 use culmen_testing::strategy::small_qp;
 use proptest::prelude::*;
@@ -171,10 +171,7 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
             6.339_658_331_975_892,
             &[2.259_895_7, 0.0, -0.399_739_4, -2.360_156_4],
         ),
-        Err(HighsError::UnsoundQp {
-            status: ModelStatus::Optimal,
-            primal_dual_objective_error: Some(error),
-        }) => assert!(error > 1e-5),
+        Err(HighsError::UnsoundQp(UnsoundQp::ObjectiveError { error })) => assert!(error > 1e-5),
         other => panic!("{other:?}"),
     }
 }
@@ -207,10 +204,7 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
             outcome: Outcome::Optimal(solution),
             ..
         }) => assert!(lp.max_violation(&solution.values) <= 1e-6),
-        Err(HighsError::UnsoundQp {
-            status: ModelStatus::Unbounded,
-            primal_dual_objective_error: None,
-        }) => {}
+        Err(HighsError::UnsoundQp(UnsoundQp::UnboundedInABox)) => {}
         other => panic!("{other:?}"),
     }
 }
@@ -385,7 +379,7 @@ proptest! {
         let best = match solver.solve(Request::new().time_limit(Duration::from_secs(2))) {
             Ok(Solved { outcome: Outcome::Optimal(best), .. }) => best,
             Ok(Solved { outcome: Outcome::Stopped { reason: StopReason::TimeLimit, .. }, .. })
-            | Err(HighsError::Run { .. } | HighsError::UnsoundQp { .. }) => return Ok(()),
+            | Err(HighsError::Run { .. } | HighsError::UnsoundQp(_)) => return Ok(()),
             other => return Err(TestCaseError::fail(format!("{other:?} on {lp:?}"))),
         };
         prop_assert!(lp.max_violation(&best.values) <= 1e-6, "{best:?}");

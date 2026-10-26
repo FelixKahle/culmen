@@ -122,7 +122,8 @@ pub(crate) const CONVEXITY_TOLERANCE: f64 = 1e-9;
 ///
 /// # Errors
 ///
-/// The smallest column of the first block, by its smallest column, whose Hessian fails the check.
+/// The smallest column of the first block whose Hessian fails the check, blocks taken in the order of their
+/// smallest columns.
 ///
 /// # Panics
 ///

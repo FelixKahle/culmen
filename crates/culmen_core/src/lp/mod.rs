@@ -324,12 +324,12 @@ fn check_plan(plan: &LpPlan) -> Result<(), LpError> {
 /// or merged, or [`LpError::NonConvexObjective`].
 fn check_quadratic(plan: &LpPlan) -> Result<(), LpError> {
     let num_cols = plan.columns.len();
-    for &(first, second, value) in &plan.quadratic {
-        if let Some(col) = [first, second].into_iter().find(|col| col.index() >= num_cols) {
-            return Err(LpError::UnknownQuadColumn { col });
+    plan.quadratic.iter().try_for_each(|&(first, second, value)| {
+        match [first, second].into_iter().find(|col| col.index() >= num_cols) {
+            Some(col) => Err(LpError::UnknownQuadColumn { col }),
+            None => finite_quad(first, second, value),
         }
-        finite_quad(first, second, value)?;
-    }
+    })?;
     merge_pairs(plan.quadratic.iter().copied())
         .into_iter()
         .try_for_each(|(first, second, value)| finite_quad(first, second, value))?;

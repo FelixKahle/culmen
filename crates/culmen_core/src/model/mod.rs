@@ -410,15 +410,15 @@ impl Model {
             .iter()
             .map(|t| (t.first, t.second, t.coefficient))
             .collect();
-        for &(first, second, value) in &terms {
-            if let Some(col) = [first, second].into_iter().find(|col| col.index() >= self.vars.len()) {
-                return Err(ModelError::UnknownVar {
+        terms.iter().try_for_each(|&(first, second, value)| {
+            match [first, second].into_iter().find(|col| col.index() >= self.vars.len()) {
+                Some(col) => Err(ModelError::UnknownVar {
                     place: ExprPlace::Objective,
                     col,
-                });
+                }),
+                None => self.check_quad_coefficient(first, second, value),
             }
-            self.check_quad_coefficient(first, second, value)?;
-        }
+        })?;
         // The LP adds repeated pairs up the same way, so a sum that passes here passes there.
         merge_pairs(terms.iter().copied())
             .into_iter()

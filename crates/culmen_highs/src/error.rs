@@ -55,16 +55,34 @@ pub enum HighsError {
         /// HiGHS's last error line, if it wrote one.
         message: Option<String>,
     },
-    /// HiGHS's QP solver reported an ending that its own measures or the model contradict: an optimum whose relative
-    /// primal-dual objective error exceeds [`Highs::QP_OBJECTIVE_ERROR`](crate::Highs::QP_OBJECTIVE_ERROR), at a point
-    /// that need not be feasible, or unboundedness although every column is bounded. HiGHS 1.15's QP solver can end
-    /// so after its iterates turned NaN.
-    UnsoundQp {
-        /// The model status HiGHS reported.
-        status: ModelStatus,
-        /// HiGHS's relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`; `None` when it computed none.
-        primal_dual_objective_error: Option<f64>,
+    /// HiGHS's QP solver reported an ending that its own measures or the model contradict. HiGHS 1.15's QP solver
+    /// can end so after its iterates turned NaN.
+    UnsoundQp(UnsoundQp),
+}
+
+/// Why the backend does not trust the ending HiGHS's QP solver reported.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UnsoundQp {
+    /// HiGHS reported an optimum whose relative primal-dual objective error exceeds
+    /// [`Highs::QP_OBJECTIVE_ERROR`](crate::Highs::QP_OBJECTIVE_ERROR); the point need not be feasible.
+    ObjectiveError {
+        /// HiGHS's relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`.
+        error: f64,
     },
+    /// HiGHS reported the QP unbounded although every column has two finite bounds, so its objective is bounded
+    /// on the feasible set.
+    UnboundedInABox,
+}
+
+impl fmt::Display for UnsoundQp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ObjectiveError { error } => {
+                write!(f, "an optimum with the primal-dual objective error {error}")
+            }
+            Self::UnboundedInABox => write!(f, "unboundedness although every column is bounded"),
+        }
+    }
 }
 
 impl fmt::Display for HighsError {
@@ -81,20 +99,7 @@ impl fmt::Display for HighsError {
             Self::OptionName { name } => write!(f, "HiGHS: option name {name:?} holds a NUL byte"),
             Self::OptionString { name } => write!(f, "HiGHS: the value of option `{name}` holds a NUL byte"),
             Self::Run { status, message: m } => write!(f, "HiGHS: the run failed ({status}){}", message(m)),
-            Self::UnsoundQp {
-                status,
-                primal_dual_objective_error: Some(error),
-            } => write!(
-                f,
-                "HiGHS: the QP solver reported {status} with the primal-dual objective error {error}, which is unsound"
-            ),
-            Self::UnsoundQp {
-                status,
-                primal_dual_objective_error: None,
-            } => write!(
-                f,
-                "HiGHS: the QP solver reported {status}, which its bounded columns contradict"
-            ),
+            Self::UnsoundQp(why) => write!(f, "HiGHS: the QP solver reported {why}, which is unsound"),
         }
     }
 }

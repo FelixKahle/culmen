@@ -258,7 +258,7 @@ trusted:
 | `OptionString { name }` | A string option's value holds a NUL byte. |
 | `OutOfRange { name, value }` | A seed or thread count is above `i32::MAX`, beyond HiGHS's integers. |
 | `Run { status, message }` | The run failed, as a thread-count conflict makes it; `message` is HiGHS's last error line. |
-| `UnsoundQp { status, primal_dual_objective_error }` | HiGHS's QP solver reported an ending its own measures or the model contradict ([Quadratic programs](#quadratic-programs)). |
+| `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
 
 ```rust
 use culmen::prelude::*;

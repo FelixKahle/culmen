@@ -65,7 +65,7 @@ use culmen_core::{
     Backend, Callback, Events, Lp, ModelClass, ModelClasses, Outcome, QuadObjective, Sense, Settings, Solution, Solved,
     StopReason, TiSlice, Unsupported,
 };
-pub use error::{Dimension, HighsError};
+pub use error::{Dimension, HighsError, UnsoundQp};
 pub use options::{
     EdgeWeight, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OnOff, OptionValue, RawOption, ScaleStrategy,
     SimplexStrategy, Switch,
@@ -234,11 +234,8 @@ impl Highs {
         if status.run == CallStatus::Error {
             return Err(failed());
         }
-        if unsound_qp(loaded, status) {
-            return Err(HighsError::UnsoundQp {
-                status: status.model,
-                primal_dual_objective_error: status.primal_dual_objective_error,
-            });
+        if let Some(why) = unsound_qp(loaded, status) {
+            return Err(HighsError::UnsoundQp(why));
         }
         let best = (status.primal == SolutionStatus::Feasible).then(|| Solution {
             objective: self.instance.objective(),
@@ -305,18 +302,19 @@ impl Default for Highs {
     }
 }
 
-/// Whether HiGHS reports a QP optimal at a point its own primal-dual objective error does not support, or
-/// unbounded although every column is bounded, so the objective is bounded on the feasible set.
-fn unsound_qp(loaded: &Loaded, status: &HighsStatus) -> bool {
+/// Why HiGHS's ending of a QP is not trusted: an optimum its own primal-dual objective error does not support, or
+/// unboundedness although every column is bounded; `None` for an LP or a trusted ending.
+fn unsound_qp(loaded: &Loaded, status: &HighsStatus) -> Option<UnsoundQp> {
     if loaded.quadratic.is_empty() {
-        return false;
+        return None;
     }
     match status.model {
         ModelStatus::Optimal => status
             .primal_dual_objective_error
-            .is_some_and(|error| error > Highs::QP_OBJECTIVE_ERROR),
-        ModelStatus::Unbounded => loaded.bounded,
-        _ => false,
+            .filter(|&error| error > Highs::QP_OBJECTIVE_ERROR)
+            .map(|error| UnsoundQp::ObjectiveError { error }),
+        ModelStatus::Unbounded => loaded.bounded.then_some(UnsoundQp::UnboundedInABox),
+        _ => None,
     }
 }
 
