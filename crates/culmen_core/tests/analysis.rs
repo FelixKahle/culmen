@@ -13,9 +13,9 @@ use core::time::Duration;
 
 use culmen_core::{
     Analyses, Analysis, AnalysisError, Backend, Basis, BasisStatus, Bound, Callback, Col, Duals, Iis, InvalidPenalty,
-    Limit, Line, Linear, Misfit, Model, ModelClass, ModelClasses, Outcome, Penalty, Program, ProgramPlan, Ranged,
-    Ranging, Relaxed, Row, Script, ScriptError, Settings, Solution, Solved, Solver, Table, TiVec, Unsupported, Var,
-    Violation, Weights, penalty,
+    Line, Linear, Misfit, Model, ModelClass, ModelClasses, Outcome, Penalty, Program, ProgramPlan, Relaxed, Row,
+    Script, ScriptError, Settings, Solution, Solved, Solver, Table, TiVec, Unsupported, Var, Violation, Weights,
+    penalty,
 };
 use proptest::prelude::*;
 
@@ -608,7 +608,7 @@ mod serde_round_trips {
     use core::fmt::Debug;
     use std::collections::BTreeMap;
 
-    use culmen_core::Side;
+    use culmen_core::{Limit, Ranged, Ranging, Side};
     use serde::Serialize;
     use serde::de::DeserializeOwned;
 
