@@ -25,7 +25,9 @@ pub trait Backend: Sized {
     const EVENTS: Events;                 // what this backend delivers
     const CLASSES: ModelClasses;          // the model classes this backend solves
     const ANALYSES: Analyses = Analyses::NONE; // what it reports after a solve: duals, basis, ranging, …
+    const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // semi columns, objectives, starts it takes
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
+    fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> { Ok(()) } // only with StartSolution
     fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>)
         -> Result<Solved<Self::Status>, Self::Error>;
 }
@@ -36,7 +38,9 @@ pub trait Backend: Sized {
   method for that event compiles but can never run. HiGHS, for instance, names `Unsupported` for `Lazy` and `Cut`.
 - **Model classes are declared.** A backend lists the classes it solves (`ModelClass::Lp`, `Milp`, `Qp`, `Miqp`)
   in `Backend::CLASSES`. `Solver::new` reads it before `load`, for every backend alike, and refuses any other class
-  with `LoadError::Unsupported { class, supported }`, so `load` never re-checks the class.
+  with `LoadError::Unsupported { class, supported }`, so `load` never re-checks the class. Features beyond the class
+  (semi columns, multiple objectives, starts) are declared alike in `Backend::FEATURES` and refused with
+  `LoadError::UnsupportedFeature` or, for a start, `SolveError::UnsupportedFeature`.
 - **Analyses are declared.** A backend lists what it reports after a solve in `Backend::ANALYSES` and implements the
   matching methods (`duals`, `basis`, `set_basis`, `ranging`, `primal_ray`, `dual_ray`, `iis`, `relax`), whose
   default bodies refuse. The `Solver` checks the declaration, the program's class, the fit of a basis or weights
@@ -75,6 +79,17 @@ takes `Hᵢᵢ = 2q` on the diagonal and `q` below it; Gurobi takes the entries 
 Gurobi and SCIP solve and HiGHS does not, would be further classes that a backend declares or leaves out.
 
 `Script` declares every class, since it replays its script rather than solving.
+
+## Features
+
+| Feature | HiGHS 1.15 (`culmen_highs`) | Gurobi 12 | SCIP |
+|---|---|---|---|
+| `SemiContinuous` | yes: `kHighsVarTypeSemiContinuous`, upper bound at most `1e5` (`Highs::SEMI_UPPER_LIMIT`) | yes: `GRB_SEMICONT` | yes: a binary indicator and two linear rows |
+| `SemiInteger` | yes: `kHighsVarTypeSemiInteger`, alike | yes: `GRB_SEMIINT` | yes, alike with an integer column |
+| `MultipleObjectives` | yes: `Highs_passLinearObjectives`, lexicographic by priority or blended by `blend_multi_objectives`; linear only | yes: `GRBsetobjectiven`, priorities, weights and tolerances | no native support |
+| `StartSolution` | yes: `Highs_setSolution`, a sparse start padded with HiGHS's undefined value | yes: the `Start` attribute, `GRB_UNDEFINED` for a partial one | yes: `SCIPcreateSol` and `SCIPaddSolFree`, partial solutions completed |
+
+`Script` declares every feature and records each start in `record.starts`.
 
 ## Events
 

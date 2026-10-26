@@ -71,20 +71,23 @@
 //!   [`Progress`], …) serializes and reads back; a [`Program`] and every checked value are checked again as they are
 //!   read.
 
+mod gap;
 mod model;
 mod program;
 mod script;
 mod solve;
 
+pub use gap::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, RelativeGap};
 pub use model::{
-    Constraint, ConstraintMap, ExprPlace, Handles, IndexSet, Keyed, KeyedIter, Keys, LinExpr, Linear, Members, Model,
-    ModelConstraint, ModelError, ModelVar, Product, QuadExpr, QuadTerm, Quadratic, Summand, Term, Values, Var, VarMap,
-    product, set,
+    Combination, Constraint, ConstraintMap, ExprPlace, Handles, IndexSet, Keyed, KeyedIter, Keys, LinExpr, Linear,
+    Members, Model, ModelConstraint, ModelError, ModelVar, Objective, Product, QuadExpr, QuadTerm, Quadratic, Summand,
+    Term, Values, Var, VarMap, product, set,
 };
 pub use program::{
-    Bounds, Col, Cols, HessianEntries, Integrality, InvalidBounds, ModelClass, ModelClasses, ModelClassesIter, Program,
-    ProgramColumn, ProgramError, ProgramPlan, ProgramRow, QuadEntries, QuadObjective, Row, RowEntries, RowMatrix,
-    RowView, Rows, Sense,
+    Bounds, Col, Cols, FurtherObjectives, HessianEntries, Integrality, InvalidBounds, InvalidWeight, LinearObjective,
+    LpFileError, ModelClass, ModelClasses, ModelClassesIter, ObjectiveId, Objectives, Program, ProgramColumn,
+    ProgramError, ProgramFeature, ProgramFeatures, ProgramFeaturesIter, ProgramPlan, ProgramRow, QuadEntries,
+    QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
 };
 pub use script::{
     Found, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote, ScriptPoll,
@@ -92,10 +95,10 @@ pub use script::{
 };
 pub use solve::context;
 pub use solve::{
-    AbsoluteGap, ActionError, AddedRow, Backend, Callback, CutContext, Events, EventsIter, HeuristicContext,
-    Improvement, InvalidAbsoluteGap, InvalidRelativeGap, LazyContext, LoadError, LogContext, LogLevel, LogLine,
-    Observer, Outcome, Phase, PollContext, Progress, ProgressContext, RelativeGap, Request, Settings, Solution,
-    SolutionContext, Solved, Solver, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
+    ActionError, AddedRow, Backend, Callback, CutContext, Events, EventsIter, HeuristicContext, Improvement,
+    LazyContext, LoadError, LogContext, LogLevel, LogLine, Observer, Outcome, Phase, PollContext, Progress,
+    ProgressContext, Request, Settings, Solution, SolutionContext, SolveError, Solved, Solver, Start, StartEntries,
+    StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
 };
 pub use solve::{
     Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,

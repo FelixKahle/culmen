@@ -244,6 +244,87 @@ trusted:
   [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`; set one for any QP
   whose solve must end.
 
+## Semi columns, several objectives and starts
+
+`Highs::FEATURES` is every [feature](program.md#features):
+
+- **Semi columns** reach HiGHS as `kHighsVarTypeSemiContinuous` and `kHighsVarTypeSemiInteger`. HiGHS 1.15 lowers a
+  semi column's upper bound above `1e5` to `1e5`, or refuses the model when its lower bound is above a tenth of that,
+  and fails a run whose solution sits at the lowered bound (`assessSemiVariables` in `HighsLpUtils.cpp`). The backend
+  refuses such a column at load instead, with `HighsError::SemiUpper { col, upper }`; `Highs::SEMI_UPPER_LIMIT` is
+  the limit.
+- **Several objectives** reach HiGHS as linear objectives, the program's own first, through
+  `Highs_passLinearObjectives`; each solve sets `blend_multi_objectives` by the combination. Lexicographically, HiGHS
+  optimizes by descending priority, each objective minimized for a positive weight and maximized otherwise, and after
+  each stage adds the row keeping it within `min(abs, rel · |f*|)` of its optimum `f*`, leaving out a negative
+  tolerance: the backend gives each objective the weight `±1` by its sense, its tolerances, `-1` for an absent one,
+  and a priority by its place. Blended, HiGHS minimizes `Σ weight · objective`: each weight is the culmen weight
+  signed by its sense. HiGHS refuses a further objective beside a Hessian, as culmen does.
+
+  A multi-objective solve leaves HiGHS's own objective value at zero after a lexicographic solve and at the blend's
+  otherwise (`returnFromLexicographicOptimization` in `HighsInterface.cpp`), and its MIP bound is that of the last
+  stage or the blend: the backend reports the program's own objective, computed from the solution, and no bound, so a
+  MIP's outcome is `Optimal` or `Stopped`. Objective values HiGHS reports to callbacks during such a solve are those
+  of the stage it is solving or of the blend.
+- **A start** reaches HiGHS through `Highs_setSolution` before the run: a full one as given, a sparse one with
+  HiGHS's undefined value (`kHighsUndefined`, `+inf`) for the other columns, which HiGHS completes, for a MIP, by a
+  sub-MIP over the columns left open. `Highs_setSparseSolution` would do the same, but refuses a value outside its
+  column's bounds, a semi column's zero among them. A feasible start of a MIP is the first incumbent HiGHS reports.
+  HiGHS also starts from the last solve's solution when a request gives none.
+
+## Model files
+
+`culmen_highs::files` reads and writes MPS and LP files with HiGHS's own readers and writers. `files::read(path)` and
+`files::write(&program, path)` pick the `ModelFormat`, `Mps` or `Lp`, by the extension, `.mps` or `.lp` in any case;
+`files::read_as` and `files::write_as` take it explicitly, through a temporary file of the right extension when the
+path has another. Reading gives a checked `Program`, every column and row named as in the file and in the file's
+order; writing then reading gives the same program up to names and that order, and the same optimum.
+
+```rust
+use culmen::prelude::*;
+use culmen::highs::files::{self, FileError, ModelFormat};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut m = Model::new();
+    let x = m.add_var(Var::integer().upper(4).name("x"));
+    let y = m.add_var(Var::semi_continuous().bounds(1, 3).name("y"));
+    m.add_named_constraint("cap", (x + 2 * y).leq(6));
+    m.maximize(3 * x + 2 * y);
+    let program = m.build()?;
+
+    let path = std::env::temp_dir().join(format!("culmen-highs-guide-{}.mps", std::process::id()));
+    files::write(&program, &path)?;
+    let read = files::read(&path)?;
+    std::fs::remove_file(&path)?;
+    assert_eq!(read.columns()[x].name.as_deref(), Some("x"));
+
+    let best = |p: Program| -> Result<Outcome, Box<dyn std::error::Error>> {
+        Ok(Solver::new(Highs::new(), p)?.solve(Request::new())?.outcome)
+    };
+    assert_eq!(best(read)?, best(program)?);
+
+    assert!(matches!(files::read("plan.json"), Err(FileError::Extension { .. })));
+    assert_eq!(ModelFormat::of_path("plan.LP".as_ref()), Some(ModelFormat::Lp));
+    Ok(())
+}
+```
+
+`FileError` says why:
+
+| Variant | When |
+|---|---|
+| `Extension { path }` | The extension names no format. |
+| `Path { path }` | The path is not UTF-8 or holds a NUL byte. |
+| `Io { path, kind }` | The file system failed, as for a missing file. |
+| `Read { path, format }` | HiGHS could not parse the file in the format. |
+| `Write { path, format }` | HiGHS could not write the file. |
+| `ColumnBounds { col, source }`, `RowBounds { row, source }` | Bounds in the file are no interval. |
+| `VarType { col, raw }` | A column has a HiGHS variable type with no `Integrality`. |
+| `Program(ProgramError)` | The content fails a program's checks, such as a non-convex objective. |
+| `Unsupported { format, feature }` | The format, as HiGHS 1.15 writes it, loses a feature: further objectives in either format (neither reader takes them); a semi-integer column in an LP file, which HiGHS lists under `semi` but not `gen`, so it reads back semi-continuous; a semi column with equal bounds in an MPS file, which HiGHS writes `FX`, fixed and continuous. |
+| `Name { name }` | A name holds a NUL byte. |
+| `Highs(HighsError)` | HiGHS refused the program. |
+
 ## Errors
 
 `HighsError` says why loading or solving failed:
@@ -254,12 +335,15 @@ trusted:
 | `TooLarge { what, count }` | The program has more columns, rows, entries or Hessian entries (`what`, a `Dimension`) than HiGHS's 32-bit indices hold. |
 | `Load { message }` | HiGHS refused the program. |
 | `Option { name, value }` | HiGHS refused an option: an unknown name, or a value of the wrong kind or out of range. |
+| `SemiUpper { col, upper }` | A semi column's upper bound exceeds `Highs::SEMI_UPPER_LIMIT`; see [Semi columns, several objectives and starts](#semi-columns-several-objectives-and-starts). |
+| `Start` | HiGHS refused a start. |
 | `OptionName { name }` | An option name holds a NUL byte, which HiGHS's C strings cannot carry. |
 | `OptionString { name }` | A string option's value holds a NUL byte. |
 | `OutOfRange { name, value }` | A seed or thread count is above `i32::MAX`, beyond HiGHS's integers. |
 | `Run { status, message }` | The run failed, as a thread-count conflict makes it; `message` is HiGHS's last error line. |
 | `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
 | `Analysis(Analysis)` | HiGHS refused or failed an analysis, as a basis it finds singular ([Analysis](analysis.md#highs)). |
+| `AnalysisFeature { analysis, feature }` | HiGHS 1.15 gets the analysis wrong for a program with the feature, as a feasibility relaxation with semi columns ([Analysis](analysis.md#highs)). |
 
 ```rust
 use culmen::prelude::*;
@@ -272,7 +356,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = HighsOptions { log_file: Some("a\0b".to_owned()), ..HighsOptions::default() };
     let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
 
-    let error = solver.solve(Request::new()).unwrap_err();
+    let Err(SolveError::Backend(error)) = solver.solve(Request::new()) else { panic!("the option is refused") };
     assert_eq!(error, HighsError::OptionString { name: "log_file".to_owned() });
     assert_eq!(error.to_string(), "HiGHS: the value of option `log_file` holds a NUL byte");
     Ok(())
@@ -452,6 +536,8 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
   `HighsError::TooLarge`.
 - **No MIQP, and a QP solve sees only the log.** See [Quadratic programs](#quadratic-programs).
 - **Options do not persist inside HiGHS.** Each solve resets them; set them through `HighsOptions`.
+- **Semi columns up to `1e5`, linear objectives only.** See
+  [Semi columns, several objectives and starts](#semi-columns-several-objectives-and-starts).
 
 ## See also
 

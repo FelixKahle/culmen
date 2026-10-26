@@ -96,6 +96,36 @@ fn test_every_variable_form_writes_its_var() {
 }
 
 #[test]
+fn test_semi_kinds_write_semi_vars() {
+    let ub = [6.0, 9.0];
+    let mut m = Model::new();
+    variable!(m, 2 <= s <= 10, SemiCont);
+    variable!(m, 1 <= t[i in 0..2] <= ub[i], SemiInteger);
+    variable!(m, 3 <= u <= 4, SemiInt);
+
+    let mut p = Model::new();
+    p.add_var(Var::semi_continuous().bounds(2, 10).name("s"));
+    p.add_var_map(0..2, |&i| Var::semi_integer().bounds(1, ub[i]).name(format!("t[{i}]")));
+    p.add_var(Var::semi_integer().bounds(3, 4).name("u"));
+
+    let program = m.build().unwrap();
+    assert_eq!(program, p.build().unwrap());
+    assert_eq!(program.columns()[s].integrality, Integrality::SemiContinuous);
+    assert_eq!(program.columns()[t[1]].integrality, Integrality::SemiInteger);
+    assert_eq!(program.columns()[u].bounds, bounds!(3.0, 4.0));
+
+    // A semi variable without both bounds is refused, named.
+    variable!(m, w, SemiCont);
+    let Err(culmen::ModelError::SemiBounds { var, bounds }) = m.build() else {
+        panic!("an unbounded semi variable is refused")
+    };
+    assert_eq!(
+        (var.col, var.name.as_deref(), bounds),
+        (w, Some("w"), Bounds::NON_NEGATIVE)
+    );
+}
+
+#[test]
 fn test_every_constraint_form_writes_its_relation() {
     let mut m = Model::new();
     variable!(m, x);

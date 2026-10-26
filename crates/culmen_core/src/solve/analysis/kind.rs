@@ -11,7 +11,7 @@ use itertools::Itertools;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::{ModelClass, ModelClasses};
+use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 
 /// What a [`Solver`](crate::Solver) can report beyond a solve's [`Outcome`](crate::Outcome).
 ///
@@ -68,6 +68,21 @@ impl Analysis {
             Self::Duals | Self::Iis => ModelClasses::of(&[ModelClass::Lp, ModelClass::Qp]),
             Self::Basis | Self::Ranging | Self::Rays => ModelClasses::of(&[ModelClass::Lp]),
             Self::FeasibilityRelaxation => ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]),
+        }
+    }
+
+    /// The features of a program the analysis is not defined for.
+    ///
+    /// Duals, a basis, ranging and rays belong to one objective, so a program with several has none; HiGHS, for one,
+    /// leaves them invalid after a multi-objective solve. Semi columns need no entry: they make a program a MILP or a
+    /// MIQP, which [`Analysis::classes`] already decides.
+    #[must_use]
+    pub const fn refused(self) -> ProgramFeatures {
+        match self {
+            Self::Duals | Self::Basis | Self::Ranging | Self::Rays => {
+                ProgramFeatures::of(&[ProgramFeature::MultipleObjectives])
+            }
+            Self::Iis | Self::FeasibilityRelaxation => ProgramFeatures::NONE,
         }
     }
 

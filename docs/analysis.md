@@ -24,7 +24,13 @@ A MIP has no duals, basis or ranging: they are statements about a continuous pro
 the integers says nothing about the MIP. An IIS of a MILP's relaxation is not an IIS of the MILP, so `iis` takes only
 continuous programs; a QP's constraints are linear, so its IIS is theirs. A feasibility relaxation minimizes a linear
 violation under the program's integrality, so a MILP has one; a QP, whose quadratic part has no place in it, is
-refused.
+refused. A program with semi columns is a MILP, so it has no duals, basis, ranging, rays or IIS either.
+
+Duals, a basis, ranging and rays belong to one objective, so a program with
+[several objectives](program.md#several-objectives) has none: `Analysis::refused()` names the
+[features](program.md#features) an analysis is not defined for, and the `Solver` refuses it for such a program with
+`AnalysisError::Feature { analysis, feature }`. An IIS and a feasibility relaxation concern the constraints alone and
+take any objectives.
 
 The `Solver` checks every request the same way for every backend, before the backend is asked, and refuses with a
 typed `AnalysisError<B::Error>`, in this order:
@@ -33,7 +39,8 @@ typed `AnalysisError<B::Error>`, in this order:
 |---|---|
 | `Unsupported { analysis, supported }` | The backend does not declare the analysis. |
 | `Class { analysis, class }` | The analysis is not defined for the program's class. |
-| `Misfit(Misfit)` | A basis or weights do not fit the program: `Length { table, expected, found }`, `BasicCount { expected, found }`, or `Status { line, status }` for a line put at a bound it does not have. |
+| `Feature { analysis, feature }` | The analysis is not defined for a feature the program uses, as duals for several objectives. |
+| `Misfit(Misfit)` | A basis or weights do not fit the program: `Length { table, expected, found }`, `BasicCount { expected, found }`, `Status { line, status }` for a line put at a bound it does not have, or `SoftSemiBound { col }` for weights pricing a semi column's bound. |
 | `NotSolved { analysis }` | It reads a solve and there is none: no solve since the program was loaded, the last one failed, or a later `set_basis`, `iis` or `feasibility_relaxation` replaced its result. |
 | `NotOptimal { analysis }` | It reads an optimal solve and the last one did not end `Optimal`. |
 | `Backend(E)` | The backend failed; for HiGHS, `HighsError::Analysis(analysis)`. |
@@ -253,12 +260,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `feasibility_relaxation(&weights)` finds a point of least weighted violation, `None` when no point meets the bounds
 and rows kept hard. `Weights` holds an `Option<Penalty>` per column lower bound (`lower`), per column upper bound
 (`upper`) and per row (`rows`); `None` keeps it hard, and a row's penalty prices a violation of either of its bounds.
-`Weights::uniform(&program, cols, rows)` gives every column bound one price and every row another. A `Penalty` is a
+`Weights::uniform(&program, cols, rows)` gives every column bound one price and every row another. A semi
+column's bounds stay hard, since relaxed below its lower bound it would no longer be a semi column: `uniform` leaves
+them `None`, and weights that price one are refused with `Misfit::SoftSemiBound { col }`. A `Penalty` is a
 finite number, zero or above: a literal is `penalty!(2.0)`, checked when the code is compiled, and a number read at
 run time is checked by `Penalty::new`.
 
 The result is `Relaxed { values }`, one value per column. `relaxed.violations(&program)` yields each
 `Violation { line, bound, amount }` the point commits, columns first, and `weights.penalty(violations)` prices them.
+A semi column at zero violates none of its bounds; elsewhere it violates them by as much as zero, which it may also
+take, is farther off.
 A MILP keeps its integrality.
 
 ```rust
@@ -300,6 +311,10 @@ strategy, and `Highs_feasibilityRelaxation`. An IIS and a relaxation reset HiGHS
   column whose cost improves toward an infinite bound.
 - **A relaxation that cannot meet its hard constraints is `None`.** HiGHS does not report whether its elastic program
   was feasible, so the backend checks the point it returns against the hard bounds, rows and integrality.
+- **No relaxation of a program with semi columns.** HiGHS 1.15 solves its elastic program without the step of
+  `Highs::run` that reformulates semi columns, so it keeps a semi column within its bounds, never at zero, and its
+  point can miss the least violation by any amount. The backend refuses such a program with
+  `HighsError::AnalysisFeature { analysis, feature }`.
 - **A QP without rows has no row duals.** HiGHS is given one free row for such a QP (see
   [Quadratic programs](highs.md#quadratic-programs)); it is not one of the program's rows.
 - **A ray can replace the basis.** To find a ray HiGHS may solve the LP again, without presolve or with zero costs.

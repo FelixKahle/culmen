@@ -284,7 +284,7 @@ fn test_lp_file_writes_every_section() {
     m.add_named_constraint("range", (x + y).between(-1.0, 4.0));
     m.add_named_constraint("fix", (x - y).equals(0.0));
     m.minimize(x - 2.0 * y + 3.0);
-    let text = m.build().unwrap().to_lp_string();
+    let text = m.build().unwrap().to_lp_string().unwrap();
     let expected = "Minimize\n obj: 1 x_1_ - 2 _1y + 3\nSubject To\n range_lo: 1 x_1_ + 1 _1y >= -1\n \
                     range_hi: 1 x_1_ + 1 _1y <= 4\n fix: 1 x_1_ - 1 _1y = 0\nBounds\n -2 <= x_1_ <= 5\n _1y free\n\
                     General\n x_1_\nEnd\n";

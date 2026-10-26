@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use typed_index_collections::TiVec;
 
-use super::{Bounds, Col, Integrality, Program, ProgramError, Row, Sense};
+use super::{Bounds, Col, Integrality, Objectives, Program, ProgramError, Row, Sense};
 
 /// A column of a [`ProgramPlan`]: its objective coefficient, bounds, integrality and name.
 ///
@@ -19,7 +19,7 @@ pub struct ProgramColumn {
     pub cost: f64,
     /// The values the column may take.
     pub bounds: Bounds,
-    /// Whether the column takes only whole values.
+    /// Which values in its bounds the column takes, and whether zero too.
     pub integrality: Integrality,
     /// The column's name in diagnostics and LP files; `None` names it by its index.
     pub name: Option<String>,
@@ -58,6 +58,38 @@ impl ProgramColumn {
     #[must_use]
     pub const fn binary(cost: f64) -> Self {
         Self::integer(cost, Bounds::BINARY)
+    }
+
+    /// A semi-continuous column: zero, or any value in `bounds`, which the plan's build checks are
+    /// `lower ..= upper` with `0 < lower` and `upper` finite.
+    ///
+    /// ```
+    /// use culmen_core::{Integrality, ProgramColumn, ProgramPlan, bounds};
+    /// let mut plan = ProgramPlan::new();
+    /// let x = plan.col(ProgramColumn::semi_continuous(1.0, bounds!(2.0, 10.0)));
+    /// assert_eq!(plan.build()?.columns()[x].integrality, Integrality::SemiContinuous);
+    /// # Ok::<(), culmen_core::ProgramError>(())
+    /// ```
+    #[must_use]
+    pub const fn semi_continuous(cost: f64, bounds: Bounds) -> Self {
+        Self {
+            cost,
+            bounds,
+            integrality: Integrality::SemiContinuous,
+            name: None,
+        }
+    }
+
+    /// A semi-integer column: zero, or a whole value in `bounds`, checked as for
+    /// [`ProgramColumn::semi_continuous`].
+    #[must_use]
+    pub const fn semi_integer(cost: f64, bounds: Bounds) -> Self {
+        Self {
+            cost,
+            bounds,
+            integrality: Integrality::SemiInteger,
+            name: None,
+        }
     }
 }
 
@@ -113,6 +145,11 @@ pub struct ProgramPlan {
     /// empty.
     #[cfg_attr(feature = "serde", serde(default))]
     pub quadratic: Vec<(Col, Col, f64)>,
+    /// How the objective combines with further linear objectives; [`Objectives::Single`] for none.
+    ///
+    /// Absent from serialized data written before further objectives, it reads as [`Objectives::Single`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub objectives: Objectives,
 }
 
 impl ProgramPlan {
@@ -125,6 +162,7 @@ impl ProgramPlan {
             columns: TiVec::new(),
             rows: TiVec::new(),
             quadratic: Vec::new(),
+            objectives: Objectives::Single,
         }
     }
 
@@ -142,12 +180,15 @@ impl ProgramPlan {
         })
     }
 
-    /// Checks every number and every handle and the convexity of the quadratic part, and builds the program.
+    /// Checks every number and every handle, every semi column's bounds, the convexity of the quadratic part and its
+    /// absence beside further objectives, and builds the program.
     ///
     /// # Errors
     ///
-    /// [`ProgramError`] naming the first non-finite offset, cost or coefficient, a term whose column the plan does not
-    /// have, or a quadratic part that is not convex for minimizing or concave for maximizing.
+    /// [`ProgramError`] naming the first non-finite offset, cost or coefficient, a semi column whose bounds are not
+    /// `lower ..= upper` with `0 < lower` and `upper` finite, a term whose column the plan does not have, a quadratic
+    /// part that is not convex for minimizing or concave for maximizing, or a quadratic part beside further
+    /// objectives.
     pub fn build(self) -> Result<Program, ProgramError> {
         Program::from_plan(self)
     }

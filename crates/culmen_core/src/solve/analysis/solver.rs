@@ -161,11 +161,11 @@ impl<B: Backend> Solver<B> {
         self.backend.relax(&self.program, weights)
     }
 
-    /// Checks that the backend provides `analysis` and that it is defined for the program's class.
+    /// Checks that the backend provides `analysis` and that it is defined for the program's class and features.
     ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`] or [`AnalysisError::Class`].
+    /// [`AnalysisError::Unsupported`], [`AnalysisError::Class`] or [`AnalysisError::Feature`].
     fn admit(&self, analysis: Analysis) -> Analyzed<(), B> {
         let class = self.program.class();
         if !B::ANALYSES.contains(analysis) {
@@ -175,6 +175,8 @@ impl<B: Backend> Solver<B> {
             })
         } else if !analysis.classes().contains(class) {
             Err(AnalysisError::Class { analysis, class })
+        } else if let Some(feature) = self.program.features().intersection(analysis.refused()).iter().next() {
+            Err(AnalysisError::Feature { analysis, feature })
         } else {
             Ok(())
         }

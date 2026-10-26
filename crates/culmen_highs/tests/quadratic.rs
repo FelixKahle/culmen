@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use culmen_core::{
     Backend, Bounds, Col, Events, Linear, LoadError, Model, ModelClass, Outcome, Program, ProgramColumn, ProgramPlan,
-    Request, Sense, Solution, Solved, Solver, StopReason, TiVec, Var,
+    Request, Sense, Solution, SolveError, Solved, Solver, StopReason, TiVec, Var,
 };
 use culmen_highs::{Highs, HighsError, UnsoundQp};
 use culmen_testing::reference::close;
@@ -175,7 +175,7 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
             6.339_658_331_975_892,
             &[2.259_895_7, 0.0, -0.399_739_4, -2.360_156_4],
         ),
-        Err(HighsError::UnsoundQp(UnsoundQp::ObjectiveError { error })) => assert!(error > 1e-5),
+        Err(SolveError::Backend(HighsError::UnsoundQp(UnsoundQp::ObjectiveError { error }))) => assert!(error > 1e-5),
         other => panic!("{other:?}"),
     }
 }
@@ -211,7 +211,7 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
             outcome: Outcome::Optimal(solution),
             ..
         }) => assert!(program.max_violation(&solution.values) <= 1e-6),
-        Err(HighsError::UnsoundQp(UnsoundQp::UnboundedInABox)) => {}
+        Err(SolveError::Backend(HighsError::UnsoundQp(UnsoundQp::UnboundedInABox))) => {}
         other => panic!("{other:?}"),
     }
 }
@@ -295,7 +295,7 @@ fn test_a_qp_solve_reports_its_log_alone() {
 /// The program written to a file, read by HiGHS's own LP-file reader and solved there: its objective value.
 fn solve_lp_file(program: &Program) -> f64 {
     let path = std::env::temp_dir().join(format!("culmen-quadratic-{}.lp", std::process::id()));
-    std::fs::write(&path, program.to_lp_string()).unwrap();
+    std::fs::write(&path, program.to_lp_string().unwrap()).unwrap();
     let c_path = CString::new(path.to_str().unwrap()).unwrap();
     // SAFETY: the instance is created here, used only on this thread, and destroyed before the block ends; the path
     // is a NUL-terminated string HiGHS reads during the call; the option name is a NUL-terminated literal.
@@ -322,7 +322,7 @@ fn test_highs_reads_the_lp_file_of_a_qp_as_the_same_problem() {
     m.minimize(x * x + x * y + 2.0 * y * y - 3.0 * x + 1.5);
     let program = m.build().unwrap();
     assert_eq!(
-        program.to_lp_string(),
+        program.to_lp_string().unwrap(),
         "Minimize\n obj: -3 x + [ 2 x ^ 2 + 2 x * y + 4 y ^ 2 ] / 2 + 1.5\nSubject To\n r0: 1 x + 2 y >= 1\n\
          Bounds\n x free\n 0 <= y <= 3\nEnd\n"
     );
@@ -394,7 +394,7 @@ proptest! {
         let best = match solver.solve(Request::new().time_limit(Duration::from_secs(2))) {
             Ok(Solved { outcome: Outcome::Optimal(best), .. }) => best,
             Ok(Solved { outcome: Outcome::Stopped { reason: StopReason::TimeLimit, .. }, .. })
-            | Err(HighsError::Run { .. } | HighsError::UnsoundQp(_)) => return Ok(()),
+            | Err(SolveError::Backend(HighsError::Run { .. } | HighsError::UnsoundQp(_))) => return Ok(()),
             other => return Err(TestCaseError::fail(format!("{other:?} on {program:?}"))),
         };
         prop_assert!(program.max_violation(&best.values) <= 1e-6, "{best:?}");

@@ -55,8 +55,11 @@ The spec is the declaration with its bounds:
 | `lb <= x <= ub` or `ub >= x >= lb` | both |
 
 The declaration is a name, `x`, or a family, `x[i in I, j in J if cond]`. The kind is `Cont` (the default), `Int`,
-`Bin` or `Free`, also spelled `Continuous`, `Integer` and `Binary`. An unwritten bound keeps the kind's default: zero
-below for `Cont` and `Int`, nothing for `Free`. A `Bin` takes no bounds; a bounded integer is `Int` with the bounds.
+`Bin`, `Free`, `SemiCont` or `SemiInt`, also spelled `Continuous`, `Integer`, `Binary`, `SemiContinuous` and
+`SemiInteger`. An unwritten bound keeps the kind's default: zero below for `Cont` and `Int`, nothing for `Free`. A
+`Bin` takes no bounds; a bounded integer is `Int` with the bounds. A semi kind is
+[zero or in its bounds](modelling.md#semi-continuous-and-semi-integer-variables) and needs both, with zero outside
+them: `variable!(m, 20 <= load <= 80, SemiCont)`.
 
 ```rust
 use culmen::prelude::*;

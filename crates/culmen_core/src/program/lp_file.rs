@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use super::{Col, Integrality, Program, Row, Sense};
+use super::{Col, Integrality, Program, ProgramFeature, Row, Sense};
 
 impl Program {
     /// The program in the CPLEX LP file format.
@@ -13,7 +13,9 @@ impl Program {
     /// The output is meant for debugging: names are reduced to the characters the format allows, an unnamed column
     /// is written `x<index>` and an unnamed row `r<index>`, and a ranged row becomes two rows suffixed `_lo` and
     /// `_hi`. Distinct names that reduce to the same text are not told apart. A quadratic part is written in the
-    /// format's brackets halved, `[ 2 x ^ 2 + 4 x * y ] / 2` for `x² + 2xy`.
+    /// format's brackets halved, `[ 2 x ^ 2 + 4 x * y ] / 2` for `x² + 2xy`. Integer and semi-integer columns are
+    /// listed under `General`, semi-continuous and semi-integer ones under `Semi-Continuous`: a column in both is
+    /// semi-integer, as CPLEX and HiGHS read it.
     ///
     /// ```
     /// use culmen_core::{ProgramColumn, ProgramPlan, Sense, bounds};
@@ -22,47 +24,69 @@ impl Program {
     /// plan.sense = Sense::Maximize;
     /// let x = plan.col(ProgramColumn::binary(3.0));
     /// plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]);
-    /// let text = plan.clone().build()?.to_lp_string();
+    /// let text = plan.clone().build()?.to_lp_string()?;
     /// assert!(text.starts_with("Maximize\n obj: 3 x0\nSubject To\n r0: 2 x0 <= 1\n"));
     ///
     /// plan.sense = Sense::Minimize;
     /// let y = plan.col(ProgramColumn::continuous(0.0, bounds!(0.0, 1.0)));
     /// plan.quadratic = vec![(x, x, 1.0), (x, y, -1.5), (y, y, 1.0)];
-    /// let text = plan.build()?.to_lp_string();
+    /// let text = plan.build()?.to_lp_string()?;
     /// assert!(text.starts_with("Minimize\n obj: 3 x0 + [ 2 x0 ^ 2 - 3 x0 * x1 + 2 x1 ^ 2 ] / 2\n"));
-    /// # Ok::<(), culmen_core::ProgramError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    #[must_use]
-    pub fn to_lp_string(&self) -> String {
+    ///
+    /// # Errors
+    ///
+    /// [`LpFileError::Unsupported`] for a program with [`ProgramFeature::MultipleObjectives`]: CPLEX's multi-objective
+    /// sections combine tolerances otherwise than [`Tolerance`](super::Tolerance) states, and HiGHS cannot read them.
+    pub fn to_lp_string(&self) -> Result<String, LpFileError> {
         let mut out = String::new();
-        // Writing into a `String` cannot fail.
-        let _ = self.write_lp(&mut out);
-        out
+        self.write_lp(&mut out)?;
+        Ok(out)
     }
 
     /// Writes the program in the CPLEX LP file format, as [`Program::to_lp_string`] describes.
     ///
     /// # Errors
     ///
-    /// The writer's error.
-    pub fn write_lp(&self, out: &mut impl fmt::Write) -> fmt::Result {
+    /// [`LpFileError::Unsupported`] as [`Program::to_lp_string`] states, before anything is written;
+    /// [`LpFileError::Write`] for the writer's error.
+    pub fn write_lp(&self, out: &mut impl fmt::Write) -> Result<(), LpFileError> {
+        if self.objectives.are_several() {
+            return Err(LpFileError::Unsupported {
+                feature: ProgramFeature::MultipleObjectives,
+            });
+        }
         self.write_objective(out)?;
         out.write_str("Subject To\n")?;
-        for row in self.rows() {
-            self.write_row(out, row)?;
-        }
+        self.rows().try_for_each(|row| self.write_row(out, row))?;
         self.write_bounds(out)?;
-        let integers: Vec<Col> = self
+        self.write_section(out, "General", Integrality::is_integral)?;
+        self.write_section(out, "Semi-Continuous", Integrality::is_semi)?;
+        out.write_str("End\n")?;
+        Ok(())
+    }
+
+    /// Writes a section listing the columns whose integrality `listed` picks, unless it lists none.
+    ///
+    /// # Errors
+    ///
+    /// The writer's error.
+    fn write_section(
+        &self,
+        out: &mut impl fmt::Write,
+        title: &str,
+        listed: impl Fn(Integrality) -> bool,
+    ) -> fmt::Result {
+        let mut cols = self
             .cols()
-            .filter(|&col| self.columns[col].integrality == Integrality::Integer)
-            .collect();
-        if !integers.is_empty() {
-            out.write_str("General\n")?;
-            for col in integers {
-                writeln!(out, " {}", self.col_label(col))?;
-            }
+            .filter(|&col| listed(self.columns[col].integrality))
+            .peekable();
+        if cols.peek().is_none() {
+            return Ok(());
         }
-        out.write_str("End\n")
+        writeln!(out, "{title}")?;
+        cols.try_for_each(|col| writeln!(out, " {}", self.col_label(col)))
     }
 
     /// Writes the sense and the objective: its linear terms, its quadratic part and its offset.
@@ -224,4 +248,40 @@ fn label(name: Option<&str>, prefix: char, index: usize) -> String {
         }
     }));
     out
+}
+
+/// Why [`Program::write_lp`] wrote no LP file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LpFileError {
+    /// The program uses a feature the LP file format as written here cannot state.
+    Unsupported {
+        /// The feature.
+        feature: ProgramFeature,
+    },
+    /// The writer failed.
+    Write(fmt::Error),
+}
+
+impl From<fmt::Error> for LpFileError {
+    fn from(error: fmt::Error) -> Self {
+        Self::Write(error)
+    }
+}
+
+impl fmt::Display for LpFileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported { feature } => write!(f, "LP file: a program with {feature} cannot be written"),
+            Self::Write(error) => write!(f, "LP file: the writer failed: {error}"),
+        }
+    }
+}
+
+impl core::error::Error for LpFileError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Unsupported { .. } => None,
+            Self::Write(error) => Some(error),
+        }
+    }
 }

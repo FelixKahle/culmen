@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use crate::{Col, InvalidBounds, Row, Sense};
+use crate::{Bounds, Col, InvalidBounds, ObjectiveId, Row, Sense};
 
 /// A variable of a [`Model`](crate::Model): its column and the name the model gave it.
 ///
@@ -61,6 +61,8 @@ pub enum ExprPlace {
     Objective,
     /// A constraint.
     Constraint(ModelConstraint),
+    /// A further objective.
+    Further(ObjectiveId),
 }
 
 impl fmt::Display for ExprPlace {
@@ -68,6 +70,7 @@ impl fmt::Display for ExprPlace {
         match self {
             Self::Objective => f.write_str("the objective"),
             Self::Constraint(constraint) => constraint.fmt(f),
+            Self::Further(objective) => write!(f, "the further objective {objective:?}"),
         }
     }
 }
@@ -134,6 +137,31 @@ pub enum ModelError {
         /// The column named.
         col: Col,
     },
+    /// A semi variable's bounds are not `lower ..= upper` with `0 < lower` and `upper` finite.
+    SemiBounds {
+        /// The variable.
+        var: ModelVar,
+        /// Its bounds.
+        bounds: Bounds,
+    },
+    /// A further objective's coefficient is NaN or infinite, as given or added up.
+    FurtherCoefficient {
+        /// The objective.
+        objective: ObjectiveId,
+        /// The variable of the coefficient.
+        var: ModelVar,
+        /// The coefficient.
+        value: f64,
+    },
+    /// A further objective's constant is NaN or infinite.
+    FurtherConstant {
+        /// The objective.
+        objective: ObjectiveId,
+        /// The constant.
+        value: f64,
+    },
+    /// The model's own objective has a quadratic term beside further objectives, which need it linear.
+    QuadraticWithObjectives,
 }
 
 impl fmt::Display for ModelError {
@@ -178,6 +206,21 @@ impl fmt::Display for ModelError {
             }
             Self::UnknownVar { place, col } => {
                 write!(f, "Model: {place} names {col:?}, which this model did not hand out")
+            }
+            Self::SemiBounds { var, bounds } => write!(
+                f,
+                "Model: semi variable {var} has the bounds {bounds}, not 0 < lower <= upper < +inf"
+            ),
+            Self::FurtherCoefficient { objective, var, value } => write!(
+                f,
+                "Model: the coefficient {value} of variable {var} in the further objective {objective:?} is not finite"
+            ),
+            Self::FurtherConstant { objective, value } => write!(
+                f,
+                "Model: the constant {value} of the further objective {objective:?} is not finite"
+            ),
+            Self::QuadraticWithObjectives => {
+                write!(f, "Model: the objective has a quadratic term beside further objectives")
             }
         }
     }

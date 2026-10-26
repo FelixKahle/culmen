@@ -10,6 +10,7 @@ mod events;
 mod load;
 mod outcome;
 mod settings;
+mod start;
 mod watch;
 
 pub use analysis::{
@@ -24,10 +25,11 @@ pub use context::{
 pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
 pub use load::LoadError;
 pub use outcome::{Outcome, Solution, Solved, StopReason};
-pub use settings::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, RelativeGap, Settings};
+pub use settings::Settings;
+pub use start::{SolveError, Start, StartEntries, StartError};
 pub use watch::{Improvement, LogLine, Observer, Request, Stop, StopFn, Watch, stop_fn};
 
-use crate::Program;
+use crate::{Program, ProgramFeature};
 use analysis::Ending;
 
 /// A program loaded into a backend, solved as often as needed, each solve with its own [`Request`].
@@ -56,18 +58,25 @@ pub struct Solver<B> {
 }
 
 impl<B: Backend> Solver<B> {
-    /// Loads `program` into `backend`, when the backend solves its class.
+    /// Loads `program` into `backend`, when the backend solves its class and takes its features.
     ///
     /// # Errors
     ///
-    /// [`LoadError::Unsupported`] when [`Backend::CLASSES`] lacks the program's [`class`](Program::class), before the
-    /// backend sees it; [`LoadError::Backend`] when the backend refuses the program.
+    /// [`LoadError::Unsupported`] when [`Backend::CLASSES`] lacks the program's [`class`](Program::class), else
+    /// [`LoadError::UnsupportedFeature`] when [`Backend::FEATURES`] lacks one of its [`features`](Program::features),
+    /// both before the backend sees it; [`LoadError::Backend`] when the backend refuses the program.
     pub fn new(mut backend: B, program: Program) -> Result<Self, LoadError<B::Error>> {
         let class = program.class();
         if !B::CLASSES.contains(class) {
             return Err(LoadError::Unsupported {
                 class,
                 supported: B::CLASSES,
+            });
+        }
+        if let Some(feature) = program.features().difference(B::FEATURES).iter().next() {
+            return Err(LoadError::UnsupportedFeature {
+                feature,
+                supported: B::FEATURES,
             });
         }
         backend.load(&program).map_err(LoadError::Backend)?;
@@ -101,16 +110,19 @@ impl<B: Backend> Solver<B> {
         (self.backend, self.program)
     }
 
-    /// Solves under the request's settings, polling its stop and reporting to its observer.
+    /// Solves under the request's settings, from its start, polling its stop and reporting to its observer.
     ///
     /// # Errors
     ///
-    /// The backend's error when a setting cannot be applied or the solver fails.
+    /// [`SolveError::UnsupportedFeature`] for a start when [`Backend::FEATURES`] lacks
+    /// [`ProgramFeature::StartSolution`], else [`SolveError::Start`] for a start [`Start::check`] refuses, both before
+    /// the backend sees the request; [`SolveError::Backend`] when the backend refuses the start, a setting cannot be
+    /// applied or the solver fails.
     ///
     /// # Panics
     ///
     /// When the observer panics: the panic continues once the solver has stopped.
-    pub fn solve(&mut self, request: Request<'_>) -> Result<Solved<B::Status>, B::Error> {
+    pub fn solve(&mut self, request: Request<'_>) -> Result<Solved<B::Status>, SolveError<B::Error>> {
         self.solve_with(request, &mut ())
     }
 
@@ -118,7 +130,7 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Errors
     ///
-    /// The backend's error when a setting cannot be applied or the solver fails.
+    /// As [`Solver::solve`].
     ///
     /// # Panics
     ///
@@ -127,12 +139,31 @@ impl<B: Backend> Solver<B> {
         &mut self,
         request: Request<'_>,
         callback: &mut impl Callback<B>,
-    ) -> Result<Solved<B::Status>, B::Error> {
-        let (watch, settings) = request.into_watch();
+    ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
+        let (watch, settings, start) = request.into_watch();
+        if let Some(start) = &start {
+            self.hand_start(start)?;
+        }
         let mut both = (watch, callback);
         let solved = self.backend.solve(&settings, &mut both);
         both.0.finish();
         self.ended = solved.as_ref().ok().map(|s| Ending::of(&s.outcome));
-        solved
+        solved.map_err(SolveError::Backend)
+    }
+
+    /// Checks a start against the backend's features and the program, and hands it to the backend.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::solve`] states for a start.
+    fn hand_start(&mut self, start: &Start) -> Result<(), SolveError<B::Error>> {
+        if !B::FEATURES.contains(ProgramFeature::StartSolution) {
+            return Err(SolveError::UnsupportedFeature {
+                feature: ProgramFeature::StartSolution,
+                supported: B::FEATURES,
+            });
+        }
+        start.check(self.program.num_cols()).map_err(SolveError::Start)?;
+        self.backend.set_start(start).map_err(SolveError::Backend)
     }
 }

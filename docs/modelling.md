@@ -42,6 +42,8 @@ model is built.
 | `Var::integer()` | integer | `[0, +inf)` |
 | `Var::binary()` | integer | `[0, 1]` |
 | `Var::free()` | continuous | `(-inf, +inf)` |
+| `Var::semi_continuous()` | zero, or any value in its bounds | none until set: `0 < lower <= upper < +inf` |
+| `Var::semi_integer()` | zero, or a whole value in its bounds | none until set: `0 < lower <= upper < +inf` |
 
 | Method | Effect |
 |---|---|
@@ -67,6 +69,37 @@ assert_eq!(m.var_name(flow), None);
 
 A variable whose bounds are invalid (a NaN, a lower bound above the upper, a lower bound of `+inf`) is accepted by
 `add_var` and refused by `build`, which names it; see [Building and `ModelError`](#building-and-modelerror).
+
+### Semi-continuous and semi-integer variables
+
+A semi variable is zero or in its bounds: a machine that is off, or runs between its minimum and maximum load. It
+needs both bounds, with zero outside them: `build` refuses a semi variable whose bounds are not
+`lower ..= upper` with `0 < lower` and `upper` finite, with `ModelError::SemiBounds`. A semi-integer variable is
+also whole when it is not zero. A model with one is mixed-integer: its program is a MILP (a MIQP with a quadratic
+objective), and it uses the [feature](program.md#features) `SemiContinuous` or `SemiInteger`.
+
+```rust
+use culmen::prelude::*;
+use culmen::{Integrality, ModelClass, ModelError};
+
+fn main() -> Result<(), ModelError> {
+    let mut m = Model::new();
+    // Off, or between 20 and 80 units.
+    let load = m.add_var(Var::semi_continuous().bounds(20, 80).name("load"));
+    // Off, or 2 to 6 whole trucks.
+    let trucks = m.add_var(Var::semi_integer().bounds(2, 6).name("trucks"));
+    m.add_constraint((load + 10 * trucks).geq(15));
+    m.minimize(2 * load + 5 * trucks);
+    let program = m.build()?;
+    assert_eq!(program.class(), ModelClass::Milp);
+    assert_eq!(program.columns()[load].integrality, Integrality::SemiContinuous);
+
+    m.add_var(Var::semi_continuous().upper(9).name("unbounded below"));
+    assert!(matches!(m.build(), Err(ModelError::SemiBounds { .. })));
+    let _ = trucks;
+    Ok(())
+}
+```
 
 ## Expressions
 
@@ -257,6 +290,52 @@ fn main() -> Result<(), ModelError> {
 }
 ```
 
+## Several objectives
+
+`m.add_objective(objective)` adds a further linear objective and returns its `ObjectiveId`; the model's own
+objective, set by `minimize` and its kin, is `ObjectiveId::FIRST`, and further ones follow in the order added. An
+`Objective` is built like a `Var`: `Objective::minimize(expr)` or `Objective::maximize(expr)`, then `.tolerance(..)`
+and `.weight(..)`. How the objectives combine is `m.set_combination(..)`:
+
+- `Combination::Lexicographic` (the default): the model's own objective first, then each further one in order,
+  each over the points that keep every earlier objective within its `Tolerance` of the optimum its stage found. The
+  order is the priority. A `Tolerance` allows `min(absolute, relative · |f*|)` from an optimum `f*`, leaving out an
+  absent part; `Tolerance::EXACT`, the default, allows nothing. `m.set_objective_tolerance(..)` sets the own
+  objective's.
+- `Combination::Blended`: one objective, `Σ s · w · f` over every objective `f` with its `Weight` `w` and `s` one to
+  minimize and minus one to maximize, is minimized. `Weight::ONE` is the default; `m.set_objective_weight(..)` sets
+  the own objective's.
+
+The objectives are linear: beside a further objective, `build` refuses a quadratic term in the own objective with
+`ModelError::QuadraticWithObjectives`. The program records them as its [`Objectives`](program.md#several-objectives),
+and a solution reports the own objective in `Solution::objective`; `program.objective_values(&values)` gives every
+objective's value, indexed by `ObjectiveId`.
+
+```rust
+use culmen::prelude::*;
+use culmen::{Combination, ObjectiveId};
+
+fn main() -> Result<(), culmen::ModelError> {
+    // Serve at least 10 units at the least cost; among the cheapest plans, the least emissions.
+    let mut m = Model::new();
+    let coal = m.add_var(Var::continuous().name("coal"));
+    let gas = m.add_var(Var::continuous().upper(6).name("gas"));
+    m.add_constraint((coal + gas).geq(10));
+    m.minimize(2 * coal + 2 * gas);
+    let co2 = m.add_objective(Objective::minimize(3 * coal + gas));
+    let program = m.build()?;
+    let values = program.objective_values(culmen::TiSlice::from_ref(&[4.0, 6.0]));
+    assert_eq!((values[ObjectiveId::FIRST], values[co2]), (20.0, 18.0));
+
+    // Allow the cost to rise by up to 1 for the emissions' sake, or blend the two at a price of 0.5 per unit.
+    m.set_objective_tolerance(Tolerance { absolute: Some(absolute_gap!(1.0)), relative: None });
+    m.set_combination(Combination::Blended);
+    m.set_objective_weight(weight!(2.0));
+    assert!(m.build().is_ok());
+    Ok(())
+}
+```
+
 ## Keyed families
 
 Most models index variables and constraints by domain keys: products, locations, pairs of them. A family keeps the
@@ -371,9 +450,13 @@ first variable or constraint at fault. The model is left as it was, so it can be
 | `UnknownVar { place, col }` | An expression names a column this model did not hand out, in the objective or a constraint. |
 | `ObjectiveQuadCoefficient { first, second, value }` | A quadratic objective coefficient is NaN or infinite, as given or added up over its pair. |
 | `NonConvexObjective { sense, var }` | The quadratic objective is not convex to minimize, or not concave to maximize. |
+| `SemiBounds { var, bounds }` | A semi variable's bounds are not `lower ..= upper` with `0 < lower` and `upper` finite. |
+| `FurtherCoefficient { objective, var, value }` | A further objective's coefficient is NaN or infinite, as given or added up. |
+| `FurtherConstant { objective, value }` | A further objective's constant is NaN or infinite. |
+| `QuadraticWithObjectives` | The own objective has a quadratic term beside further objectives. |
 
 `var` is a `ModelVar { col, name }` and `constraint` a `ModelConstraint { row, name }`; each displays as its name
-in backticks, or as its handle when it has none. `place` is an `ExprPlace`: `Objective` or `Constraint(..)`.
+in backticks, or as its handle when it has none. `place` is an `ExprPlace`: `Objective`, `Constraint(..)` or `Further(ObjectiveId)`.
 
 ```rust
 use culmen::prelude::*;

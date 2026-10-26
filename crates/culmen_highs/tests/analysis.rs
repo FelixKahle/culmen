@@ -582,7 +582,7 @@ fn test_highs_restores_the_relaxed_solution_to_the_columns_of_the_model() {
     // writes 2 values, not 4.
     let (program, _) = gap_of_two();
     let path = std::env::temp_dir().join(format!("culmen-relax-{}.lp", std::process::id()));
-    std::fs::write(&path, program.to_lp_string()).unwrap();
+    std::fs::write(&path, program.to_lp_string().unwrap()).unwrap();
     let c_path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
     let (hard, soft) = ([-1.0; 2], [1.0; 2]);
     let mut values = [f64::NAN; 10];

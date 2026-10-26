@@ -57,8 +57,13 @@ sees a class it did not declare.
 | `Highs` | `{LP, MILP, QP}`: HiGHS 1.15 refuses to solve a QP with integer columns. |
 | `Script` | Every class: it replays its script rather than solving. |
 
+The same holds for [features](program.md#features): every backend declares the features it takes as
+`Backend::FEATURES`, a `ProgramFeatures` set (none unless declared), and `Solver::new` refuses a program using any
+other before `load`. `Highs` takes every feature; `Script` takes every feature and records each start.
+
 The refusal is typed: `LoadError<E>` is `Unsupported { class, supported }`, naming the program's class and the backend's
-set, or `Backend(E)` with the backend's own error. It displays both, and `Error::source` is the backend's error.
+set, `UnsupportedFeature { feature, supported }`, naming the first feature the backend lacks and its set, or
+`Backend(E)` with the backend's own error. It displays all three, and `Error::source` is the backend's error.
 
 ```rust
 use culmen::prelude::*;
@@ -94,15 +99,66 @@ A `Request` is built by chaining. Each method replaces what it sets:
 
 | Method | Sets |
 |---|---|
-| `Request::new()` | The solver's defaults, no stop, no observer. |
+| `Request::new()` | The solver's defaults, no stop, no observer, no start. |
 | `.time_limit(duration)` | The wall-clock time the solve may take. |
 | `.settings_from(settings)` | Every setting at once, from a [`Settings`](#settings); it replaces a time limit set before. |
 | `.stop(&stop)` | The [`Stop`](callbacks.md#stop) polled while the solve runs. |
 | `.observer(&mut observer)` | The [`Observer`](callbacks.md#observer) of progress, improving solutions and log lines. |
 | `.progress_interval(duration)` | The least time between two progress reports; `Request::DEFAULT_PROGRESS_INTERVAL`, one second, unless set. |
+| `.start(start)` | A [start](#starts) handed to the solver before the solve: a full `TiVec<Col, f64>` or a sparse `Vec<(Col, f64)>`. |
 
-`request.settings()` reads the settings back. The request borrows its stop and observer, so both outlive the solve
+`request.settings()` and `request.start_solution()` read the settings and the start back. The request borrows its stop and observer, so both outlive the solve
 and can be read afterwards.
+
+## Starts
+
+A `Start` is a solution the solver may start from: `Start::Full(values)`, one value per column, or
+`Start::Sparse(entries)`, values for some columns, the solver choosing the rest. A MIP solver takes a feasible start
+as its first incumbent and may complete a partial or infeasible one; an LP solver may start from it. A start need not
+be feasible, but it must fit the program: `start.check(num_cols)` states it, and `solve` checks it before the backend
+sees it. A start applies to its one solve.
+
+`solve` refuses a start typed, as `SolveError`:
+
+| Variant | When |
+|---|---|
+| `UnsupportedFeature { feature: StartSolution, supported }` | The backend's `FEATURES` lacks `StartSolution`. |
+| `Start(StartError::Length { expected, found })` | A full start holds another number of values than the program has columns. |
+| `Start(StartError::UnknownColumn { col })` | A sparse start names a column the program does not have. |
+| `Start(StartError::RepeatedColumn { col })` | A sparse start names a column twice. |
+| `Start(StartError::NotFinite { col, value })` | A value is NaN or infinite. |
+
+```rust
+use culmen::prelude::*;
+use culmen::{Improvement, StartError};
+
+#[derive(Default)]
+struct First(Option<f64>);
+
+impl Observer for First {
+    fn improved(&mut self, i: &Improvement<'_>) {
+        self.0.get_or_insert(i.objective);
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (value, weight) = ([10.0, 13.0, 7.0, 8.0], [5.0, 6.0, 4.0, 3.0]);
+    let mut m = Model::new();
+    let take = m.add_vars(4, |_| Var::binary());
+    m.add_constraint(LinExpr::sum((0..4).map(|i| weight[i] * take[i])).leq(10.0));
+    m.maximize(LinExpr::sum((0..4).map(|i| value[i] * take[i])));
+    let mut solver = Solver::new(Highs::new(), m.build()?)?;
+
+    // Items 1 and 3, worth 21, are the optimum: HiGHS takes them as its first incumbent.
+    let mut first = First::default();
+    solver.solve(Request::new().observer(&mut first).start(vec![(take[0], 0.0), (take[1], 1.0), (take[2], 0.0), (take[3], 1.0)]))?;
+    assert_eq!(first.0, Some(21.0));
+
+    let error = solver.solve(Request::new().start(vec![(take[1], 1.0), (take[1], 0.0)])).unwrap_err();
+    assert_eq!(error, SolveError::Start(StartError::RepeatedColumn { col: take[1] }));
+    Ok(())
+}
+```
 
 ## `Settings`
 
@@ -188,7 +244,7 @@ assert_eq!(InvalidRelativeGap::Negative.to_string(), "RelativeGap: below zero");
 
 ## `Solved` and `Outcome`
 
-A solve returns `Result<Solved<B::Status>, B::Error>`. `Solved` is plain data:
+A solve returns `Result<Solved<B::Status>, SolveError<B::Error>>`. `Solved` is plain data:
 
 | Field | Holds |
 |---|---|
@@ -209,7 +265,9 @@ A solve returns `Result<Solved<B::Status>, B::Error>`. `Solved` is plain data:
 
 A `Solution` is `{ objective, values }`: the objective value, quadratic part and offset included, and one value per
 column. Every objective value and bound includes the program's quadratic part and offset and is in the model's own
-sense. `outcome.solution()` returns the
+sense. For a program with [several objectives](program.md#several-objectives), `objective` is the program's own
+objective, the first; `program.objective_values(&solution.values)` gives every objective's value, and a backend
+reports no bound, since its bound is that of the last stage or of the blend. `outcome.solution()` returns the
 best solution of any variant, `None` when there is none, and `outcome.into_solution()` takes it by value.
 
 ```rust
@@ -276,9 +334,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Errors
 
-`Solver::new` fails with a [`LoadError<B::Error>`](#model-classes-and-refusal): a class the backend does not solve,
-or the backend's own error when it refuses the program. `solve` and `solve_with` fail with the backend's own error type,
-`B::Error`: a setting it cannot apply, or a failed run. For HiGHS that is [`HighsError`](highs.md#errors). A solve
+`Solver::new` fails with a [`LoadError<B::Error>`](#model-classes-and-refusal): a class the backend does not solve, a
+feature it does not take, or the backend's own error when it refuses the program. `solve` and `solve_with` fail with a
+`SolveError<B::Error>`: a [start](#starts) the backend does not take or that does not fit the program, both decided
+before the backend sees the request, or `SolveError::Backend` with the backend's own error, a setting it cannot
+apply, or a failed run. For HiGHS that is [`HighsError`](highs.md#errors). A solve
 that ends without a solution is not an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
 
 `solve` and `solve_with` panic when an observer or callback panics: the panic continues out of the call once the

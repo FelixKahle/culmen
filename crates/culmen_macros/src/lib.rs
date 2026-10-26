@@ -33,7 +33,8 @@ use tokens::{Relation, first_span, rewrite_indices, split_commas, split_keyword,
 ///
 /// `variable!(model, spec[, kind])`. The spec is the name, `x` or `x[i in I, j in J if cond]`, with the bounds it
 /// is given: `x`, `x >= lb`, `x <= ub`, `x == value`, `lb <= x <= ub` or `ub >= x >= lb`. The kind is `Cont` (the
-/// default), `Int`, `Bin` or `Free`, also spelled `Continuous`, `Integer` and `Binary`. Expands to
+/// default), `Int`, `Bin`, `Free`, `SemiCont` or `SemiInt`, also spelled `Continuous`, `Integer`, `Binary`,
+/// `SemiContinuous` and `SemiInteger`; a semi kind takes both bounds, `0 < lb <= ub < +inf`. Expands to
 /// `Model::add_var(Var::…)` or `Model::add_var_map(keys, |key| Var::…)`.
 #[proc_macro]
 pub fn variable(input: TokenStream) -> TokenStream {
@@ -83,6 +84,8 @@ enum Kind {
     Integer,
     Binary,
     Free,
+    SemiContinuous,
+    SemiInteger,
 }
 
 /// The kind a trailing argument names.
@@ -97,9 +100,11 @@ fn kind(tokens: &TokenStream2) -> syn::Result<Kind> {
         "Int" | "Integer" => Ok(Kind::Integer),
         "Bin" | "Binary" => Ok(Kind::Binary),
         "Free" => Ok(Kind::Free),
+        "SemiCont" | "SemiContinuous" => Ok(Kind::SemiContinuous),
+        "SemiInt" | "SemiInteger" => Ok(Kind::SemiInteger),
         _ => Err(syn::Error::new(
             first_span(tokens),
-            "a kind: `Cont`, `Int`, `Bin` or `Free`",
+            "a kind: `Cont`, `Int`, `Bin`, `Free`, `SemiCont` or `SemiInt`",
         )),
     }
 }
@@ -170,6 +175,8 @@ fn var_expr(root: &TokenStream2, kind: Kind, bounds: &Bounds) -> TokenStream2 {
         Kind::Integer => quote!(#root::Var::integer()),
         Kind::Binary => quote!(#root::Var::binary()),
         Kind::Free => quote!(#root::Var::free()),
+        Kind::SemiContinuous => quote!(#root::Var::semi_continuous()),
+        Kind::SemiInteger => quote!(#root::Var::semi_integer()),
     };
     if let Some(value) = &bounds.fixed {
         let v = Ident::new("value", Span::mixed_site());

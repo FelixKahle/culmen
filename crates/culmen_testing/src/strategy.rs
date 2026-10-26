@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Property-test strategies: tiny bounded LPs and MILPs the reference solver enumerates, and small convex QPs.
+//! Property-test strategies: tiny bounded LPs and MILPs, with semi columns or without, the reference solver
+//! enumerates, and small convex QPs.
 
 use culmen_core::{Bounds, Col, Integrality, Program, ProgramColumn, ProgramPlan, ProgramRow, Sense, TiVec};
 use itertools::Itertools;
@@ -41,14 +42,50 @@ fn row_bounds() -> impl Strategy<Value = Bounds> {
 ///
 /// When a generated plan fails to build, which a strategy defect would cause.
 pub fn small_lp() -> impl Strategy<Value = Program> {
-    prop::collection::vec(column(), 1..=4)
-        .prop_filter("at most two continuous columns", |columns| {
-            columns
-                .iter()
-                .filter(|c| c.integrality == Integrality::Continuous)
-                .count()
-                <= 2
-        })
+    tiny(
+        prop::collection::vec(column(), 1..=4).prop_filter("at most two continuous columns", |columns| {
+            columns.iter().filter(|c| !c.integrality.is_integral()).count() <= 2
+        }),
+    )
+}
+
+/// A semi column: semi-continuous or semi-integer, its bounds `1 ..= 4` at most, its cost a small integer.
+fn semi_column() -> impl Strategy<Value = ProgramColumn> {
+    (any::<bool>(), 1i32..=2, 0i32..=2, -5i32..=5).prop_map(|(integer, lower, width, cost)| {
+        let bounds = Bounds::new(f64::from(lower), f64::from(lower + width)).expect("lower <= upper");
+        if integer {
+            ProgramColumn::semi_integer(f64::from(cost), bounds)
+        } else {
+            ProgramColumn::semi_continuous(f64::from(cost), bounds)
+        }
+    })
+}
+
+/// A tiny bounded MILP with semi columns: one to four columns of which one to three semi and at most two not
+/// integral, up to three rows with small integer coefficients, either sense and a small offset.
+///
+/// # Panics
+///
+/// When a generated plan fails to build, which a strategy defect would cause.
+pub fn small_semi() -> impl Strategy<Value = Program> {
+    let any_column = prop_oneof![column(), semi_column()];
+    let columns = (semi_column(), prop::collection::vec(any_column, 0..=3)).prop_map(|(semi, mut rest)| {
+        rest.insert(0, semi);
+        rest
+    });
+    tiny(columns.prop_filter("at most two columns not integral", |columns| {
+        columns.iter().filter(|c| !c.integrality.is_integral()).count() <= 2
+    }))
+}
+
+/// A tiny program over the given columns: up to three rows with small integer coefficients, either sense and a
+/// small offset.
+///
+/// # Panics
+///
+/// When a generated plan fails to build, which a strategy defect would cause.
+fn tiny(columns: impl Strategy<Value = Vec<ProgramColumn>>) -> impl Strategy<Value = Program> {
+    columns
         .prop_flat_map(|columns| {
             let n = columns.len();
             let row = (row_bounds(), prop::collection::vec((0..n, -4i32..=4), 1..=4));
@@ -74,7 +111,7 @@ pub fn small_lp() -> impl Strategy<Value = Program> {
                 offset: f64::from(offset),
                 columns: columns.into(),
                 rows,
-                quadratic: Vec::new(),
+                ..ProgramPlan::new()
             }
             .build()
             .expect("a valid plan")
@@ -120,6 +157,7 @@ pub fn small_qp() -> impl Strategy<Value = Program> {
                     .map(|(i, j, q)| (i, j, sign * q))
                     .collect(),
                 columns,
+                ..ProgramPlan::new()
             }
             .build()
             .expect("a convex plan")

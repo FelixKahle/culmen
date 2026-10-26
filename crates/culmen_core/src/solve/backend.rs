@@ -9,8 +9,8 @@ use super::context::{
     CutContext, HeuristicContext, LazyContext, LogContext, PollContext, ProgressContext, SolutionContext,
 };
 use crate::{
-    Analyses, Analysis, AnalysisError, Basis, Col, Duals, Events, Iis, ModelClasses, Program, Ranging, Relaxed, Row,
-    Settings, Solved, TiVec, Weights,
+    Analyses, Analysis, AnalysisError, Basis, Col, Duals, Events, Iis, ModelClasses, Program, ProgramFeatures, Ranging,
+    Relaxed, Row, Settings, Solved, Start, TiVec, Weights,
 };
 
 /// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls a [`Callback`] as the
@@ -24,7 +24,8 @@ use crate::{
 /// # Contract
 ///
 /// - [`Solver::new`](crate::Solver::new) calls [`Backend::load`] only with a program whose
-///   [`class`](Program::class) is in [`Backend::CLASSES`], so `load` need not check it.
+///   [`class`](Program::class) is in [`Backend::CLASSES`] and whose [`features`](Program::features) are in
+///   [`Backend::FEATURES`], so `load` need not check them.
 /// - [`Backend::solve`] solves the last program [`Backend::load`] accepted, and its [`Solved`] reads with that
 ///   program's handles: a [`Solution`](crate::Solution) holds one value per column, every objective value and
 ///   bound includes the program's quadratic part and offset.
@@ -70,6 +71,9 @@ pub trait Backend: Sized {
     /// [`Solver`](crate::Solver) refuses any other with [`AnalysisError::Unsupported`], so the default bodies of the
     /// analysis methods, which return that error, run only when one is called directly.
     const ANALYSES: Analyses = Analyses::NONE;
+    /// The features this backend takes; [`Solver::new`](crate::Solver::new) refuses a program using any other, and
+    /// [`Solver::solve`](crate::Solver::solve) a request using any other. None unless declared.
+    const FEATURES: ProgramFeatures = ProgramFeatures::NONE;
 
     /// Loads a program, replacing the one before.
     ///
@@ -80,6 +84,21 @@ pub trait Backend: Sized {
     ///
     /// When the solver refuses the program.
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
+
+    /// Hands the solver a start for the next solve of the loaded program.
+    ///
+    /// Called by [`Solver::solve`](crate::Solver::solve) right before [`Backend::solve`], only when
+    /// [`Backend::FEATURES`] holds [`ProgramFeature::StartSolution`](crate::ProgramFeature::StartSolution) and with a
+    /// start [`Start::check`] accepts for the loaded program. The default does nothing, as befits a backend that does
+    /// not declare the feature.
+    ///
+    /// # Errors
+    ///
+    /// When the solver refuses the start.
+    fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> {
+        let _ = start;
+        Ok(())
+    }
 
     /// Solves the loaded program, calling `callback` as the search goes.
     ///

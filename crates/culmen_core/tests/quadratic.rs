@@ -588,6 +588,7 @@ fn test_the_lp_file_writes_the_quadratic_part_halved_in_brackets() {
         m.build()
             .unwrap()
             .to_lp_string()
+            .unwrap()
             .starts_with("Minimize\n obj: [ 2 x ^ 2 + 1 x * y + 2 y ^ 2 ] / 2\nSubject To\n"),
         "no linear term: the bracket opens the objective"
     );
@@ -596,10 +597,17 @@ fn test_the_lp_file_writes_the_quadratic_part_halved_in_brackets() {
         m.build()
             .unwrap()
             .to_lp_string()
+            .unwrap()
             .starts_with("Maximize\n obj: 2 x + [ -2 x ^ 2 - 6 y ^ 2 ] / 2 - 1.5\nSubject To\n"),
     );
     m.minimize(QuadExpr::new() + 4.0);
-    assert!(m.build().unwrap().to_lp_string().starts_with("Minimize\n obj: 0 + 4\n"));
+    assert!(
+        m.build()
+            .unwrap()
+            .to_lp_string()
+            .unwrap()
+            .starts_with("Minimize\n obj: 0 + 4\n")
+    );
 }
 
 #[test]

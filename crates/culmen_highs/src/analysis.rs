@@ -7,8 +7,8 @@
 //! numbering to typed lines and drop the free row a QP without rows is given (see `instance`).
 
 use culmen_core::{
-    Analysis, AnalysisError, Basis, BasisStatus, Bound, Col, Duals, Iis, Integrality, Limit, Line, Program, Ranged,
-    Ranging, Relaxed, Row, Sense, Settings, Side, TiVec, Weights,
+    Analysis, AnalysisError, Basis, BasisStatus, Bound, Col, Duals, Iis, Limit, Line, Program, ProgramFeature,
+    ProgramFeatures, Ranged, Ranging, Relaxed, Row, Sense, Settings, Side, TiVec, Weights,
 };
 use highs_sys::{
     HighsInt, kHighsBasisStatusBasic, kHighsBasisStatusLower, kHighsBasisStatusNonbasic, kHighsBasisStatusUpper,
@@ -261,12 +261,21 @@ fn side(raw: HighsInt) -> Option<Side> {
 /// backend's; `None` when no point meets the hard bounds and rows.
 ///
 /// HiGHS 1.15 does not report whether its elastic program was feasible, so the point it returns is checked against
-/// the hard bounds, rows and integrality instead.
+/// the hard bounds, rows and integrality instead. Its elastic program keeps a semi column within its bounds, never at
+/// zero (it solves the program without `Highs::run`, which alone reformulates semi columns), so its point can miss the
+/// least violation by any amount; a program with semi columns is refused.
 ///
 /// # Errors
 ///
-/// When an option is refused or HiGHS fails.
+/// [`HighsError::AnalysisFeature`] for a program with semi columns; when an option is refused or HiGHS fails.
 pub(crate) fn relax(highs: &mut Highs, program: &Program, weights: &Weights) -> Analyzed<Option<Relaxed>> {
+    let semi = ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::SemiInteger]);
+    if let Some(feature) = program.features().intersection(semi).iter().next() {
+        return Err(AnalysisError::Backend(HighsError::AnalysisFeature {
+            analysis: Analysis::FeasibilityRelaxation,
+            feature,
+        }));
+    }
     configure(&mut highs.instance, &highs.options, &Settings::new()).map_err(AnalysisError::Backend)?;
     let penalties = penalties(weights, highs.instance.num_row());
     let values = highs
@@ -309,7 +318,7 @@ fn meets_hard(relaxed: &Relaxed, program: &Program, weights: &Weights) -> bool {
     let whole = program
         .columns()
         .iter_enumerated()
-        .filter(|(_, c)| c.integrality == Integrality::Integer)
+        .filter(|(_, c)| c.integrality.is_integral())
         .all(|(col, _)| (relaxed.values[col] - relaxed.values[col].round()).abs() <= TOLERANCE);
     hard_met && whole
 }
