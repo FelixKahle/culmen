@@ -1,15 +1,16 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The LP plan, the model, expressions and the LP-file writer.
+//! The program plan, the model, expressions and the LP-file writer.
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
 
 use culmen_core::{
-    Bounds, Col, Constraint, ExprPlace, Integrality, InvalidBounds, LinExpr, Linear, LpColumn, LpError, LpPlan, Model,
-    ModelConstraint, ModelError, ModelVar, Row, Sense, Term, TiVec, Var, VarMap, bounds, product, set,
+    Bounds, Col, Constraint, ExprPlace, Integrality, InvalidBounds, LinExpr, Linear, Model, ModelConstraint,
+    ModelError, ModelVar, ProgramColumn, ProgramError, ProgramPlan, Row, Sense, Term, TiVec, Var, VarMap, bounds,
+    product, set,
 };
 use proptest::prelude::*;
 
@@ -39,26 +40,26 @@ fn test_bounds_refuse_every_empty_or_undefined_interval() {
 
 #[test]
 fn test_plan_merges_repeated_terms_and_drops_zeros() {
-    let mut plan = LpPlan::new();
-    let x = plan.col(LpColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-    let y = plan.col(LpColumn::binary(2.0));
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+    let y = plan.col(ProgramColumn::binary(2.0));
     let r = plan.row(bounds!(0.0, 4.0), [(y, 1.0), (x, 2.0), (x, -2.0), (y, 0.5)]);
-    let lp = plan.build().unwrap();
-    assert_eq!(lp.row(r).entries().collect::<Vec<_>>(), [(y, 1.5)]);
-    assert_eq!(lp.num_entries(), 1);
-    assert!(lp.is_mip());
+    let program = plan.build().unwrap();
+    assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(y, 1.5)]);
+    assert_eq!(program.num_entries(), 1);
+    assert!(program.is_mip());
 }
 
 #[test]
 fn test_plan_names_the_first_defect() {
-    let mut plan = LpPlan::new();
-    let x = plan.col(LpColumn::continuous(f64::NAN, Bounds::FREE));
-    assert!(matches!(plan.clone().build(), Err(LpError::NonFiniteCost { col, .. }) if col == x));
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(f64::NAN, Bounds::FREE));
+    assert!(matches!(plan.clone().build(), Err(ProgramError::NonFiniteCost { col, .. }) if col == x));
     plan.columns[x].cost = 1.0;
     let r = plan.row(Bounds::FREE, [(x, f64::INFINITY)]);
     assert_eq!(
         plan.clone().build(),
-        Err(LpError::NonFiniteCoefficient {
+        Err(ProgramError::NonFiniteCoefficient {
             row: r,
             col: x,
             value: f64::INFINITY
@@ -67,21 +68,21 @@ fn test_plan_names_the_first_defect() {
     plan.rows[r].terms = vec![(Col::new(7), 1.0)];
     assert_eq!(
         plan.clone().build(),
-        Err(LpError::UnknownColumn {
+        Err(ProgramError::UnknownColumn {
             row: r,
             col: Col::new(7)
         })
     );
     plan.rows[r].terms = vec![(x, f64::MAX), (x, f64::MAX)];
     assert!(
-        matches!(plan.clone().build(), Err(LpError::NonFiniteCoefficient { .. })),
+        matches!(plan.clone().build(), Err(ProgramError::NonFiniteCoefficient { .. })),
         "the sum overflows"
     );
     plan.rows[r].terms.clear();
     plan.offset = f64::NEG_INFINITY;
     assert_eq!(
         plan.build(),
-        Err(LpError::NonFiniteOffset {
+        Err(ProgramError::NonFiniteOffset {
             value: f64::NEG_INFINITY
         })
     );
@@ -179,16 +180,16 @@ fn test_model_moves_constants_into_bounds_and_sums_objective_terms() {
     let y = m.add_var(Var::free());
     let r = m.add_constraint((x + 1).leq(3.0 - y));
     m.maximize(2.0 * x + x - y / 2.0 + 5);
-    let lp = m.build().unwrap();
-    assert_eq!(lp.sense(), Sense::Maximize);
-    assert_eq!(lp.offset(), 5.0);
-    assert_eq!(lp.columns()[x].cost, 3.0);
-    assert_eq!(lp.columns()[y].cost, -0.5);
-    assert_eq!(lp.columns()[x].integrality, Integrality::Integer);
-    assert_eq!(lp.columns()[x].bounds, bounds!(0.0, 9.0));
-    assert_eq!(lp.columns()[y].bounds, Bounds::FREE);
-    assert_eq!(lp.row_bounds()[r], bounds!(f64::NEG_INFINITY, 2.0));
-    assert_eq!(lp.row(r).entries().collect::<Vec<_>>(), [(x, 1.0), (y, 1.0)]);
+    let program = m.build().unwrap();
+    assert_eq!(program.sense(), Sense::Maximize);
+    assert_eq!(program.offset(), 5.0);
+    assert_eq!(program.columns()[x].cost, 3.0);
+    assert_eq!(program.columns()[y].cost, -0.5);
+    assert_eq!(program.columns()[x].integrality, Integrality::Integer);
+    assert_eq!(program.columns()[x].bounds, bounds!(0.0, 9.0));
+    assert_eq!(program.columns()[y].bounds, Bounds::FREE);
+    assert_eq!(program.row_bounds()[r], bounds!(f64::NEG_INFINITY, 2.0));
+    assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(x, 1.0), (y, 1.0)]);
 }
 
 #[test]
@@ -318,15 +319,15 @@ proptest! {
         m.add_vars(3, |_| Var::free());
         let (lower, upper) = (f64::from(lower), f64::from(lower + width));
         let row = m.add_constraint(expr.clone().between(lower, upper));
-        let lp = m.build().unwrap();
+        let program = m.build().unwrap();
         let values: TiVec<Col, f64> = point.iter().map(|&v| f64::from(v)).collect();
         let direct = expr.value(&values);
-        let activity: f64 = lp.row(row).entries().map(|(c, a)| a * values[c]).sum();
+        let activity: f64 = program.row(row).entries().map(|(c, a)| a * values[c]).sum();
         let held = (lower..=upper).contains(&direct);
-        prop_assert_eq!(lp.row_bounds()[row].contains(activity), held);
-        prop_assert_eq!(lp.max_violation(&values) == 0.0, held);
-        prop_assert!(lp.row(row).entries().all(|(_, a)| a != 0.0));
-        prop_assert_eq!(lp.rows().collect::<Vec<_>>(), [Row::new(0)]);
+        prop_assert_eq!(program.row_bounds()[row].contains(activity), held);
+        prop_assert_eq!(program.max_violation(&values) == 0.0, held);
+        prop_assert!(program.row(row).entries().all(|(_, a)| a != 0.0));
+        prop_assert_eq!(program.rows().collect::<Vec<_>>(), [Row::new(0)]);
     }
 }
 
@@ -335,15 +336,15 @@ fn test_row_views_read_bounds_name_and_entries_both_ways() {
     let mut m = Model::new();
     let x = m.add_vars(3, |_| Var::continuous());
     let r = m.add_named_constraint("mix", (2 * x[2] + x[0] - x[1]).leq(4.0));
-    let lp = m.build().unwrap();
-    let row = lp.row(r);
+    let program = m.build().unwrap();
+    let row = program.row(r);
     assert_eq!(row.bounds(), bounds!(f64::NEG_INFINITY, 4.0));
     assert_eq!(row.name(), Some("mix"));
     assert_eq!((row.len(), row.is_empty()), (3, false));
     let values: TiVec<Col, f64> = vec![1.0, 2.0, 3.0].into();
     assert_eq!(row.activity(&values), 5.0);
 
-    let mut entries = lp.row(r).entries();
+    let mut entries = program.row(r).entries();
     assert_eq!(entries.len(), 3);
     assert_eq!(entries.next_back(), Some((x[2], 2.0)));
     assert_eq!(entries.len(), 2);
@@ -392,19 +393,19 @@ fn test_keyed_iterators_run_both_ways_with_exact_lengths() {
 }
 
 #[test]
-fn test_lp_cols_and_rows_run_both_ways_with_exact_lengths() {
+fn test_program_cols_and_rows_run_both_ways_with_exact_lengths() {
     let mut m = Model::new();
     let x = m.add_vars(3, |_| Var::binary());
     let once = m.add_constraint(LinExpr::sum(x.iter().copied()).leq(1.0));
-    let lp = m.build().unwrap();
-    let mut cols = lp.cols();
+    let program = m.build().unwrap();
+    let mut cols = program.cols();
     assert_eq!(cols.len(), 3);
     assert_eq!(cols.next_back(), Some(x[2]));
     assert_eq!(cols.clone().collect::<Vec<_>>(), x[..2]);
     cols.by_ref().for_each(drop);
     assert_eq!((cols.next(), cols.next_back()), (None, None));
-    assert_eq!(lp.rows().rev().collect::<Vec<_>>(), [once]);
-    assert_eq!(lp.rows().len(), 1);
+    assert_eq!(program.rows().rev().collect::<Vec<_>>(), [once]);
+    assert_eq!(program.rows().len(), 1);
 }
 
 proptest! {
@@ -449,10 +450,10 @@ fn huge_expression(n: usize) -> impl Strategy<Value = LinExpr> {
 }
 
 proptest! {
-    /// The model's checks are the LP's: a build fails with a model error naming the constraint exactly when a
-    /// column's coefficients add up past finite, and a model that builds is a plan the LP accepts as it is.
+    /// The model's checks are the program's: a build fails with a model error naming the constraint exactly when a
+    /// column's coefficients add up past finite, and a model that builds is a plan the program accepts as it is.
     #[test]
-    fn test_models_never_build_an_lp_the_lp_refuses(expr in huge_expression(2)) {
+    fn test_models_never_build_a_program_the_program_refuses(expr in huge_expression(2)) {
         let mut m = Model::new();
         m.add_vars(2, |_| Var::free());
         m.add_constraint(expr.clone().leq(1.0));
@@ -461,9 +462,9 @@ proptest! {
             !sum.is_finite()
         });
         match m.build() {
-            Ok(lp) => {
+            Ok(program) => {
                 prop_assert!(!overflows);
-                prop_assert_eq!(LpPlan::from(lp.clone()).build(), Ok(lp));
+                prop_assert_eq!(ProgramPlan::from(program.clone()).build(), Ok(program));
             }
             Err(error) => {
                 prop_assert!(matches!(error, ModelError::Coefficient { .. }), "{error:?}");
@@ -478,13 +479,13 @@ proptest! {
         let mut m = Model::new();
         m.add_vars(4, |_| Var::free());
         let row = m.add_constraint(expr.leq(0.0));
-        let lp = m.build().unwrap();
-        let forwards: Vec<_> = lp.row(row).entries().collect();
-        let mut backwards: Vec<_> = lp.row(row).entries().rev().collect();
+        let program = m.build().unwrap();
+        let forwards: Vec<_> = program.row(row).entries().collect();
+        let mut backwards: Vec<_> = program.row(row).entries().rev().collect();
         backwards.reverse();
         prop_assert_eq!(&forwards, &backwards);
-        prop_assert_eq!(lp.row(row).entries().len(), forwards.len());
-        prop_assert_eq!(lp.row(row).len(), forwards.len());
+        prop_assert_eq!(program.row(row).entries().len(), forwards.len());
+        prop_assert_eq!(program.row(row).len(), forwards.len());
         prop_assert!(forwards.windows(2).all(|w| w[0].0 < w[1].0));
     }
 }

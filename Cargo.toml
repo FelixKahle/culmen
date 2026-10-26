@@ -8,7 +8,7 @@
 #   culmen          the facade users depend on: re-exports, a prelude, the `highs` and `macros` features
 #   ├─ culmen_highs   the HiGHS backend over `highs-sys`; the only crate with `unsafe`
 #   ├─ culmen_macros  `variable!`, `constraint!`, `objective!` and `sum!`, expanding to culmen_core's methods
-#   └─ culmen_core    the LP as data, the modelling layer, the backend seam, the solve API; no `unsafe`
+#   └─ culmen_core    the program as data, the modelling layer, the backend seam, the solve API; no `unsafe`
 #
 #   culmen_testing  dev-only: exact reference solvers and property-test strategies shared by the test suites
 [workspace]

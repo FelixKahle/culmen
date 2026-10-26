@@ -1,56 +1,56 @@
-# The LP as data
+# The program as data
 
-An `Lp` is a linear, mixed-integer or convex quadratic program: minimize or maximize
+A `Program` is a linear, mixed-integer or convex quadratic program: minimize or maximize
 `cost · x + Σ q · xᵢ · xⱼ + offset` over `x`, with every column in its bounds, the integer columns whole, and every
 row's activity `Σ coefficient · column` in its bounds. Its constraints are linear. It is an
 immutable value, built once and checked then, and it is what a [backend](solving.md#solver) loads. A
 [model](modelling.md) builds one; this page builds them directly and reads them back.
 
-## `LpPlan`
+## `ProgramPlan`
 
-An `LpPlan` is an LP as plain data, with `pub` fields, checked into an `Lp` by `LpPlan::build`:
+A `ProgramPlan` is a program as plain data, with `pub` fields, checked into a `Program` by `ProgramPlan::build`:
 
 | Field | Holds |
 |---|---|
 | `sense` | `Sense::Minimize` (the default) or `Sense::Maximize`. |
 | `offset` | The constant added to the objective. |
-| `columns` | A `TiVec<Col, LpColumn>`: each column's `cost`, `bounds`, `integrality` and `name`. |
-| `rows` | A `TiVec<Row, LpRow>`: each row's `bounds`, `terms` as `(Col, f64)`, and `name`. |
+| `columns` | A `TiVec<Col, ProgramColumn>`: each column's `cost`, `bounds`, `integrality` and `name`. |
+| `rows` | A `TiVec<Row, ProgramRow>`: each row's `bounds`, `terms` as `(Col, f64)`, and `name`. |
 | `quadratic` | The objective's quadratic terms as `(Col, Col, f64)`, each `(i, j, q)` adding `q · xᵢ · xⱼ`; empty for a linear objective. See [The quadratic part](#the-quadratic-part). |
 
 `plan.col(column)` pushes a column and returns its `Col`; `plan.row(bounds, terms)` pushes an unnamed row and
-returns its `Row`. `LpColumn::continuous(cost, bounds)`, `LpColumn::integer(cost, bounds)` and
-`LpColumn::binary(cost)` make columns without a name; the fields are public, so set `name` directly.
+returns its `Row`. `ProgramColumn::continuous(cost, bounds)`, `ProgramColumn::integer(cost, bounds)` and
+`ProgramColumn::binary(cost)` make columns without a name; the fields are public, so set `name` directly.
 
 ```rust
-use culmen::{Bounds, LpColumn, LpPlan, Sense, bounds};
+use culmen::{Bounds, ProgramColumn, ProgramPlan, Sense, bounds};
 
-fn main() -> Result<(), culmen::LpError> {
+fn main() -> Result<(), culmen::ProgramError> {
     // Maximize 3x + 2y subject to x + y <= 4 and x + 3y <= 6, with x, y >= 0.
-    let mut plan = LpPlan::new();
+    let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
-    let x = plan.col(LpColumn { name: Some("x".into()), ..LpColumn::continuous(3.0, Bounds::NON_NEGATIVE) });
-    let y = plan.col(LpColumn::continuous(2.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn { name: Some("x".into()), ..ProgramColumn::continuous(3.0, Bounds::NON_NEGATIVE) });
+    let y = plan.col(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
     let total = plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]);
     plan.row(bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0), (x, 0.5), (x, -0.5)]);
     plan.rows[total].name = Some("total".into());
 
-    let lp = plan.build()?;
-    assert_eq!((lp.num_cols(), lp.num_rows(), lp.num_entries()), (2, 2, 4));
-    assert_eq!(lp.row(total).name(), Some("total"));
+    let program = plan.build()?;
+    assert_eq!((program.num_cols(), program.num_rows(), program.num_entries()), (2, 2, 4));
+    assert_eq!(program.row(total).name(), Some("total"));
     Ok(())
 }
 ```
 
 A row's terms may repeat a column; their coefficients are added up in the order given, and an entry that sums to
-zero is dropped. Every row of an `Lp` holds each column at most once, with a non-zero coefficient, sorted by column.
+zero is dropped. Every row of a `Program` holds each column at most once, with a non-zero coefficient, sorted by column.
 
-`Lp` and `LpPlan` convert both ways: `LpPlan::from(lp)` takes an LP apart into its plan, and `Lp::try_from(plan)` is
-`plan.build()`.
+`Program` and `ProgramPlan` convert both ways: `ProgramPlan::from(program)` takes a program apart into its plan, and
+`Program::try_from(plan)` is `plan.build()`.
 
-## `Lp`
+## `Program`
 
-An `Lp` is read through methods; it has no public fields and no constructor that skips the checks.
+A `Program` is read through methods; it has no public fields and no constructor that skips the checks.
 
 | Method | Gives |
 |---|---|
@@ -60,14 +60,14 @@ An `Lp` is read through methods; it has no public fields and no constructor that
 | `quadratic()` | The objective's [quadratic part](#the-quadratic-part), a `QuadObjective`. |
 | `class()` | The [`ModelClass`](#model-classes): `Lp`, `Milp`, `Qp` or `Miqp`. |
 | `cols()`, `rows()` | Every `Col`, every `Row`, in order. |
-| `columns()` | The columns' `LpColumn` data, indexed by `Col`: `lp.columns()[x]`. |
+| `columns()` | The columns' `ProgramColumn` data, indexed by `Col`: `program.columns()[x]`. |
 | `row_bounds()` | The rows' bounds, indexed by `Row`. |
 | `row(row)` | A [`RowView`](#row-views-and-iterators) of one row: its bounds, name and entries. |
 | `matrix()` | The whole matrix in compressed row form, a `RowMatrix { starts, cols, values }`. |
 | `objective_value(values)`, `max_violation(values)` | See [Checking a point](#checking-a-point). |
 | `to_lp_string()`, `write_lp(out)` | See [LP files](#lp-files). |
 
-The methods that take a handle panic when the LP has no such column or row; they never read anything undefined.
+The methods that take a handle panic when the program has no such column or row; they never read anything undefined.
 
 ## `Bounds`
 
@@ -136,7 +136,7 @@ assert_eq!(format!("{:.1}", bounds!(0.5, 2.0)), "[0.5, 2.0]");
 ## Integrality and sense
 
 `Integrality` is `Continuous` (the default) or `Integer`. A binary column is an integer column with
-`Bounds::BINARY`; the LP stores no third kind, since the bounds already say it.
+`Bounds::BINARY`; the program stores no third kind, since the bounds already say it.
 
 `Sense` is `Minimize` (the default) or `Maximize`. `sense.better(a, b)` says whether objective value `a` is strictly
 better than `b` under it.
@@ -147,38 +147,39 @@ better than `b` under it.
 distinct types, a table indexed by columns cannot be read with a row. `Col::new(i)` and `Row::new(i)` make a handle
 from a position, `index()` reads it back, and both convert to and from `usize`.
 
-Handles come from `Model::add_var`, `Model::add_constraint`, `LpPlan::col` and `LpPlan::row`; write `Col::new`
-yourself only where the position itself is the point. A handle from one LP used on another reads that LP's column or
-row of the same position; a read that cannot answer for the position panics or returns `None`, as its docs say.
+Handles come from `Model::add_var`, `Model::add_constraint`, `ProgramPlan::col` and `ProgramPlan::row`; write `Col::new`
+yourself only where the position itself is the point. A handle from one program used on another reads that program's
+column or row of the same position; a read that cannot answer for the position panics or returns `None`, as its docs
+say.
 
 Per-column data is a `TiVec<Col, f64>` or a borrowed `TiSlice<Col, f64>`, re-exported as `culmen::TiVec` and
 `culmen::TiSlice` from `typed-index-collections`. They index by `Col` only: `values[x]`.
 
 ## Row views and iterators
 
-`lp.row(r)` is a `RowView`: the row's `bounds()`, `name()`, `len()`, `is_empty()`, its `entries()` as
+`program.row(r)` is a `RowView`: the row's `bounds()`, `name()`, `len()`, `is_empty()`, its `entries()` as
 `(Col, f64)` sorted by column, and `activity(values)`, the row's `Σ coefficient · value` at a point. A `RowView` is
 also `IntoIterator` over its entries.
 
 ```rust
-use culmen::{LpColumn, LpPlan, TiVec, bounds};
+use culmen::{ProgramColumn, ProgramPlan, TiVec, bounds};
 
-fn main() -> Result<(), culmen::LpError> {
-    let mut plan = LpPlan::new();
-    let x = plan.col(LpColumn::binary(1.0));
-    let y = plan.col(LpColumn::binary(1.0));
+fn main() -> Result<(), culmen::ProgramError> {
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::binary(1.0));
+    let y = plan.col(ProgramColumn::binary(1.0));
     let r = plan.row(bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]);
-    let lp = plan.build()?;
+    let program = plan.build()?;
 
-    let row = lp.row(r);
+    let row = program.row(r);
     assert_eq!((row.bounds(), row.name(), row.len()), (bounds!(0.0, 1.0), None, 2));
     assert_eq!(row.into_iter().collect::<Vec<_>>(), [(x, 1.0), (y, 2.0)]);
-    assert_eq!(lp.row(r).entries().rev().next(), Some((y, 2.0)));
+    assert_eq!(program.row(r).entries().rev().next(), Some((y, 2.0)));
 
     let point: TiVec<culmen::Col, f64> = vec![1.0, 1.0].into();
     assert_eq!(row.activity(&point), 3.0);
-    assert_eq!(lp.cols().collect::<Vec<_>>(), [x, y]);
-    assert_eq!(lp.rows().len(), 1);
+    assert_eq!(program.cols().collect::<Vec<_>>(), [x, y]);
+    assert_eq!(program.rows().len(), 1);
     Ok(())
 }
 ```
@@ -188,7 +189,7 @@ are named types that run both ways and know their exact length.
 
 ## The quadratic part
 
-`lp.quadratic()` is a `QuadObjective`, the objective's `Σ q · xᵢ · xⱼ` in one canonical form: entries `(i, j, q)`
+`program.quadratic()` is a `QuadObjective`, the objective's `Σ q · xᵢ · xⱼ` in one canonical form: entries `(i, j, q)`
 with `i <= j`, each pair at most once, every coefficient finite and non-zero, sorted by `(i, j)`. The model's `x * x`
 is the entry `(x, x, 1)` and `2.0 * x * y` the entry `(x, y, 2)`. A plan's terms may name a pair in either order and
 repeat it; the coefficients of a pair are added up in the order given, and a pair that sums to zero is dropped.
@@ -205,20 +206,20 @@ Solvers take the quadratic part as `½ xᵀHx` with a symmetric Hessian `H`. In 
 | `value(values)` | `Σ q · xᵢ · xⱼ` at a point. |
 
 ```rust
-use culmen::{Bounds, LpColumn, LpPlan, TiSlice};
+use culmen::{Bounds, ProgramColumn, ProgramPlan, TiSlice};
 
-fn main() -> Result<(), culmen::LpError> {
+fn main() -> Result<(), culmen::ProgramError> {
     // x² + 2xy + 3y², written with the cross term split in both orders.
-    let mut plan = LpPlan::new();
-    let x = plan.col(LpColumn::continuous(0.0, Bounds::FREE));
-    let y = plan.col(LpColumn::continuous(0.0, Bounds::FREE));
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
     plan.quadratic = vec![(y, x, 1.0), (x, x, 1.0), (x, y, 1.0), (y, y, 3.0)];
-    let lp = plan.build()?;
+    let program = plan.build()?;
 
-    let q = lp.quadratic();
+    let q = program.quadratic();
     assert_eq!(q.entries().collect::<Vec<_>>(), [(x, x, 1.0), (x, y, 2.0), (y, y, 3.0)]);
     assert_eq!(q.hessian().collect::<Vec<_>>(), [(x, x, 2.0), (x, y, 2.0), (y, y, 6.0)]);
-    assert_eq!(lp.objective_value(TiSlice::from_ref(&[1.0, 1.0])), 6.0);
+    assert_eq!(program.objective_value(TiSlice::from_ref(&[1.0, 1.0])), 6.0);
     Ok(())
 }
 ```
@@ -226,14 +227,14 @@ fn main() -> Result<(), culmen::LpError> {
 The class of program is *convex* quadratic. Convexity is a property of real numbers that floating point cannot
 decide exactly, so `build` checks it with a stated tolerance: `H` splits into blocks of columns its entries join,
 and for every block `s · H + δ · I` must have a Cholesky factor, where `s` is `1` to minimize and `-1` to maximize and
-`δ` is `Lp::CONVEXITY_TOLERANCE` (`1e-9`) times the block's largest `|Hᵢⱼ|`. Every `Lp` therefore has an objective
-convex to minimize, or concave to maximize, up to that tolerance; a semidefinite one passes. Each block costs a dense
-factorization cubic in its number of columns, so a separable objective, a sum of squares of single columns, costs
-next to nothing.
+`δ` is `Program::CONVEXITY_TOLERANCE` (`1e-9`) times the block's largest `|Hᵢⱼ|`. Every `Program` therefore has an
+objective convex to minimize, or concave to maximize, up to that tolerance; a semidefinite one passes. Each block costs
+a dense factorization cubic in its number of columns, so a separable objective, a sum of squares of single columns,
+costs next to nothing.
 
 ## Model classes
 
-`lp.class()` is a `ModelClass`, the kind of program the LP is: whether it has an integer column, and whether its
+`program.class()` is a `ModelClass`, the kind of program it is: whether it has an integer column, and whether its
 objective has a quadratic part.
 
 | Class | Integer columns | Objective |
@@ -267,10 +268,10 @@ assert_eq!(ModelClasses::ALL.len(), 4);
 
 ## Checking a point
 
-`lp.objective_value(values)` is the objective at a point, quadratic part and offset included.
-`lp.max_violation(values)` is the largest amount by which the point violates a column bound, a row, or integrality,
-and zero for a feasible point. Both panic when `values` holds fewer values than the LP has columns. They are the way
-to check a solution against the LP independently of any solver:
+`program.objective_value(values)` is the objective at a point, quadratic part and offset included.
+`program.max_violation(values)` is the largest amount by which the point violates a column bound, a row, or integrality,
+and zero for a feasible point. Both panic when `values` holds fewer values than the program has columns. They are the
+way to check a solution against the program independently of any solver:
 
 ```rust
 use culmen::prelude::*;
@@ -281,20 +282,20 @@ fn main() -> Result<(), culmen::ModelError> {
     let y = m.add_var(Var::continuous());
     m.add_constraint((x + y).leq(4.0));
     m.maximize(2.0 * x + y + 1.0);
-    let lp = m.build()?;
+    let program = m.build()?;
 
     let good: culmen::TiVec<Col, f64> = vec![3.0, 1.0].into();
-    assert_eq!((lp.objective_value(&good), lp.max_violation(&good)), (8.0, 0.0));
+    assert_eq!((program.objective_value(&good), program.max_violation(&good)), (8.0, 0.0));
     let bad: culmen::TiVec<Col, f64> = vec![2.5, 2.0].into();
-    assert_eq!(lp.max_violation(&bad), 0.5);
+    assert_eq!(program.max_violation(&bad), 0.5);
     Ok(())
 }
 ```
 
 ## LP files
 
-`lp.to_lp_string()` writes the LP in the CPLEX LP file format, and `lp.write_lp(&mut out)` writes it into any
-`fmt::Write`. The output is for reading by eye or by another solver while debugging:
+`program.to_lp_string()` writes the program in the CPLEX LP file format, and `program.write_lp(&mut out)` writes it into
+any `fmt::Write`. The output is for reading by eye or by another solver while debugging:
 
 - Names are reduced to the characters the format allows. An unnamed column is written `x<index>` and an unnamed row
   `r<index>`; distinct names that reduce to the same text are not told apart.
@@ -326,41 +327,41 @@ fn main() -> Result<(), culmen::ModelError> {
 }
 ```
 
-## Checks and `LpError`
+## Checks and `ProgramError`
 
-`LpPlan::build` accepts a plan when its offset and costs are finite, every term names a column of the plan with a
+`ProgramPlan::build` accepts a plan when its offset and costs are finite, every term names a column of the plan with a
 finite coefficient, in every row the coefficients of each column, added up in the order given, are finite, every
 quadratic term names columns of the plan with a finite coefficient, the coefficients of each pair, added up in the
 order given, are finite, and the quadratic part passes the [convexity check](#the-quadratic-part).
-Bounds and integrality need no check there: their types already guarantee them. Otherwise it returns an `LpError`
+Bounds and integrality need no check there: their types already guarantee them. Otherwise it returns a `ProgramError`
 naming the first defect:
 
 | Variant | Message |
 |---|---|
-| `NonFiniteOffset { value }` | `Lp: the objective offset {value} is not finite` |
-| `NonFiniteCost { col, value }` | `Lp: the cost {value} of {col:?} is not finite` |
-| `NonFiniteCoefficient { row, col, value }` | `Lp: the coefficient {value} of {col:?} in {row:?} is not finite` |
-| `UnknownColumn { row, col }` | `Lp: {row:?} names {col:?}, which the plan does not have` |
-| `UnknownQuadColumn { col }` | `Lp: a quadratic term names {col:?}, which the plan does not have` |
-| `NonFiniteQuadCoefficient { first, second, value }` | `Lp: the quadratic coefficient {value} of {first:?} · {second:?} is not finite` |
-| `NonConvexObjective { sense, col }` | `Lp: the quadratic objective is not convex in the block of {col:?}`, or `not concave` to maximize |
+| `NonFiniteOffset { value }` | `Program: the objective offset {value} is not finite` |
+| `NonFiniteCost { col, value }` | `Program: the cost {value} of {col:?} is not finite` |
+| `NonFiniteCoefficient { row, col, value }` | `Program: the coefficient {value} of {col:?} in {row:?} is not finite` |
+| `UnknownColumn { row, col }` | `Program: {row:?} names {col:?}, which the plan does not have` |
+| `UnknownQuadColumn { col }` | `Program: a quadratic term names {col:?}, which the plan does not have` |
+| `NonFiniteQuadCoefficient { first, second, value }` | `Program: the quadratic coefficient {value} of {first:?} · {second:?} is not finite` |
+| `NonConvexObjective { sense, col }` | `Program: the quadratic objective is not convex in the block of {col:?}`, or `not concave` to maximize |
 
 ```rust
-use culmen::{Col, LpColumn, LpError, LpPlan, Row, bounds};
+use culmen::{Col, ProgramColumn, ProgramError, ProgramPlan, Row, bounds};
 
-let mut plan = LpPlan::new();
-let x = plan.col(LpColumn::binary(1.0));
+let mut plan = ProgramPlan::new();
+let x = plan.col(ProgramColumn::binary(1.0));
 plan.row(bounds!(0.0, 1.0), [(x, 1.0), (Col::new(7), 1.0)]);
-assert_eq!(plan.build(), Err(LpError::UnknownColumn { row: Row::new(0), col: Col::new(7) }));
+assert_eq!(plan.build(), Err(ProgramError::UnknownColumn { row: Row::new(0), col: Col::new(7) }));
 ```
 
 A model reports the same defects as a [`ModelError`](modelling.md#building-and-modelerror), in the model's own names.
-With the `serde` feature an `Lp` is read back through its plan and checked the same way; see
+With the `serde` feature a `Program` is read back through its plan and checked the same way; see
 [Serialization](testing.md#serialization).
 
 ## See also
 
-- [Modelling](modelling.md): the usual way to build an `Lp`.
-- [Solving](solving.md): loading an `Lp` into a backend.
-- [Design](design.md#the-lp-is-checked-data): why the LP is a checked value.
+- [Modelling](modelling.md): the usual way to build a `Program`.
+- [Solving](solving.md): loading a `Program` into a backend.
+- [Design](design.md#the-program-is-checked-data): why the program is a checked value.
 - [Documentation index](README.md).

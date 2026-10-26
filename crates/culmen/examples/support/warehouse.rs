@@ -109,7 +109,7 @@ impl Observer for Live {
 /// the assignment.
 pub(crate) fn solve(
     warehouse: &Warehouse,
-    lp: Lp,
+    program: Program,
     x: &VarMap<(usize, usize)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let seconds: u64 = std::env::args().nth(1).map_or(Ok(10), |s| s.parse())?;
@@ -120,10 +120,10 @@ pub(crate) fn solve(
 
     println!(
         "{} variables, {} constraints; stopping after {seconds} s or on Ctrl-C",
-        lp.num_cols(),
-        lp.num_rows()
+        program.num_cols(),
+        program.num_rows()
     );
-    let mut solver = Solver::new(Highs::new(), lp)?;
+    let mut solver = Solver::new(Highs::new(), program)?;
     let mut live = Live { show_log };
     let request = Request::new()
         .time_limit(Duration::from_secs(seconds))

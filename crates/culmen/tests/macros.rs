@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The modelling macros build exactly the LP the plain methods build.
+//! The modelling macros build exactly the program the plain methods build.
 #![cfg(feature = "macros")]
 #![cfg_attr(
     test,
@@ -9,10 +9,10 @@
 )]
 
 use culmen::prelude::*;
-use culmen::{Integrality, LpError, QuadExpr};
+use culmen::{Integrality, ProgramError, QuadExpr};
 
 #[test]
-fn test_assignment_written_both_ways_builds_the_same_lp() {
+fn test_assignment_written_both_ways_builds_the_same_program() {
     let (products, locations) = (vec![0_usize, 1, 2, 3], 0..3_usize);
     let volume = [4.0, 3.0, 5.0, 2.0];
     let cap = [8.0, 7.0, 6.0];
@@ -84,12 +84,12 @@ fn test_every_variable_form_writes_its_var() {
     });
     p.add_var(Var::continuous().lower(7.0).name("k"));
 
-    let (lp, expected) = (m.build().unwrap(), p.build().unwrap());
-    assert_eq!(lp, expected);
-    assert_eq!(lp.columns()[c].integrality, Integrality::Integer);
-    assert_eq!(lp.columns()[h[1]].bounds, bounds!(0.0, 4.0));
+    let (program, expected) = (m.build().unwrap(), p.build().unwrap());
+    assert_eq!(program, expected);
+    assert_eq!(program.columns()[c].integrality, Integrality::Integer);
+    assert_eq!(program.columns()[h[1]].bounds, bounds!(0.0, 4.0));
     assert_eq!(
-        (lp.columns()[d].bounds.lower(), lp.columns()[a].bounds.lower()),
+        (program.columns()[d].bounds.lower(), program.columns()[a].bounds.lower()),
         (2.5, 0.0)
     );
     let _ = (b, e, f, g, k);
@@ -132,7 +132,7 @@ fn test_sum_runs_its_loop_nest_with_patterns_and_filters() {
 }
 
 #[test]
-fn test_a_quadratic_objective_written_both_ways_builds_the_same_lp() {
+fn test_a_quadratic_objective_written_both_ways_builds_the_same_program() {
     // Least squares on a budget: track targets, spending at most 4 in all.
     let (items, target) = (0..3_usize, [1.0, 2.0, 3.0]);
 
@@ -177,5 +177,5 @@ fn test_model_errors_name_macro_declared_entries() {
     variable!(m, 3 <= z[i in 0..2] <= 1);
     let error = m.build().unwrap_err();
     assert!(error.to_string().contains("`z[0]`"), "{error}");
-    let _ = (z, LpError::NonFiniteOffset { value: 0.0 });
+    let _ = (z, ProgramError::NonFiniteOffset { value: 0.0 });
 }

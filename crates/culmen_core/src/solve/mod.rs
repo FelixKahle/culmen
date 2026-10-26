@@ -22,9 +22,9 @@ pub use outcome::{Outcome, Solution, Solved, StopReason};
 pub use settings::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, RelativeGap, Settings};
 pub use watch::{Improvement, LogLine, Observer, Request, Stop, StopFn, Watch, stop_fn};
 
-use crate::Lp;
+use crate::Program;
 
-/// An LP loaded into a backend, solved as often as needed, each solve with its own [`Request`].
+/// A program loaded into a backend, solved as often as needed, each solve with its own [`Request`].
 ///
 /// ```
 /// use culmen_core::{Model, Outcome, Request, Script, Solver, Var};
@@ -32,10 +32,10 @@ use crate::Lp;
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::binary());
 /// m.maximize(x);
-/// let lp = m.build()?;
+/// let program = m.build()?;
 ///
 /// // The scripted backend stands in for a solver here; with the `highs` feature of `culmen`, `Highs::new()`.
-/// let mut solver = Solver::new(Script::optimal(1.0, vec![1.0]), lp)?;
+/// let mut solver = Solver::new(Script::optimal(1.0, vec![1.0]), program)?;
 /// let solved = solver.solve(Request::new())?;
 /// let Outcome::Optimal(solution) = solved.outcome else { panic!("expected an optimum") };
 /// assert_eq!(solution.values[x], 1.0);
@@ -44,32 +44,32 @@ use crate::Lp;
 #[derive(Debug)]
 pub struct Solver<B> {
     backend: B,
-    lp: Lp,
+    program: Program,
 }
 
 impl<B: Backend> Solver<B> {
-    /// Loads `lp` into `backend`, when the backend solves its class.
+    /// Loads `program` into `backend`, when the backend solves its class.
     ///
     /// # Errors
     ///
-    /// [`LoadError::Unsupported`] when [`Backend::CLASSES`] lacks the LP's [`class`](Lp::class), before the
-    /// backend sees it; [`LoadError::Backend`] when the backend refuses the LP.
-    pub fn new(mut backend: B, lp: Lp) -> Result<Self, LoadError<B::Error>> {
-        let class = lp.class();
+    /// [`LoadError::Unsupported`] when [`Backend::CLASSES`] lacks the program's [`class`](Program::class), before the
+    /// backend sees it; [`LoadError::Backend`] when the backend refuses the program.
+    pub fn new(mut backend: B, program: Program) -> Result<Self, LoadError<B::Error>> {
+        let class = program.class();
         if !B::CLASSES.contains(class) {
             return Err(LoadError::Unsupported {
                 class,
                 supported: B::CLASSES,
             });
         }
-        backend.load(&lp).map_err(LoadError::Backend)?;
-        Ok(Self { backend, lp })
+        backend.load(&program).map_err(LoadError::Backend)?;
+        Ok(Self { backend, program })
     }
 
-    /// The loaded LP.
+    /// The loaded program.
     #[must_use]
-    pub const fn lp(&self) -> &Lp {
-        &self.lp
+    pub const fn program(&self) -> &Program {
+        &self.program
     }
 
     /// The backend, to read its own state.
@@ -83,10 +83,10 @@ impl<B: Backend> Solver<B> {
         &mut self.backend
     }
 
-    /// The backend and the LP, taken apart.
+    /// The backend and the program, taken apart.
     #[must_use]
-    pub fn into_parts(self) -> (B, Lp) {
-        (self.backend, self.lp)
+    pub fn into_parts(self) -> (B, Program) {
+        (self.backend, self.program)
     }
 
     /// Solves under the request's settings, polling its stop and reporting to its observer.

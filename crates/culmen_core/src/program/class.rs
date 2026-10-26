@@ -11,10 +11,10 @@ use itertools::Itertools;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// What kind of program an [`Lp`](super::Lp) is: whether it has integer columns, and whether its objective has a
-/// quadratic part. Its constraints are linear in every class.
+/// What kind of program a [`Program`](super::Program) is: whether it has integer columns, and whether its objective has
+/// a quadratic part. Its constraints are linear in every class.
 ///
-/// [`Lp::class`](super::Lp::class) computes it, and a backend declares the classes it solves in
+/// [`Program::class`](super::Program::class) computes it, and a backend declares the classes it solves in
 /// [`Backend::CLASSES`](crate::Backend::CLASSES). The enum is non-exhaustive: a class of quadratic constraints
 /// would be a new variant, and a backend that does not declare it refuses it.
 ///
@@ -79,7 +79,7 @@ impl fmt::Display for ModelClass {
 
 /// A set of [`ModelClass`]es: what a [`Backend`](crate::Backend) solves ([`Backend::CLASSES`]).
 ///
-/// [`Solver::new`](crate::Solver::new) loads an [`Lp`](super::Lp) only into a backend whose set contains its
+/// [`Solver::new`](crate::Solver::new) loads a [`Program`](super::Program) only into a backend whose set contains its
 /// class, and refuses any other with [`LoadError::Unsupported`](crate::LoadError::Unsupported).
 ///
 /// [`Backend::CLASSES`]: crate::Backend::CLASSES

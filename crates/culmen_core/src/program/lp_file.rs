@@ -1,14 +1,14 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! An LP in the CPLEX LP file format, for reading by eye or by another solver while debugging.
+//! A program in the CPLEX LP file format, for reading by eye or by another solver while debugging.
 
 use core::fmt;
 
-use super::{Col, Integrality, Lp, Row, Sense};
+use super::{Col, Integrality, Program, Row, Sense};
 
-impl Lp {
-    /// The LP in the CPLEX LP file format.
+impl Program {
+    /// The program in the CPLEX LP file format.
     ///
     /// The output is meant for debugging: names are reduced to the characters the format allows, an unnamed column
     /// is written `x<index>` and an unnamed row `r<index>`, and a ranged row becomes two rows suffixed `_lo` and
@@ -16,21 +16,21 @@ impl Lp {
     /// format's brackets halved, `[ 2 x ^ 2 + 4 x * y ] / 2` for `x² + 2xy`.
     ///
     /// ```
-    /// use culmen_core::{LpColumn, LpPlan, Sense, bounds};
+    /// use culmen_core::{ProgramColumn, ProgramPlan, Sense, bounds};
     ///
-    /// let mut plan = LpPlan::new();
+    /// let mut plan = ProgramPlan::new();
     /// plan.sense = Sense::Maximize;
-    /// let x = plan.col(LpColumn::binary(3.0));
+    /// let x = plan.col(ProgramColumn::binary(3.0));
     /// plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]);
     /// let text = plan.clone().build()?.to_lp_string();
     /// assert!(text.starts_with("Maximize\n obj: 3 x0\nSubject To\n r0: 2 x0 <= 1\n"));
     ///
     /// plan.sense = Sense::Minimize;
-    /// let y = plan.col(LpColumn::continuous(0.0, bounds!(0.0, 1.0)));
+    /// let y = plan.col(ProgramColumn::continuous(0.0, bounds!(0.0, 1.0)));
     /// plan.quadratic = vec![(x, x, 1.0), (x, y, -1.5), (y, y, 1.0)];
     /// let text = plan.build()?.to_lp_string();
     /// assert!(text.starts_with("Minimize\n obj: 3 x0 + [ 2 x0 ^ 2 - 3 x0 * x1 + 2 x1 ^ 2 ] / 2\n"));
-    /// # Ok::<(), culmen_core::LpError>(())
+    /// # Ok::<(), culmen_core::ProgramError>(())
     /// ```
     #[must_use]
     pub fn to_lp_string(&self) -> String {
@@ -40,7 +40,7 @@ impl Lp {
         out
     }
 
-    /// Writes the LP in the CPLEX LP file format, as [`Lp::to_lp_string`] describes.
+    /// Writes the program in the CPLEX LP file format, as [`Program::to_lp_string`] describes.
     ///
     /// # Errors
     ///

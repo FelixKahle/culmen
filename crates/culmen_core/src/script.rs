@@ -11,8 +11,8 @@ use typed_index_collections::{TiSlice, TiVec};
 use crate::solve::context::{check_constraint, check_entries, check_solution};
 use crate::{
     ActionError, AddedRow, Backend, Callback, Col, Constraint, CutContext, Events, HeuristicContext, LazyContext,
-    LogContext, LogLevel, Lp, ModelClasses, Outcome, Phase, PollContext, Progress, ProgressContext, Settings, Solution,
-    SolutionContext, Solved, StopReason,
+    LogContext, LogLevel, ModelClasses, Outcome, Phase, PollContext, Program, Progress, ProgressContext, Settings,
+    Solution, SolutionContext, Solved, StopReason,
 };
 
 /// A solution a script step reports.
@@ -265,14 +265,14 @@ pub enum ScriptStatus {
 /// Why a [`Script`] refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScriptError {
-    /// A solve was asked for before any LP was loaded.
+    /// A solve was asked for before any program was loaded.
     NotLoaded,
 }
 
 impl fmt::Display for ScriptError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotLoaded => write!(f, "Script: no LP is loaded"),
+            Self::NotLoaded => write!(f, "Script: no program is loaded"),
         }
     }
 }
@@ -294,8 +294,8 @@ impl Backend for Script {
     const EVENTS: Events = Events::ALL;
     const CLASSES: ModelClasses = ModelClasses::ALL;
 
-    fn load(&mut self, lp: &Lp) -> Result<(), ScriptError> {
-        self.num_cols = Some(lp.num_cols());
+    fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
+        self.num_cols = Some(program.num_cols());
         Ok(())
     }
 

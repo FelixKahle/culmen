@@ -13,9 +13,9 @@ use core::time::Duration;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use culmen_core::{
-    Backend, Bounds, Callback, Col, Events, LinExpr, Linear, LoadError, Lp, LpColumn, LpError, LpPlan, Model,
-    ModelClass, ModelClasses, ModelError, ModelVar, Outcome, QuadExpr, QuadTerm, Quadratic, Script, Sense, Settings,
-    Solved, Solver, Term, TiSlice, TiVec, Unsupported, Var,
+    Backend, Bounds, Callback, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, ModelClasses, ModelError,
+    ModelVar, Outcome, Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Script, Sense,
+    Settings, Solved, Solver, Term, TiSlice, TiVec, Unsupported, Var,
 };
 use proptest::prelude::*;
 
@@ -201,10 +201,10 @@ proptest! {
         }
     }
 
-    /// A sum of squared affine forms plus a linear part builds an LP whose objective value is the expression's at
+    /// A sum of squared affine forms plus a linear part builds a program whose objective value is the expression's at
     /// every point: the merge into canonical entries keeps the value.
     #[test]
-    fn test_the_lp_values_the_objective_as_the_expression_does(
+    fn test_the_program_values_the_objective_as_the_expression_does(
         forms in prop::collection::vec((prop::collection::vec(-3i32..=3, 3), -2i32..=2), 1..4),
         costs in prop::collection::vec(-3i32..=3, 3),
         point in prop::collection::vec(-5.0..5.0f64, 3),
@@ -219,10 +219,10 @@ proptest! {
         let linear = LinExpr::sum(xs.iter().zip(&costs).map(|(&x, &c)| f64::from(c) * x));
         let objective = if maximize { -(squares + linear) } else { squares + linear };
         m.set_objective(if maximize { Sense::Maximize } else { Sense::Minimize }, objective.clone());
-        let lp = m.build().unwrap();
+        let program = m.build().unwrap();
         let point: TiVec<Col, f64> = point.into();
-        prop_assert!(close(lp.objective_value(&point), objective.value(&point)));
-        let entries: Vec<(Col, Col, f64)> = lp.quadratic().entries().collect();
+        prop_assert!(close(program.objective_value(&point), objective.value(&point)));
+        let entries: Vec<(Col, Col, f64)> = program.quadratic().entries().collect();
         prop_assert!(entries.iter().all(|&(i, j, q)| i <= j && q != 0.0));
         prop_assert!(entries.windows(2).all(|w| (w[0].0, w[0].1) < (w[1].0, w[1].1)), "sorted, each pair once");
     }
@@ -232,13 +232,19 @@ proptest! {
 fn test_the_model_merges_pairs_in_either_order_and_drops_cancelled_ones() {
     let (mut m, x, y) = xy();
     m.minimize(x * y + y * x + 3.0 * x * x - x * x + 2.0 * y * y + y * x - x * y - 2.0 * x * y);
-    let lp = m.build().unwrap();
-    assert_eq!(lp.quadratic().entries().collect::<Vec<_>>(), [(x, x, 2.0), (y, y, 2.0)]);
-    assert_eq!(lp.quadratic().len(), 2);
-    assert!(!lp.quadratic().is_empty());
+    let program = m.build().unwrap();
+    assert_eq!(
+        program.quadratic().entries().collect::<Vec<_>>(),
+        [(x, x, 2.0), (y, y, 2.0)]
+    );
+    assert_eq!(program.quadratic().len(), 2);
+    assert!(!program.quadratic().is_empty());
     // The Hessian of x² + y² as HiGHS reads it, ½ xᵀHx: twice each coefficient on the diagonal.
-    assert_eq!(lp.quadratic().hessian().collect::<Vec<_>>(), [(x, x, 4.0), (y, y, 4.0)]);
-    assert_eq!(lp.quadratic().hessian().rev().count(), 2);
+    assert_eq!(
+        program.quadratic().hessian().collect::<Vec<_>>(),
+        [(x, x, 4.0), (y, y, 4.0)]
+    );
+    assert_eq!(program.quadratic().hessian().rev().count(), 2);
 }
 
 #[test]
@@ -246,15 +252,15 @@ fn test_the_hessian_doubles_the_diagonal_alone() {
     let (mut m, x, y) = xy();
     // x² + 3xy + 4y²: H = [[2, 3], [3, 8]], whose lower triangle holds 2, 3 and 8.
     m.minimize(x * x + 3.0 * x * y + 4.0 * y * y);
-    let lp = m.build().unwrap();
+    let program = m.build().unwrap();
     assert_eq!(
-        lp.quadratic().hessian().collect::<Vec<_>>(),
+        program.quadratic().hessian().collect::<Vec<_>>(),
         [(x, x, 2.0), (x, y, 3.0), (y, y, 8.0)]
     );
     // ½ xᵀHx at (1, 2): ½(2 + 2·3·2 + 8·4) = 23 = 1 + 6 + 16.
     let point: &TiSlice<Col, f64> = TiSlice::from_ref(&[1.0, 2.0]);
-    assert_eq!(lp.quadratic().value(point), 23.0);
-    assert_eq!(lp.objective_value(point), 23.0);
+    assert_eq!(program.quadratic().value(point), 23.0);
+    assert_eq!(program.objective_value(point), 23.0);
 }
 
 #[test]
@@ -343,18 +349,18 @@ fn test_semidefinite_and_concave_objectives_build() {
 
 #[test]
 fn test_the_plan_checks_its_quadratic_terms() {
-    let mut plan = LpPlan::new();
-    let x = plan.col(LpColumn::continuous(0.0, Bounds::FREE));
-    let y = plan.col(LpColumn::continuous(0.0, Bounds::FREE));
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
     plan.quadratic = vec![(x, Col::new(5), 1.0)];
     assert_eq!(
         plan.clone().build(),
-        Err(LpError::UnknownQuadColumn { col: Col::new(5) })
+        Err(ProgramError::UnknownQuadColumn { col: Col::new(5) })
     );
     plan.quadratic = vec![(x, y, f64::INFINITY)];
     assert_eq!(
         plan.clone().build(),
-        Err(LpError::NonFiniteQuadCoefficient {
+        Err(ProgramError::NonFiniteQuadCoefficient {
             first: x,
             second: y,
             value: f64::INFINITY
@@ -362,42 +368,45 @@ fn test_the_plan_checks_its_quadratic_terms() {
     );
     plan.quadratic = vec![(y, x, f64::MAX), (x, y, f64::MAX)];
     assert!(
-        matches!(plan.clone().build(), Err(LpError::NonFiniteQuadCoefficient { value, .. }) if value == f64::INFINITY),
+        matches!(
+            plan.clone().build(),
+            Err(ProgramError::NonFiniteQuadCoefficient { value, .. }) if value == f64::INFINITY
+        ),
         "the pair's coefficients add up across both orders"
     );
     plan.quadratic = vec![(x, y, 1.0)];
     let error = plan.clone().build().unwrap_err();
     assert_eq!(
         error,
-        LpError::NonConvexObjective {
+        ProgramError::NonConvexObjective {
             sense: Sense::Minimize,
             col: x
         }
     );
     assert_eq!(
         error.to_string(),
-        "Lp: the quadratic objective is not convex in the block of Col(0)"
+        "Program: the quadratic objective is not convex in the block of Col(0)"
     );
     plan.sense = Sense::Maximize;
     plan.quadratic = vec![(y, y, 1.0)];
     assert_eq!(
         plan.clone().build().unwrap_err().to_string(),
-        "Lp: the quadratic objective is not concave in the block of Col(1)"
+        "Program: the quadratic objective is not concave in the block of Col(1)"
     );
     plan.quadratic = vec![(y, y, -1.0), (x, x, 0.0)];
-    let lp = plan.build().unwrap();
-    assert_eq!(lp.quadratic().entries().collect::<Vec<_>>(), [(y, y, -1.0)]);
-    assert_eq!(LpPlan::from(lp).quadratic, [(y, y, -1.0)]);
+    let program = plan.build().unwrap();
+    assert_eq!(program.quadratic().entries().collect::<Vec<_>>(), [(y, y, -1.0)]);
+    assert_eq!(ProgramPlan::from(program).quadratic, [(y, y, -1.0)]);
 }
 
 /// The plan of `½ xᵀ(sign · (AᵀA + ridge · I))x` over free columns.
-fn gram_plan(a: &[Vec<i32>], ridge: f64, sign: f64, sense: Sense) -> LpPlan {
+fn gram_plan(a: &[Vec<i32>], ridge: f64, sign: f64, sense: Sense) -> ProgramPlan {
     let n = a[0].len();
     let h = |i: usize, j: usize| a.iter().map(|row| f64::from(row[i] * row[j])).sum::<f64>();
-    let mut plan = LpPlan::new();
+    let mut plan = ProgramPlan::new();
     plan.sense = sense;
     let cols: Vec<Col> = (0..n)
-        .map(|_| plan.col(LpColumn::continuous(0.0, Bounds::FREE)))
+        .map(|_| plan.col(ProgramColumn::continuous(0.0, Bounds::FREE)))
         .collect();
     for i in 0..n {
         plan.quadratic.push((cols[i], cols[i], sign * (h(i, i) + ridge) / 2.0));
@@ -486,7 +495,7 @@ fn test_class_sets_combine_iterate_and_print_by_name() {
 
 static LOADS: AtomicUsize = AtomicUsize::new(0);
 
-/// A backend that solves linear classes alone and counts its loads; it refuses an LP without columns.
+/// A backend that solves linear classes alone and counts its loads; it refuses a program without columns.
 #[derive(Debug)]
 struct LinearOnly;
 
@@ -496,7 +505,7 @@ struct NoColumns;
 
 impl fmt::Display for NoColumns {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("LinearOnly: the LP has no columns")
+        f.write_str("LinearOnly: the program has no columns")
     }
 }
 
@@ -517,9 +526,13 @@ impl Backend for LinearOnly {
     const EVENTS: Events = Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]);
 
-    fn load(&mut self, lp: &Lp) -> Result<(), NoColumns> {
+    fn load(&mut self, program: &Program) -> Result<(), NoColumns> {
         LOADS.fetch_add(1, Ordering::SeqCst);
-        if lp.num_cols() == 0 { Err(NoColumns) } else { Ok(()) }
+        if program.num_cols() == 0 {
+            Err(NoColumns)
+        } else {
+            Ok(())
+        }
     }
 
     fn solve(&mut self, _: &Settings, _: &mut dyn Callback<Self>) -> Result<Solved<()>, NoColumns> {
@@ -556,14 +569,14 @@ fn test_a_class_outside_the_backend_set_is_refused_before_load() {
     assert_eq!(error, LoadError::Backend(NoColumns));
     assert_eq!(
         error.to_string(),
-        "Solver: the backend refused the LP: LinearOnly: the LP has no columns"
+        "Solver: the backend refused the program: LinearOnly: the program has no columns"
     );
     let source = core::error::Error::source(&error).unwrap();
-    assert_eq!(source.to_string(), "LinearOnly: the LP has no columns");
+    assert_eq!(source.to_string(), "LinearOnly: the program has no columns");
 
     // The script replays any class.
     let mut solver = Solver::new(Script::optimal(2.0, vec![1.0, 1.0]), m.build().unwrap()).unwrap();
-    assert_eq!(solver.lp().class(), ModelClass::Qp);
+    assert_eq!(solver.program().class(), ModelClass::Qp);
     assert!(solver.solve(culmen_core::Request::new()).is_ok());
 }
 

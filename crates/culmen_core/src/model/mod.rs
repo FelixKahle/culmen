@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The modelling layer: variables, expressions and constraints written the way the mathematics reads, built into
-//! an [`Lp`].
+//! a [`Program`].
 
 mod error;
 mod expr;
@@ -20,8 +20,8 @@ pub use keyed::{
 };
 pub use quad::{QuadExpr, QuadTerm, Quadratic, Summand};
 
-use crate::lp::{check_convex, merge_pairs, merge_terms};
-use crate::{Bounds, Col, Integrality, Lp, LpColumn, LpPlan, LpRow, QuadObjective, Row, Sense};
+use crate::program::{check_convex, merge_pairs, merge_terms};
+use crate::{Bounds, Col, Integrality, Program, ProgramColumn, ProgramPlan, ProgramRow, QuadObjective, Row, Sense};
 
 /// A variable to add to a [`Model`]: its integrality, bounds and name.
 ///
@@ -124,13 +124,13 @@ struct Named {
 }
 
 /// A linear, mixed-integer or convex quadratic model, written with handles, expressions and constraints and built
-/// into an [`Lp`].
+/// into a [`Program`].
 ///
 /// Constraints are linear; the objective is linear or quadratic, and a quadratic objective must be convex to
 /// minimize or concave to maximize.
 ///
 /// Every number is stored as given and checked once, by [`Model::build`], whose error names the variable or
-/// constraint at fault. The handles the model returns are the columns and rows of the LP it builds, so a solution
+/// constraint at fault. The handles the model returns are the columns and rows of the program it builds, so a solution
 /// is read with them.
 ///
 /// ```
@@ -144,10 +144,10 @@ struct Named {
 /// let cap = m.add_named_constraint("capacity", load.leq(10.0));
 /// m.set_objective(Sense::Maximize, (0..3).map(|i| value[i] * take[i]).sum::<LinExpr>());
 ///
-/// let lp = m.build()?;
-/// assert_eq!((lp.num_cols(), lp.num_rows()), (3, 1));
-/// assert_eq!(lp.row(cap).name(), Some("capacity"));
-/// assert_eq!(lp.columns()[take[1]].cost, 13.0);
+/// let program = m.build()?;
+/// assert_eq!((program.num_cols(), program.num_rows()), (3, 1));
+/// assert_eq!(program.row(cap).name(), Some("capacity"));
+/// assert_eq!(program.columns()[take[1]].cost, 13.0);
 /// # Ok::<(), culmen_core::ModelError>(())
 /// ```
 #[derive(Clone, Debug, Default)]
@@ -273,9 +273,9 @@ impl Model {
     /// let x = m.add_var(Var::free());
     /// let y = m.add_var(Var::free());
     /// m.minimize(x * x + 2.0 * x * y + 2.0 * y * y - 4.0 * x + 3.0);
-    /// let lp = m.build()?;
-    /// assert_eq!(lp.quadratic().entries().collect::<Vec<_>>(), [(x, x, 1.0), (x, y, 2.0), (y, y, 2.0)]);
-    /// assert_eq!((lp.columns()[x].cost, lp.offset()), (-4.0, 3.0));
+    /// let program = m.build()?;
+    /// assert_eq!(program.quadratic().entries().collect::<Vec<_>>(), [(x, x, 1.0), (x, y, 2.0), (y, y, 2.0)]);
+    /// assert_eq!((program.columns()[x].cost, program.offset()), (-4.0, 3.0));
     /// # Ok::<(), culmen_core::ModelError>(())
     /// ```
     pub fn set_objective(&mut self, sense: Sense, objective: impl Quadratic) {
@@ -317,27 +317,27 @@ impl Model {
         self.rows.get(row)?.name.as_deref()
     }
 
-    /// Checks every number and handle and builds the LP; the model stays as it is, to be changed and built again.
+    /// Checks every number and handle and builds the program; the model stays as it is, to be changed and built again.
     ///
-    /// These checks are the LP's own, made in the model's terms, so every model they accept builds and every error
+    /// These checks are the program's own, made in the model's terms, so every model they accept builds and every error
     /// names the variable or constraint at fault.
     ///
     /// # Errors
     ///
     /// [`ModelError`] naming the first variable or constraint at fault: invalid bounds, a non-finite objective or
     /// constraint coefficient, a handle the model did not hand out, or a quadratic objective that is not convex to
-    /// minimize or concave to maximize, as [`Lp::CONVEXITY_TOLERANCE`] states.
-    pub fn build(&self) -> Result<Lp, ModelError> {
-        let mut plan = LpPlan {
+    /// minimize or concave to maximize, as [`Program::CONVEXITY_TOLERANCE`] states.
+    pub fn build(&self) -> Result<Program, ModelError> {
+        let mut plan = ProgramPlan {
             sense: self.sense,
-            ..LpPlan::new()
+            ..ProgramPlan::new()
         };
         for (col, var) in self.vars.iter_enumerated() {
             let bounds = Bounds::new(var.lower, var.upper).map_err(|source| ModelError::VarBounds {
                 var: self.model_var(col),
                 source,
             })?;
-            plan.columns.push(LpColumn {
+            plan.columns.push(ProgramColumn {
                 cost: 0.0,
                 bounds,
                 integrality: var.integrality,
@@ -348,10 +348,10 @@ impl Model {
         for (row, named) in self.rows.iter_enumerated() {
             plan.rows.push(self.build_row(row, named)?);
         }
-        // The checks above are the LP's own, made in the model's terms: every bound is a `Bounds`, every cost and
+        // The checks above are the program's own, made in the model's terms: every bound is a `Bounds`, every cost and
         // the offset finite, every row's and the objective's terms known and finite as given and as merged the way
-        // the LP merges, and the quadratic part convex as the LP checks it.
-        Ok(Lp::from_plan_unchecked(plan))
+        // the program merges, and the quadratic part convex as the program checks it.
+        Ok(Program::from_plan_unchecked(plan))
     }
 
     /// Writes the objective's coefficients, constant and quadratic terms into the plan.
@@ -360,7 +360,7 @@ impl Model {
     ///
     /// [`ModelError::UnknownVar`], [`ModelError::ObjectiveCoefficient`], [`ModelError::ObjectiveConstant`],
     /// [`ModelError::ObjectiveQuadCoefficient`] or [`ModelError::NonConvexObjective`].
-    fn build_objective(&self, plan: &mut LpPlan) -> Result<(), ModelError> {
+    fn build_objective(&self, plan: &mut ProgramPlan) -> Result<(), ModelError> {
         self.build_linear_objective(plan)?;
         plan.quadratic = self.quadratic_terms()?;
         let quadratic = QuadObjective::from_terms(plan.quadratic.iter().copied());
@@ -375,7 +375,7 @@ impl Model {
     /// # Errors
     ///
     /// [`ModelError::UnknownVar`], [`ModelError::ObjectiveCoefficient`] or [`ModelError::ObjectiveConstant`].
-    fn build_linear_objective(&self, plan: &mut LpPlan) -> Result<(), ModelError> {
+    fn build_linear_objective(&self, plan: &mut ProgramPlan) -> Result<(), ModelError> {
         let linear = &self.objective.linear;
         for term in &linear.terms {
             let column = plan.columns.get_mut(term.col).ok_or(ModelError::UnknownVar {
@@ -419,7 +419,7 @@ impl Model {
                 None => self.check_quad_coefficient(first, second, value),
             }
         })?;
-        // The LP adds repeated pairs up the same way, so a sum that passes here passes there.
+        // The program adds repeated pairs up the same way, so a sum that passes here passes there.
         merge_pairs(terms.iter().copied())
             .into_iter()
             .try_for_each(|(first, second, value)| self.check_quad_coefficient(first, second, value))?;
@@ -445,7 +445,7 @@ impl Model {
     /// # Errors
     ///
     /// [`ModelError::UnknownVar`], [`ModelError::Coefficient`] or [`ModelError::ConstraintBounds`].
-    fn build_row(&self, row: Row, named: &Named) -> Result<LpRow, ModelError> {
+    fn build_row(&self, row: Row, named: &Named) -> Result<ProgramRow, ModelError> {
         let c = &named.constraint;
         let terms = self.row_terms(row, &c.expr)?;
         let bounds = Bounds::new(c.lower, c.upper)
@@ -454,7 +454,7 @@ impl Model {
                 constraint: self.model_constraint(row),
                 source,
             })?;
-        Ok(LpRow {
+        Ok(ProgramRow {
             bounds,
             terms,
             name: named.name.clone(),
@@ -476,7 +476,7 @@ impl Model {
             }
             self.check_coefficient(row, term.col, term.coefficient)?;
         }
-        // The LP adds repeated columns up the same way, so a sum that passes here passes there.
+        // The program adds repeated columns up the same way, so a sum that passes here passes there.
         let merged = merge_terms(expr.terms.iter().map(|t| (t.col, t.coefficient)).collect());
         for &(col, value) in &merged {
             self.check_coefficient(row, col, value)?;

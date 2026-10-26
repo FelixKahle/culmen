@@ -183,8 +183,8 @@ pub(crate) struct Hook<'a> {
     pub(crate) wanted: Events,
     /// When the run began.
     pub(crate) start: Instant,
-    /// The loaded LP, to size and value solutions.
-    pub(crate) lp: &'a Loaded,
+    /// The loaded program, to size and value solutions.
+    pub(crate) program: &'a Loaded,
     /// A panic a callback raised, held until the run returns.
     pub(crate) panic: Option<Payload>,
     /// The last error line of HiGHS's log.
@@ -373,7 +373,7 @@ unsafe fn heuristic(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
     // neither reads nor writes until the callback returns.
     let record = UserSolution(unsafe { &mut *call.data_in });
     let mut ctx = HighsHeuristic {
-        lp: hook.lp,
+        program: hook.program,
         offered: &mut hook.offered,
         elapsed,
         mip: mip_data(call),
@@ -393,7 +393,7 @@ unsafe fn solution(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
     let (values, size) = (field!(call, mip_solution), position(field!(call, mip_solution_size)));
     // SAFETY: HiGHS's record holds `size` values at `mip_solution`, valid for the call, or a null pointer.
     let values = unsafe { slice(values, size) };
-    if values.len() != hook.lp.num_cols() {
+    if values.len() != hook.program.num_cols() {
         return;
     }
     let mut ctx = HighsSolution {
@@ -418,7 +418,9 @@ fn report_offer(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
     };
     let Some(offer) = hook.offered.as_ref() else { return };
     let taken = (primal - offer.objective).abs() <= 1e-9 * primal.abs().max(1.0);
-    let improves = hook.incumbent.is_none_or(|best| hook.lp.sense.better(primal, best));
+    let improves = hook
+        .incumbent
+        .is_none_or(|best| hook.program.sense.better(primal, best));
     if !improves {
         hook.offered = None;
         return;
@@ -803,7 +805,7 @@ impl QueryOrigin {
 /// better.
 #[derive(Debug)]
 pub struct HighsHeuristic<'a> {
-    lp: &'a Loaded,
+    program: &'a Loaded,
     offered: &'a mut Option<Offer>,
     elapsed: Duration,
     mip: MipData,
@@ -828,7 +830,7 @@ impl HighsHeuristic<'_> {
 impl HighsHeuristic<'_> {
     /// Keeps a supplied solution, valued, to report once HiGHS takes it.
     fn offer(&mut self, values: Vec<f64>) {
-        let objective = self.lp.objective(&values);
+        let objective = self.program.objective(&values);
         *self.offered = Some(Offer { objective, values });
     }
 }
@@ -839,7 +841,7 @@ impl HeuristicContext for HighsHeuristic<'_> {
     }
 
     fn supply(&mut self, values: &TiSlice<Col, f64>) -> Result<(), ActionError> {
-        check_solution(values, self.lp.num_cols())?;
+        check_solution(values, self.program.num_cols())?;
         let buffer = self.record.buffer();
         if buffer.len() != values.len() {
             return Err(ActionError::Refused(format!(
@@ -854,7 +856,7 @@ impl HeuristicContext for HighsHeuristic<'_> {
     }
 
     fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
-        let num_cols = self.lp.num_cols();
+        let num_cols = self.program.num_cols();
         check_entries(entries, num_cols)?;
         self.record.set_sparse(entries)?;
         self.record.repair()?;
@@ -953,7 +955,7 @@ impl UserSolution<'_> {
     }
 }
 
-/// A column of the presolved problem HiGHS's MIP solver works on, which need not be a column of the loaded LP.
+/// A column of the presolved problem HiGHS's MIP solver works on, which need not be a column of the loaded program.
 ///
 /// ```
 /// use culmen_highs::ReducedCol;

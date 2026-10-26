@@ -1,17 +1,17 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Why an LP could not be loaded into a backend.
+//! Why a program could not be loaded into a backend.
 
 use core::fmt;
 
 use crate::{ModelClass, ModelClasses};
 
-/// Why [`Solver::new`](crate::Solver::new) could not load an LP: the backend does not solve its class, or the
+/// Why [`Solver::new`](crate::Solver::new) could not load a program: the backend does not solve its class, or the
 /// backend refused it with its own error `E`.
 ///
 /// The class check is the same for every backend: it reads [`Backend::CLASSES`](crate::Backend::CLASSES) before
-/// the backend sees the LP.
+/// the backend sees the program.
 ///
 /// ```
 /// use culmen_core::{LoadError, Model, ModelClass, ModelClasses, Script, Solver, Var};
@@ -29,14 +29,14 @@ use crate::{ModelClass, ModelClasses};
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadError<E> {
-    /// The backend does not solve the LP's class.
+    /// The backend does not solve the program's class.
     Unsupported {
-        /// The LP's class.
+        /// The program's class.
         class: ModelClass,
         /// The classes the backend solves.
         supported: ModelClasses,
     },
-    /// The backend refused the LP.
+    /// The backend refused the program.
     Backend(E),
 }
 
@@ -46,7 +46,7 @@ impl<E: fmt::Display> fmt::Display for LoadError<E> {
             Self::Unsupported { class, supported } => {
                 write!(f, "Solver: the backend solves {supported}, not a {class}")
             }
-            Self::Backend(error) => write!(f, "Solver: the backend refused the LP: {error}"),
+            Self::Backend(error) => write!(f, "Solver: the backend refused the program: {error}"),
         }
     }
 }

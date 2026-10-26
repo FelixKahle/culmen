@@ -15,8 +15,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use culmen_core::{
-    Backend, Callback, Col, Events, HeuristicContext, Improvement, LinExpr, Linear, LogLine, Lp, Model, Observer,
-    Outcome, Phase, PollContext, Progress, Request, Settings, Solution, SolutionContext, Solver, StopReason, TiVec,
+    Backend, Callback, Col, Events, HeuristicContext, Improvement, LinExpr, Linear, LogLine, Model, Observer, Outcome,
+    Phase, PollContext, Program, Progress, Request, Settings, Solution, SolutionContext, Solver, StopReason, TiVec,
     Var, relative_gap,
 };
 use culmen_highs::{Highs, HighsNative, HighsOptions, LpSolver, PollSource, QueryOrigin, Switch};
@@ -45,11 +45,11 @@ impl Observer for Seen {
 }
 
 /// The hard instance: a 60 × 30 generalized assignment HiGHS does not finish in seconds.
-fn hard() -> Lp {
-    assignment(60, 30, 12_345, 0.0).lp
+fn hard() -> Program {
+    assignment(60, 30, 12_345, 0.0).program
 }
 
-fn knapsack() -> (Lp, Vec<Col>) {
+fn knapsack() -> (Program, Vec<Col>) {
     let (value, weight) = ([10.0, 13.0, 7.0, 8.0, 9.0, 4.0], [5.0, 6.0, 4.0, 3.0, 5.0, 2.0]);
     let mut m = Model::new();
     let take = m.add_vars(6, |_| Var::binary());
@@ -95,16 +95,16 @@ fn test_log_lines_reach_the_observer_and_stdout_stays_quiet() {
 
 #[test]
 fn test_improving_solutions_arrive_feasible_and_improving() {
-    let lp = assignment(30, 12, 7, 0.0).lp;
+    let program = assignment(30, 12, 7, 0.0).program;
     let mut seen = Seen::default();
-    let mut solver = Solver::new(Highs::new(), lp.clone()).unwrap();
+    let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let solved = solver
         .solve(Request::new().time_limit(Duration::from_secs(20)).observer(&mut seen))
         .unwrap();
     assert!(!seen.improved.is_empty());
     for (objective, values) in &seen.improved {
-        assert!(lp.max_violation(values) <= 1e-6);
-        assert!(close(lp.objective_value(values), *objective, 1e-9));
+        assert!(program.max_violation(values) <= 1e-6);
+        assert!(close(program.objective_value(values), *objective, 1e-9));
     }
     assert!(
         seen.improved.windows(2).all(|w| w[1].0 < w[0].0),
@@ -147,14 +147,14 @@ fn test_progress_arrives_about_once_per_interval() {
 
 #[test]
 fn test_stop_request_ends_a_hard_mip_early_with_its_incumbent() {
-    let lp = hard();
+    let program = hard();
     let stop = Arc::new(AtomicBool::new(false));
     let trigger = Arc::clone(&stop);
     let timer = thread::spawn(move || {
         thread::sleep(Duration::from_secs(1));
         trigger.store(true, Ordering::Release);
     });
-    let mut solver = Solver::new(Highs::new(), lp.clone()).unwrap();
+    let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let solved = solver
         .solve(Request::new().time_limit(Duration::from_secs(30)).stop(&stop))
         .unwrap();
@@ -175,7 +175,7 @@ fn test_stop_request_ends_a_hard_mip_early_with_its_incumbent() {
             solved.outcome
         );
     };
-    assert!(lp.max_violation(&best.values) <= 1e-6);
+    assert!(program.max_violation(&best.values) <= 1e-6);
     assert!(bound <= best.objective);
 }
 
@@ -233,8 +233,8 @@ impl Observer for Panicking {
 
 #[test]
 fn test_a_panicking_observer_panics_out_of_solve_and_leaves_highs_usable() {
-    let (lp, take) = knapsack();
-    let mut solver = Solver::new(Highs::new(), lp).unwrap();
+    let (program, take) = knapsack();
+    let mut solver = Solver::new(Highs::new(), program).unwrap();
     let caught = catch_unwind(AssertUnwindSafe(|| {
         solver.solve(Request::new().observer(&mut Panicking))
     }));
@@ -307,7 +307,7 @@ impl Callback<Highs> for Kinds {
     }
 }
 
-fn lp_problem() -> Lp {
+fn lp_problem() -> Program {
     let mut m = Model::new();
     let xs = m.add_vars(30, |_| Var::continuous().upper(10.0));
     for i in 0..30 {
@@ -379,8 +379,8 @@ fn test_ipm_poll_interrupts_an_lp() {
 
 #[test]
 fn test_mip_kinds_fire_progress_solutions_queries_and_cut_pool() {
-    let lp = assignment(30, 12, 7, 0.0).lp;
-    let mut solver = Solver::new(Highs::new(), lp).unwrap();
+    let program = assignment(30, 12, 7, 0.0).program;
+    let mut solver = Solver::new(Highs::new(), program).unwrap();
     let mut kinds = Kinds::default();
     let solved = solver
         .solve_with(Request::new().time_limit(Duration::from_secs(20)), &mut kinds)
@@ -409,9 +409,9 @@ fn test_mip_kinds_fire_progress_solutions_queries_and_cut_pool() {
 
 #[test]
 fn test_a_supplied_solution_becomes_the_first_incumbent() {
-    let (lp, take) = knapsack();
+    let (program, take) = knapsack();
     // HiGHS finds the optimum once; a second solve is handed it at the first query.
-    let optimum = Solver::new(Highs::new(), lp.clone())
+    let optimum = Solver::new(Highs::new(), program.clone())
         .unwrap()
         .solve(Request::new())
         .unwrap()
@@ -423,7 +423,7 @@ fn test_a_supplied_solution_becomes_the_first_incumbent() {
         presolve: Some(Switch::Off),
         ..HighsOptions::default()
     };
-    let mut solver = Solver::new(Highs::with_options(options), lp).unwrap();
+    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
     let mut kinds = Kinds {
         supply: Some(values.raw.clone()),
         ..Kinds::default()
@@ -442,12 +442,12 @@ fn test_a_supplied_solution_becomes_the_first_incumbent() {
 
 #[test]
 fn test_a_partial_solution_is_repaired_into_an_incumbent() {
-    let (lp, take) = knapsack();
+    let (program, take) = knapsack();
     let options = HighsOptions {
         presolve: Some(Switch::Off),
         ..HighsOptions::default()
     };
-    let mut solver = Solver::new(Highs::with_options(options), lp).unwrap();
+    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
     let partial = vec![(take[0], 1.0), (take[1], 1.0)];
     let mut kinds = Kinds {
         supply_partial: Some(partial),
@@ -464,12 +464,12 @@ fn test_a_partial_solution_is_repaired_into_an_incumbent() {
 
 #[test]
 fn test_a_wrong_solution_is_refused_before_highs_sees_it() {
-    let (lp, _) = knapsack();
+    let (program, _) = knapsack();
     let options = HighsOptions {
         presolve: Some(Switch::Off),
         ..HighsOptions::default()
     };
-    let mut solver = Solver::new(Highs::with_options(options), lp).unwrap();
+    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
     let mut kinds = Kinds {
         supply: Some(vec![1.0; 3]),
         ..Kinds::default()
@@ -538,10 +538,10 @@ fn test_poll_context_reports_mip_progress_in_generic_terms() {
 
 #[test]
 fn test_offset_reaches_every_reported_objective_and_bound() {
-    let shifted = assignment(30, 12, 7, 1000.0).lp;
-    let plain = assignment(30, 12, 7, 0.0).lp;
-    let solve = |lp: Lp, seen: &mut Seen| {
-        Solver::new(Highs::new(), lp)
+    let shifted = assignment(30, 12, 7, 1000.0).program;
+    let plain = assignment(30, 12, 7, 0.0).program;
+    let solve = |program: Program, seen: &mut Seen| {
+        Solver::new(Highs::new(), program)
             .unwrap()
             .solve(
                 Request::new()
@@ -610,7 +610,7 @@ impl Callback<Highs> for Nested {
 
 #[test]
 fn test_a_solve_nested_in_a_callback_gets_its_own_callbacks() {
-    let mut solver = Solver::new(Highs::new(), assignment(30, 12, 7, 0.0).lp).unwrap();
+    let mut solver = Solver::new(Highs::new(), assignment(30, 12, 7, 0.0).program).unwrap();
     let mut nested = Nested::default();
     let solved = solver.solve_with(Request::new(), &mut nested).unwrap();
     let inner = nested.inner.unwrap();

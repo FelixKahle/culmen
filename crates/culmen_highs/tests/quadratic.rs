@@ -12,8 +12,8 @@ use std::ffi::CString;
 use std::time::Duration;
 
 use culmen_core::{
-    Backend, Bounds, Col, Events, Linear, LoadError, Lp, LpColumn, LpPlan, Model, ModelClass, Outcome, Request, Sense,
-    Solution, Solved, Solver, StopReason, TiVec, Var,
+    Backend, Bounds, Col, Events, Linear, LoadError, Model, ModelClass, Outcome, Program, ProgramColumn, ProgramPlan,
+    Request, Sense, Solution, Solved, Solver, StopReason, TiVec, Var,
 };
 use culmen_highs::{Highs, HighsError, UnsoundQp};
 use culmen_testing::reference::close;
@@ -21,14 +21,18 @@ use culmen_testing::strategy::small_qp;
 use proptest::prelude::*;
 
 /// The optimum HiGHS finds, which the test expects to exist.
-fn optimum(lp: &Lp) -> Solution {
-    let mut solver = Solver::new(Highs::new(), lp.clone()).unwrap();
+fn optimum(program: &Program) -> Solution {
+    let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let solved = solver.solve(Request::new()).unwrap();
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!("expected an optimum, got {solved:?}")
     };
-    assert!(lp.max_violation(&solution.values) <= 1e-7, "{solution:?}");
-    assert!(close(lp.objective_value(&solution.values), solution.objective, 1e-7));
+    assert!(program.max_violation(&solution.values) <= 1e-7, "{solution:?}");
+    assert!(close(
+        program.objective_value(&solution.values),
+        solution.objective,
+        1e-7
+    ));
     solution
 }
 
@@ -45,9 +49,9 @@ fn test_squared_distance_is_least_at_its_centre() {
     let x = m.add_var(Var::free());
     let y = m.add_var(Var::free());
     m.minimize((x - 1) * (x - 1) + (y - 2) * (y - 2));
-    let lp = m.build().unwrap();
-    assert_eq!(lp.class(), ModelClass::Qp);
-    assert_point(&optimum(&lp), 0.0, &[1.0, 2.0]);
+    let program = m.build().unwrap();
+    assert_eq!(program.class(), ModelClass::Qp);
+    assert_point(&optimum(&program), 0.0, &[1.0, 2.0]);
 }
 
 #[test]
@@ -82,9 +86,9 @@ fn test_a_square_and_a_cross_term_reach_highs_at_their_written_weight() {
     m.minimize(x * x + x * y + y * y - 3.0 * x);
     assert_point(&optimum(&m.build().unwrap()), -3.0, &[2.0, -1.0]);
 
-    let mut plan = LpPlan::new();
-    let x = plan.col(LpColumn::continuous(-3.0, Bounds::FREE));
-    let y = plan.col(LpColumn::continuous(0.0, Bounds::FREE));
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(-3.0, Bounds::FREE));
+    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
     plan.quadratic = vec![(y, y, 1.0), (y, x, 0.5), (x, x, 1.0), (x, y, 0.5)];
     assert_point(&optimum(&plan.build().unwrap()), -3.0, &[2.0, -1.0]);
 }
@@ -98,10 +102,10 @@ fn test_a_linear_program_solves_as_before() {
     m.add_constraint((x + y).leq(4));
     m.add_constraint((x + 3 * y).leq(6));
     m.maximize(3 * x + 2 * y);
-    let lp = m.build().unwrap();
-    assert_eq!(lp.class(), ModelClass::Lp);
-    assert!(lp.quadratic().is_empty());
-    assert_point(&optimum(&lp), 12.0, &[4.0, 0.0]);
+    let program = m.build().unwrap();
+    assert_eq!(program.class(), ModelClass::Lp);
+    assert!(program.quadratic().is_empty());
+    assert_point(&optimum(&program), 12.0, &[4.0, 0.0]);
 }
 
 #[test]
@@ -110,10 +114,10 @@ fn test_a_qp_with_bounds_alone_leaves_its_starting_point() {
     // clamped into the bounds, here the origin, and reports it optimal after no iteration although the gradient
     // there, -1 on x3, points into the box. Its optimum is x2 = 20/51, x3 = 1, at -859/1020: the minimum of
     // 2.55·x2² - 2·x2 - 0.45, where the gradient is (40/51, 1, 0, 0.1 - 40/51), pointing out of the box.
-    let mut plan = LpPlan::new();
+    let mut plan = ProgramPlan::new();
     let x: Vec<Col> = [0.0, 0.0, 0.0, -1.0]
         .into_iter()
-        .map(|cost| plan.col(LpColumn::continuous(cost, Bounds::new(0.0, 1.0).unwrap())))
+        .map(|cost| plan.col(ProgramColumn::continuous(cost, Bounds::new(0.0, 1.0).unwrap())))
         .collect();
     plan.quadratic = vec![
         (x[0], x[0], 2.05),
@@ -137,11 +141,11 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
     // Found by the property test below. HiGHS 1.15 reports this QP optimal at about 34.27 with a relative
     // primal-dual objective error near 1, while the boxes' midpoint (1.5, -1, 0, -2) is feasible at 14.99. The
     // optimum, from its KKT conditions in exact arithmetic, is about 6.3397 at (2.2599, 0, -0.3997, -2.3602).
-    let mut plan = LpPlan::new();
+    let mut plan = ProgramPlan::new();
     let boxes = [(0.0, 3.0, 0.0), (-2.0, 0.0, -5.0), (-1.0, 1.0, 0.0), (-3.0, -1.0, -2.0)];
     let x: Vec<Col> = boxes
         .into_iter()
-        .map(|(lower, upper, cost)| plan.col(LpColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
+        .map(|(lower, upper, cost)| plan.col(ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
         .collect();
     let exactly_12 = Bounds::new(12.0, 12.0).unwrap();
     plan.row(exactly_12, [(x[0], 2.0), (x[1], -3.0), (x[2], -1.0), (x[3], -3.0)]);
@@ -180,11 +184,11 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
 fn test_a_bounded_qp_reported_unbounded_is_refused() {
     // Found by the property test below. HiGHS 1.15 reports this QP unbounded although every column lies in a
     // finite box, where a continuous objective is bounded.
-    let mut plan = LpPlan::new();
+    let mut plan = ProgramPlan::new();
     let boxes = [(0.0, 2.0, 0.0), (-2.0, 2.0, -3.0), (1.0, 5.0, -2.0), (-1.0, 1.0, 0.0)];
     let x: Vec<Col> = boxes
         .into_iter()
-        .map(|(lower, upper, cost)| plan.col(LpColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
+        .map(|(lower, upper, cost)| plan.col(ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
         .collect();
     plan.row(Bounds::new(-1.0, 0.0).unwrap(), [(x[1], -2.0), (x[3], -1.0)]);
     plan.quadratic = vec![
@@ -198,19 +202,22 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
         (x[2], x[3], 3.0),
         (x[3], x[3], 5.05),
     ];
-    let lp = plan.build().unwrap();
-    match Solver::new(Highs::new(), lp.clone()).unwrap().solve(Request::new()) {
+    let program = plan.build().unwrap();
+    match Solver::new(Highs::new(), program.clone())
+        .unwrap()
+        .solve(Request::new())
+    {
         Ok(Solved {
             outcome: Outcome::Optimal(solution),
             ..
-        }) => assert!(lp.max_violation(&solution.values) <= 1e-6),
+        }) => assert!(program.max_violation(&solution.values) <= 1e-6),
         Err(HighsError::UnsoundQp(UnsoundQp::UnboundedInABox)) => {}
         other => panic!("{other:?}"),
     }
 }
 
 /// min (x - 0.4)² + n with n integer in 0..=3.
-fn miqp() -> Lp {
+fn miqp() -> Program {
     let mut m = Model::new();
     let x = m.add_var(Var::free());
     let n = m.add_var(Var::integer().upper(3));
@@ -220,9 +227,9 @@ fn miqp() -> Lp {
 
 #[test]
 fn test_a_miqp_is_refused_before_highs_sees_it() {
-    let lp = miqp();
-    assert_eq!(lp.class(), ModelClass::Miqp);
-    let error = Solver::new(Highs::new(), lp).unwrap_err();
+    let program = miqp();
+    assert_eq!(program.class(), ModelClass::Miqp);
+    let error = Solver::new(Highs::new(), program).unwrap_err();
     assert_eq!(
         error,
         LoadError::Unsupported {
@@ -285,10 +292,10 @@ fn test_a_qp_solve_reports_its_log_alone() {
     assert_eq!(kinds.0, Events::LOG);
 }
 
-/// The LP written to a file, read by HiGHS's own LP-file reader and solved there: its objective value.
-fn solve_lp_file(lp: &Lp) -> f64 {
+/// The program written to a file, read by HiGHS's own LP-file reader and solved there: its objective value.
+fn solve_lp_file(program: &Program) -> f64 {
     let path = std::env::temp_dir().join(format!("culmen-quadratic-{}.lp", std::process::id()));
-    std::fs::write(&path, lp.to_lp_string()).unwrap();
+    std::fs::write(&path, program.to_lp_string()).unwrap();
     let c_path = CString::new(path.to_str().unwrap()).unwrap();
     // SAFETY: the instance is created here, used only on this thread, and destroyed before the block ends; the path
     // is a NUL-terminated string HiGHS reads during the call; the option name is a NUL-terminated literal.
@@ -313,32 +320,39 @@ fn test_highs_reads_the_lp_file_of_a_qp_as_the_same_problem() {
     let y = m.add_var(Var::continuous().upper(3).name("y"));
     m.add_constraint((x + 2 * y).geq(1));
     m.minimize(x * x + x * y + 2.0 * y * y - 3.0 * x + 1.5);
-    let lp = m.build().unwrap();
+    let program = m.build().unwrap();
     assert_eq!(
-        lp.to_lp_string(),
+        program.to_lp_string(),
         "Minimize\n obj: -3 x + [ 2 x ^ 2 + 2 x * y + 4 y ^ 2 ] / 2 + 1.5\nSubject To\n r0: 1 x + 2 y >= 1\n\
          Bounds\n x free\n 0 <= y <= 3\nEnd\n"
     );
-    let file = solve_lp_file(&lp);
-    assert!(close(file, optimum(&lp).objective, 1e-7), "the file solves to {file}");
+    let file = solve_lp_file(&program);
+    assert!(
+        close(file, optimum(&program).objective, 1e-7),
+        "the file solves to {file}"
+    );
 
     m.set_objective(Sense::Maximize, -(x * x) - 4.0 * y);
-    let lp = m.build().unwrap();
-    let file = solve_lp_file(&lp);
-    assert!(close(file, optimum(&lp).objective, 1e-7), "the file solves to {file}");
+    let program = m.build().unwrap();
+    let file = solve_lp_file(&program);
+    assert!(
+        close(file, optimum(&program).objective, 1e-7),
+        "the file solves to {file}"
+    );
 }
 
-/// The value of `lp`'s objective at `values`, in the direction it is optimized: lower is better.
-fn loss(lp: &Lp, values: &TiVec<Col, f64>) -> f64 {
-    match lp.sense() {
-        Sense::Minimize => lp.objective_value(values),
-        Sense::Maximize => -lp.objective_value(values),
+/// The value of `program`'s objective at `values`, in the direction it is optimized: lower is better.
+fn loss(program: &Program, values: &TiVec<Col, f64>) -> f64 {
+    match program.sense() {
+        Sense::Minimize => program.objective_value(values),
+        Sense::Maximize => -program.objective_value(values),
     }
 }
 
 /// A point at fractions of the way through each column's bounds.
-fn point_in_boxes(lp: &Lp, fractions: &[f64]) -> TiVec<Col, f64> {
-    lp.columns()
+fn point_in_boxes(program: &Program, fractions: &[f64]) -> TiVec<Col, f64> {
+    program
+        .columns()
         .iter()
         .zip(fractions)
         .map(|(c, t)| c.bounds.lower() + t * (c.bounds.upper() - c.bounds.lower()))
@@ -346,17 +360,18 @@ fn point_in_boxes(lp: &Lp, fractions: &[f64]) -> TiVec<Col, f64> {
 }
 
 /// A short projected gradient step from `values`, back into the bounds.
-fn gradient_step(lp: &Lp, values: &TiVec<Col, f64>) -> TiVec<Col, f64> {
-    let mut gradient: TiVec<Col, f64> = lp.columns().iter().map(|c| c.cost).collect();
-    for (i, j, q) in lp.quadratic().entries() {
+fn gradient_step(program: &Program, values: &TiVec<Col, f64>) -> TiVec<Col, f64> {
+    let mut gradient: TiVec<Col, f64> = program.columns().iter().map(|c| c.cost).collect();
+    for (i, j, q) in program.quadratic().entries() {
         gradient[i] += q * values[j];
         gradient[j] += q * values[i];
     }
-    let direction = match lp.sense() {
+    let direction = match program.sense() {
         Sense::Minimize => -1e-3,
         Sense::Maximize => 1e-3,
     };
-    lp.columns()
+    program
+        .columns()
         .iter_enumerated()
         .map(|(col, c)| (values[col] + direction * gradient[col]).clamp(c.bounds.lower(), c.bounds.upper()))
         .collect()
@@ -365,35 +380,35 @@ fn gradient_step(lp: &Lp, values: &TiVec<Col, f64>) -> TiVec<Col, f64> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
 
-    /// On random convex QPs HiGHS's optimum is feasible, valued as `Lp::objective_value` values it, and no worse
+    /// On random convex QPs HiGHS's optimum is feasible, valued as `Program::objective_value` values it, and no worse
     /// than any feasible point in the boxes nor than a projected gradient step from it. A run HiGHS fails, or whose
     /// optimum its own primal-dual objective error does not support, ends in a typed error, and one that does not
     /// terminate stops at its time limit.
     #[test]
     fn test_highs_qp_optimum_is_no_worse_than_feasible_points(
-        lp in small_qp(),
+        program in small_qp(),
         fractions in prop::collection::vec(prop::collection::vec(0.0..=1.0f64, 4), 8),
     ) {
-        let mut solver = Solver::new(Highs::new(), lp.clone()).unwrap();
+        let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
         // HiGHS 1.15's QP solver can fail to terminate on such a QP; the time limit ends it.
         let best = match solver.solve(Request::new().time_limit(Duration::from_secs(2))) {
             Ok(Solved { outcome: Outcome::Optimal(best), .. }) => best,
             Ok(Solved { outcome: Outcome::Stopped { reason: StopReason::TimeLimit, .. }, .. })
             | Err(HighsError::Run { .. } | HighsError::UnsoundQp(_)) => return Ok(()),
-            other => return Err(TestCaseError::fail(format!("{other:?} on {lp:?}"))),
+            other => return Err(TestCaseError::fail(format!("{other:?} on {program:?}"))),
         };
-        prop_assert!(lp.max_violation(&best.values) <= 1e-6, "{best:?}");
-        prop_assert!(close(lp.objective_value(&best.values), best.objective, 1e-7));
-        let at_best = loss(&lp, &best.values);
+        prop_assert!(program.max_violation(&best.values) <= 1e-6, "{best:?}");
+        prop_assert!(close(program.objective_value(&best.values), best.objective, 1e-7));
+        let at_best = loss(&program, &best.values);
         let tolerance = 1e-5 * at_best.abs().max(1.0);
-        let mut points: Vec<TiVec<Col, f64>> = fractions.iter().map(|f| point_in_boxes(&lp, f)).collect();
-        points.push(point_in_boxes(&lp, &[0.5; 4]));
-        for point in points.into_iter().filter(|p| lp.max_violation(p) == 0.0) {
-            prop_assert!(at_best <= loss(&lp, &point) + tolerance, "{best:?} loses to {point:?}");
+        let mut points: Vec<TiVec<Col, f64>> = fractions.iter().map(|f| point_in_boxes(&program, f)).collect();
+        points.push(point_in_boxes(&program, &[0.5; 4]));
+        for point in points.into_iter().filter(|p| program.max_violation(p) == 0.0) {
+            prop_assert!(at_best <= loss(&program, &point) + tolerance, "{best:?} loses to {point:?}");
         }
-        if lp.num_rows() == 0 {
-            let step = gradient_step(&lp, &best.values);
-            prop_assert!(at_best <= loss(&lp, &step) + tolerance, "{best:?} loses to its step {step:?}");
+        if program.num_rows() == 0 {
+            let step = gradient_step(&program, &best.values);
+            prop_assert!(at_best <= loss(&program, &step) + tolerance, "{best:?} loses to its step {step:?}");
         }
     }
 }

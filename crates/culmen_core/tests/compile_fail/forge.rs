@@ -1,17 +1,17 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! A checked value cannot be built around its constructor: neither an empty interval nor an LP whose numbers were
+//! A checked value cannot be built around its constructor: neither an empty interval nor a program whose numbers were
 //! never checked. Every field is given, so both refusals are the privacy check's.
 
-use culmen_core::{Bounds, Lp};
+use culmen_core::{Bounds, Program};
 
 fn empty() -> Bounds {
     Bounds { lower: 2.0, upper: 1.0 }
 }
 
-fn unchecked() -> Lp {
-    Lp {
+fn unchecked() -> Program {
+    Program {
         sense: Default::default(),
         offset: f64::NAN,
         columns: Default::default(),

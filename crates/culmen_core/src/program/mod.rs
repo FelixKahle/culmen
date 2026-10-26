@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The LP as data: a checked, immutable value with typed handles.
+//! The program as data: a checked, immutable value with typed handles.
 
 mod bounds;
 mod class;
@@ -20,7 +20,7 @@ use typed_index_collections::{TiSlice, TiVec};
 pub use bounds::{Bounds, Integrality, InvalidBounds, Sense};
 pub use class::{ModelClass, ModelClasses, ModelClassesIter};
 pub use ids::{Col, Cols, Row, Rows};
-pub use plan::{LpColumn, LpPlan, LpRow};
+pub use plan::{ProgramColumn, ProgramPlan, ProgramRow};
 pub use quad::{HessianEntries, QuadEntries, QuadObjective};
 pub(crate) use quad::{check_convex, merge_pairs};
 pub use row::{RowEntries, RowView};
@@ -29,35 +29,35 @@ pub use row::{RowEntries, RowView};
 /// `cost · x + Σ q · xᵢ · xⱼ + offset` over `x` with every column in its bounds, the integer columns whole, and
 /// every row's activity in its bounds.
 ///
-/// An `Lp` is built once, by value, from an [`LpPlan`] or a [`Model`](crate::Model), and every number in it was
+/// A `Program` is built once, by value, from a [`ProgramPlan`] or a [`Model`](crate::Model), and every number in it was
 /// checked then: costs, coefficients and the offset are finite, each row holds each column at most once, with a
 /// non-zero coefficient, and the quadratic part ([`QuadObjective`]) is canonical and passes the convexity check of
-/// [`Lp::CONVEXITY_TOLERANCE`]. Its constraints are linear; [`Lp::class`] names the kind of program it is. It is
-/// plain data a [`Backend`](crate::Backend) loads; it holds no solver state.
+/// [`Program::CONVEXITY_TOLERANCE`]. Its constraints are linear; [`Program::class`] names the kind of program it is. It
+/// is plain data a [`Backend`](crate::Backend) loads; it holds no solver state.
 ///
 /// ```
-/// use culmen_core::{Bounds, LpColumn, LpPlan, Sense, bounds};
+/// use culmen_core::{Bounds, ProgramColumn, ProgramPlan, Sense, bounds};
 ///
-/// let mut plan = LpPlan::new();
+/// let mut plan = ProgramPlan::new();
 /// plan.sense = Sense::Maximize;
-/// let x = plan.col(LpColumn::binary(5.0));
-/// let y = plan.col(LpColumn::binary(4.0));
+/// let x = plan.col(ProgramColumn::binary(5.0));
+/// let y = plan.col(ProgramColumn::binary(4.0));
 /// let r = plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0), (x, 0.0)]);
-/// let lp = plan.build()?;
-/// assert!(lp.is_mip());
-/// assert_eq!(lp.row(r).entries().collect::<Vec<_>>(), [(x, 1.0), (y, 1.0)]);
-/// # Ok::<(), culmen_core::LpError>(())
+/// let program = plan.build()?;
+/// assert!(program.is_mip());
+/// assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(x, 1.0), (y, 1.0)]);
+/// # Ok::<(), culmen_core::ProgramError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize),
-    serde(try_from = "LpPlan", into = "LpPlan")
+    serde(try_from = "ProgramPlan", into = "ProgramPlan")
 )]
-pub struct Lp {
+pub struct Program {
     sense: Sense,
     offset: f64,
-    columns: TiVec<Col, LpColumn>,
+    columns: TiVec<Col, ProgramColumn>,
     row_bounds: TiVec<Row, Bounds>,
     row_names: TiVec<Row, Option<String>>,
     /// Where each row's entries start in `entry_cols` and `entry_values`, with one more element at the end.
@@ -67,7 +67,7 @@ pub struct Lp {
     quadratic: QuadObjective,
 }
 
-/// The constraint matrix of an [`Lp`] in compressed row form: row `r`'s entries are
+/// The constraint matrix of a [`Program`] in compressed row form: row `r`'s entries are
 /// `cols[starts[r]..starts[r + 1]]` with `values` alike, sorted by column.
 #[derive(Clone, Copy, Debug)]
 pub struct RowMatrix<'a> {
@@ -79,11 +79,11 @@ pub struct RowMatrix<'a> {
     pub values: &'a [f64],
 }
 
-impl Lp {
+impl Program {
     /// The tolerance of the convexity check, relative to the largest Hessian value of each block.
     ///
     /// The Hessian `H` of the quadratic part (see [`QuadObjective`]) splits into blocks of columns joined by its
-    /// entries. An `Lp` is built only when, for every block, `s · H + δ · I` has a Cholesky factor in floating
+    /// entries. A `Program` is built only when, for every block, `s · H + δ · I` has a Cholesky factor in floating
     /// point, where `s` is `1` for minimizing and `-1` for maximizing and `δ` is this tolerance times the block's
     /// largest `|Hᵢⱼ|`. So every eigenvalue of `s · H` on a block is at least about `-δ`: the objective is convex
     /// for minimizing and concave for maximizing up to that tolerance and the factorization's rounding. A block
@@ -168,7 +168,7 @@ impl Lp {
 
     /// The columns' data, indexed by [`Col`].
     #[must_use]
-    pub fn columns(&self) -> &TiSlice<Col, LpColumn> {
+    pub fn columns(&self) -> &TiSlice<Col, ProgramColumn> {
         &self.columns
     }
 
@@ -182,7 +182,7 @@ impl Lp {
     ///
     /// # Panics
     ///
-    /// When the LP has no row `row`.
+    /// When the program has no row `row`.
     #[must_use]
     pub fn row(&self, row: Row) -> RowView<'_> {
         let range = self.row_starts[row.index()]..self.row_starts[row.index() + 1];
@@ -208,7 +208,7 @@ impl Lp {
     ///
     /// # Panics
     ///
-    /// When `values` holds fewer values than the LP has columns.
+    /// When `values` holds fewer values than the program has columns.
     #[must_use]
     pub fn objective_value(&self, values: &TiSlice<Col, f64>) -> f64 {
         let linear = self
@@ -223,7 +223,7 @@ impl Lp {
     ///
     /// # Panics
     ///
-    /// When `values` holds fewer values than the LP has columns.
+    /// When `values` holds fewer values than the program has columns.
     #[must_use]
     pub fn max_violation(&self, values: &TiSlice<Col, f64>) -> f64 {
         let columns = self.columns.iter_enumerated().map(|(col, c)| {
@@ -241,27 +241,27 @@ impl Lp {
         columns.chain(rows).fold(0.0, f64::max)
     }
 
-    /// Checks a plan and builds the LP from it.
+    /// Checks a plan and builds the program from it.
     ///
     /// The plan is accepted when its offset and costs are finite, every term names a column of the plan with a
     /// finite coefficient, in every row the coefficients of each column, added up in the order given, are finite,
     /// every quadratic term names columns of the plan with a finite coefficient, the coefficients of each unordered
     /// pair of columns, added up in the order given, are finite, and the quadratic part passes the convexity check
-    /// of [`Lp::CONVEXITY_TOLERANCE`] under the plan's sense.
+    /// of [`Program::CONVEXITY_TOLERANCE`] under the plan's sense.
     ///
     /// # Errors
     ///
-    /// As [`LpPlan::build`].
-    fn from_plan(plan: LpPlan) -> Result<Self, LpError> {
+    /// As [`ProgramPlan::build`].
+    fn from_plan(plan: ProgramPlan) -> Result<Self, ProgramError> {
         check_plan(&plan)?;
         Ok(Self::from_plan_unchecked(plan))
     }
 
-    /// Builds the LP from a plan [`Lp::from_plan`] accepts; a plan it refuses gives an unspecified LP, never
-    /// undefined behaviour.
-    pub(crate) fn from_plan_unchecked(plan: LpPlan) -> Self {
-        debug_assert_eq!(check_plan(&plan), Ok(()), "Lp: an unchecked plan is refused");
-        let mut lp = Self {
+    /// Builds the program from a plan [`Program::from_plan`] accepts; a plan it refuses gives an unspecified program,
+    /// never undefined behaviour.
+    pub(crate) fn from_plan_unchecked(plan: ProgramPlan) -> Self {
+        debug_assert_eq!(check_plan(&plan), Ok(()), "Program: an unchecked plan is refused");
+        let mut program = Self {
             sense: plan.sense,
             offset: plan.offset,
             row_bounds: TiVec::with_capacity(plan.rows.len()),
@@ -272,15 +272,15 @@ impl Lp {
             columns: plan.columns,
             quadratic: QuadObjective::from_terms(plan.quadratic),
         };
-        lp.row_starts.push(0);
+        program.row_starts.push(0);
         for data in plan.rows {
-            lp.push_row(data);
+            program.push_row(data);
         }
-        lp
+        program
     }
 
     /// Appends a row with its terms sorted, merged and stripped of zeros.
-    fn push_row(&mut self, data: LpRow) {
+    fn push_row(&mut self, data: ProgramRow) {
         for (col, value) in merge_terms(data.terms) {
             if value != 0.0 {
                 self.entry_cols.push(col);
@@ -293,40 +293,40 @@ impl Lp {
     }
 }
 
-/// Checks a plan as [`Lp::from_plan`] states.
+/// Checks a plan as [`Program::from_plan`] states.
 ///
 /// # Errors
 ///
-/// [`LpError`] naming the first non-finite offset, cost or coefficient, or the first term whose column the plan
+/// [`ProgramError`] naming the first non-finite offset, cost or coefficient, or the first term whose column the plan
 /// does not have.
-fn check_plan(plan: &LpPlan) -> Result<(), LpError> {
+fn check_plan(plan: &ProgramPlan) -> Result<(), ProgramError> {
     if !plan.offset.is_finite() {
-        return Err(LpError::NonFiniteOffset { value: plan.offset });
+        return Err(ProgramError::NonFiniteOffset { value: plan.offset });
     }
     if let Some((col, c)) = plan.columns.iter_enumerated().find(|(_, c)| !c.cost.is_finite()) {
-        return Err(LpError::NonFiniteCost { col, value: c.cost });
+        return Err(ProgramError::NonFiniteCost { col, value: c.cost });
     }
     for (row, data) in plan.rows.iter_enumerated() {
         check_terms(row, &data.terms, plan.columns.len())?;
         let merged = merge_terms(data.terms.clone());
         if let Some(&(col, value)) = merged.iter().find(|(_, value)| !value.is_finite()) {
-            return Err(LpError::NonFiniteCoefficient { row, col, value });
+            return Err(ProgramError::NonFiniteCoefficient { row, col, value });
         }
     }
     check_quadratic(plan)
 }
 
-/// Checks a plan's quadratic terms as [`Lp::from_plan`] states.
+/// Checks a plan's quadratic terms as [`Program::from_plan`] states.
 ///
 /// # Errors
 ///
-/// [`LpError::UnknownQuadColumn`] or [`LpError::NonFiniteQuadCoefficient`] for the first defective term, as given
-/// or merged, or [`LpError::NonConvexObjective`].
-fn check_quadratic(plan: &LpPlan) -> Result<(), LpError> {
+/// [`ProgramError::UnknownQuadColumn`] or [`ProgramError::NonFiniteQuadCoefficient`] for the first defective term, as
+/// given or merged, or [`ProgramError::NonConvexObjective`].
+fn check_quadratic(plan: &ProgramPlan) -> Result<(), ProgramError> {
     let num_cols = plan.columns.len();
     plan.quadratic.iter().try_for_each(|&(first, second, value)| {
         match [first, second].into_iter().find(|col| col.index() >= num_cols) {
-            Some(col) => Err(LpError::UnknownQuadColumn { col }),
+            Some(col) => Err(ProgramError::UnknownQuadColumn { col }),
             None => finite_quad(first, second, value),
         }
     })?;
@@ -334,17 +334,18 @@ fn check_quadratic(plan: &LpPlan) -> Result<(), LpError> {
         .into_iter()
         .try_for_each(|(first, second, value)| finite_quad(first, second, value))?;
     let quadratic = QuadObjective::from_terms(plan.quadratic.iter().copied());
-    check_convex(plan.sense, &quadratic, num_cols).map_err(|col| LpError::NonConvexObjective { sense: plan.sense, col })
+    check_convex(plan.sense, &quadratic, num_cols)
+        .map_err(|col| ProgramError::NonConvexObjective { sense: plan.sense, col })
 }
 
 /// # Errors
 ///
-/// [`LpError::NonFiniteQuadCoefficient`] when `value` is NaN or infinite.
-fn finite_quad(first: Col, second: Col, value: f64) -> Result<(), LpError> {
+/// [`ProgramError::NonFiniteQuadCoefficient`] when `value` is NaN or infinite.
+fn finite_quad(first: Col, second: Col, value: f64) -> Result<(), ProgramError> {
     if value.is_finite() {
         Ok(())
     } else {
-        Err(LpError::NonFiniteQuadCoefficient { first, second, value })
+        Err(ProgramError::NonFiniteQuadCoefficient { first, second, value })
     }
 }
 
@@ -352,14 +353,14 @@ fn finite_quad(first: Col, second: Col, value: f64) -> Result<(), LpError> {
 ///
 /// # Errors
 ///
-/// [`LpError::UnknownColumn`] or [`LpError::NonFiniteCoefficient`] for the first defective term.
-fn check_terms(row: Row, terms: &[(Col, f64)], num_cols: usize) -> Result<(), LpError> {
+/// [`ProgramError::UnknownColumn`] or [`ProgramError::NonFiniteCoefficient`] for the first defective term.
+fn check_terms(row: Row, terms: &[(Col, f64)], num_cols: usize) -> Result<(), ProgramError> {
     for &(col, value) in terms {
         if col.index() >= num_cols {
-            return Err(LpError::UnknownColumn { row, col });
+            return Err(ProgramError::UnknownColumn { row, col });
         }
         if !value.is_finite() {
-            return Err(LpError::NonFiniteCoefficient { row, col, value });
+            return Err(ProgramError::NonFiniteCoefficient { row, col, value });
         }
     }
     Ok(())
@@ -379,37 +380,37 @@ pub(crate) fn merge_terms(mut terms: Vec<(Col, f64)>) -> Vec<(Col, f64)> {
     merged
 }
 
-impl From<Lp> for LpPlan {
-    fn from(lp: Lp) -> Self {
-        let rows = lp
+impl From<Program> for ProgramPlan {
+    fn from(program: Program) -> Self {
+        let rows = program
             .rows()
-            .map(|row| LpRow {
-                bounds: lp.row_bounds[row],
-                terms: lp.row(row).entries().collect(),
-                name: lp.row_names[row].clone(),
+            .map(|row| ProgramRow {
+                bounds: program.row_bounds[row],
+                terms: program.row(row).entries().collect(),
+                name: program.row_names[row].clone(),
             })
             .collect();
         Self {
-            sense: lp.sense,
-            offset: lp.offset,
-            columns: lp.columns,
+            sense: program.sense,
+            offset: program.offset,
+            columns: program.columns,
             rows,
-            quadratic: lp.quadratic.entries().collect(),
+            quadratic: program.quadratic.entries().collect(),
         }
     }
 }
 
-impl TryFrom<LpPlan> for Lp {
-    type Error = LpError;
+impl TryFrom<ProgramPlan> for Program {
+    type Error = ProgramError;
 
-    fn try_from(plan: LpPlan) -> Result<Self, LpError> {
+    fn try_from(plan: ProgramPlan) -> Result<Self, ProgramError> {
         plan.build()
     }
 }
 
-/// Why an [`LpPlan`] could not be built.
+/// Why a [`ProgramPlan`] could not be built.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LpError {
+pub enum ProgramError {
     /// The objective offset is NaN or infinite.
     NonFiniteOffset {
         /// The offset given.
@@ -453,7 +454,7 @@ pub enum LpError {
         value: f64,
     },
     /// The quadratic part is not convex for minimizing, or not concave for maximizing, within
-    /// [`Lp::CONVEXITY_TOLERANCE`].
+    /// [`Program::CONVEXITY_TOLERANCE`].
     NonConvexObjective {
         /// The objective's sense.
         sense: Sense,
@@ -462,37 +463,51 @@ pub enum LpError {
     },
 }
 
-impl fmt::Display for LpError {
+impl fmt::Display for ProgramError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NonFiniteOffset { value } => write!(f, "Lp: the objective offset {value} is not finite"),
-            Self::NonFiniteCost { col, value } => write!(f, "Lp: the cost {value} of {col:?} is not finite"),
+            Self::NonFiniteOffset { value } => write!(f, "Program: the objective offset {value} is not finite"),
+            Self::NonFiniteCost { col, value } => write!(f, "Program: the cost {value} of {col:?} is not finite"),
             Self::NonFiniteCoefficient { row, col, value } => {
-                write!(f, "Lp: the coefficient {value} of {col:?} in {row:?} is not finite")
+                write!(
+                    f,
+                    "Program: the coefficient {value} of {col:?} in {row:?} is not finite"
+                )
             }
-            Self::UnknownColumn { row, col } => write!(f, "Lp: {row:?} names {col:?}, which the plan does not have"),
+            Self::UnknownColumn { row, col } => {
+                write!(f, "Program: {row:?} names {col:?}, which the plan does not have")
+            }
             Self::UnknownQuadColumn { col } => {
-                write!(f, "Lp: a quadratic term names {col:?}, which the plan does not have")
+                write!(
+                    f,
+                    "Program: a quadratic term names {col:?}, which the plan does not have"
+                )
             }
             Self::NonFiniteQuadCoefficient { first, second, value } => {
                 write!(
                     f,
-                    "Lp: the quadratic coefficient {value} of {first:?} · {second:?} is not finite"
+                    "Program: the quadratic coefficient {value} of {first:?} · {second:?} is not finite"
                 )
             }
             Self::NonConvexObjective {
                 sense: Sense::Minimize,
                 col,
-            } => write!(f, "Lp: the quadratic objective is not convex in the block of {col:?}"),
+            } => write!(
+                f,
+                "Program: the quadratic objective is not convex in the block of {col:?}"
+            ),
             Self::NonConvexObjective {
                 sense: Sense::Maximize,
                 col,
-            } => write!(f, "Lp: the quadratic objective is not concave in the block of {col:?}"),
+            } => write!(
+                f,
+                "Program: the quadratic objective is not concave in the block of {col:?}"
+            ),
         }
     }
 }
 
-impl core::error::Error for LpError {}
+impl core::error::Error for ProgramError {}
 
 #[cfg(test)]
 mod tests {
@@ -500,7 +515,7 @@ mod tests {
 
     use proptest::prelude::*;
 
-    use super::{Bounds, Col, Lp, LpColumn, LpPlan, LpRow};
+    use super::{Bounds, Col, Program, ProgramColumn, ProgramPlan, ProgramRow};
 
     /// A number from a small finite range, a huge one whose sums overflow, an infinity or NaN.
     fn number() -> impl Strategy<Value = f64> {
@@ -513,8 +528,8 @@ mod tests {
 
     /// A plan of up to three columns and three rows whose terms name up to four columns, minimizing an objective
     /// with up to three squares of up to four columns.
-    fn plan() -> impl Strategy<Value = LpPlan> {
-        let row = prop::collection::vec((0..4usize, number()), 0..5).prop_map(|terms| LpRow {
+    fn plan() -> impl Strategy<Value = ProgramPlan> {
+        let row = prop::collection::vec((0..4usize, number()), 0..5).prop_map(|terms| ProgramRow {
             bounds: Bounds::FREE,
             terms: terms.into_iter().map(|(i, value)| (Col::new(i), value)).collect(),
             name: None,
@@ -522,25 +537,25 @@ mod tests {
         let columns = prop::collection::vec(number(), 0..4);
         let squares = prop::collection::vec((0..4usize, number()), 0..4);
         let parts = (number(), columns, prop::collection::vec(row, 0..4), squares);
-        parts.prop_map(|(offset, costs, rows, squares)| LpPlan {
+        parts.prop_map(|(offset, costs, rows, squares)| ProgramPlan {
             offset,
             columns: costs
                 .into_iter()
-                .map(|cost| LpColumn::continuous(cost, Bounds::FREE))
+                .map(|cost| ProgramColumn::continuous(cost, Bounds::FREE))
                 .collect(),
             rows: rows.into(),
             quadratic: squares
                 .into_iter()
                 .map(|(i, q)| (Col::new(i), Col::new(i), q))
                 .collect(),
-            ..LpPlan::new()
+            ..ProgramPlan::new()
         })
     }
 
-    /// Whether the plan meets `Lp::from_plan`'s precondition, read from its prose: each row's coefficients are
+    /// Whether the plan meets `Program::from_plan`'s precondition, read from its prose: each row's coefficients are
     /// summed per column in a map, in the order given, and so are the squares' coefficients, whose sums a convex
     /// objective of squares alone has non-negative.
-    fn accepted(plan: &LpPlan) -> bool {
+    fn accepted(plan: &ProgramPlan) -> bool {
         let num_cols = plan.columns.len();
         let finite = plan.offset.is_finite() && plan.columns.iter().all(|c| c.cost.is_finite());
         let rows_ok = plan
@@ -568,9 +583,9 @@ mod tests {
         #[test]
         fn test_from_plan_is_from_plan_unchecked_on_accepted_plans(plan in plan()) {
             if accepted(&plan) {
-                prop_assert_eq!(Lp::from_plan(plan.clone()), Ok(Lp::from_plan_unchecked(plan)));
+                prop_assert_eq!(Program::from_plan(plan.clone()), Ok(Program::from_plan_unchecked(plan)));
             } else {
-                prop_assert!(Lp::from_plan(plan).is_err());
+                prop_assert!(Program::from_plan(plan).is_err());
             }
         }
     }

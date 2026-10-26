@@ -104,7 +104,7 @@ pub enum ModelError {
         value: f64,
     },
     /// The quadratic objective is not convex to minimize, or not concave to maximize, within
-    /// [`Lp::CONVEXITY_TOLERANCE`](crate::Lp::CONVEXITY_TOLERANCE).
+    /// [`Program::CONVEXITY_TOLERANCE`](crate::Program::CONVEXITY_TOLERANCE).
     NonConvexObjective {
         /// The objective's sense.
         sense: Sense,

@@ -4,7 +4,7 @@
 //! The HiGHS backend of culmen: HiGHS 1.15 through `highs-sys`, with every HiGHS callback as a typed, safe
 //! context, typed options, and every status.
 //!
-//! [`Highs`] implements [`Backend`]: load an [`Lp`], solve it under [`Settings`], and HiGHS's callbacks reach a
+//! [`Highs`] implements [`Backend`]: load a [`Program`], solve it under [`Settings`], and HiGHS's callbacks reach a
 //! [`Callback<Highs>`](culmen_core::Callback) as the generic events of culmen_core, each with a HiGHS context type
 //! that offers what HiGHS reports beyond the generic traits ([`callback`] maps every kind). The generic path, a
 //! [`Request`](culmen_core::Request) with a stop and an observer, works unchanged.
@@ -62,8 +62,8 @@ pub use callback::{
     MipData, PollSource, QueryOrigin, ReducedCol, RootNodePoint,
 };
 use culmen_core::{
-    Backend, Callback, Events, Lp, ModelClass, ModelClasses, Outcome, QuadObjective, Sense, Settings, Solution, Solved,
-    StopReason, TiSlice, Unsupported,
+    Backend, Callback, Events, ModelClass, ModelClasses, Outcome, Program, QuadObjective, Sense, Settings, Solution,
+    Solved, StopReason, TiSlice, Unsupported,
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
 pub use options::{
@@ -99,10 +99,10 @@ pub struct Highs {
     loaded: Option<Loaded>,
 }
 
-/// What the backend keeps of the loaded LP.
+/// What the backend keeps of the loaded program.
 #[derive(Debug)]
 pub(crate) struct Loaded {
-    /// The cost of each column, one per column of the LP.
+    /// The cost of each column, one per column of the program.
     pub(crate) costs: Vec<f64>,
     pub(crate) quadratic: QuadObjective,
     /// Whether every column has two finite bounds.
@@ -113,17 +113,17 @@ pub(crate) struct Loaded {
 }
 
 impl Loaded {
-    fn of(lp: &Lp) -> Self {
+    fn of(program: &Program) -> Self {
         Self {
-            costs: lp.columns().iter().map(|c| c.cost).collect(),
-            quadratic: lp.quadratic().clone(),
-            bounded: lp
+            costs: program.columns().iter().map(|c| c.cost).collect(),
+            quadratic: program.quadratic().clone(),
+            bounded: program
                 .columns()
                 .iter()
                 .all(|c| c.bounds.lower().is_finite() && c.bounds.upper().is_finite()),
-            is_mip: lp.is_mip(),
-            offset: lp.offset(),
-            sense: lp.sense(),
+            is_mip: program.is_mip(),
+            offset: program.offset(),
+            sense: program.sense(),
         }
     }
 
@@ -135,7 +135,7 @@ impl Loaded {
     ///
     /// # Panics
     ///
-    /// When `values` has fewer values than the LP has columns.
+    /// When `values` has fewer values than the program has columns.
     pub(crate) fn objective(&self, values: &[f64]) -> f64 {
         let linear = self.costs.iter().zip(values).map(|(c, x)| c * x).sum::<f64>();
         self.offset + linear + self.quadratic.value(TiSlice::from_ref(values))
@@ -361,7 +361,7 @@ fn run_hooked(instance: &mut Instance, loaded: &Loaded, callback: &mut dyn Callb
         callback,
         wanted,
         start,
-        lp: loaded,
+        program: loaded,
         panic: None,
         last_error: None,
         offered: None,
@@ -452,10 +452,10 @@ impl Backend for Highs {
     /// MIQP problems with HiGHS").
     const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp, ModelClass::Qp]);
 
-    fn load(&mut self, lp: &Lp) -> Result<(), HighsError> {
+    fn load(&mut self, program: &Program) -> Result<(), HighsError> {
         self.loaded = None;
-        self.instance.pass(lp)?;
-        self.loaded = Some(Loaded::of(lp));
+        self.instance.pass(program)?;
+        self.loaded = Some(Loaded::of(program));
         Ok(())
     }
 
@@ -536,10 +536,10 @@ mod tests {
         let x = m.add_var(culmen_core::Var::continuous());
         let y = m.add_var(culmen_core::Var::integer());
         m.minimize(x * x + 2.0 * x * y + y * y + 3.0 * x - y + 2.0);
-        let lp = m.build().unwrap();
+        let program = m.build().unwrap();
         let values = [1.0, 2.0];
-        assert_eq!(Loaded::of(&lp).objective(&values), 12.0);
-        assert_eq!(lp.objective_value(TiSlice::from_ref(&values)), 12.0);
+        assert_eq!(Loaded::of(&program).objective(&values), 12.0);
+        assert_eq!(program.objective_value(TiSlice::from_ref(&values)), 12.0);
     }
 
     #[test]
