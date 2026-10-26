@@ -221,6 +221,10 @@ pub(crate) unsafe extern "C" fn trampoline(
         return;
     }
     let Some(kind) = Kind::from_raw(kind) else { return };
+    debug_assert!(
+        user.cast::<Mutex<Hook<'_>>>().is_aligned(),
+        "trampoline: the callback data is not a run's hook"
+    );
     // SAFETY: `user` is not null, so it is the run's `Mutex<Hook>`, alive until the callback is uninstalled after
     // `Highs_run` returns; a shared reference to a `Mutex` is what any thread may hold.
     let shared = unsafe { &*user.cast::<Mutex<Hook<'_>>>() };
@@ -247,6 +251,10 @@ pub(crate) unsafe extern "C" fn trampoline(
     INSIDE.set(outer);
     drop(hook);
     if stop && matches!(kind, Kind::Poll(_)) {
+        debug_assert!(
+            !data_in.is_null(),
+            "trampoline: HiGHS passed no input record to an interrupt poll"
+        );
         // SAFETY: at an interrupt kind `data_in` is the call's valid input record, which HiGHS reads after the
         // callback returns.
         unsafe { (&raw mut (*data_in).user_interrupt).write(1) };
@@ -263,10 +271,11 @@ struct Call {
 
 /// Reads one field of the callback record.
 macro_rules! field {
-    ($call:expr, $name:ident) => {
+    ($call:expr, $name:ident) => {{
+        debug_assert!(!$call.out.is_null(), "field: HiGHS passed no output record");
         // SAFETY: `out` is valid for the call, and the field is one HiGHS sets for this kind.
         unsafe { (&raw const (*$call.out).$name).read() }
-    };
+    }};
 }
 
 /// Builds the context of the call's kind and hands it to the callback.
@@ -356,6 +365,10 @@ unsafe fn log(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
 ///
 /// `call` is the user-solution kind of a call whose contract holds.
 unsafe fn heuristic(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
+    debug_assert!(
+        !call.data_in.is_null() && call.data_in.is_aligned(),
+        "heuristic: HiGHS passed no usable input record"
+    );
     // SAFETY: at the user-solution kind `data_in` is the call's valid, initialised input record, which HiGHS
     // neither reads nor writes until the callback returns.
     let record = UserSolution(unsafe { &mut *call.data_in });
@@ -513,6 +526,7 @@ unsafe fn slice<'a, T>(data: *const T, len: usize) -> &'a [T] {
     if data.is_null() || len == 0 {
         return &[];
     }
+    debug_assert!(data.is_aligned(), "slice: HiGHS's array is misaligned");
     // SAFETY: the caller vouches for `len` values at `data`, valid for `'a`.
     unsafe { core::slice::from_raw_parts(data, len) }
 }
@@ -874,6 +888,7 @@ impl UserSolution<'_> {
         if data.is_null() || len == 0 {
             return &mut [];
         }
+        debug_assert!(data.is_aligned(), "UserSolution: HiGHS's solution buffer is misaligned");
         // SAFETY: at the user-solution kind HiGHS points `user_solution` at its own buffer of `user_solution_size`
         // initialised values, which lives for the call and which nothing else touches while `self` is borrowed.
         unsafe { core::slice::from_raw_parts_mut(data, len) }
@@ -898,6 +913,14 @@ impl UserSolution<'_> {
         let index = index.ok_or_else(refused)?;
         let value: Vec<f64> = entries.iter().map(|&(_, v)| v).collect();
         let count = HighsInt::try_from(entries.len()).map_err(|_| refused())?;
+        debug_assert!(
+            index.len() == entries.len() && value.len() == entries.len(),
+            "UserSolution: the index and value arrays differ in length from the count"
+        );
+        debug_assert!(
+            index.iter().all(|&c| usize::try_from(c).is_ok_and(|c| c < num_cols)),
+            "UserSolution: an index is not a column of HiGHS's model"
+        );
         // SAFETY: the record is the call's input record, whose internal pointer HiGHS set to its own input; `index`
         // and `value` hold `count` entries over columns of HiGHS's model. HiGHS may log, which re-enters the
         // trampoline on this thread and is not delivered.
@@ -916,6 +939,10 @@ impl UserSolution<'_> {
     ///
     /// [`ActionError::Refused`] when HiGHS finds no feasible completion.
     fn repair(&mut self) -> Result<(), ActionError> {
+        debug_assert!(
+            self.0.user_solution_size >= 0,
+            "UserSolution: HiGHS's buffer size is negative"
+        );
         // SAFETY: the record is the call's input record, whose internal pointer HiGHS set to its own input. HiGHS
         // may log, which re-enters the trampoline on this thread and is not delivered.
         let status = unsafe { Highs_repairCallbackSolution(&raw mut *self.0) };
