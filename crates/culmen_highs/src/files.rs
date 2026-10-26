@@ -125,7 +125,8 @@ pub fn read_as(path: impl AsRef<Path>, format: ModelFormat) -> Result<Program, F
         });
     }
     let model = instance.model();
-    // Every name HiGHS holds was read from the file or is empty, so it is no longer than the file.
+    // A name HiGHS read from the file is no longer than the file, and one it made up for an unnamed line is
+    // shorter than its own name buffers, `NAME_LENGTH`; the buffer is longer than both.
     let mut buffer = vec![
         0u8;
         usize::try_from(length)
@@ -133,7 +134,8 @@ pub fn read_as(path: impl AsRef<Path>, format: ModelFormat) -> Result<Program, F
             .saturating_add(1)
             .max(NAME_LENGTH)
     ];
-    // SAFETY: the buffer is longer than the file, so longer than any name HiGHS holds.
+    // SAFETY: the buffer is longer than the file and than HiGHS's own name buffers, so longer than any name HiGHS
+    // holds.
     let (col_names, row_names) = unsafe {
         (
             names(&instance, Line::Col, model.costs.len(), &mut buffer),
