@@ -288,13 +288,17 @@ fn is_primal_ray(program: &Program, d: &TiVec<Col, f64>) -> bool {
 /// Whether `y` is a Farkas certificate of `program`'s infeasibility as culmen orients it: the largest `yᵀAx` over
 /// the columns' bounds is below the least `yᵀr` over the rows' bounds.
 fn is_farkas(program: &Program, y: &TiVec<Row, f64>) -> bool {
-    let mut aty: TiVec<Col, f64> = program.cols().map(|_| 0.0).collect();
-    for r in program.rows() {
-        for (c, a) in program.row(r).entries() {
-            aty[c] += y[r] * a;
-        }
-    }
-    let over_cols = support(program.cols().map(|c| (aty[c], program.columns()[c].bounds)), true);
+    let aty = |c: Col| -> f64 {
+        let column = |r: Row| {
+            program
+                .row(r)
+                .entries()
+                .filter(move |e| e.0 == c)
+                .map(move |e| y[r] * e.1)
+        };
+        program.rows().flat_map(column).sum()
+    };
+    let over_cols = support(program.cols().map(|c| (aty(c), program.columns()[c].bounds)), true);
     let over_rows = support(program.rows().map(|r| (y[r], program.row_bounds()[r])), false);
     over_cols + 1e-9 < over_rows
 }

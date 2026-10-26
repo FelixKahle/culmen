@@ -297,6 +297,10 @@ fn penalties(weights: &Weights, num_rows: usize) -> Penalties {
 const TOLERANCE: f64 = 1e-6;
 
 /// Whether the point meets every hard bound and row of `program`, and its integrality, within [`TOLERANCE`].
+///
+/// # Panics
+///
+/// When the point holds fewer values than the program has columns, or the weights lack an entry of the program.
 fn meets_hard(relaxed: &Relaxed, program: &Program, weights: &Weights) -> bool {
     let hard_met = relaxed
         .violations(program)

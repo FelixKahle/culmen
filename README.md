@@ -49,6 +49,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   stated tolerance. A quadratic constraint does not compile.
 - **Model classes are typed.** Every program knows its class (`Lp`, `Milp`, `Qp`, `Miqp`), every backend declares the
   classes it solves, and `Solver::new` refuses any other with a typed error naming both, before the solver sees it.
+- **More than a solution.** After a solve, `Solver` reports duals and reduced costs, the simplex basis (and takes
+  one as a warm start), cost and bound ranging, primal and dual rays, an irreducible infeasible subsystem and a
+  weighted feasibility relaxation, all read with the model's own handles. Each backend declares which it provides,
+  and a request it cannot answer is a typed error naming why.
 - **Any solver behind one seam.** `Backend` is an open trait with typed, solver-neutral callback events: log,
   progress, interrupt poll, feasible and improving solutions, lazy constraints, user cuts, heuristic solutions,
   and native events for what only one solver offers. HiGHS is the first backend, and every HiGHS callback is

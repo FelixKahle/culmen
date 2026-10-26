@@ -69,6 +69,28 @@ pub(crate) struct RawRanging {
     pub(crate) row_bound_down: RangingRecord,
 }
 
+impl RawRanging {
+    /// The ranging of `n` columns and `m` rows, all zeros.
+    fn zeros(n: usize, m: usize) -> Self {
+        Self {
+            cost_up: RangingRecord::zeros(n),
+            cost_down: RangingRecord::zeros(n),
+            col_bound_up: RangingRecord::zeros(n),
+            col_bound_down: RangingRecord::zeros(n),
+            row_bound_up: RangingRecord::zeros(m),
+            row_bound_down: RangingRecord::zeros(m),
+        }
+    }
+
+    /// Whether every column record holds `n` entries and every row record `m`.
+    fn fits(&self, n: usize, m: usize) -> bool {
+        [&self.cost_up, &self.cost_down, &self.col_bound_up, &self.col_bound_down]
+            .iter()
+            .all(|r| r.has_len(n))
+            && [&self.row_bound_up, &self.row_bound_down].iter().all(|r| r.has_len(m))
+    }
+}
+
 /// HiGHS's IIS: the columns and rows, each with HiGHS's `kHighsIisBound*` of it.
 #[derive(Debug, Default)]
 pub(crate) struct RawIis {
@@ -152,14 +174,7 @@ impl Instance {
     /// HiGHS's ranging of the last run; `None` when HiGHS refuses, as without an optimal simplex basis.
     pub(crate) fn ranging(&mut self) -> Option<RawRanging> {
         let (n, m) = (self.num_col(), self.num_row());
-        let mut r = RawRanging {
-            cost_up: RangingRecord::zeros(n),
-            cost_down: RangingRecord::zeros(n),
-            col_bound_up: RangingRecord::zeros(n),
-            col_bound_down: RangingRecord::zeros(n),
-            row_bound_up: RangingRecord::zeros(m),
-            row_bound_down: RangingRecord::zeros(m),
-        };
+        let mut r = RawRanging::zeros(n, m);
         let (cu, cd, bu, bd) = (
             r.cost_up.raw(),
             r.cost_down.raw(),
@@ -168,43 +183,16 @@ impl Instance {
         );
         let (ru, rd) = (r.row_bound_up.raw(), r.row_bound_down.raw());
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
-        debug_assert!(
-            [&r.cost_up, &r.cost_down, &r.col_bound_up, &r.col_bound_down]
-                .iter()
-                .all(|x| x.has_len(n))
-                && [&r.row_bound_up, &r.row_bound_down].iter().all(|x| x.has_len(m)),
-            "Instance: the ranging buffers do not fit HiGHS's model"
-        );
+        debug_assert!(r.fits(n, m), "Instance: the ranging buffers do not fit HiGHS's model");
         // SAFETY: the instance is live and borrowed exclusively. On success HiGHS copies one entry per column into
         // each of the sixteen column arrays and one per row into each of the eight row arrays, which is what the
         // buffers hold; on failure it writes nothing.
+        #[rustfmt::skip]
         let status = unsafe {
             Highs_getRanging(
                 self.raw(),
-                cu.0,
-                cu.1,
-                cu.2,
-                cu.3,
-                cd.0,
-                cd.1,
-                cd.2,
-                cd.3,
-                bu.0,
-                bu.1,
-                bu.2,
-                bu.3,
-                bd.0,
-                bd.1,
-                bd.2,
-                bd.3,
-                ru.0,
-                ru.1,
-                ru.2,
-                ru.3,
-                rd.0,
-                rd.1,
-                rd.2,
-                rd.3,
+                cu.0, cu.1, cu.2, cu.3, cd.0, cd.1, cd.2, cd.3, bu.0, bu.1, bu.2, bu.3,
+                bd.0, bd.1, bd.2, bd.3, ru.0, ru.1, ru.2, ru.3, rd.0, rd.1, rd.2, rd.3,
             )
         };
         (CallStatus::from_raw(status) != CallStatus::Error).then_some(r)
@@ -240,54 +228,48 @@ impl Instance {
     ///
     /// HiGHS may run its simplex solver to find one, which replaces the last run's result.
     pub(crate) fn iis(&mut self) -> Option<RawIis> {
+        let (n, m) = self.iis_size()?;
+        let (mut num_cols, mut num_rows) = (HighsInt::try_from(n).ok()?, HighsInt::try_from(m).ok()?);
+        let (mut col_index, mut col_bound, mut row_index, mut row_bound) =
+            (vec![0; n], vec![0; n], vec![0; m], vec![0; m]);
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        debug_assert!(
+            col_index.len() == n && col_bound.len() == n && row_index.len() == m && row_bound.len() == m,
+            "Instance: the IIS buffers do not fit the IIS"
+        );
+        // SAFETY: the instance is live and borrowed exclusively. HiGHS answers this call from the IIS it kept at
+        // `iis_size`, of `n` columns and `m` rows, so it writes `n` entries into each column array and `m` into each
+        // row array, which they hold. The per-model status arrays are null, which HiGHS skips.
+        #[rustfmt::skip]
+        let status = unsafe {
+            Highs_getIis(
+                self.raw(), &raw mut num_cols, &raw mut num_rows,
+                col_index.as_mut_ptr(), row_index.as_mut_ptr(), col_bound.as_mut_ptr(), row_bound.as_mut_ptr(),
+                ptr::null_mut(), ptr::null_mut(),
+            )
+        };
+        (CallStatus::from_raw(status) != CallStatus::Error).then(|| RawIis {
+            cols: col_index.into_iter().zip(col_bound).collect(),
+            rows: row_index.into_iter().zip(row_bound).collect(),
+        })
+    }
+
+    /// Computes HiGHS's IIS, which HiGHS keeps until the model changes, and returns its numbers of columns and rows;
+    /// `None` when the call fails.
+    fn iis_size(&mut self) -> Option<(usize, usize)> {
         let (mut num_cols, mut num_rows): (HighsInt, HighsInt) = (0, 0);
         let null = ptr::null_mut();
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively; with every array null HiGHS computes the IIS, keeps
         // it, and writes only the two counts.
+        #[rustfmt::skip]
         let status = unsafe {
-            Highs_getIis(
-                self.raw(),
-                &raw mut num_cols,
-                &raw mut num_rows,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-            )
+            Highs_getIis(self.raw(), &raw mut num_cols, &raw mut num_rows, null, null, null, null, null, null)
         };
         if CallStatus::from_raw(status) == CallStatus::Error {
             return None;
         }
-        let (n, m) = (usize::try_from(num_cols).ok()?, usize::try_from(num_rows).ok()?);
-        let (mut col_index, mut col_bound, mut row_index, mut row_bound) =
-            (vec![0; n], vec![0; n], vec![0; m], vec![0; m]);
-        // SAFETY: as above; HiGHS answers this second call from the IIS it kept, of the same `n` columns and `m`
-        // rows, so it writes `n` entries into each column array and `m` into each row array, which they hold. The
-        // per-model status arrays are null, which HiGHS skips.
-        let status = unsafe {
-            Highs_getIis(
-                self.raw(),
-                &raw mut num_cols,
-                &raw mut num_rows,
-                col_index.as_mut_ptr(),
-                row_index.as_mut_ptr(),
-                col_bound.as_mut_ptr(),
-                row_bound.as_mut_ptr(),
-                null,
-                null,
-            )
-        };
-        debug_assert!(
-            usize::try_from(num_cols).ok() == Some(n) && usize::try_from(num_rows).ok() == Some(m),
-            "Instance: HiGHS changed its IIS between two reads"
-        );
-        (CallStatus::from_raw(status) != CallStatus::Error).then(|| RawIis {
-            cols: col_index.into_iter().zip(col_bound).collect(),
-            rows: row_index.into_iter().zip(row_bound).collect(),
-        })
+        Some((usize::try_from(num_cols).ok()?, usize::try_from(num_rows).ok()?))
     }
 
     /// Solves HiGHS's feasibility relaxation of the loaded model under `penalties` and returns the relaxed point,
