@@ -6,8 +6,8 @@
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
-//! The core of culmen: linear, mixed-integer and convex quadratic programs as data, a modelling layer that reads like the
-//! mathematics, and a solver-neutral seam with rich callbacks, a cooperative stop and a throttled observer.
+//! The core of culmen: linear, mixed-integer and convex quadratic programs as data, a modelling layer that reads
+//! like the mathematics, and a solver-neutral seam with rich callbacks, a cooperative stop and a throttled observer.
 //!
 //! This crate holds no solver and no `unsafe`. A solver plugs in by implementing [`Backend`]; the `culmen` facade
 //! re-exports this crate with the HiGHS backend and the modelling macros.
@@ -24,8 +24,8 @@
 //! - **The solver is a seam.** A [`Backend`] loads an [`Lp`] and solves it under [`Settings`], calling a
 //!   [`Callback`] with one typed context per event kind ([`Events`]); what it cannot deliver it declares, and its
 //!   context for that event is [`Unsupported`], so such a callback never runs. It declares the [`ModelClasses`] it
-//!   solves, and [`Solver::new`] refuses an LP of any other [`ModelClass`] with a typed [`LoadError`]. Whatever a solver offers beyond the
-//!   neutral contexts is on its own context types.
+//!   solves, and [`Solver::new`] refuses an LP of any other [`ModelClass`] with a typed [`LoadError`]. Whatever a
+//!   solver offers beyond the neutral contexts is on its own context types.
 //! - **A solve is a value.** A [`Solver`] holds a loaded backend; each [`Solver::solve`] takes a [`Request`] of
 //!   settings, a [`Stop`] and an [`Observer`], and returns [`Solved`]: a generic [`Outcome`] and the backend's own
 //!   status.

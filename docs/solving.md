@@ -7,8 +7,10 @@ backend's own status. This page covers all three. Watching and stopping a solve 
 
 ## `Solver`
 
-`Solver::new(backend, lp)` loads `lp` into `backend` and fails with the backend's error when the backend refuses the
-LP. A `Solver` can then solve as often as needed, each time with its own request.
+`Solver::new(backend, lp)` loads `lp` into `backend`. It fails with a [`LoadError`](#model-classes-and-refusal):
+`Unsupported` when the backend does not solve the LP's class, before the backend sees it, or `Backend` with the
+backend's own error when the backend refuses the LP. A `Solver` can then solve as often as needed, each time with
+its own request.
 
 | Method | Does |
 |---|---|
@@ -38,6 +40,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let second = solver.solve(Request::new().time_limit(Duration::from_secs(5)))?;
     assert_eq!(first.outcome, second.outcome);
     assert_eq!(solver.lp().num_cols(), 3);
+    Ok(())
+}
+```
+
+## Model classes and refusal
+
+Every LP has a [class](lp.md#model-classes), `lp.class()`: `Lp`, `Milp`, `Qp` or `Miqp`. Every backend declares the
+classes it solves as `Backend::CLASSES`, a `ModelClasses` set, and `Solver::new` checks the LP's class against it
+before it calls the backend's `load`. The check is the same for every backend, and a backend's `load` never sees a
+class it did not declare.
+
+| Backend | `CLASSES` |
+|---|---|
+| `Highs` | `{LP, MILP, QP}`: HiGHS 1.15 refuses to solve a QP with integer columns. |
+| `Script` | Every class: it replays its script rather than solving. |
+
+The refusal is typed: `LoadError<E>` is `Unsupported { class, supported }`, naming the LP's class and the backend's
+set, or `Backend(E)` with the backend's own error. It displays both, and `Error::source` is the backend's error.
+
+```rust
+use culmen::prelude::*;
+use culmen::{LoadError, ModelClass};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // A QP with an integer column: a MIQP, which HiGHS 1.15 cannot solve.
+    let mut m = Model::new();
+    let x = m.add_var(Var::free());
+    let n = m.add_var(Var::integer().upper(3));
+    m.minimize((x - 0.5) * (x - 0.5) + n);
+    let lp = m.build()?;
+    assert_eq!(lp.class(), ModelClass::Miqp);
+
+    let error = Solver::new(Highs::new(), lp).unwrap_err();
+    assert_eq!(error, LoadError::Unsupported { class: ModelClass::Miqp, supported: Highs::CLASSES });
+    assert_eq!(error.to_string(), "Solver: the backend solves {LP, MILP, QP}, not a MIQP");
+
+    // Without the integer column it is a QP, which HiGHS solves.
+    let mut m = Model::new();
+    let x = m.add_var(Var::free());
+    m.minimize((x - 0.5) * (x - 0.5));
+    let solved = Solver::new(Highs::new(), m.build()?)?.solve(Request::new())?;
+    let best = solved.outcome.solution().ok_or("no solution")?;
+    assert!((best.values[x] - 0.5).abs() < 1e-6);
     Ok(())
 }
 ```
@@ -161,8 +206,9 @@ A solve returns `Result<Solved<B::Status>, B::Error>`. `Solved` is plain data:
 | `Unbounded` | The objective improves without limit. | Nothing. |
 | `InfeasibleOrUnbounded` | One of the two, and the solver did not tell which. | Nothing. |
 
-A `Solution` is `{ objective, values }`: the objective value, offset included, and one value per column. Every
-objective value and bound includes the LP's offset and is in the model's own sense. `outcome.solution()` returns the
+A `Solution` is `{ objective, values }`: the objective value, quadratic part and offset included, and one value per
+column. Every objective value and bound includes the LP's quadratic part and offset and is in the model's own
+sense. `outcome.solution()` returns the
 best solution of any variant, `None` when there is none, and `outcome.into_solution()` takes it by value.
 
 ```rust
@@ -228,9 +274,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Errors
 
-`Solver::new`, `solve` and `solve_with` fail with the backend's own error type, `B::Error`: refusing the LP, a
-setting it cannot apply, or a failed run. For HiGHS that is [`HighsError`](highs.md#errors). A solve that ends
-without a solution is not an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
+`Solver::new` fails with a [`LoadError<B::Error>`](#model-classes-and-refusal): a class the backend does not solve,
+or the backend's own error when it refuses the LP. `solve` and `solve_with` fail with the backend's own error type,
+`B::Error`: a setting it cannot apply, or a failed run. For HiGHS that is [`HighsError`](highs.md#errors). A solve
+that ends without a solution is not an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
 
 `solve` and `solve_with` panic when an observer or callback panics: the panic continues out of the call once the
 solver has stopped ([Panics and threads](callbacks.md#panics-and-threads)).

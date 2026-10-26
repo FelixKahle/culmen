@@ -2,9 +2,9 @@
   <img src="docs/img/logo.svg" alt="culmen" width="640">
 </p>
 
-**Linear and mixed-integer programming in Rust.** Write a model the way the mathematics reads, build it into a
-checked LP, and solve it on a switchable backend. You can watch the search live and stop it cooperatively at any
-moment.
+**Linear, mixed-integer and convex quadratic programming in Rust.** Write a model the way the mathematics reads,
+build it into a checked LP, and solve it on a switchable backend. You can watch the search live and stop it
+cooperatively at any moment.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
 [![Rust 1.99+](https://img.shields.io/badge/rust-1.99%2B-orange.svg)](https://www.rust-lang.org)
@@ -44,6 +44,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Two equal ways to write a model.** You can write plain methods and operators (`2.0 * x + y`,
   `expr.leq(10.0)`, `LinExpr::sum`, `Model::add_var_map`), or use the `variable!`, `constraint!`, `objective!` and
   `sum!` macros, which expand to exactly those calls.
+- **Convex quadratic objectives, checked.** `x * y`, `x * x` and `(x - 1) * (x - 1)` build quadratic objectives
+  beside linear constraints, and building checks the objective is convex to minimize or concave to maximize, with a
+  stated tolerance. A quadratic constraint does not compile.
+- **Model classes are typed.** Every LP knows its class (`Lp`, `Milp`, `Qp`, `Miqp`), every backend declares the
+  classes it solves, and `Solver::new` refuses any other with a typed error naming both, before the solver sees it.
 - **Any solver behind one seam.** `Backend` is an open trait with typed, solver-neutral callback events: log,
   progress, interrupt poll, feasible and improving solutions, lazy constraints, user cuts, heuristic solutions,
   and native events for what only one solver offers. HiGHS is the first backend, and every HiGHS callback is
@@ -115,6 +120,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## A convex quadratic program
+
+A quadratic objective is written with the same operators. The point of the half-plane `x + y <= 1` nearest
+`(1, 2)` is `(0, 1)`, at squared distance 2:
+
+```rust
+use culmen::prelude::*;
+use culmen::ModelClass;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut m = Model::new();
+    let x = m.add_var(Var::free());
+    let y = m.add_var(Var::free());
+    m.add_constraint((x + y).leq(1));
+    m.minimize((x - 1) * (x - 1) + (y - 2) * (y - 2));
+    let lp = m.build()?;
+    assert_eq!(lp.class(), ModelClass::Qp);
+
+    let mut solver = Solver::new(Highs::new(), lp)?;
+    let Outcome::Optimal(best) = solver.solve(Request::new())?.outcome else {
+        return Err("no optimum".into());
+    };
+    assert!((best.objective - 2.0).abs() < 1e-6);
+    assert!(best.values[x].abs() < 1e-6 && (best.values[y] - 1.0).abs() < 1e-6);
+    Ok(())
+}
+```
+
+HiGHS 1.15 solves LPs, MILPs and convex QPs, not QPs with integer columns: `Solver::new` refuses a MIQP on HiGHS
+with `LoadError::Unsupported`.
+
 ## Watching and stopping a solve
 
 ```rust
@@ -185,18 +221,18 @@ first build takes a few minutes.
 |---|---|---|
 | `highs` | yes | The HiGHS backend, as `culmen::Highs` and the module `culmen::highs`. |
 | `macros` | no | `variable!`, `constraint!`, `objective!` and `sum!`. |
-| `serde` | no | Serialization of the plain data: LPs, bounds, settings, outcomes, solutions, HiGHS options and statuses. |
+| `serde` | no | Serialization of the plain data: LPs (quadratic parts included), model classes, bounds, settings, outcomes, solutions, HiGHS options and statuses. |
 
 ## Documentation
 
 The user guide is in [`docs/`](docs/README.md), and every Rust snippet in it runs as a doctest:
 
 - [Getting started](docs/getting-started.md): requirements, features, and a first model.
-- [Modelling](docs/modelling.md) and [Macros](docs/macros.md): variables, expressions, constraints, objectives
-  and keyed families, written with methods or with macros.
-- [Solving](docs/solving.md) and [Callbacks](docs/callbacks.md): requests, settings, outcomes, observers, stops
-  and every callback event.
-- [HiGHS](docs/highs.md): options, threads, statuses, callback contexts, and limitations.
+- [Modelling](docs/modelling.md) and [Macros](docs/macros.md): variables, linear and quadratic expressions,
+  constraints, objectives and keyed families, written with methods or with macros.
+- [Solving](docs/solving.md) and [Callbacks](docs/callbacks.md): model classes, requests, settings, outcomes,
+  observers, stops and every callback event.
+- [HiGHS](docs/highs.md): options, threads, statuses, quadratic programs, callback contexts, and limitations.
 - [The LP as data](docs/lp.md), [Testing](docs/testing.md), [Design](docs/design.md), and
   [Backends](docs/backends.md) for backend authors.
 

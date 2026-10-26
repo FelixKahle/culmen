@@ -73,6 +73,9 @@ it is a `TryFrom` or a `new` returning `Result`, so the refusal is visible where
 - **Events are typed and declared.** A backend names one context type per event kind and lists what it delivers
   in `Backend::EVENTS`. An event it cannot deliver takes `Unsupported`, an enum with no values, so a callback for it
   compiles everywhere and never runs on that backend.
+- **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
+  `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the LP, the
+  same way for every backend.
 - **Actions live where the solver honours them.** Only a poll context can interrupt, only a lazy context can add a
   lazy constraint, only a heuristic context can supply a solution. Calling an action at a point where the solver
   would ignore it does not compile.

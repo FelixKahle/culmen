@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Felix Kahle
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# culmen: linear and mixed-integer programming in Rust.
+# culmen: linear, mixed-integer and convex quadratic programming in Rust.
 #
 # The crates point down, never up:
 #

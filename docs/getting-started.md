@@ -133,11 +133,12 @@ as above. The ones you meet first:
 | `ModelError` | `Model::build` | [Modelling](modelling.md#building-and-modelerror) |
 | `LpError` | `LpPlan::build` | [The LP as data](lp.md#checks-and-lperror) |
 | `InvalidBounds` | `Bounds::new` and its conversions | [The LP as data](lp.md#bounds) |
-| `HighsError` | `Solver::new` and `Solver::solve` with HiGHS | [HiGHS](highs.md#errors) |
+| `LoadError` | `Solver::new`: a model class the backend does not solve, or the backend's own error | [Solving](solving.md#model-classes-and-refusal) |
+| `HighsError` | `Solver::solve` with HiGHS, and inside `LoadError` from `Solver::new` | [HiGHS](highs.md#errors) |
 | `ActionError` | actions inside a callback | [Callbacks](callbacks.md#contexts) |
 
-Each error's message starts with the name of the type it concerns (`Model:`, `Lp:`, `Bounds:`, `HiGHS:`), and a
-model error names the variable or constraint at fault by the name you gave it.
+Each error's message starts with the name of the type it concerns (`Model:`, `Lp:`, `Bounds:`, `Solver:`,
+`HiGHS:`), and a model error names the variable or constraint at fault by the name you gave it.
 
 ## Examples
 

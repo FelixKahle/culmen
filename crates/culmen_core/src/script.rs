@@ -100,8 +100,9 @@ pub struct Record {
 /// A backend that delivers a fixed list of [`Step`]s to the callback and then ends with a fixed [`Outcome`].
 ///
 /// It supports every generic event and loads every [`ModelClass`](crate::ModelClass), since it replays rather
-/// than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent
-/// and the last bound reported before. The outcome and the elapsed time count every step, whichever events the
+/// than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
+/// interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent and the last bound
+/// reported before. The outcome and the elapsed time count every step, whichever events the
 /// callback asks for.
 ///
 /// ```

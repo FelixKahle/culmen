@@ -9,10 +9,11 @@
 )]
 
 use std::ffi::CString;
+use std::time::Duration;
 
 use culmen_core::{
     Backend, Bounds, Col, Events, Linear, LoadError, Lp, LpColumn, LpPlan, Model, ModelClass, Outcome, Request, Sense,
-    Solution, Solved, Solver, TiVec, Var,
+    Solution, Solved, Solver, StopReason, TiVec, Var,
 };
 use culmen_highs::{Highs, HighsError, ModelStatus};
 use culmen_testing::reference::close;
@@ -372,16 +373,19 @@ proptest! {
 
     /// On random convex QPs HiGHS's optimum is feasible, valued as `Lp::objective_value` values it, and no worse
     /// than any feasible point in the boxes nor than a projected gradient step from it. A run HiGHS fails, or whose
-    /// optimum its own primal-dual objective error does not support, ends in a typed error.
+    /// optimum its own primal-dual objective error does not support, ends in a typed error, and one that does not
+    /// terminate stops at its time limit.
     #[test]
     fn test_highs_qp_optimum_is_no_worse_than_feasible_points(
         lp in small_qp(),
         fractions in prop::collection::vec(prop::collection::vec(0.0..=1.0f64, 4), 8),
     ) {
         let mut solver = Solver::new(Highs::new(), lp.clone()).unwrap();
-        let best = match solver.solve(Request::new()) {
+        // HiGHS 1.15's QP solver can fail to terminate on such a QP; the time limit ends it.
+        let best = match solver.solve(Request::new().time_limit(Duration::from_secs(2))) {
             Ok(Solved { outcome: Outcome::Optimal(best), .. }) => best,
-            Err(HighsError::Run { .. } | HighsError::UnsoundQp { .. }) => return Ok(()),
+            Ok(Solved { outcome: Outcome::Stopped { reason: StopReason::TimeLimit, .. }, .. })
+            | Err(HighsError::Run { .. } | HighsError::UnsoundQp { .. }) => return Ok(()),
             other => return Err(TestCaseError::fail(format!("{other:?} on {lp:?}"))),
         };
         prop_assert!(lp.max_violation(&best.values) <= 1e-6, "{best:?}");

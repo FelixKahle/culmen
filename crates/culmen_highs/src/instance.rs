@@ -83,23 +83,14 @@ impl Instance {
         } else {
             ptr::null()
         };
-        let (q_format, q_start, q_index, q_value) = if q_num_nz == 0 {
-            (0, ptr::null(), ptr::null(), ptr::null())
-        } else {
-            (
-                kHighsHessianFormatTriangular,
-                q.starts.as_ptr(),
-                q.rows.as_ptr(),
-                q.values.as_ptr(),
-            )
-        };
+        let (q_format, q_start, q_index, q_value) = q.raw();
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
             a.agrees_with(lp),
             "Instance: the arrays passed to HiGHS do not match the LP's counts"
         );
         debug_assert!(
-            q.agrees_with(lp),
+            q.agrees_with(lp) && q.values.len() == lp.quadratic().len(),
             "Instance: the Hessian passed to HiGHS does not match the LP's quadratic part"
         );
         // SAFETY: the instance is live and borrowed exclusively. The column arrays hold `num_col` values, the row
@@ -397,6 +388,21 @@ struct Hessian {
 }
 
 impl Hessian {
+    /// The format, starts, rows and values `Highs_passModel` takes: a format of zero and null arrays without
+    /// entries.
+    fn raw(&self) -> (HighsInt, *const HighsInt, *const HighsInt, *const f64) {
+        if self.values.is_empty() {
+            (0, ptr::null(), ptr::null(), ptr::null())
+        } else {
+            (
+                kHighsHessianFormatTriangular,
+                self.starts.as_ptr(),
+                self.rows.as_ptr(),
+                self.values.as_ptr(),
+            )
+        }
+    }
+
     /// The Hessian of `lp`, whose counts the caller checked against HiGHS's index type.
     fn of(lp: &Lp) -> Self {
         let entries: Vec<(Col, Col, f64)> = lp.quadratic().hessian().collect();

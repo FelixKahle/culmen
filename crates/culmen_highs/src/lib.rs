@@ -79,12 +79,6 @@ use instance::Instance;
 const DEFAULT_RELATIVE_GAP: f64 = 1e-4;
 /// HiGHS's default absolute MIP gap.
 const DEFAULT_ABSOLUTE_GAP: f64 = 1e-6;
-/// The largest relative primal-dual objective error at which a QP optimum HiGHS reports is taken as optimal.
-///
-/// HiGHS 1.15's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
-/// percent, after its iterates turned NaN, and that point need not even be feasible; on random convex QPs its
-/// correct optima stay below 1e-6.
-const QP_OBJECTIVE_ERROR: f64 = 1e-5;
 
 /// The HiGHS backend: one HiGHS instance and the options every solve applies.
 ///
@@ -157,6 +151,14 @@ struct Ran {
 }
 
 impl Highs {
+    /// The largest relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`, at which a QP optimum HiGHS
+    /// reports is taken as optimal; above it the solve fails with [`HighsError::UnsoundQp`].
+    ///
+    /// HiGHS 1.15's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
+    /// percent, after its iterates turned NaN, and that point need not even be feasible; on random convex QPs its
+    /// correct optima stay below `1e-6`.
+    pub const QP_OBJECTIVE_ERROR: f64 = 1e-5;
+
     /// A backend with HiGHS's default options.
     ///
     /// # Panics
@@ -222,8 +224,8 @@ impl Highs {
     /// # Errors
     ///
     /// [`HighsError::Run`] when HiGHS failed, or reports an optimum without a solution; [`HighsError::UnsoundQp`]
-    /// when it reports a QP optimal with a primal-dual objective error above [`QP_OBJECTIVE_ERROR`], or unbounded
-    /// although every column is bounded.
+    /// when it reports a QP optimal with a primal-dual objective error above [`Highs::QP_OBJECTIVE_ERROR`], or
+    /// unbounded although every column is bounded.
     fn outcome(&self, loaded: &Loaded, settings: &Settings, status: &HighsStatus) -> Result<Outcome, HighsError> {
         let failed = || HighsError::Run {
             status: status.model,
@@ -312,7 +314,7 @@ fn unsound_qp(loaded: &Loaded, status: &HighsStatus) -> bool {
     match status.model {
         ModelStatus::Optimal => status
             .primal_dual_objective_error
-            .is_some_and(|error| error > QP_OBJECTIVE_ERROR),
+            .is_some_and(|error| error > Highs::QP_OBJECTIVE_ERROR),
         ModelStatus::Unbounded => loaded.bounded,
         _ => false,
     }

@@ -480,6 +480,20 @@ impl<T: Quadratic> Sum<T> for QuadExpr {
     }
 }
 
+/// The sum of the items, as [`QuadExpr::sum`].
+impl<T: Quadratic> FromIterator<T> for QuadExpr {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self::sum(iter)
+    }
+}
+
+/// Adds each item, as `+=` does.
+impl<T: Quadratic> Extend<T> for QuadExpr {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        iter.into_iter().for_each(|item| item.add_quad_to(self, 1.0));
+    }
+}
+
 impl Add<QuadTerm> for Col {
     type Output = QuadExpr;
     fn add(self, rhs: QuadTerm) -> QuadExpr {

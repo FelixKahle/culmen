@@ -56,8 +56,9 @@ pub enum HighsError {
         message: Option<String>,
     },
     /// HiGHS's QP solver reported an ending that its own measures or the model contradict: an optimum whose relative
-    /// primal-dual objective error exceeds `1e-5`, at a point that need not be feasible, or unboundedness although
-    /// every column is bounded. HiGHS 1.15's QP solver can end so after its iterates turned NaN.
+    /// primal-dual objective error exceeds [`Highs::QP_OBJECTIVE_ERROR`](crate::Highs::QP_OBJECTIVE_ERROR), at a point
+    /// that need not be feasible, or unboundedness although every column is bounded. HiGHS 1.15's QP solver can end
+    /// so after its iterates turned NaN.
     UnsoundQp {
         /// The model status HiGHS reported.
         status: ModelStatus,

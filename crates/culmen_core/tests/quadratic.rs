@@ -98,6 +98,10 @@ fn test_quadratic_sums_build_one_expression_in_order() {
     assert_eq!(acc.linear.constant, 6.0);
     let squares: QuadExpr = [x, y].into_iter().map(|v| v * v).sum();
     assert_eq!(squares, QuadExpr::sum([x * x, y * y]));
+    assert_eq!([x * x, y * y].into_iter().collect::<QuadExpr>(), squares);
+    let mut extended = QuadExpr::from(x * x);
+    extended.extend([y * y]);
+    assert_eq!(extended, squares);
     let mixed: QuadExpr = [QuadExpr::from(x * y), QuadExpr::from(x)].into_iter().sum();
     assert_eq!((mixed.terms.len(), mixed.linear.terms.len()), (1, 1));
     assert_eq!(QuadExpr::from(2.5).linear.constant, 2.5);
@@ -218,8 +222,9 @@ proptest! {
         let lp = m.build().unwrap();
         let point: TiVec<Col, f64> = point.into();
         prop_assert!(close(lp.objective_value(&point), objective.value(&point)));
-        prop_assert!(lp.quadratic().entries().all(|(i, j, q)| i <= j && q != 0.0));
-        prop_assert!(lp.quadratic().entries().zip(lp.quadratic().entries().skip(1)).all(|(s, t)| (s.0, s.1) < (t.0, t.1)));
+        let entries: Vec<(Col, Col, f64)> = lp.quadratic().entries().collect();
+        prop_assert!(entries.iter().all(|&(i, j, q)| i <= j && q != 0.0));
+        prop_assert!(entries.windows(2).all(|w| (w[0].0, w[0].1) < (w[1].0, w[1].1)), "sorted, each pair once");
     }
 }
 
@@ -456,6 +461,7 @@ fn test_class_sets_combine_iterate_and_print_by_name() {
     extended.extend([ModelClass::Miqp, ModelClass::Lp]);
     assert_eq!(extended, ModelClasses::of(&[ModelClass::Lp, ModelClass::Miqp]));
     assert_eq!((three.len(), three.iter().len(), three.is_empty()), (3, 3, false));
+    assert_eq!(three.iter().take(2).count(), 2, "the iterator's adaptors are std's");
     assert!(ModelClasses::NONE.is_empty() && ModelClasses::default().is_empty());
     assert_eq!(
         three.iter().collect::<Vec<_>>(),

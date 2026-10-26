@@ -244,8 +244,8 @@ impl fmt::Display for ModelClasses {
 pub struct ModelClassesIter(ModelClasses);
 
 impl ModelClassesIter {
-    /// Takes `class` out of the remaining set.
-    fn take(&mut self, class: ModelClass) -> ModelClass {
+    /// Removes `class` from the remaining set and returns it.
+    fn remove(&mut self, class: ModelClass) -> ModelClass {
         (self.0).0 &= !class.bit();
         class
     }
@@ -259,7 +259,7 @@ impl Iterator for ModelClassesIter {
         ModelClass::ALL
             .into_iter()
             .find(|&c| rest.contains(c))
-            .map(|c| self.take(c))
+            .map(|c| self.remove(c))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -273,7 +273,7 @@ impl DoubleEndedIterator for ModelClassesIter {
         ModelClass::ALL
             .into_iter()
             .rfind(|&c| rest.contains(c))
-            .map(|c| self.take(c))
+            .map(|c| self.remove(c))
     }
 }
 

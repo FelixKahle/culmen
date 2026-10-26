@@ -1,8 +1,9 @@
 # Backends
 
 culmen_core does not know any solver. A backend is a crate that implements `culmen_core::Backend` for its solver:
-it loads an `Lp`, applies the generic `Settings` over its own typed options, drives the solver's callbacks as
-culmen's generic events, and maps the solver's statuses to the generic `Outcome`, keeping its own status beside it.
+it declares the model classes it solves, loads an `Lp`, applies the generic `Settings` over its own typed options,
+drives the solver's callbacks as culmen's generic events, and maps the solver's statuses to the generic `Outcome`,
+keeping its own status beside it.
 HiGHS (`culmen_highs`) is the first backend. This page shows that the seam fits the other serious MIP solvers too:
 each core concept is listed with what HiGHS 1.15 offers for it, and what Gurobi 12 and SCIP would offer a backend
 written later.
@@ -22,6 +23,7 @@ pub trait Backend: Sized {
     type Heuristic<'a>: HeuristicContext; // Events::HEURISTIC
     type Native<'a>: Debug;               // Events::NATIVE: whatever only this solver reports
     const EVENTS: Events;                 // what this backend delivers
+    const CLASSES: ModelClasses;          // the model classes this backend solves
     fn load(&mut self, lp: &Lp) -> Result<(), Self::Error>;
     fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>)
         -> Result<Solved<Self::Status>, Self::Error>;
@@ -31,6 +33,9 @@ pub trait Backend: Sized {
 - **Capabilities are typed and queryable.** A backend lists the events it delivers in `Backend::EVENTS`. For an event
   it cannot deliver it names `culmen_core::Unsupported` as the context type: an enum with no values, so a callback
   method for that event compiles but can never run. HiGHS, for instance, names `Unsupported` for `Lazy` and `Cut`.
+- **Model classes are declared.** A backend lists the classes it solves (`ModelClass::Lp`, `Milp`, `Qp`, `Miqp`)
+  in `Backend::CLASSES`. `Solver::new` reads it before `load`, for every backend alike, and refuses any other class
+  with `LoadError::Unsupported { class, supported }`, so `load` never re-checks the class.
 - **Actions are typed per event.** Only `PollContext` has `interrupt`, only `LazyContext` has `add_lazy`, only
   `CutContext` has `add_cut`, only `HeuristicContext` has `supply` and `supply_partial`. An action that a solver
   honours only at certain points exists only on the context of those points.
@@ -42,13 +47,29 @@ pub trait Backend: Sized {
   ordinary `impl<B: Backend> Callback<B>`: it polls the stop at `POLL`, throttles `PROGRESS`/`POLL` into
   `Observer::progress`, reports `INCUMBENT` as `Observer::improved`, and joins `LOG` chunks into lines. It works
   unchanged on every backend, and pairs with a backend-specific callback as `(watch, mine)`.
-- **The contract** (on `Backend`): solve the last loaded LP; report every objective and bound with the LP's offset
-  in the model's sense; call only events in `EVENTS ∩ callback.events()`, only during `solve`, never two at once; a
-  panic in a callback stops the solve and unwinds out of `solve`, never aborts.
+- **The contract** (on `Backend`): solve the last loaded LP; report every objective and bound with the LP's quadratic
+  part and offset in the model's sense; call only events in `EVENTS ∩ callback.events()`, only during `solve`, never
+  two at once; a panic in a callback stops the solve and unwinds out of `solve`, never aborts.
 
 `Script`, the in-memory backend in culmen_core, delivers every generic event from a scripted list. Its tests drive
 lazy constraints, cuts, heuristic solutions, native events, the observer, stops and panics without any solver.
 That is evidence that nothing in the core assumes HiGHS.
+
+## Model classes
+
+| Class | HiGHS 1.15 (`culmen_highs`) | Gurobi 12 | SCIP |
+|---|---|---|---|
+| `Lp` | yes | yes | yes |
+| `Milp` | yes | yes | yes |
+| `Qp` | yes: `Highs_passModel` with the lower triangle of `H` in `½ xᵀHx`, column-wise | yes: `GRBaddqpterms`, whose `qval` is the coefficient of `xᵢ · xⱼ` as culmen stores it | yes: a linear objective over an epigraph variable bounded by a quadratic constraint |
+| `Miqp` | no: `Highs_run` refuses it ("Cannot solve MIQP problems with HiGHS") | yes | yes |
+
+An `Lp`'s quadratic part is canonical and convex in its sense ([The LP as data](lp.md#the-quadratic-part)), so a
+backend converts it without checking it again: HiGHS takes `Hᵢᵢ = 2q` on the diagonal and `q` below it; Gurobi takes
+the entries as they are. Quadratic constraints, which Gurobi and SCIP solve and HiGHS does not, would be further
+classes that a backend declares or leaves out.
+
+`Script` declares every class, since it replays its script rather than solving.
 
 ## Events
 
@@ -107,7 +128,7 @@ same with `GRBsetintparam` / `GRBsetdblparam` / `GRBsetstrparam`, and SCIP with 
 | `Infeasible` | `Infeasible` | `GRB_INFEASIBLE` | `INFEASIBLE` |
 | `Unbounded` | `Unbounded` | `GRB_UNBOUNDED` | `UNBOUNDED` |
 | `InfeasibleOrUnbounded` | `UnboundedOrInfeasible` | `GRB_INF_OR_UNBD` | `INFORUNBD` |
-| `Err(backend error)` | `NotSet`, `LoadError`, `ModelError`, `PresolveError`, `SolveError`, `PostsolveError`, or a failed run | `GRB_NUMERIC`, `GRB_LOADED` after optimize, an error code | `UNKNOWN` after solve, a `SCIP_RETCODE` error |
+| `Err(backend error)` | `NotSet`, `LoadError`, `ModelError`, `PresolveError`, `SolveError`, `PostsolveError`, or a failed run; for a QP also `Optimal` with a relative primal-dual objective error above `1e-5`, and `Unbounded` with every column bounded (`HighsError::UnsoundQp`) | `GRB_NUMERIC`, `GRB_LOADED` after optimize, an error code | `UNKNOWN` after solve, a `SCIP_RETCODE` error |
 
 A `Stopped` outcome carries the best solution when the solver holds a feasible one, and the best bound for a MIP.
 `Solved::status` keeps the native status for diagnostics. For HiGHS that is `HighsStatus`: run status, model status,
@@ -119,7 +140,8 @@ A `culmen_gurobi` crate would hold an `Env`/`Model` pair over `grb-sys`. `load` 
 arrays. `solve` sets parameters from its own typed `GurobiOptions`, then from `Settings`, installs one
 `GRBsetcallbackfunc` trampoline for the run, and maps `where` codes to events as in the table above. Its context
 types would be `GurobiMessage`, `GurobiMip`, `GurobiMipSol` and `GurobiMipNode`. `GurobiMipNode` would implement
-`CutContext` and `HeuristicContext` and offer `cbGet` codes as inherent methods. `EVENTS` would be `Events::ALL`.
+`CutContext` and `HeuristicContext` and offer `cbGet` codes as inherent methods. `EVENTS` would be `Events::ALL`,
+and `CLASSES` would be `ModelClasses::ALL`, the quadratic part passed with `GRBaddqpterms`.
 None of this needs a change to culmen_core. SCIP needs more plumbing, since its callbacks are plugins (an event
 handler, a message handler, a constraint handler, a separator and a heuristic, each registered on the `SCIP*`), but
 each plugin maps onto exactly one event kind above.
