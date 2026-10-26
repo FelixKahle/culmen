@@ -1,7 +1,10 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! One HiGHS instance behind safe methods: the only place, with the callback trampoline, that calls HiGHS.
+//! One HiGHS instance behind safe methods: the only place, with the callback trampoline, that calls HiGHS. The calls
+//! behind the analyses are in its `analysis` submodule.
+
+mod analysis;
 
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr::{self, NonNull};
@@ -16,6 +19,8 @@ use highs_sys::{
     HighsCCallbackType, HighsInt, kHighsHessianFormatTriangular, kHighsMatrixFormatRowwise, kHighsObjSenseMaximize,
     kHighsObjSenseMinimize, kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger,
 };
+
+pub(crate) use analysis::{Penalties, RangingRecord, RawIis};
 
 use crate::{CallStatus, Dimension, HighsError, ModelStatus, OptionValue};
 

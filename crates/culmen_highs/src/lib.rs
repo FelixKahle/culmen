@@ -45,6 +45,7 @@
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
 
+mod analysis;
 pub mod callback;
 mod error;
 mod instance;
@@ -61,6 +62,7 @@ pub use callback::{
     Cut, CutPool, HighsHeuristic, HighsLog, HighsLogType, HighsMipProgress, HighsNative, HighsPoll, HighsSolution,
     MipData, PollSource, QueryOrigin, ReducedCol, RootNodePoint,
 };
+use culmen_core::{Analyses, AnalysisError, Basis, Col, Duals, Iis, Ranging, Relaxed, Row, TiVec, Weights};
 use culmen_core::{
     Backend, Callback, Events, ModelClass, ModelClasses, Outcome, Program, QuadObjective, Sense, Settings, Solution,
     Solved, StopReason, TiSlice, Unsupported,
@@ -452,6 +454,9 @@ impl Backend for Highs {
     /// MIQP problems with HiGHS").
     const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp, ModelClass::Qp]);
 
+    /// Every analysis, each through its HiGHS call; the `analysis` module documents what HiGHS gives.
+    const ANALYSES: Analyses = Analyses::ALL;
+
     fn load(&mut self, program: &Program) -> Result<(), HighsError> {
         self.loaded = None;
         self.instance.pass(program)?;
@@ -477,6 +482,38 @@ impl Backend for Highs {
             status,
             elapsed: ran.elapsed,
         })
+    }
+
+    fn duals(&self, program: &Program) -> Result<Duals, AnalysisError<HighsError>> {
+        analysis::duals(self, program)
+    }
+
+    fn basis(&self, program: &Program) -> Result<Option<Basis>, AnalysisError<HighsError>> {
+        analysis::basis(self, program)
+    }
+
+    fn set_basis(&mut self, _: &Program, basis: &Basis) -> Result<(), AnalysisError<HighsError>> {
+        analysis::set_basis(self, basis)
+    }
+
+    fn ranging(&mut self, program: &Program) -> Result<Ranging, AnalysisError<HighsError>> {
+        analysis::ranging(self, program)
+    }
+
+    fn primal_ray(&mut self, program: &Program) -> Result<Option<TiVec<Col, f64>>, AnalysisError<HighsError>> {
+        analysis::primal_ray(self, program)
+    }
+
+    fn dual_ray(&mut self, _: &Program) -> Result<Option<TiVec<Row, f64>>, AnalysisError<HighsError>> {
+        analysis::dual_ray(self)
+    }
+
+    fn iis(&mut self, program: &Program) -> Result<Option<Iis>, AnalysisError<HighsError>> {
+        analysis::iis(self, program)
+    }
+
+    fn relax(&mut self, program: &Program, weights: &Weights) -> Result<Option<Relaxed>, AnalysisError<HighsError>> {
+        analysis::relax(self, program, weights)
     }
 }
 

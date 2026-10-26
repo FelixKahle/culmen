@@ -97,4 +97,8 @@ pub use solve::{
     Observer, Outcome, Phase, PollContext, Progress, ProgressContext, RelativeGap, Request, Settings, Solution,
     SolutionContext, Solved, Solver, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
 };
+pub use solve::{
+    Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,
+    Line, Misfit, Penalty, Ranged, Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
+};
 pub use typed_index_collections::{TiSlice, TiVec};

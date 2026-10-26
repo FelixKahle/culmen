@@ -219,6 +219,16 @@ impl Program {
         self.offset + linear + self.quadratic.value(values)
     }
 
+    /// The activity of every row at a point: the sum of its coefficients times the point's values.
+    ///
+    /// # Panics
+    ///
+    /// When `values` holds fewer values than the program has columns.
+    #[must_use]
+    pub fn activities(&self, values: &TiSlice<Col, f64>) -> TiVec<Row, f64> {
+        self.rows().map(|row| self.row(row).activity(values)).collect()
+    }
+
     /// The largest amount by which a point violates a bound, a row or integrality, zero for a feasible point.
     ///
     /// # Panics
