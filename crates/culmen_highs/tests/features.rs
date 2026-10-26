@@ -9,9 +9,9 @@
 )]
 
 use culmen_core::{
-    Col, Combination, Improvement, LinExpr, Linear, LoadError, Model, Objective, ObjectiveId, Observer, Outcome,
-    Program, Request, Solution, SolveError, Solver, Start, StartError, TiSlice, TiVec, Tolerance, Var, absolute_gap,
-    relative_gap, weight,
+    Analysis, AnalysisError, Col, Combination, Improvement, LinExpr, Linear, LoadError, Misfit, Model, ModelClass,
+    Objective, ObjectiveId, Observer, Outcome, Program, ProgramFeature, Request, Solution, SolveError, Solver, Start,
+    StartError, TiSlice, TiVec, Tolerance, Var, Weights, absolute_gap, penalty, relative_gap, weight,
 };
 use culmen_highs::{Highs, HighsError};
 use culmen_testing::reference::{self, close};
@@ -379,4 +379,160 @@ fn test_objective_values_follow_the_program() {
     let values = program.objective_values(TiSlice::from_ref(&[1.0, 2.0]));
     assert_eq!((values[ObjectiveId::FIRST], values[second]), (3.0, 2.0));
     let _ = (x, y);
+}
+
+/// Minimize the violation of `x + y >= 1.8` (price 1) and `x <= 0.5` (price 10) with `x` semi-continuous in
+/// `[2, 10]` and `y` in `[0, 1]`, their bounds hard. Off, `x = 0` and `y = 1` miss the first row by 0.8, a penalty of
+/// 0.8; on, `x >= 2` misses the second by at least 1.5, a penalty of 15. So the relaxed point has the semi column at
+/// zero, which violates none of its bounds.
+fn semi_relaxation() -> (Program, Col, Col) {
+    let mut m = Model::new();
+    let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    let y = m.add_var(Var::continuous().upper(1));
+    m.add_constraint((x + y).geq(1.8));
+    m.add_constraint(x.leq(0.5));
+    m.minimize(x);
+    (m.build().unwrap(), x, y)
+}
+
+#[test]
+fn test_highs_relaxation_of_a_semi_program_is_refused() {
+    // HiGHS 1.15's feasibility relaxation keeps x within [2, 10]: it returns x = 2, a penalty of 15, however high the
+    // second row's price, where x = 0 costs 0.8 (a raw fixture below). The backend refuses it.
+    let (program, ..) = semi_relaxation();
+    let weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let mut solver = Solver::new(Highs::new(), program).unwrap();
+    assert_eq!(
+        solver.feasibility_relaxation(&weights).unwrap_err(),
+        AnalysisError::Backend(HighsError::AnalysisFeature {
+            analysis: Analysis::FeasibilityRelaxation,
+            feature: ProgramFeature::SemiContinuous
+        })
+    );
+}
+
+#[test]
+fn test_highs_relaxation_keeps_a_semi_column_on() {
+    let (lower, upper, cost) = ([2.0, 0.0], [10.0, 1.0], [1.0, 0.0]);
+    let integrality = [
+        highs_sys::kHighsVarTypeSemiContinuous,
+        highs_sys::kHighsVarTypeContinuous,
+    ];
+    let (row_lower, row_upper) = ([1.8, f64::NEG_INFINITY], [f64::INFINITY, 0.5]);
+    let (starts, index, value) = ([0, 2], [0, 1, 0], [1.0, 1.0, 1.0]);
+    let (col_penalty, row_penalty) = ([-1.0, -1.0], [1.0, 100.0]);
+    let mut x = [0.0; 2];
+    // SAFETY: the instance is created here, used only on this thread, and destroyed before the block ends. The model
+    // has two columns and two rows: the column arrays hold two values, the row arrays two, the row-wise matrix two
+    // starts and three entries; the penalties one per column bound and per row; the solution buffer two values and
+    // the other solution arrays are null, which HiGHS skips.
+    let status = unsafe {
+        let highs = highs_sys::Highs_create();
+        debug_assert!(!highs.is_null(), "HiGHS allocates an instance");
+        highs_sys::Highs_setBoolOptionValue(highs, c"output_flag".as_ptr(), 0);
+        highs_sys::Highs_passMip(
+            highs,
+            2,
+            2,
+            3,
+            highs_sys::kHighsMatrixFormatRowwise,
+            highs_sys::kHighsObjSenseMinimize,
+            0.0,
+            cost.as_ptr(),
+            lower.as_ptr(),
+            upper.as_ptr(),
+            row_lower.as_ptr(),
+            row_upper.as_ptr(),
+            starts.as_ptr(),
+            index.as_ptr(),
+            value.as_ptr(),
+            integrality.as_ptr(),
+        );
+        let status = highs_sys::Highs_feasibilityRelaxation(
+            highs,
+            -1.0,
+            -1.0,
+            -1.0,
+            col_penalty.as_ptr(),
+            col_penalty.as_ptr(),
+            row_penalty.as_ptr(),
+        );
+        highs_sys::Highs_getSolution(
+            highs,
+            x.as_mut_ptr(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        );
+        highs_sys::Highs_destroy(highs);
+        status
+    };
+    assert_ne!(status, highs_sys::kHighsStatusError);
+    assert_eq!(
+        x[0], 2.0,
+        "the semi column stays on, at a penalty of 150 against 0.8 off"
+    );
+}
+
+#[test]
+fn test_a_soft_bound_of_a_semi_column_is_refused() {
+    let (program, x, _) = semi_relaxation();
+    let mut weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    weights.lower[x] = Some(penalty!(1.0));
+    let mut solver = Solver::new(Highs::new(), program).unwrap();
+    assert_eq!(
+        solver.feasibility_relaxation(&weights).unwrap_err(),
+        AnalysisError::Misfit(Misfit::SoftSemiBound { col: x })
+    );
+}
+
+#[test]
+fn test_analyses_of_one_objective_are_refused_for_several() {
+    let (m, ..) = two_stage();
+    let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
+    solver.solve(Request::new()).unwrap();
+    let refused = AnalysisError::Feature {
+        analysis: Analysis::Duals,
+        feature: ProgramFeature::MultipleObjectives,
+    };
+    assert_eq!(solver.duals().unwrap_err(), refused);
+    assert_eq!(
+        refused.to_string(),
+        "Solver: duals are not defined for a program with multiple objectives"
+    );
+    assert!(matches!(
+        solver.basis(),
+        Err(AnalysisError::Feature {
+            analysis: Analysis::Basis,
+            ..
+        })
+    ));
+    assert!(matches!(
+        solver.ranging(),
+        Err(AnalysisError::Feature {
+            analysis: Analysis::Ranging,
+            ..
+        })
+    ));
+    assert!(matches!(
+        solver.primal_ray(),
+        Err(AnalysisError::Feature {
+            analysis: Analysis::Rays,
+            ..
+        })
+    ));
+    // An IIS concerns the constraints alone: the program's are feasible.
+    assert_eq!(solver.iis().unwrap(), None);
+
+    // A semi program is a MILP, which has no duals.
+    let (program, ..) = semi_relaxation();
+    let mut solver = Solver::new(Highs::new(), program).unwrap();
+    solver.solve(Request::new()).unwrap();
+    assert!(matches!(
+        solver.duals(),
+        Err(AnalysisError::Class {
+            class: ModelClass::Milp,
+            ..
+        })
+    ));
 }

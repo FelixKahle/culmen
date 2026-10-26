@@ -6,7 +6,7 @@
 use core::fmt;
 
 use super::{Analyses, Analysis, BasisStatus, Line};
-use crate::{ModelClass, Program};
+use crate::{Col, ModelClass, Program, ProgramFeature};
 
 /// Why a [`Solver`](crate::Solver) refused an analysis, or the backend failed it with its own error `E`.
 ///
@@ -35,6 +35,13 @@ pub enum AnalysisError<E> {
         analysis: Analysis,
         /// The program's class.
         class: ModelClass,
+    },
+    /// The analysis is not defined for a program with a feature it uses, as duals are not for several objectives.
+    Feature {
+        /// The analysis asked for.
+        analysis: Analysis,
+        /// The first feature of the program the analysis is not defined for.
+        feature: ProgramFeature,
     },
     /// The analysis reads a solve, and there is none to read: no solve since the program was loaded, the last solve
     /// failed, or a later basis, IIS or relaxation replaced its result.
@@ -67,6 +74,10 @@ impl<E: fmt::Display> fmt::Display for AnalysisError<E> {
                     analysis.classes()
                 )
             }
+            Self::Feature { analysis, feature } => {
+                let are = analysis.agree("is", "are");
+                write!(f, "Solver: {analysis} {are} not defined for a program with {feature}")
+            }
             Self::NotSolved { analysis } => {
                 let need = analysis.agree("needs", "need");
                 write!(f, "Solver: {analysis} {need} a solve, and there is none to read")
@@ -89,7 +100,11 @@ impl<E: core::error::Error + 'static> core::error::Error for AnalysisError<E> {
         match self {
             Self::Backend(error) => Some(error),
             Self::Misfit(misfit) => Some(misfit),
-            Self::Unsupported { .. } | Self::Class { .. } | Self::NotSolved { .. } | Self::NotOptimal { .. } => None,
+            Self::Unsupported { .. }
+            | Self::Class { .. }
+            | Self::Feature { .. }
+            | Self::NotSolved { .. }
+            | Self::NotOptimal { .. } => None,
         }
     }
 }
@@ -132,6 +147,12 @@ pub enum Misfit {
         /// Its status, [`BasisStatus::Lower`] or [`BasisStatus::Upper`].
         status: BasisStatus,
     },
+    /// The weights price a bound of a semi-continuous or semi-integer column, whose bounds stay hard: relaxed below
+    /// its lower bound it would no longer be a semi column.
+    SoftSemiBound {
+        /// The column.
+        col: Col,
+    },
 }
 
 impl fmt::Display for Misfit {
@@ -146,6 +167,12 @@ impl fmt::Display for Misfit {
             }
             Self::Status { line, status } => {
                 write!(f, "the basis puts {line} at its {status} bound, which is infinite")
+            }
+            Self::SoftSemiBound { col } => {
+                write!(
+                    f,
+                    "the weights price a bound of the semi column {col:?}, which stays hard"
+                )
             }
         }
     }

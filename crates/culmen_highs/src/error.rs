@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use culmen_core::{Analysis, Col};
+use culmen_core::{Analysis, Col, ProgramFeature};
 
 use crate::{ModelStatus, OptionValue};
 
@@ -72,6 +72,14 @@ pub enum HighsError {
     },
     /// HiGHS refused a start.
     Start,
+    /// HiGHS 1.15 gets the analysis wrong for a program with the feature, so the backend refuses it: its feasibility
+    /// relaxation keeps a semi column within its bounds, never at zero.
+    AnalysisFeature {
+        /// The analysis asked for.
+        analysis: Analysis,
+        /// The program's feature HiGHS gets it wrong for.
+        feature: ProgramFeature,
+    },
 }
 
 /// Why the backend does not trust the ending HiGHS's QP solver reported.
@@ -121,6 +129,9 @@ impl fmt::Display for HighsError {
                 crate::Highs::SEMI_UPPER_LIMIT
             ),
             Self::Start => write!(f, "HiGHS: the start was refused"),
+            Self::AnalysisFeature { analysis, feature } => {
+                write!(f, "HiGHS: the {analysis} of a program with {feature} is refused")
+            }
         }
     }
 }

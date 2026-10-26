@@ -139,7 +139,8 @@ pub struct Weights {
 }
 
 impl Weights {
-    /// The same price for every column bound and the same for every row, for `program`.
+    /// The same price for every column bound but a semi column's, which stays hard, and the same for every row, for
+    /// `program`.
     ///
     /// ```
     /// use culmen_core::{Linear, Model, Var, Weights, penalty};
@@ -153,22 +154,29 @@ impl Weights {
     /// ```
     #[must_use]
     pub fn uniform(program: &Program, cols: Option<Penalty>, rows: Option<Penalty>) -> Self {
+        let col = |c: &crate::ProgramColumn| cols.filter(|_| !c.integrality.is_semi());
         Self {
-            lower: program.cols().map(|_| cols).collect(),
-            upper: program.cols().map(|_| cols).collect(),
+            lower: program.columns().iter().map(col).collect(),
+            upper: program.columns().iter().map(col).collect(),
             rows: program.rows().map(|_| rows).collect(),
         }
     }
 
-    /// Checks that the weights hold one entry per column bound and per row of `program`.
+    /// Checks that the weights hold one entry per column bound and per row of `program`, and keep every semi
+    /// column's bounds hard.
     ///
     /// # Errors
     ///
-    /// [`Misfit::Length`] for the first table of the wrong length.
+    /// [`Misfit::Length`] for the first table of the wrong length, else [`Misfit::SoftSemiBound`] for the first semi
+    /// column with a priced bound.
     pub fn check(&self, program: &Program) -> Result<(), Misfit> {
         Table::LowerWeights.check(self.lower.len(), program)?;
         Table::UpperWeights.check(self.upper.len(), program)?;
-        Table::RowWeights.check(self.rows.len(), program)
+        Table::RowWeights.check(self.rows.len(), program)?;
+        let soft = program.cols().find(|&col| {
+            program.columns()[col].integrality.is_semi() && (self.lower[col].is_some() || self.upper[col].is_some())
+        });
+        soft.map_or(Ok(()), |col| Err(Misfit::SoftSemiBound { col }))
     }
 
     /// The price of one unit of violation of `bound` of `line`, `None` when it is hard.
@@ -210,7 +218,8 @@ pub struct Relaxed {
 }
 
 impl Relaxed {
-    /// Every bound and row of `program` the point violates, columns first.
+    /// Every bound and row of `program` the point violates, columns first; a semi-continuous or semi-integer column
+    /// violates its bounds only by as much as zero, which it may also take, is farther off.
     ///
     /// # Panics
     ///
@@ -267,7 +276,13 @@ impl<'a> Violations<'a> {
             (Line::Row(row), self.program.row(row).activity(self.values))
         };
         let bounds = line.bounds(self.program);
-        let amount = bounds.violation(value);
+        let amount = match line {
+            // A semi column may also be zero, so it violates its bounds only by as much as zero is farther off.
+            Line::Col(col) if self.program.columns()[col].integrality.is_semi() => {
+                bounds.violation(value).min(value.abs())
+            }
+            Line::Col(_) | Line::Row(_) => bounds.violation(value),
+        };
         let bound = if value < bounds.lower() {
             Bound::Lower
         } else {

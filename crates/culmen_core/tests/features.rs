@@ -13,11 +13,11 @@ use core::time::Duration;
 use std::collections::HashSet;
 
 use culmen_core::{
-    Backend, Bounds, Callback, Col, Combination, Events, ExprPlace, Integrality, Linear, LinearObjective, LoadError,
-    LpFileError, Model, ModelClass, ModelClasses, ModelError, Objective, ObjectiveId, Objectives, Outcome, Program,
-    ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Request, Script, Sense, Settings,
-    SolveError, Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Unsupported, Var, Weight,
-    Weighted, absolute_gap, bounds, relative_gap, weight,
+    Backend, Bound, Bounds, Callback, Col, Combination, Events, ExprPlace, Integrality, Line, Linear, LinearObjective,
+    LoadError, LpFileError, Model, ModelClass, ModelClasses, ModelError, Objective, ObjectiveId, Objectives, Outcome,
+    Program, ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Relaxed, Request, Script,
+    Sense, Settings, SolveError, Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Unsupported, Var,
+    Violation, Weight, Weighted, absolute_gap, bounds, relative_gap, weight,
 };
 use proptest::prelude::*;
 
@@ -619,4 +619,42 @@ mod serde_round_trips {
         let program: Program = serde_json::from_value(json).unwrap();
         assert_eq!(program.objectives(), &Objectives::Single);
     }
+}
+
+#[test]
+fn test_a_semi_column_at_zero_violates_none_of_its_bounds() {
+    let (m, x, y) = semi();
+    let program = m.build().unwrap();
+    let violations = |values: Vec<f64>| {
+        Relaxed { values: values.into() }
+            .violations(&program)
+            .collect::<Vec<_>>()
+    };
+    // x off and y on at 3: no bound and no row is violated.
+    assert_eq!(violations(vec![0.0, 3.0]), []);
+    // x at 0.5 is 0.5 off zero and 1.5 below its lower bound; y at 0.75 is 0.75 off zero: each the nearer.
+    assert_eq!(
+        violations(vec![0.5, 0.75]),
+        [
+            Violation {
+                line: Line::Col(x),
+                bound: Bound::Lower,
+                amount: 0.5
+            },
+            Violation {
+                line: Line::Col(y),
+                bound: Bound::Lower,
+                amount: 0.75
+            },
+        ]
+    );
+    // Above the upper bound, zero is no nearer.
+    assert_eq!(
+        violations(vec![12.0, 0.0]),
+        [Violation {
+            line: Line::Col(x),
+            bound: Bound::Upper,
+            amount: 2.0
+        }]
+    );
 }
