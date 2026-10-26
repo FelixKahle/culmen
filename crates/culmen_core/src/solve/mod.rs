@@ -3,6 +3,7 @@
 
 //! Solving: the backend seam, the generic callbacks, the observer convenience, and the solver value.
 
+mod analysis;
 mod backend;
 pub mod context;
 mod events;
@@ -11,6 +12,10 @@ mod outcome;
 mod settings;
 mod watch;
 
+pub use analysis::{
+    Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,
+    Line, Misfit, Penalty, Ranged, Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
+};
 pub use backend::{Backend, Callback};
 pub use context::{
     ActionError, AddedRow, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, ProgressContext,
@@ -23,6 +28,7 @@ pub use settings::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, Relative
 pub use watch::{Improvement, LogLine, Observer, Request, Stop, StopFn, Watch, stop_fn};
 
 use crate::Program;
+use analysis::Ending;
 
 /// A program loaded into a backend, solved as often as needed, each solve with its own [`Request`].
 ///
@@ -45,6 +51,8 @@ use crate::Program;
 pub struct Solver<B> {
     backend: B,
     program: Program,
+    /// How the last solve ended; `None` before one, after one failed, or once a later call replaced its result.
+    ended: Option<Ending>,
 }
 
 impl<B: Backend> Solver<B> {
@@ -63,7 +71,11 @@ impl<B: Backend> Solver<B> {
             });
         }
         backend.load(&program).map_err(LoadError::Backend)?;
-        Ok(Self { backend, program })
+        Ok(Self {
+            backend,
+            program,
+            ended: None,
+        })
     }
 
     /// The loaded program.
@@ -120,6 +132,7 @@ impl<B: Backend> Solver<B> {
         let mut both = (watch, callback);
         let solved = self.backend.solve(&settings, &mut both);
         both.0.finish();
+        self.ended = solved.as_ref().ok().map(|s| Ending::of(&s.outcome));
         solved
     }
 }

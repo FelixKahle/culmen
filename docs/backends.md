@@ -24,6 +24,7 @@ pub trait Backend: Sized {
     type Native<'a>: Debug;               // Events::NATIVE: whatever only this solver reports
     const EVENTS: Events;                 // what this backend delivers
     const CLASSES: ModelClasses;          // the model classes this backend solves
+    const ANALYSES: Analyses = Analyses::NONE; // what it reports after a solve: duals, basis, ranging, …
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
     fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>)
         -> Result<Solved<Self::Status>, Self::Error>;
@@ -36,6 +37,10 @@ pub trait Backend: Sized {
 - **Model classes are declared.** A backend lists the classes it solves (`ModelClass::Lp`, `Milp`, `Qp`, `Miqp`)
   in `Backend::CLASSES`. `Solver::new` reads it before `load`, for every backend alike, and refuses any other class
   with `LoadError::Unsupported { class, supported }`, so `load` never re-checks the class.
+- **Analyses are declared.** A backend lists what it reports after a solve in `Backend::ANALYSES` and implements the
+  matching methods (`duals`, `basis`, `set_basis`, `ranging`, `primal_ray`, `dual_ray`, `iis`, `relax`), whose
+  default bodies refuse. The `Solver` checks the declaration, the program's class, the fit of a basis or weights
+  and the solve read before it asks, for every backend alike ([Analysis](analysis.md)).
 - **Actions are typed per event.** Only `PollContext` has `interrupt`, only `LazyContext` has `add_lazy`, only
   `CutContext` has `add_cut`, only `HeuristicContext` has `supply` and `supply_partial`. An action that a solver
   honours only at certain points exists only on the context of those points.

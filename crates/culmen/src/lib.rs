@@ -176,6 +176,10 @@ mod docs {
     struct Callbacks;
 
     #[cfg(feature = "highs")]
+    #[doc = include_str!("../../../docs/analysis.md")]
+    struct Analysis;
+
+    #[cfg(feature = "highs")]
     #[doc = include_str!("../../../docs/highs.md")]
     struct HighsBackend;
 

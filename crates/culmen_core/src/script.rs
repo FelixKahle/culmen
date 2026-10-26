@@ -10,9 +10,9 @@ use typed_index_collections::{TiSlice, TiVec};
 
 use crate::solve::context::{check_constraint, check_entries, check_solution};
 use crate::{
-    ActionError, AddedRow, Backend, Callback, Col, Constraint, CutContext, Events, HeuristicContext, LazyContext,
-    LogContext, LogLevel, ModelClasses, Outcome, Phase, PollContext, Program, Progress, ProgressContext, Settings,
-    Solution, SolutionContext, Solved, StopReason,
+    ActionError, AddedRow, Analyses, Backend, Callback, Col, Constraint, CutContext, Events, HeuristicContext,
+    LazyContext, LogContext, LogLevel, ModelClasses, Outcome, Phase, PollContext, Program, Progress, ProgressContext,
+    Settings, Solution, SolutionContext, Solved, StopReason,
 };
 
 /// A solution a script step reports.
@@ -293,6 +293,8 @@ impl Backend for Script {
 
     const EVENTS: Events = Events::ALL;
     const CLASSES: ModelClasses = ModelClasses::ALL;
+    /// A script replays events and an outcome; it has no duals, basis or other analysis to report honestly.
+    const ANALYSES: Analyses = Analyses::NONE;
 
     fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
         self.num_cols = Some(program.num_cols());

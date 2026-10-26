@@ -19,6 +19,7 @@ solve as often as needed, each time with its own request.
 | `program()` | The loaded program. |
 | `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
 | `into_parts()` | The backend and the program, taken apart. |
+| `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome ([Analysis](analysis.md)). |
 
 The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Script>` replays a script
 ([Testing](testing.md#the-script-backend)), and a backend of your own plugs in by implementing
@@ -243,7 +244,8 @@ A solution is read with the handles the model returned:
 - `solution.values[x]` for one variable, since `values` is a `TiVec<Col, f64>`.
 - `family.values(&solution.values)` for a whole [`VarMap`](modelling.md#keyed-families), as `(&key, value)` pairs.
 - `expr.value(&solution.values)` for any [expression](modelling.md#expressions).
-- `program.row(r).activity(&solution.values)` for a constraint's activity, and `program.max_violation(&solution.values)`
+- `program.row(r).activity(&solution.values)` for a constraint's activity, `program.activities(&solution.values)`
+  for every row's, and `program.max_violation(&solution.values)`
   to check the solution against the program ([Checking a point](program.md#checking-a-point)).
 
 Integer variables come back as floating-point numbers within the solver's integrality tolerance; round them
@@ -285,6 +287,7 @@ solver has stopped ([Panics and threads](callbacks.md#panics-and-threads)).
 ## See also
 
 - [Callbacks](callbacks.md): stops, observers and callbacks.
+- [Analysis](analysis.md): duals, the basis, ranging, rays, IIS and feasibility relaxation after a solve.
 - [HiGHS](highs.md): the HiGHS backend's options, statuses and errors.
 - [Testing](testing.md): solving with a scripted backend.
 - [Documentation index](README.md).

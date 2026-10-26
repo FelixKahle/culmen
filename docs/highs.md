@@ -259,6 +259,7 @@ trusted:
 | `OutOfRange { name, value }` | A seed or thread count is above `i32::MAX`, beyond HiGHS's integers. |
 | `Run { status, message }` | The run failed, as a thread-count conflict makes it; `message` is HiGHS's last error line. |
 | `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
+| `Analysis(Analysis)` | HiGHS refused or failed an analysis, as a basis it finds singular ([Analysis](analysis.md#highs)). |
 
 ```rust
 use culmen::prelude::*;
@@ -455,6 +456,7 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 ## See also
 
 - [Callbacks](callbacks.md): the neutral events and contexts.
+- [Analysis](analysis.md#highs): duals, basis, ranging, rays, IIS and feasibility relaxation on HiGHS.
 - [Solving](solving.md): requests, settings and outcomes.
 - [Backends](backends.md): how HiGHS's callbacks, options and statuses map onto culmen's seam, beside Gurobi and SCIP.
 - [Design](design.md#where-unsafe-lives): why the trampoline is sound.

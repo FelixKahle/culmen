@@ -5,6 +5,8 @@
 
 use core::fmt;
 
+use culmen_core::Analysis;
+
 use crate::{ModelStatus, OptionValue};
 
 /// Why loading or solving with HiGHS failed.
@@ -58,6 +60,8 @@ pub enum HighsError {
     /// HiGHS's QP solver reported an ending that its own measures or the model contradict. HiGHS 1.15's QP solver
     /// can end so after its iterates turned NaN.
     UnsoundQp(UnsoundQp),
+    /// HiGHS refused or failed an analysis, as it refuses a basis it finds singular.
+    Analysis(Analysis),
 }
 
 /// Why the backend does not trust the ending HiGHS's QP solver reported.
@@ -100,6 +104,7 @@ impl fmt::Display for HighsError {
             Self::OptionString { name } => write!(f, "HiGHS: the value of option `{name}` holds a NUL byte"),
             Self::Run { status, message: m } => write!(f, "HiGHS: the run failed ({status}){}", message(m)),
             Self::UnsoundQp(why) => write!(f, "HiGHS: the QP solver reported {why}, which is unsound"),
+            Self::Analysis(analysis) => write!(f, "HiGHS: the {analysis} failed"),
         }
     }
 }
