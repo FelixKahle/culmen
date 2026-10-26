@@ -196,8 +196,8 @@ columns when it runs ("Cannot solve MIQP problems with HiGHS"), so a MIQP is ref
 [`Solver::new`](solving.md#model-classes-and-refusal) with `LoadError::Unsupported` before HiGHS sees it.
 
 The backend passes the quadratic part as HiGHS reads it, the lower triangle of the Hessian `H` of `½ xᵀHx` column by
-column ([The quadratic part](lp.md#the-quadratic-part)): the model's `x * x` reaches HiGHS as `Hₓₓ = 2`, and
-`x * y` as `Hᵧₓ = 1`. Every `Lp` passed the convexity check when it was built, so HiGHS's own refusal of a Hessian
+column ([The quadratic part](program.md#the-quadratic-part)): the model's `x * x` reaches HiGHS as `Hₓₓ = 2`, and
+`x * y` as `Hᵧₓ = 1`. Every `Program` passed the convexity check when it was built, so HiGHS's own refusal of a Hessian
 with a diagonal of the wrong sign never arises.
 
 ```rust
@@ -211,10 +211,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y = m.add_var(Var::free());
     m.add_constraint((x + y).leq(1));
     m.minimize((x - 1) * (x - 1) + (y - 2) * (y - 2));
-    let lp = m.build()?;
-    assert_eq!(lp.class(), ModelClass::Qp);
+    let program = m.build()?;
+    assert_eq!(program.class(), ModelClass::Qp);
 
-    let solved = Solver::new(Highs::new(), lp)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), program)?.solve(Request::new())?;
     let Outcome::Optimal(best) = solved.outcome else { return Err("no optimum".into()) };
     assert!((best.objective - 2.0).abs() < 1e-6);
     assert!((best.values[x] - 0.0).abs() < 1e-6 && (best.values[y] - 1.0).abs() < 1e-6);
@@ -250,9 +250,9 @@ trusted:
 
 | Variant | When |
 |---|---|
-| `NotLoaded` | A solve was asked for before an LP was loaded. |
-| `TooLarge { what, count }` | The LP has more columns, rows, entries or Hessian entries (`what`, a `Dimension`) than HiGHS's 32-bit indices hold. |
-| `Load { message }` | HiGHS refused the LP. |
+| `NotLoaded` | A solve was asked for before a program was loaded. |
+| `TooLarge { what, count }` | The program has more columns, rows, entries or Hessian entries (`what`, a `Dimension`) than HiGHS's 32-bit indices hold. |
+| `Load { message }` | HiGHS refused the program. |
 | `Option { name, value }` | HiGHS refused an option: an unknown name, or a value of the wrong kind or out of range. |
 | `OptionName { name }` | An option name holds a NUL byte, which HiGHS's C strings cannot carry. |
 | `OptionString { name }` | A string option's value holds a NUL byte. |
@@ -308,7 +308,7 @@ A `Callback<Highs>` receives HiGHS's own context types. Each implements the neut
 | `nodes`, `lp_iterations` | Branch-and-bound nodes, and LP iterations over all nodes. |
 
 A context's `progress()` carries the elapsed time since the solve began; a poll's phase is `Simplex`, `Barrier` or
-`Mip` after its source. A solution HiGHS reports with another number of values than the LP has columns is not
+`Mip` after its source. A solution HiGHS reports with another number of values than the program has columns is not
 delivered.
 
 The interrupt and logging callbacks are always installed, whatever the callback asks for: the polls so that a panic
@@ -435,8 +435,8 @@ At `NATIVE`, HiGHS reports its cut pool after the root node, and again after eac
 | `cuts` | Each `Cut { lower, upper, entries }`: `lower <= Σ value · column <= upper`, an open end infinite. |
 | `mip` | The `MipData` at the time. |
 
-The cuts range over the presolved problem HiGHS's MIP solver works on, not over the LP you loaded, so their columns
-are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your LP by mistake. `HighsNative` is
+The cuts range over the presolved problem HiGHS's MIP solver works on, not over the program you loaded, so their columns
+are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your program by mistake. `HighsNative` is
 `#[non_exhaustive]`, so a `match` on it needs a `_` arm.
 
 ## Limitations
@@ -447,7 +447,7 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 - **An interrupt is honoured only at a poll.** Only `HighsPoll` has `interrupt`, and only `HighsHeuristic` accepts
   a solution.
 - **One thread count per thread.** See [Threads](#threads).
-- **32-bit indices.** An LP with more than `i32::MAX` columns, rows, entries or Hessian entries is refused with
+- **32-bit indices.** A program with more than `i32::MAX` columns, rows, entries or Hessian entries is refused with
   `HighsError::TooLarge`.
 - **No MIQP, and a QP solve sees only the log.** See [Quadratic programs](#quadratic-programs).
 - **Options do not persist inside HiGHS.** Each solve resets them; set them through `HighsOptions`.

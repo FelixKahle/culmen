@@ -3,30 +3,30 @@
 This page states the principles the API follows and why. Each one is a guarantee you can rely on when you use
 culmen, and a rule a contribution keeps.
 
-## The LP is checked data
+## The program is checked data
 
-An [`Lp`](lp.md#lp) is a value, built once and never changed. Every number in it was checked when it was built:
-costs, coefficients and the offset are finite, bounds are valid intervals, and each row holds each column at most
-once. Nothing downstream checks again, and nothing downstream can meet an LP that was not checked: `Lp` has no
+A [`Program`](program.md#program) is a value, built once and never changed. Every number in it was checked when it was
+built: costs, coefficients and the offset are finite, bounds are valid intervals, and each row holds each column at most
+once. Nothing downstream checks again, and nothing downstream can meet a program that was not checked: `Program` has no
 public fields, its only constructors check, and deserialization goes through the same check.
 
 The check happens in one place, `build`, and its error names what is at fault. A model's error names the variable
 or constraint by the name you gave it (`` Model: constraint `big` has the non-finite coefficient inf on variable `x` ``),
-because the model runs the LP's checks in its own terms; every model `build` accepts gives an LP the LP's own checks
-accept.
+because the model runs the program's checks in its own terms; every model `build` accepts gives a program those
+checks accept.
 
-Holding no solver state, an LP can be cloned, compared, serialized, written as an [LP file](lp.md#lp-files), and
-loaded into any backend.
+Holding no solver state, a program can be cloned, compared, serialized, written as an [LP file](program.md#lp-files),
+and loaded into any backend.
 
 ## Typed handles
 
 `Col` and `Row` are distinct `Copy` types, not `usize`. A solution is a `TiVec<Col, f64>`, indexed by `Col` only, so
 reading a solution with a row, or a row table with a column, does not compile. The handles a model returns are the
-columns and rows of the LP it builds, so there is no mapping to keep between "model variables" and "solver
+columns and rows of the program it builds, so there is no mapping to keep between "model variables" and "solver
 columns": `solution.values[x]` is the value of the variable `x`.
 
-The same holds beyond the LP. HiGHS's cut pool ranges over the presolved problem, whose columns are not the LP's;
-they are `ReducedCol`, a third type, so a cut cannot be read as a row of your LP by mistake.
+The same holds beyond the program. HiGHS's cut pool ranges over the presolved problem, whose columns are not the
+program's; they are `ReducedCol`, a third type, so a cut cannot be read as a row of your program by mistake.
 
 Keyed families give handles domain keys (`x[(product, location)]`), and a family is plain data you can iterate,
 look up and read a solution through.
@@ -49,11 +49,11 @@ say what was refused. Code never writes `.unwrap()` to make a literal.
 
 ## Plain data and sealed values
 
-A type without an invariant is plain data with `pub` fields and no getters: `LpPlan`, `LpColumn`, `Constraint`,
-`LinExpr`, `Settings`, `Solution`, `Progress`, `HighsOptions`, `HighsStatus`. You build them with struct literals and
-`..Default::default()`, read and change their fields directly, and match on them.
+A type without an invariant is plain data with `pub` fields and no getters: `ProgramPlan`, `ProgramColumn`,
+`Constraint`, `LinExpr`, `Settings`, `Solution`, `Progress`, `HighsOptions`, `HighsStatus`. You build them with struct
+literals and `..Default::default()`, read and change their fields directly, and match on them.
 
-A type with an invariant keeps its fields private behind a checked constructor: `Bounds`, `Lp`, the gaps. Their
+A type with an invariant keeps its fields private behind a checked constructor: `Bounds`, `Program`, the gaps. Their
 fields cannot be written from outside, not even all at once:
 
 ```compile_fail
@@ -74,7 +74,7 @@ it is a `TryFrom` or a `new` returning `Result`, so the refusal is visible where
   in `Backend::EVENTS`. An event it cannot deliver takes `Unsupported`, an enum with no values, so a callback for it
   compiles everywhere and never runs on that backend.
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
-  `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the LP, the
+  `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the program, the
   same way for every backend.
 - **Actions live where the solver honours them.** Only a poll context can interrupt, only a lazy context can add a
   lazy constraint, only a heuristic context can supply a solution. Calling an action at a point where the solver
@@ -124,7 +124,7 @@ The rustdoc of `culmen_highs::callback` states these arguments in full.
 
 ## See also
 
-- [The LP as data](lp.md) and [Modelling](modelling.md): the checked values in practice.
+- [The program as data](program.md) and [Modelling](modelling.md): the checked values in practice.
 - [Callbacks](callbacks.md): the seam from a user's side.
 - [Backends](backends.md): the seam from a backend author's side.
 - [Documentation index](README.md).

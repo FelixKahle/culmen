@@ -3,14 +3,14 @@
 
 //! Instances hard enough that a solver searches for seconds: generalized assignment problems.
 
-use culmen_core::{LinExpr, Linear, Lp, Model, Var, VarMap, product};
+use culmen_core::{LinExpr, Linear, Model, Program, Var, VarMap, product};
 
 /// A generalized assignment problem: each product goes to exactly one location, each location holds at most its
 /// capacity in volume, and the walking cost of picks is minimized.
 #[derive(Debug)]
 pub struct Assignment {
-    /// The built LP.
-    pub lp: Lp,
+    /// The built program.
+    pub program: Program,
     /// The assignment variables, keyed by `(product, location)`.
     pub x: VarMap<(usize, usize)>,
 }
@@ -56,7 +56,7 @@ pub fn assignment(products: usize, locations: usize, seed: u64, offset: f64) -> 
     let walk = LinExpr::sum(x.iter().map(|(&(p, l), col)| picks[p] * 2.0 * distance[l] * col));
     m.minimize(walk + offset);
     Assignment {
-        lp: m.build().expect("a valid model"),
+        program: m.build().expect("a valid model"),
         x,
     }
 }

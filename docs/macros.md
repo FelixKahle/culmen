@@ -2,7 +2,7 @@
 
 `variable!`, `constraint!`, `objective!` and `sum!` write a model the way the mathematics reads. Each expands to the
 plain methods of [Modelling](modelling.md), so a model written with them and one written with the methods build the
-same LP, and the two styles mix freely in one model.
+same program, and the two styles mix freely in one model.
 
 ## Enabling the macros
 
@@ -33,8 +33,8 @@ fn main() -> Result<(), culmen::ModelError> {
 
     assert_eq!(m.var_name(x[(3, 1)]), Some("x[3,1]"));
     assert_eq!(m.constraint_name(capacity[1]), Some("capacity[1]"));
-    let lp = m.build()?;
-    assert_eq!((lp.num_cols(), lp.num_rows()), (8, 6));
+    let program = m.build()?;
+    assert_eq!((program.num_cols(), program.num_rows()), (8, 6));
     Ok(())
 }
 ```

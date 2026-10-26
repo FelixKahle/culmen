@@ -3,7 +3,7 @@
 
 //! The modelling macros of culmen: a model written the way the mathematics reads, each macro expanding to the public
 //! methods of culmen's modelling layer, so a model written with them and one written with the methods build the same
-//! `Lp`.
+//! `Program`.
 //!
 //! Use them through the `culmen` facade with its `macros` feature (or beside `culmen_core`); they are documented
 //! there with the methods each form writes. In brief:

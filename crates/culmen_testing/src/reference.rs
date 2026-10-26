@@ -7,7 +7,7 @@
 //! continuous columns span, solving each vertex's linear system in exact rational arithmetic. Every column must have
 //! finite bounds, so the polytope is bounded and an optimum, if any point is feasible, lies at a vertex.
 
-use culmen_core::{Integrality, Lp, Sense};
+use culmen_core::{Integrality, Program, Sense};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, ToPrimitive, Zero};
@@ -44,14 +44,14 @@ struct Inequality {
 ///
 /// When a column has an infinite bound, or the integer box holds more than a million points.
 #[must_use]
-pub fn solve(lp: &Lp) -> Reference {
+pub fn solve(program: &Program) -> Reference {
     let exact = |v: f64| BigRational::from_float(v).expect("a finite number");
-    let ints: Vec<usize> = (0..lp.num_cols()).filter(|&j| is_integer(lp, j)).collect();
-    let conts: Vec<usize> = (0..lp.num_cols()).filter(|&j| !is_integer(lp, j)).collect();
+    let ints: Vec<usize> = (0..program.num_cols()).filter(|&j| is_integer(program, j)).collect();
+    let conts: Vec<usize> = (0..program.num_cols()).filter(|&j| !is_integer(program, j)).collect();
     let ranges: Vec<(i64, i64)> = ints
         .iter()
         .map(|&j| {
-            let bounds = lp.columns()[culmen_core::Col::new(j)].bounds;
+            let bounds = program.columns()[culmen_core::Col::new(j)].bounds;
             let lower = exact(bounds.lower())
                 .ceil()
                 .to_integer()
@@ -73,8 +73,8 @@ pub fn solve(lp: &Lp) -> Reference {
         return Reference::Infeasible;
     }
     loop {
-        if let Some(value) = best_continuous(lp, &ints, &point, &conts) {
-            let better = best.as_ref().is_none_or(|b| match lp.sense() {
+        if let Some(value) = best_continuous(program, &ints, &point, &conts) {
+            let better = best.as_ref().is_none_or(|b| match program.sense() {
                 Sense::Minimize => value < *b,
                 Sense::Maximize => value > *b,
             });
@@ -89,8 +89,8 @@ pub fn solve(lp: &Lp) -> Reference {
     best.map_or(Reference::Infeasible, Reference::Optimal)
 }
 
-fn is_integer(lp: &Lp, j: usize) -> bool {
-    lp.columns()[culmen_core::Col::new(j)].integrality == Integrality::Integer
+fn is_integer(program: &Program, j: usize) -> bool {
+    program.columns()[culmen_core::Col::new(j)].integrality == Integrality::Integer
 }
 
 /// Steps `point` to the next integer point of the box, `false` after the last.
@@ -107,9 +107,9 @@ fn advance(point: &mut [i64], ranges: &[(i64, i64)]) -> bool {
 
 /// The best objective value over the continuous columns with the integer columns fixed at `point`, `None` when no
 /// continuous point is feasible.
-fn best_continuous(lp: &Lp, ints: &[usize], point: &[i64], conts: &[usize]) -> Option<BigRational> {
+fn best_continuous(program: &Program, ints: &[usize], point: &[i64], conts: &[usize]) -> Option<BigRational> {
     let exact = |v: f64| BigRational::from_float(v).expect("a finite number");
-    let fixed: Vec<Option<BigRational>> = (0..lp.num_cols())
+    let fixed: Vec<Option<BigRational>> = (0..program.num_cols())
         .map(|j| {
             ints.iter()
                 .position(|&i| i == j)
@@ -118,22 +118,22 @@ fn best_continuous(lp: &Lp, ints: &[usize], point: &[i64], conts: &[usize]) -> O
         .collect();
     let position = |j: usize| conts.iter().position(|&c| c == j);
     let mut inequalities = Vec::new();
-    for row in lp.rows() {
+    for row in program.rows() {
         let mut a = vec![BigRational::zero(); conts.len()];
         let mut constant = BigRational::zero();
-        for (col, coefficient) in lp.row(row).entries() {
+        for (col, coefficient) in program.row(row).entries() {
             let coefficient = exact(coefficient);
             match &fixed[col.index()] {
                 Some(value) => constant += &coefficient * value,
                 None => a[position(col.index()).expect("a continuous column")] += coefficient,
             }
         }
-        push_bounds(&mut inequalities, &a, &constant, lp.row_bounds()[row]);
+        push_bounds(&mut inequalities, &a, &constant, program.row_bounds()[row]);
     }
     for (k, &j) in conts.iter().enumerate() {
         let mut a = vec![BigRational::zero(); conts.len()];
         a[k] = BigRational::one();
-        let bounds = lp.columns()[culmen_core::Col::new(j)].bounds;
+        let bounds = program.columns()[culmen_core::Col::new(j)].bounds;
         assert!(
             bounds.lower().is_finite() && bounds.upper().is_finite(),
             "every continuous column is bounded"
@@ -141,9 +141,9 @@ fn best_continuous(lp: &Lp, ints: &[usize], point: &[i64], conts: &[usize]) -> O
         push_bounds(&mut inequalities, &a, &BigRational::zero(), bounds);
     }
     let objective = |x: &[BigRational]| -> BigRational {
-        let mut value = exact(lp.offset());
-        for j in 0..lp.num_cols() {
-            let cost = exact(lp.columns()[culmen_core::Col::new(j)].cost);
+        let mut value = exact(program.offset());
+        for j in 0..program.num_cols() {
+            let cost = exact(program.columns()[culmen_core::Col::new(j)].cost);
             let x_j = fixed[j]
                 .clone()
                 .unwrap_or_else(|| x[position(j).expect("a continuous column")].clone());
@@ -154,7 +154,7 @@ fn best_continuous(lp: &Lp, ints: &[usize], point: &[i64], conts: &[usize]) -> O
     vertices(&inequalities, conts.len())
         .into_iter()
         .map(|x| objective(&x))
-        .reduce(|a, b| match lp.sense() {
+        .reduce(|a, b| match program.sense() {
             Sense::Minimize => a.min(b),
             Sense::Maximize => a.max(b),
         })

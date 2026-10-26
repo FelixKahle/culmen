@@ -6,11 +6,11 @@ error[E0451]: fields `lower` and `upper` of struct `culmen_core::Bounds` are pri
    |              |
    |              private field
 
-error[E0451]: fields `sense`, `offset`, `columns`, `row_bounds`, `row_names`, `row_starts`, `entry_cols`, `entry_values` and `quadratic` of struct `culmen_core::Lp` are private
+error[E0451]: fields `sense`, `offset`, `columns`, `row_bounds`, `row_names`, `row_starts`, `entry_cols`, `entry_values` and `quadratic` of struct `Program` are private
   --> tests/compile_fail/forge.rs:15:9
    |
-14 |     Lp {
-   |     -- in this type
+14 |     Program {
+   |     ------- in this type
 15 |         sense: Default::default(),
    |         ^^^^^ private field
 16 |         offset: f64::NAN,

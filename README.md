@@ -3,7 +3,7 @@
 </p>
 
 **Linear, mixed-integer and convex quadratic programming in Rust.** Write a model the way the mathematics reads,
-build it into a checked LP, and solve it on a switchable backend. You can watch the search live and stop it
+build it into a checked program, and solve it on a switchable backend. You can watch the search live and stop it
 cooperatively at any moment.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
@@ -36,8 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Why culmen
 
-- **The LP is checked data.** A model builds an `Lp` with typed `Col` and `Row` handles. Every number is checked
-  once, when the model is built, and an error names the variable or constraint at fault. The handles a model
+- **The program is checked data.** A model builds a `Program` with typed `Col` and `Row` handles. Every number is
+  checked once, when the model is built, and an error names the variable or constraint at fault. The handles a model
   returns read the solution directly: `best.values[x]`.
 - **Literals are checked at compile time.** `bounds!(0.0, 40.0)`, `relative_gap!(0.01)` and `threads!(4)` are
   checked when the code compiles, so an invalid literal is a compile error, not a panic at run time.
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Convex quadratic objectives, checked.** `x * y`, `x * x` and `(x - 1) * (x - 1)` build quadratic objectives
   beside linear constraints, and building checks the objective is convex to minimize or concave to maximize, with a
   stated tolerance. A quadratic constraint does not compile.
-- **Model classes are typed.** Every LP knows its class (`Lp`, `Milp`, `Qp`, `Miqp`), every backend declares the
+- **Model classes are typed.** Every program knows its class (`Lp`, `Milp`, `Qp`, `Miqp`), every backend declares the
   classes it solves, and `Solver::new` refuses any other with a typed error naming both, before the solver sees it.
 - **Any solver behind one seam.** `Backend` is an open trait with typed, solver-neutral callback events: log,
   progress, interrupt poll, feasible and improving solutions, lazy constraints, user cuts, heuristic solutions,
@@ -114,8 +114,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     constraint!(m, cap[l in locations], sum!(volume[p] * x[p, l] for p in products) <= capacity[l]);
     objective!(m, Min, sum!(walk[p][l] * x[p, l] for p in products, l in locations));
 
-    let lp = m.build()?;
-    assert_eq!((lp.num_cols(), lp.num_rows()), (8, 6));
+    let program = m.build()?;
+    assert_eq!((program.num_cols(), program.num_rows()), (8, 6));
     Ok(())
 }
 ```
@@ -135,10 +135,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y = m.add_var(Var::free());
     m.add_constraint((x + y).leq(1));
     m.minimize((x - 1) * (x - 1) + (y - 2) * (y - 2));
-    let lp = m.build()?;
-    assert_eq!(lp.class(), ModelClass::Qp);
+    let program = m.build()?;
+    assert_eq!(program.class(), ModelClass::Qp);
 
-    let mut solver = Solver::new(Highs::new(), lp)?;
+    let mut solver = Solver::new(Highs::new(), program)?;
     let Outcome::Optimal(best) = solver.solve(Request::new())?.outcome else {
         return Err("no optimum".into());
     };
@@ -221,7 +221,7 @@ first build takes a few minutes.
 |---|---|---|
 | `highs` | yes | The HiGHS backend, as `culmen::Highs` and the module `culmen::highs`. |
 | `macros` | no | `variable!`, `constraint!`, `objective!` and `sum!`. |
-| `serde` | no | Serialization of the plain data: LPs (quadratic parts included), model classes, bounds, settings, outcomes, solutions, HiGHS options and statuses. |
+| `serde` | no | Serialization of the plain data: programs (quadratic parts included), model classes, bounds, settings, outcomes, solutions, HiGHS options and statuses. |
 
 ## Documentation
 
@@ -233,7 +233,7 @@ The user guide is in [`docs/`](docs/README.md), and every Rust snippet in it run
 - [Solving](docs/solving.md) and [Callbacks](docs/callbacks.md): model classes, requests, settings, outcomes,
   observers, stops and every callback event.
 - [HiGHS](docs/highs.md): options, threads, statuses, quadratic programs, callback contexts, and limitations.
-- [The LP as data](docs/lp.md), [Testing](docs/testing.md), [Design](docs/design.md), and
+- [The program as data](docs/program.md), [Testing](docs/testing.md), [Design](docs/design.md), and
   [Backends](docs/backends.md) for backend authors.
 
 The API reference is the rustdoc: `cargo doc --open -p culmen`.
@@ -253,7 +253,7 @@ example has a `_macros` twin, run with `--features macros`.
 | Crate | What it holds |
 |---|---|
 | [`culmen`](crates/culmen) | The crate to depend on: re-exports, a `prelude`, and the `highs` and `macros` features. |
-| [`culmen_core`](crates/culmen_core) | The LP as data, the modelling layer, the backend seam and the solve API. No solver and no `unsafe`. |
+| [`culmen_core`](crates/culmen_core) | The program as data, the modelling layer, the backend seam and the solve API. No solver and no `unsafe`. |
 | [`culmen_highs`](crates/culmen_highs) | The HiGHS backend: every callback as a typed, safe context, typed options and every status. |
 | [`culmen_macros`](crates/culmen_macros) | The modelling macros, which expand to `culmen_core`'s methods. |
 | [`culmen_testing`](crates/culmen_testing) | Dev-only: an exact reference solver, property-test strategies and hard instances. |

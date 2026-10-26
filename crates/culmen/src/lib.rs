@@ -12,7 +12,7 @@
 //! # A model, two ways
 //!
 //! Every model is written with plain methods and operators; the macros write the same calls more briefly and build
-//! the same [`Lp`]. A generalized assignment: put each product in one location, within each location's capacity,
+//! the same [`Program`]. A generalized assignment: put each product in one location, within each location's capacity,
 //! walking least.
 //!
 //! ```
@@ -164,8 +164,8 @@ mod docs {
     #[doc = include_str!("../../../docs/macros.md")]
     struct Macros;
 
-    #[doc = include_str!("../../../docs/lp.md")]
-    struct LpAsData;
+    #[doc = include_str!("../../../docs/program.md")]
+    struct ProgramAsData;
 
     #[cfg(feature = "highs")]
     #[doc = include_str!("../../../docs/solving.md")]
@@ -196,8 +196,8 @@ pub mod prelude {
 
     pub use culmen_core::{
         Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Improvement, IndexSet, LinExpr, Linear,
-        LogLine, Lp, Model, Observer, Outcome, Progress, QuadExpr, Quadratic, Request, Row, Sense, Settings, Solution,
-        Solved, Solver, Stop, StopReason, Var, VarMap, absolute_gap, bounds, product, relative_gap, set, stop_fn,
-        threads,
+        LogLine, Model, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Request, Row, Sense, Settings,
+        Solution, Solved, Solver, Stop, StopReason, Var, VarMap, absolute_gap, bounds, product, relative_gap, set,
+        stop_fn, threads,
     };
 }

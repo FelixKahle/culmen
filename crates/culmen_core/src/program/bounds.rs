@@ -337,7 +337,7 @@ impl TryFrom<BoundsForm> for Bounds {
 
 /// Whether a column takes any value in its bounds or only whole ones.
 ///
-/// A binary column is an integer column with [`Bounds::BINARY`]; the LP stores no third kind, since the bounds
+/// A binary column is an integer column with [`Bounds::BINARY`]; the program stores no third kind, since the bounds
 /// already say it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

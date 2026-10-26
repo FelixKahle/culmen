@@ -1,24 +1,24 @@
 # Solving
 
-A solve takes three values: a `Solver`, which holds a backend with an LP loaded; a `Request`, which carries one
+A solve takes three values: a `Solver`, which holds a backend with a program loaded; a `Request`, which carries one
 solve's settings, stop and observer; and the `Solved` it returns, which holds the generic `Outcome` beside the
 backend's own status. This page covers all three. Watching and stopping a solve are on
 [Callbacks](callbacks.md).
 
 ## `Solver`
 
-`Solver::new(backend, lp)` loads `lp` into `backend`. It fails with a [`LoadError`](#model-classes-and-refusal):
-`Unsupported` when the backend does not solve the LP's class, before the backend sees it, or `Backend` with the
-backend's own error when the backend refuses the LP. A `Solver` can then solve as often as needed, each time with
-its own request.
+`Solver::new(backend, program)` loads `program` into `backend`. It fails with a
+[`LoadError`](#model-classes-and-refusal): `Unsupported` when the backend does not solve the program's class, before the
+backend sees it, or `Backend` with the backend's own error when the backend refuses the program. A `Solver` can then
+solve as often as needed, each time with its own request.
 
 | Method | Does |
 |---|---|
 | `solve(request)` | Solves under the request's settings, polling its stop and reporting to its observer. |
 | `solve_with(request, &mut callback)` | The same, and also runs a [`Callback`](callbacks.md#callback) with the backend's full context types. |
-| `lp()` | The loaded LP. |
+| `program()` | The loaded program. |
 | `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
-| `into_parts()` | The backend and the LP, taken apart. |
+| `into_parts()` | The backend and the program, taken apart. |
 
 The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Script>` replays a script
 ([Testing](testing.md#the-script-backend)), and a backend of your own plugs in by implementing
@@ -39,24 +39,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let first = solver.solve(Request::new())?;
     let second = solver.solve(Request::new().time_limit(Duration::from_secs(5)))?;
     assert_eq!(first.outcome, second.outcome);
-    assert_eq!(solver.lp().num_cols(), 3);
+    assert_eq!(solver.program().num_cols(), 3);
     Ok(())
 }
 ```
 
 ## Model classes and refusal
 
-Every LP has a [class](lp.md#model-classes), `lp.class()`: `Lp`, `Milp`, `Qp` or `Miqp`. Every backend declares the
-classes it solves as `Backend::CLASSES`, a `ModelClasses` set, and `Solver::new` checks the LP's class against it
-before it calls the backend's `load`. The check is the same for every backend, and a backend's `load` never sees a
-class it did not declare.
+Every program has a [class](program.md#model-classes), `program.class()`: `Lp`, `Milp`, `Qp` or `Miqp`. Every backend
+declares the classes it solves as `Backend::CLASSES`, a `ModelClasses` set, and `Solver::new` checks the program's class
+against it before it calls the backend's `load`. The check is the same for every backend, and a backend's `load` never
+sees a class it did not declare.
 
 | Backend | `CLASSES` |
 |---|---|
 | `Highs` | `{LP, MILP, QP}`: HiGHS 1.15 refuses to solve a QP with integer columns. |
 | `Script` | Every class: it replays its script rather than solving. |
 
-The refusal is typed: `LoadError<E>` is `Unsupported { class, supported }`, naming the LP's class and the backend's
+The refusal is typed: `LoadError<E>` is `Unsupported { class, supported }`, naming the program's class and the backend's
 set, or `Backend(E)` with the backend's own error. It displays both, and `Error::source` is the backend's error.
 
 ```rust
@@ -69,10 +69,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let x = m.add_var(Var::free());
     let n = m.add_var(Var::integer().upper(3));
     m.minimize((x - 0.5) * (x - 0.5) + n);
-    let lp = m.build()?;
-    assert_eq!(lp.class(), ModelClass::Miqp);
+    let program = m.build()?;
+    assert_eq!(program.class(), ModelClass::Miqp);
 
-    let error = Solver::new(Highs::new(), lp).unwrap_err();
+    let error = Solver::new(Highs::new(), program).unwrap_err();
     assert_eq!(error, LoadError::Unsupported { class: ModelClass::Miqp, supported: Highs::CLASSES });
     assert_eq!(error.to_string(), "Solver: the backend solves {LP, MILP, QP}, not a MIQP");
 
@@ -207,7 +207,7 @@ A solve returns `Result<Solved<B::Status>, B::Error>`. `Solved` is plain data:
 | `InfeasibleOrUnbounded` | One of the two, and the solver did not tell which. | Nothing. |
 
 A `Solution` is `{ objective, values }`: the objective value, quadratic part and offset included, and one value per
-column. Every objective value and bound includes the LP's quadratic part and offset and is in the model's own
+column. Every objective value and bound includes the program's quadratic part and offset and is in the model's own
 sense. `outcome.solution()` returns the
 best solution of any variant, `None` when there is none, and `outcome.into_solution()` takes it by value.
 
@@ -243,8 +243,8 @@ A solution is read with the handles the model returned:
 - `solution.values[x]` for one variable, since `values` is a `TiVec<Col, f64>`.
 - `family.values(&solution.values)` for a whole [`VarMap`](modelling.md#keyed-families), as `(&key, value)` pairs.
 - `expr.value(&solution.values)` for any [expression](modelling.md#expressions).
-- `lp.row(r).activity(&solution.values)` for a constraint's activity, and `lp.max_violation(&solution.values)` to
-  check the solution against the LP ([Checking a point](lp.md#checking-a-point)).
+- `program.row(r).activity(&solution.values)` for a constraint's activity, and `program.max_violation(&solution.values)`
+  to check the solution against the program ([Checking a point](program.md#checking-a-point)).
 
 Integer variables come back as floating-point numbers within the solver's integrality tolerance; round them
 (`value.round()`) or compare against `0.5` for binaries.
@@ -266,8 +266,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let taken: Vec<&str> = take.values(&best.values).filter(|&(_, v)| v > 0.5).map(|(&item, _)| item).collect();
     assert_eq!(taken, ["glass", "tin"]);
     assert_eq!(weight.value(&best.values).round(), 6.0);
-    assert_eq!(solver.lp().row(cap).activity(&best.values).round(), 6.0);
-    assert!(solver.lp().max_violation(&best.values) < 1e-6);
+    assert_eq!(solver.program().row(cap).activity(&best.values).round(), 6.0);
+    assert!(solver.program().max_violation(&best.values) < 1e-6);
     Ok(())
 }
 ```
@@ -275,7 +275,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Errors
 
 `Solver::new` fails with a [`LoadError<B::Error>`](#model-classes-and-refusal): a class the backend does not solve,
-or the backend's own error when it refuses the LP. `solve` and `solve_with` fail with the backend's own error type,
+or the backend's own error when it refuses the program. `solve` and `solve_with` fail with the backend's own error type,
 `B::Error`: a setting it cannot apply, or a failed run. For HiGHS that is [`HighsError`](highs.md#errors). A solve
 that ends without a solution is not an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
 

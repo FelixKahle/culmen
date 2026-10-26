@@ -63,10 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
     let x = m.add_var(Var::binary());
     m.maximize(x);
-    let lp = m.build()?;
+    let program = m.build()?;
 
     // Finished: the scripted outcome comes back, and the settings reached the backend.
-    let mut solver = Solver::new(Script::optimal(1.0, vec![1.0]), lp.clone())?;
+    let mut solver = Solver::new(Script::optimal(1.0, vec![1.0]), program.clone())?;
     let running = AtomicBool::new(false);
     assert_eq!(best_within(&mut solver, Duration::from_secs(5), &running)?, Some(1.0));
     assert_eq!(solver.backend().record.settings[0].time_limit, Some(Duration::from_secs(5)));
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Stopped: the incumbent found before the poll is the answer.
     let at = Progress::at(Duration::from_secs(1), Phase::Mip);
     let steps = [Step::Incumbent(Found { progress: at, objective: 0.0, values: vec![0.0].into() }), Step::Poll(at)];
-    let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), lp)?;
+    let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program)?;
     let stopped = AtomicBool::new(true);
     let solved_best = best_within(&mut solver, Duration::from_secs(5), &stopped)?;
     assert_eq!(solved_best, Some(0.0));
@@ -149,9 +149,9 @@ published (`publish = false`); outside this workspace, depend on it by path unde
 
 | Module | Holds |
 |---|---|
-| `reference` | `solve(&lp)`, an exact solver for tiny problems, and `close(a, b, tolerance)`, a relative comparison. |
+| `reference` | `solve(&program)`, an exact solver for tiny problems, and `close(a, b, tolerance)`, a relative comparison. |
 | `strategy` | `small_lp()`, a `proptest` strategy of tiny bounded LPs and MILPs that `reference::solve` can enumerate. |
-| `instances` | `assignment(products, locations, seed, offset)`, a generalized assignment hard enough that a solver searches for seconds; it returns the `lp` and its variables `x`. |
+| `instances` | `assignment(products, locations, seed, offset)`, a generalized assignment hard enough that a solver searches for seconds; it returns the `program` and its variables `x`. |
 
 `reference::solve` enumerates every integer point of the integer columns' box and every vertex of the continuous
 part, solving each in exact rational arithmetic, so it shares none of a floating-point solver's reasoning. It
@@ -168,13 +168,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y = m.add_var(Var::continuous().bounds(0, 2));
     m.add_constraint((x + y).leq(4.0));
     m.maximize(2.0 * x + y);
-    let lp = m.build()?;
+    let program = m.build()?;
 
-    let exact = reference::solve(&lp);
+    let exact = reference::solve(&program);
     assert_ne!(exact, Reference::Infeasible);
     assert_eq!(exact.objective(), Some(7.0));
 
-    let solved = Solver::new(Highs::new(), lp)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), program)?.solve(Request::new())?;
     let found = solved.outcome.solution().ok_or("no solution")?.objective;
     assert!(reference::close(found, 7.0, 1e-9));
     Ok(())
@@ -188,21 +188,21 @@ With `small_lp()`, a property test states that a backend agrees with the referen
 
 With the `serde` feature, the plain data derives `Serialize` and `Deserialize`:
 
-- The LP: `Lp`, `LpPlan` (its `quadratic` terms included), `LpColumn`, `LpRow`, `Bounds`, `Integrality`, `Sense`,
-  `Col`, `Row`, `ModelClass`, `ModelClasses` (as a list of classes).
+- The program: `Program`, `ProgramPlan` (its `quadratic` terms included), `ProgramColumn`, `ProgramRow`, `Bounds`,
+  `Integrality`, `Sense`, `Col`, `Row`, `ModelClass`, `ModelClasses` (as a list of classes).
 - The solve: `Settings`, `RelativeGap`, `AbsoluteGap`, `Solved`, `Outcome`, `Solution`, `StopReason`, `Progress`,
   `Phase`, `LogLevel`.
 - With `highs`: `HighsOptions` and its option types, `OptionValue`, `HighsStatus`, `ModelStatus`, `SolutionStatus`,
   `CallStatus`.
 
 The model (`Model`, `Var`, `LinExpr`, `QuadExpr`, `Constraint`, the families) is not serializable: serialize the
-`Lp` it builds.
+`Program` it builds.
 
 A checked value is checked again as it is read, so a document cannot smuggle in what the constructors refuse:
 
-- An `Lp` is written as its plan and read back through `LpPlan::build`, the convexity check of its quadratic part
-  included; a defect is the [`LpError`](lp.md#checks-and-lperror) as a deserialization error. A plan without the
-  `quadratic` field, as written before quadratic objectives, reads as linear.
+- A `Program` is written as its plan and read back through `ProgramPlan::build`, the convexity check of its quadratic
+  part included; a defect is the [`ProgramError`](program.md#checks-and-programerror) as a deserialization error. A plan
+  without the `quadratic` field, as written before quadratic objectives, reads as linear.
 - `Bounds` is written as `{"lower": …, "upper": …}`, an infinite end as `null`, since JSON has no infinity; it is
   read back through `Bounds::new`, an end that is `null` or left out read as infinite.
 - `RelativeGap` and `AbsoluteGap` are written as plain numbers and read back through their checked constructors;
@@ -224,5 +224,5 @@ assert!(error.to_string().starts_with("RelativeGap: below zero"));
 
 - [Callbacks](callbacks.md): what the `Script` delivers.
 - [Backends](backends.md): the seam the `Script` implements, and the contract every backend keeps.
-- [The LP as data](lp.md): what serializes, and how it is checked.
+- [The program as data](program.md): what serializes, and how it is checked.
 - [Documentation index](README.md).

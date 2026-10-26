@@ -32,15 +32,15 @@ Depend on `culmen` only. It re-exports everything a model and a solve need; the 
 | `macros` | off | `variable!`, `constraint!`, `objective!` and `sum!` (see [Macros](macros.md)). |
 | `serde` | off | `Serialize` and `Deserialize` for the plain data, and for the HiGHS options and statuses with `highs` (see [Serialization](testing.md#serialization)). |
 
-With `default-features = false` you get the modelling layer, the LP and the solve API without a solver: enough to
+With `default-features = false` you get the modelling layer, the program and the solve API without a solver: enough to
 build and inspect models, write LP files, or drive a backend of your own.
 
 `culmen::prelude` holds what a model and a solve need: `Model`, `Var`, `LinExpr`, `Linear`, `Constraint`, `Bounds`,
-`Col`, `Row`, `Lp`, `Sense`, `Solver`, `Request`, `Settings`, `Outcome`, `Solution`, `Solved`, `StopReason`, `Observer`, `Progress`,
-`Improvement`, `LogLine`, `Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the
-functions `product`, `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`, `absolute_gap!` and
-`threads!`, and, with their features, `Highs` and the modelling macros. Everything else is at the crate root,
-`culmen::…`.
+`Col`, `Row`, `Program`, `Sense`, `Solver`, `Request`, `Settings`, `Outcome`, `Solution`, `Solved`, `StopReason`,
+`Observer`, `Progress`, `Improvement`, `LogLine`, `Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`,
+`ConstraintMap`, the functions `product`, `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`,
+`absolute_gap!` and `threads!`, and, with their features, `Highs` and the modelling macros. Everything else is at the
+crate root, `culmen::…`.
 
 ## A first model
 
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.add_named_constraint("capacity", weight.leq(10.0));
     m.maximize(LinExpr::sum(items.iter().map(|&(name, value, _)| value * take[name])));
 
-    // Build the checked LP, load it into HiGHS, and solve with HiGHS's defaults.
+    // Build the checked program, load it into HiGHS, and solve with HiGHS's defaults.
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
     let solved = solver.solve(Request::new())?;
 
@@ -87,16 +87,16 @@ What happened, step by step:
    column handle of each item, read as `take["tent"]`.
 2. `weight * take[name]` is a [`Term`](modelling.md#expressions); `LinExpr::sum` adds terms into an expression;
    `.leq(10.0)` turns it into a [`Constraint`](modelling.md#comparisons).
-3. `m.build()` checked every number and produced an [`Lp`](lp.md#lp). A defect there is a
+3. `m.build()` checked every number and produced a [`Program`](program.md#program). A defect there is a
    [`ModelError`](modelling.md#building-and-modelerror) naming the variable or constraint at fault.
-4. `Solver::new` loaded the LP into the backend; `solve` ran it under a [`Request`](solving.md#request) and
+4. `Solver::new` loaded the program into the backend; `solve` ran it under a [`Request`](solving.md#request) and
    returned [`Solved`](solving.md#solved-and-outcome): the generic `Outcome`, HiGHS's own status, and the time.
 5. The solution is read with the handles the model returned: `best.values[take["tent"]]`, or the whole family at
    once with `take.values(&best.values)`.
 
 ## The same model with macros
 
-With the `macros` feature, the same model reads closer to the mathematics. It builds the same LP.
+With the `macros` feature, the same model reads closer to the mathematics. It builds the same program.
 
 ```rust
 use culmen::prelude::*;
@@ -131,13 +131,13 @@ as above. The ones you meet first:
 | Error | Raised by | Page |
 |---|---|---|
 | `ModelError` | `Model::build` | [Modelling](modelling.md#building-and-modelerror) |
-| `LpError` | `LpPlan::build` | [The LP as data](lp.md#checks-and-lperror) |
-| `InvalidBounds` | `Bounds::new` and its conversions | [The LP as data](lp.md#bounds) |
+| `ProgramError` | `ProgramPlan::build` | [The program as data](program.md#checks-and-programerror) |
+| `InvalidBounds` | `Bounds::new` and its conversions | [The program as data](program.md#bounds) |
 | `LoadError` | `Solver::new`: a model class the backend does not solve, or the backend's own error | [Solving](solving.md#model-classes-and-refusal) |
 | `HighsError` | `Solver::solve` with HiGHS, and inside `LoadError` from `Solver::new` | [HiGHS](highs.md#errors) |
 | `ActionError` | actions inside a callback | [Callbacks](callbacks.md#contexts) |
 
-Each error's message starts with the name of the type it concerns (`Model:`, `Lp:`, `Bounds:`, `Solver:`,
+Each error's message starts with the name of the type it concerns (`Model:`, `Program:`, `Bounds:`, `Solver:`,
 `HiGHS:`), and a model error names the variable or constraint at fault by the name you gave it.
 
 ## Examples

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Borrowed views of one row of an [`Lp`](super::Lp).
+//! Borrowed views of one row of a [`Program`](super::Program).
 
 use core::iter::{Copied, FusedIterator, Zip};
 use core::slice;
@@ -10,21 +10,21 @@ use typed_index_collections::TiSlice;
 
 use super::{Bounds, Col};
 
-/// One row of an [`Lp`](super::Lp): its bounds, its name and its entries, sorted by column, each column at most
-/// once and with a non-zero coefficient.
+/// One row of a [`Program`](super::Program): its bounds, its name and its entries, sorted by column, each column at
+/// most once and with a non-zero coefficient.
 ///
 /// ```
-/// use culmen_core::{LpColumn, LpPlan, bounds};
+/// use culmen_core::{ProgramColumn, ProgramPlan, bounds};
 ///
-/// let mut plan = LpPlan::new();
-/// let x = plan.col(LpColumn::binary(1.0));
-/// let y = plan.col(LpColumn::binary(1.0));
+/// let mut plan = ProgramPlan::new();
+/// let x = plan.col(ProgramColumn::binary(1.0));
+/// let y = plan.col(ProgramColumn::binary(1.0));
 /// let r = plan.row(bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]);
-/// let lp = plan.build()?;
-/// let row = lp.row(r);
+/// let program = plan.build()?;
+/// let row = program.row(r);
 /// assert_eq!((row.bounds(), row.name(), row.len()), (bounds!(0.0, 1.0), None, 2));
 /// assert_eq!(row.into_iter().collect::<Vec<_>>(), [(x, 1.0), (y, 2.0)]);
-/// # Ok::<(), culmen_core::LpError>(())
+/// # Ok::<(), culmen_core::ProgramError>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RowView<'a> {
@@ -96,7 +96,7 @@ impl<'a> IntoIterator for RowView<'a> {
     }
 }
 
-/// The entries of a row of an [`Lp`](super::Lp) as `(column, coefficient)`, sorted by column; made by
+/// The entries of a row of a [`Program`](super::Program) as `(column, coefficient)`, sorted by column; made by
 /// [`RowView::entries`].
 #[derive(Clone, Debug)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]

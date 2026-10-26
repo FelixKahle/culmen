@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Typed handles of the columns and rows of an [`Lp`](super::Lp).
+//! Typed handles of the columns and rows of a [`Program`](super::Program).
 
 use core::iter::FusedIterator;
 use core::ops::Range;
@@ -9,12 +9,12 @@ use core::ops::Range;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// A column of an LP: a variable of the model it was built from.
+/// A column of a program: a variable of the model it was built from.
 ///
-/// A `Col` is a plain `Copy` index. It is handed out by [`LpPlan::col`](super::LpPlan::col) and
-/// [`Model::add_var`](crate::Model::add_var), and the column of a model variable is the same `Col` in the LP the
-/// model builds, so a solution is read with the handle the model returned. A `Col` from one LP used on another
-/// reads that LP's column of the same index; every read that cannot answer for the index panics or returns `None`
+/// A `Col` is a plain `Copy` index. It is handed out by [`ProgramPlan::col`](super::ProgramPlan::col) and
+/// [`Model::add_var`](crate::Model::add_var), and the column of a model variable is the same `Col` in the program the
+/// model builds, so a solution is read with the handle the model returned. A `Col` from one program used on another
+/// reads that program's column of the same index; every read that cannot answer for the index panics or returns `None`
 /// as its docs say, never anything undefined.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(transparent))]
@@ -51,9 +51,9 @@ impl From<Col> for usize {
     }
 }
 
-/// A row of an LP: a constraint of the model it was built from.
+/// A row of a program: a constraint of the model it was built from.
 ///
-/// Like [`Col`], a plain `Copy` index, handed out by [`LpPlan::row`](super::LpPlan::row) and
+/// Like [`Col`], a plain `Copy` index, handed out by [`ProgramPlan::row`](super::ProgramPlan::row) and
 /// [`Model::add_constraint`](crate::Model::add_constraint).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(transparent))]
@@ -90,7 +90,7 @@ impl From<Row> for usize {
     }
 }
 
-/// Every column of an LP, in order; made by [`Lp::cols`](super::Lp::cols).
+/// Every column of a program, in order; made by [`Program::cols`](super::Program::cols).
 #[derive(Clone, Debug)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct Cols(Range<usize>);
@@ -124,7 +124,7 @@ impl ExactSizeIterator for Cols {}
 
 impl FusedIterator for Cols {}
 
-/// Every row of an LP, in order; made by [`Lp::rows`](super::Lp::rows).
+/// Every row of a program, in order; made by [`Program::rows`](super::Program::rows).
 #[derive(Clone, Debug)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct Rows(Range<usize>);

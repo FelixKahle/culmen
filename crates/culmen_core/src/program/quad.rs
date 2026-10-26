@@ -13,29 +13,29 @@ use typed_index_collections::{TiSlice, TiVec};
 
 use super::{Col, Sense};
 
-/// The quadratic part of an [`Lp`](super::Lp)'s objective, `Σ q · xᵢ · xⱼ`.
+/// The quadratic part of a [`Program`](super::Program)'s objective, `Σ q · xᵢ · xⱼ`.
 ///
 /// Each entry `(i, j, q)` adds `q · xᵢ · xⱼ`, so the model's `x * x` is the entry `(x, x, 1)` and `2 · x · y` the
 /// entry `(x, y, 2)`. The entries are canonical: `i <= j`, each pair at most once, every coefficient finite and
 /// non-zero, sorted by `(i, j)`. In the solver's form `½ xᵀHx`, the symmetric Hessian `H` has `Hᵢᵢ = 2q` on the
 /// diagonal and `Hᵢⱼ = Hⱼᵢ = q` off it; [`QuadObjective::hessian`] gives its lower triangle.
 ///
-/// An `Lp` holds one only when its objective is convex for minimizing or concave for maximizing, as
-/// [`Lp::CONVEXITY_TOLERANCE`](super::Lp::CONVEXITY_TOLERANCE) states.
+/// A `Program` holds one only when its objective is convex for minimizing or concave for maximizing, as
+/// [`Program::CONVEXITY_TOLERANCE`](super::Program::CONVEXITY_TOLERANCE) states.
 ///
 /// ```
-/// use culmen_core::{Bounds, LpColumn, LpPlan, TiSlice};
+/// use culmen_core::{Bounds, ProgramColumn, ProgramPlan, TiSlice};
 ///
-/// let mut plan = LpPlan::new();
-/// let x = plan.col(LpColumn::continuous(0.0, Bounds::FREE));
-/// let y = plan.col(LpColumn::continuous(0.0, Bounds::FREE));
+/// let mut plan = ProgramPlan::new();
+/// let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+/// let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
 /// plan.quadratic = vec![(y, x, 1.0), (x, x, 1.0), (x, y, 1.0), (y, y, 1.0)];
-/// let lp = plan.build()?;
-/// let q = lp.quadratic();
+/// let program = plan.build()?;
+/// let q = program.quadratic();
 /// assert_eq!(q.entries().collect::<Vec<_>>(), [(x, x, 1.0), (x, y, 2.0), (y, y, 1.0)]);
 /// assert_eq!(q.hessian().collect::<Vec<_>>(), [(x, x, 2.0), (x, y, 2.0), (y, y, 2.0)]);
 /// assert_eq!(q.value(TiSlice::from_ref(&[1.0, 2.0])), 9.0);
-/// # Ok::<(), culmen_core::LpError>(())
+/// # Ok::<(), culmen_core::ProgramError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct QuadObjective {
@@ -115,7 +115,8 @@ const fn hessian_value((i, j, q): (Col, Col, f64)) -> f64 {
     if i.index() == j.index() { 2.0 * q } else { q }
 }
 
-/// The relative tolerance of the convexity check; see [`Lp::CONVEXITY_TOLERANCE`](super::Lp::CONVEXITY_TOLERANCE).
+/// The relative tolerance of the convexity check; see
+/// [`Program::CONVEXITY_TOLERANCE`](super::Program::CONVEXITY_TOLERANCE).
 pub(crate) const CONVEXITY_TOLERANCE: f64 = 1e-9;
 
 /// Checks that canonical, finite entries are convex for minimizing or concave for maximizing, block by block.

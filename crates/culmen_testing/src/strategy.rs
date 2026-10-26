@@ -3,13 +3,13 @@
 
 //! Property-test strategies: tiny bounded LPs and MILPs the reference solver enumerates, and small convex QPs.
 
-use culmen_core::{Bounds, Col, Integrality, Lp, LpColumn, LpPlan, LpRow, Sense, TiVec};
+use culmen_core::{Bounds, Col, Integrality, Program, ProgramColumn, ProgramPlan, ProgramRow, Sense, TiVec};
 use itertools::Itertools;
 use proptest::prelude::*;
 
 /// A column: integrality, bounds and cost, all small integers.
-fn column() -> impl Strategy<Value = LpColumn> {
-    (any::<bool>(), -3i32..=1, 0i32..=4, -5i32..=5).prop_map(|(integer, lower, width, cost)| LpColumn {
+fn column() -> impl Strategy<Value = ProgramColumn> {
+    (any::<bool>(), -3i32..=1, 0i32..=4, -5i32..=5).prop_map(|(integer, lower, width, cost)| ProgramColumn {
         cost: f64::from(cost),
         bounds: Bounds::new(f64::from(lower), f64::from(lower + width)).expect("lower <= upper"),
         integrality: if integer {
@@ -40,7 +40,7 @@ fn row_bounds() -> impl Strategy<Value = Bounds> {
 /// # Panics
 ///
 /// When a generated plan fails to build, which a strategy defect would cause.
-pub fn small_lp() -> impl Strategy<Value = Lp> {
+pub fn small_lp() -> impl Strategy<Value = Program> {
     prop::collection::vec(column(), 1..=4)
         .prop_filter("at most two continuous columns", |columns| {
             columns
@@ -62,14 +62,14 @@ pub fn small_lp() -> impl Strategy<Value = Lp> {
         .prop_map(|(columns, rows, maximize, offset)| {
             let rows = rows
                 .into_iter()
-                .map(|(bounds, terms)| LpRow {
+                .map(|(bounds, terms)| ProgramRow {
                     bounds,
                     terms: terms.into_iter().map(|(j, a)| (Col::new(j), f64::from(a))).collect(),
                     name: None,
                 })
                 .collect();
             let sense = if maximize { Sense::Maximize } else { Sense::Minimize };
-            LpPlan {
+            ProgramPlan {
                 sense,
                 offset: f64::from(offset),
                 columns: columns.into(),
@@ -91,7 +91,7 @@ pub const QP_RIDGE: f64 = 0.1;
 /// # Panics
 ///
 /// When a generated plan fails to build, which a strategy defect would cause.
-pub fn small_qp() -> impl Strategy<Value = Lp> {
+pub fn small_qp() -> impl Strategy<Value = Program> {
     (2..=4usize)
         .prop_flat_map(|n| {
             let boxes = prop::collection::vec((-3i32..=1, 1i32..=4), n);
@@ -102,16 +102,16 @@ pub fn small_qp() -> impl Strategy<Value = Lp> {
         })
         .prop_map(|(boxes, a, costs, rows, maximize)| {
             let sign = if maximize { -1.0 } else { 1.0 };
-            let columns: TiVec<Col, LpColumn> = boxes
+            let columns: TiVec<Col, ProgramColumn> = boxes
                 .iter()
                 .zip(&costs)
                 .map(|(&(lower, width), &cost)| {
                     let bounds = Bounds::new(f64::from(lower), f64::from(lower + width)).expect("lower <= upper");
-                    LpColumn::continuous(sign * f64::from(cost), bounds)
+                    ProgramColumn::continuous(sign * f64::from(cost), bounds)
                 })
                 .collect();
             let mid: Vec<f64> = boxes.iter().map(|&(l, w)| f64::from(l) + f64::from(w) / 2.0).collect();
-            LpPlan {
+            ProgramPlan {
                 sense: if maximize { Sense::Maximize } else { Sense::Minimize },
                 offset: 0.0,
                 rows: rows.into_iter().map(|row| row_through(&mid, row)).collect(),
@@ -137,9 +137,9 @@ fn half_gram(a: &[Vec<i32>], n: usize) -> Vec<(Col, Col, f64)> {
 }
 
 /// A row with the given coefficients whose bounds hold its activity at `point`, widened by `below` and `above`.
-fn row_through(point: &[f64], (coefficients, below, above): (Vec<i32>, i32, i32)) -> LpRow {
+fn row_through(point: &[f64], (coefficients, below, above): (Vec<i32>, i32, i32)) -> ProgramRow {
     let activity: f64 = coefficients.iter().zip(point).map(|(&c, x)| f64::from(c) * x).sum();
-    LpRow {
+    ProgramRow {
         bounds: Bounds::new(activity - f64::from(below), activity + f64::from(above)).expect("lower <= upper"),
         terms: coefficients
             .into_iter()

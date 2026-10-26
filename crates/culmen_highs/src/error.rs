@@ -10,16 +10,16 @@ use crate::{ModelStatus, OptionValue};
 /// Why loading or solving with HiGHS failed.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HighsError {
-    /// A solve was asked for before an LP was loaded.
+    /// A solve was asked for before a program was loaded.
     NotLoaded,
-    /// The LP has more columns, rows, entries or Hessian entries than HiGHS's 32-bit indices hold.
+    /// The program has more columns, rows, entries or Hessian entries than HiGHS's 32-bit indices hold.
     TooLarge {
         /// What overflowed.
         what: Dimension,
         /// How many there are.
         count: usize,
     },
-    /// HiGHS refused the LP.
+    /// HiGHS refused the program.
     Load {
         /// HiGHS's last error line, if it wrote one.
         message: Option<String>,
@@ -89,9 +89,9 @@ impl fmt::Display for HighsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = |m: &Option<String>| m.as_deref().map(|m| format!(": {m}")).unwrap_or_default();
         match self {
-            Self::NotLoaded => write!(f, "HiGHS: no LP is loaded"),
+            Self::NotLoaded => write!(f, "HiGHS: no program is loaded"),
             Self::TooLarge { what, count } => write!(f, "HiGHS: {count} {what} exceed HiGHS's 32-bit indices"),
-            Self::Load { message: m } => write!(f, "HiGHS: the LP was refused{}", message(m)),
+            Self::Load { message: m } => write!(f, "HiGHS: the program was refused{}", message(m)),
             Self::Option { name, value } => write!(f, "HiGHS: option `{name}` refused the value {value}"),
             Self::OutOfRange { name, value } => {
                 write!(f, "HiGHS: option `{name}` takes at most {}, not {value}", i32::MAX)
@@ -106,7 +106,7 @@ impl fmt::Display for HighsError {
 
 impl core::error::Error for HighsError {}
 
-/// What of an LP HiGHS counts in its 32-bit indices.
+/// What of a program HiGHS counts in its 32-bit indices.
 ///
 /// ```
 /// use culmen_highs::Dimension;

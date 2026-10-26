@@ -100,12 +100,12 @@ fn test_options_are_applied_and_refused_by_name() {
     let mut m = Model::new();
     let x = m.add_var(Var::binary());
     m.maximize(x);
-    let lp = m.build().unwrap();
+    let program = m.build().unwrap();
     let options = HighsOptions {
         simplex_strategy: Some(SimplexStrategy::Primal),
         ..HighsOptions::default()
     };
-    let mut solver = Solver::new(Highs::with_options(options), lp.clone()).unwrap();
+    let mut solver = Solver::new(Highs::with_options(options), program.clone()).unwrap();
     assert!(matches!(
         solver.solve(Request::new()).unwrap().outcome,
         Outcome::Optimal(_)
@@ -125,15 +125,15 @@ fn test_options_are_applied_and_refused_by_name() {
     );
 
     let wrong_kind = HighsOptions::default().option("mip_rel_gap", "large");
-    let mut solver = Solver::new(Highs::with_options(wrong_kind), lp).unwrap();
+    let mut solver = Solver::new(Highs::with_options(wrong_kind), program).unwrap();
     assert!(matches!(solver.solve(Request::new()), Err(HighsError::Option { .. })));
 }
 
 #[test]
 fn test_a_nul_byte_is_blamed_on_the_name_or_the_value_that_holds_it() {
-    let lp = infeasible(false).build().unwrap();
+    let program = infeasible(false).build().unwrap();
     let solve = |options: HighsOptions| {
-        Solver::new(Highs::with_options(options), lp.clone())
+        Solver::new(Highs::with_options(options), program.clone())
             .unwrap()
             .solve(Request::new())
             .unwrap_err()
@@ -223,7 +223,7 @@ fn test_a_moved_backend_solves_on_another_thread() {
 
 #[test]
 fn test_a_seed_beyond_highs_integers_is_refused() {
-    let lp = infeasible(true).build().unwrap();
+    let program = infeasible(true).build().unwrap();
     let settings = Settings {
         seed: Some(u32::MAX),
         ..Settings::new()
@@ -232,7 +232,7 @@ fn test_a_seed_beyond_highs_integers_is_refused() {
         name: "random_seed",
         value: 4_294_967_295,
     };
-    let mut solver = Solver::new(Highs::new(), lp.clone()).unwrap();
+    let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let solved = solver.solve(Request::new().settings_from(settings));
     assert_eq!(solved.unwrap_err(), refused);
 
@@ -240,7 +240,7 @@ fn test_a_seed_beyond_highs_integers_is_refused() {
         random_seed: Some(u32::MAX),
         ..HighsOptions::default()
     };
-    let mut solver = Solver::new(Highs::with_options(options), lp).unwrap();
+    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
     let solved = solver.solve(Request::new());
     assert_eq!(solved.unwrap_err(), refused);
     assert_eq!(

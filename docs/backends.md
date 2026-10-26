@@ -1,7 +1,7 @@
 # Backends
 
 culmen_core does not know any solver. A backend is a crate that implements `culmen_core::Backend` for its solver:
-it declares the model classes it solves, loads an `Lp`, applies the generic `Settings` over its own typed options,
+it declares the model classes it solves, loads a `Program`, applies the generic `Settings` over its own typed options,
 drives the solver's callbacks as culmen's generic events, and maps the solver's statuses to the generic `Outcome`,
 keeping its own status beside it.
 HiGHS (`culmen_highs`) is the first backend. This page shows that the seam fits the other serious MIP solvers too:
@@ -24,7 +24,7 @@ pub trait Backend: Sized {
     type Native<'a>: Debug;               // Events::NATIVE: whatever only this solver reports
     const EVENTS: Events;                 // what this backend delivers
     const CLASSES: ModelClasses;          // the model classes this backend solves
-    fn load(&mut self, lp: &Lp) -> Result<(), Self::Error>;
+    fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
     fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>)
         -> Result<Solved<Self::Status>, Self::Error>;
 }
@@ -47,9 +47,9 @@ pub trait Backend: Sized {
   ordinary `impl<B: Backend> Callback<B>`: it polls the stop at `POLL`, throttles `PROGRESS`/`POLL` into
   `Observer::progress`, reports `INCUMBENT` as `Observer::improved`, and joins `LOG` chunks into lines. It works
   unchanged on every backend, and pairs with a backend-specific callback as `(watch, mine)`.
-- **The contract** (on `Backend`): solve the last loaded LP; report every objective and bound with the LP's quadratic
-  part and offset in the model's sense; call only events in `EVENTS ∩ callback.events()`, only during `solve`, never
-  two at once; a panic in a callback stops the solve and unwinds out of `solve`, never aborts.
+- **The contract** (on `Backend`): solve the last loaded program; report every objective and bound with the program's
+  quadratic part and offset in the model's sense; call only events in `EVENTS ∩ callback.events()`, only during `solve`,
+  never two at once; a panic in a callback stops the solve and unwinds out of `solve`, never aborts.
 
 `Script`, the in-memory backend in culmen_core, delivers every generic event from a scripted list. Its tests drive
 lazy constraints, cuts, heuristic solutions, native events, the observer, stops and panics without any solver.
@@ -64,10 +64,10 @@ That is evidence that nothing in the core assumes HiGHS.
 | `Qp` | yes: `Highs_passModel` with the lower triangle of `H` in `½ xᵀHx`, column-wise | yes: `GRBaddqpterms`, whose `qval` is the coefficient of `xᵢ · xⱼ` as culmen stores it | yes: a linear objective over an epigraph variable bounded by a quadratic constraint |
 | `Miqp` | no: `Highs_run` refuses it ("Cannot solve MIQP problems with HiGHS") | yes | yes |
 
-An `Lp`'s quadratic part is canonical and convex in its sense ([The LP as data](lp.md#the-quadratic-part)), so a
-backend converts it without checking it again: HiGHS takes `Hᵢᵢ = 2q` on the diagonal and `q` below it; Gurobi takes
-the entries as they are. Quadratic constraints, which Gurobi and SCIP solve and HiGHS does not, would be further
-classes that a backend declares or leaves out.
+A `Program`'s quadratic part is canonical and convex in its sense
+([The program as data](program.md#the-quadratic-part)), so a backend converts it without checking it again: HiGHS
+takes `Hᵢᵢ = 2q` on the diagonal and `q` below it; Gurobi takes the entries as they are. Quadratic constraints, which
+Gurobi and SCIP solve and HiGHS does not, would be further classes that a backend declares or leaves out.
 
 `Script` declares every class, since it replays its script rather than solving.
 
@@ -136,7 +136,7 @@ primal and dual solution status, MIP gap, nodes, iterations, and the last error 
 
 ## What a Gurobi backend would be
 
-A `culmen_gurobi` crate would hold an `Env`/`Model` pair over `grb-sys`. `load` calls `GRBnewmodel` with the `Lp`'s
+A `culmen_gurobi` crate would hold an `Env`/`Model` pair over `grb-sys`. `load` calls `GRBnewmodel` with the `Program`'s
 arrays. `solve` sets parameters from its own typed `GurobiOptions`, then from `Settings`, installs one
 `GRBsetcallbackfunc` trampoline for the run, and maps `where` codes to events as in the table above. Its context
 types would be `GurobiMessage`, `GurobiMip`, `GurobiMipSol` and `GurobiMipNode`. `GurobiMipNode` would implement

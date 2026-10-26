@@ -7,7 +7,7 @@ use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr::{self, NonNull};
 use std::ffi::CString;
 
-use culmen_core::{Col, Integrality, Lp, Sense};
+use culmen_core::{Col, Integrality, Program, Sense};
 use highs_sys::{
     Highs_create, Highs_destroy, Highs_getDoubleInfoValue, Highs_getInt64InfoValue, Highs_getIntInfoValue,
     Highs_getModelStatus, Highs_getNumCol, Highs_getObjectiveValue, Highs_getSolution, Highs_passModel,
@@ -59,26 +59,26 @@ impl Instance {
         usize::try_from(count).unwrap_or(0)
     }
 
-    /// Passes `lp` to HiGHS, replacing any model before.
+    /// Passes `program` to HiGHS, replacing any model before.
     ///
     /// # Errors
     ///
     /// [`HighsError::TooLarge`] when a count exceeds HiGHS's 32-bit indices, [`HighsError::Load`] when HiGHS
-    /// refuses the LP.
-    pub(crate) fn pass(&mut self, lp: &Lp) -> Result<(), HighsError> {
-        let a = Arrays::of(lp);
+    /// refuses the program.
+    pub(crate) fn pass(&mut self, program: &Program) -> Result<(), HighsError> {
+        let a = Arrays::of(program);
         let (num_col, num_row) = (
-            index(lp.num_cols(), Dimension::Columns)?,
+            index(program.num_cols(), Dimension::Columns)?,
             index(a.row_lower.len(), Dimension::Rows)?,
         );
-        let num_nz = index(lp.num_entries(), Dimension::Entries)?;
-        let q_num_nz = index(lp.quadratic().len(), Dimension::HessianEntries)?;
-        let q = Hessian::of(lp);
-        let sense = match lp.sense() {
+        let num_nz = index(program.num_entries(), Dimension::Entries)?;
+        let q_num_nz = index(program.quadratic().len(), Dimension::HessianEntries)?;
+        let q = Hessian::of(program);
+        let sense = match program.sense() {
             Sense::Minimize => kHighsObjSenseMinimize,
             Sense::Maximize => kHighsObjSenseMaximize,
         };
-        let integrality = if lp.is_mip() {
+        let integrality = if program.is_mip() {
             a.integrality.as_ptr()
         } else {
             ptr::null()
@@ -86,12 +86,12 @@ impl Instance {
         let (q_format, q_start, q_index, q_value) = q.raw();
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
-            a.agrees_with(lp),
-            "Instance: the arrays passed to HiGHS do not match the LP's counts"
+            a.agrees_with(program),
+            "Instance: the arrays passed to HiGHS do not match the program's counts"
         );
         debug_assert!(
-            q.agrees_with(lp) && q.values.len() == lp.quadratic().len(),
-            "Instance: the Hessian passed to HiGHS does not match the LP's quadratic part"
+            q.agrees_with(program) && q.values.len() == program.quadratic().len(),
+            "Instance: the Hessian passed to HiGHS does not match the program's quadratic part"
         );
         // SAFETY: the instance is live and borrowed exclusively. The column arrays hold `num_col` values, the row
         // bounds `num_row`, `starts` holds `num_row + 1` row starts (HiGHS reads the first `num_row`), `cols` and
@@ -109,7 +109,7 @@ impl Instance {
                 kHighsMatrixFormatRowwise,
                 q_format,
                 sense,
-                lp.offset(),
+                program.offset(),
                 a.costs.as_ptr(),
                 a.lower.as_ptr(),
                 a.upper.as_ptr(),
@@ -117,7 +117,7 @@ impl Instance {
                 a.row_upper.as_ptr(),
                 a.starts.as_ptr(),
                 a.cols.as_ptr(),
-                lp.matrix().values.as_ptr(),
+                program.matrix().values.as_ptr(),
                 q_start,
                 q_index,
                 q_value,
@@ -303,7 +303,7 @@ impl core::fmt::Debug for Instance {
     }
 }
 
-/// An LP's arrays in the layout `Highs_passModel` reads.
+/// A program's arrays in the layout `Highs_passModel` reads.
 ///
 /// A QP without rows gets one free row without entries. HiGHS 1.15 solves a QP without rows from the
 /// unconstrained minimizer clamped into the bounds, and can report that point optimal after no iteration when it
@@ -321,24 +321,24 @@ struct Arrays {
 }
 
 impl Arrays {
-    /// The arrays of `lp`, with a free row for a QP without rows.
-    fn of(lp: &Lp) -> Self {
-        let columns = lp.columns();
-        let matrix = lp.matrix();
-        let free_row = needs_free_row(lp);
+    /// The arrays of `program`, with a free row for a QP without rows.
+    fn of(program: &Program) -> Self {
+        let columns = program.columns();
+        let matrix = program.matrix();
+        let free_row = needs_free_row(program);
         // Every start is at most the entry count and every column below the column count, both checked by the
         // caller before it passes the arrays, so the conversions it passes are exact.
         Self {
             costs: columns.iter().map(|c| c.cost).collect(),
             lower: columns.iter().map(|c| c.bounds.lower()).collect(),
             upper: columns.iter().map(|c| c.bounds.upper()).collect(),
-            row_lower: lp
+            row_lower: program
                 .row_bounds()
                 .iter()
                 .map(|b| b.lower())
                 .chain(free_row.then_some(f64::NEG_INFINITY))
                 .collect(),
-            row_upper: lp
+            row_upper: program
                 .row_bounds()
                 .iter()
                 .map(|b| b.upper())
@@ -363,22 +363,22 @@ impl Arrays {
 }
 
 impl Arrays {
-    /// Whether every array holds the length `Highs_passModel` reads for `lp`: one value per column, one per row
-    /// (the LP's rows, and the free row a QP without rows gets), one start per row and one more, one column per
+    /// Whether every array holds the length `Highs_passModel` reads for `program`: one value per column, one per row
+    /// (the program's rows, and the free row a QP without rows gets), one start per row and one more, one column per
     /// entry.
-    fn agrees_with(&self, lp: &Lp) -> bool {
-        let (cols, entries) = (lp.num_cols(), lp.num_entries());
-        let rows = lp.num_rows() + usize::from(needs_free_row(lp));
+    fn agrees_with(&self, program: &Program) -> bool {
+        let (cols, entries) = (program.num_cols(), program.num_entries());
+        let rows = program.num_rows() + usize::from(needs_free_row(program));
         [&self.costs, &self.lower, &self.upper].iter().all(|a| a.len() == cols)
             && self.integrality.len() == cols
             && [&self.row_lower, &self.row_upper].iter().all(|a| a.len() == rows)
             && self.starts.len() == rows + 1
             && self.cols.len() == entries
-            && lp.matrix().values.len() == entries
+            && program.matrix().values.len() == entries
     }
 }
 
-/// The Hessian of an LP's quadratic part in the layout `Highs_passModel` reads: its lower triangle in compressed
+/// The Hessian of a program's quadratic part in the layout `Highs_passModel` reads: its lower triangle in compressed
 /// column form, `rows[starts[c]..starts[c + 1]]` with `values` alike for column `c`, the diagonal first, as
 /// [`QuadObjective::hessian`](culmen_core::QuadObjective::hessian) gives it for HiGHS's `½ xᵀQx`.
 struct Hessian {
@@ -403,13 +403,13 @@ impl Hessian {
         }
     }
 
-    /// The Hessian of `lp`, whose counts the caller checked against HiGHS's index type.
-    fn of(lp: &Lp) -> Self {
-        let entries: Vec<(Col, Col, f64)> = lp.quadratic().hessian().collect();
+    /// The Hessian of `program`, whose counts the caller checked against HiGHS's index type.
+    fn of(program: &Program) -> Self {
+        let entries: Vec<(Col, Col, f64)> = program.quadratic().hessian().collect();
         // Every start is at most the entry count and every row below the column count, both checked by the
         // caller before it passes the arrays, so the conversions it passes are exact.
         Self {
-            starts: (0..=lp.num_cols())
+            starts: (0..=program.num_cols())
                 .map(|col| entries.partition_point(|e| e.0.index() < col) as HighsInt)
                 .collect(),
             rows: entries.iter().map(|e| e.1.index() as HighsInt).collect(),
@@ -417,11 +417,11 @@ impl Hessian {
         }
     }
 
-    /// Whether the arrays hold the length `Highs_passModel` reads for `lp`'s Hessian: one start per column and
+    /// Whether the arrays hold the length `Highs_passModel` reads for `program`'s Hessian: one start per column and
     /// one more, ending at the entry count, and one row and one value per entry.
-    fn agrees_with(&self, lp: &Lp) -> bool {
+    fn agrees_with(&self, program: &Program) -> bool {
         let entries = self.values.len();
-        self.starts.len() == lp.num_cols() + 1
+        self.starts.len() == program.num_cols() + 1
             && self.rows.len() == entries
             && self
                 .starts
@@ -430,9 +430,9 @@ impl Hessian {
     }
 }
 
-/// Whether `lp` is a QP without rows, which HiGHS 1.15 solves only with one free, empty row added.
-fn needs_free_row(lp: &Lp) -> bool {
-    lp.num_rows() == 0 && !lp.quadratic().is_empty()
+/// Whether `program` is a QP without rows, which HiGHS 1.15 solves only with one free, empty row added.
+fn needs_free_row(program: &Program) -> bool {
+    program.num_rows() == 0 && !program.quadratic().is_empty()
 }
 
 /// A count as HiGHS's index type.

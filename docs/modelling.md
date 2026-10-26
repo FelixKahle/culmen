@@ -1,14 +1,15 @@
 # Modelling
 
 A `Model` holds variables, linear constraints and a linear or convex quadratic objective written with handles and
-expressions, and builds them into a checked [`Lp`](lp.md#lp). This page covers every part of a model with the plain
-methods and operators; [Macros](macros.md) writes the same calls more briefly.
+expressions, and builds them into a checked [`Program`](program.md#program). This page covers every part of a model with
+the plain methods and operators; [Macros](macros.md) writes the same calls more briefly.
 
 ## Models and handles
 
-`Model::new()` is an empty model that minimizes zero. Adding a variable returns its column, a [`Col`](lp.md#col-and-row);
-adding a constraint returns its row, a [`Row`](lp.md#col-and-row). Both are `Copy` handles, and they are the columns
-and rows of the LP the model builds, so a solution is read with the handle the model returned.
+`Model::new()` is an empty model that minimizes zero. Adding a variable returns its column, a
+[`Col`](program.md#col-and-row); adding a constraint returns its row, a [`Row`](program.md#col-and-row). Both are `Copy`
+handles, and they are the columns and rows of the program the model builds, so a solution is read with the handle the
+model returned.
 
 ```rust
 use culmen::prelude::*;
@@ -21,9 +22,9 @@ fn main() -> Result<(), culmen::ModelError> {
     m.maximize(x + ys[1]);
 
     assert_eq!((m.num_vars(), m.num_constraints()), (4, 1));
-    let lp = m.build()?;
-    assert_eq!(lp.row(r).name(), Some("link"));
-    assert_eq!(lp.columns()[x].bounds, bounds!(0.0, 4.0));
+    let program = m.build()?;
+    assert_eq!(program.row(r).name(), Some("link"));
+    assert_eq!(program.columns()[x].bounds, bounds!(0.0, 4.0));
     Ok(())
 }
 ```
@@ -50,7 +51,7 @@ model is built.
 | `.name(n)` | Names the variable in errors, logs and LP files. |
 
 Bounds take anything that converts into `f64` losslessly, so `Var::integer().bounds(0, 40)` needs no `.0`.
-A [`Bounds`](lp.md#bounds) value converts into a continuous `Var` in those bounds, so `add_var` takes it directly:
+A [`Bounds`](program.md#bounds) value converts into a continuous `Var` in those bounds, so `add_var` takes it directly:
 
 ```rust
 use culmen::prelude::*;
@@ -208,8 +209,8 @@ assert_eq!((band.lower, band.upper), (-1.0, 1.0));
 
 `m.set_objective(sense, expr)` sets the objective, replacing any before. `m.minimize(expr)` and `m.maximize(expr)`
 are the same with the sense written in the name. The expression is linear or quadratic. Its constant becomes the
-LP's [offset](lp.md#lp), which every reported objective value and bound includes. A column that appears several
-times in the objective has its coefficients added up, and so has a pair of columns in a product.
+program's [offset](program.md#program), which every reported objective value and bound includes. A column that appears
+several times in the objective has its coefficients added up, and so has a pair of columns in a product.
 
 ```rust
 use culmen::prelude::*;
@@ -218,8 +219,8 @@ fn main() -> Result<(), culmen::ModelError> {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous());
     m.set_objective(Sense::Maximize, 3.0 * x + 1.5 + x);
-    let lp = m.build()?;
-    assert_eq!((lp.sense(), lp.offset(), lp.columns()[x].cost), (Sense::Maximize, 1.5, 4.0));
+    let program = m.build()?;
+    assert_eq!((program.sense(), program.offset(), program.columns()[x].cost), (Sense::Maximize, 1.5, 4.0));
     Ok(())
 }
 ```
@@ -227,7 +228,8 @@ fn main() -> Result<(), culmen::ModelError> {
 A quadratic objective must be convex to minimize and concave to maximize: `build` checks it, block by block of
 variables the products join, and refuses any other with `ModelError::NonConvexObjective`, which names the first
 variable of the first block at fault. The check factors each block's Hessian with a small tolerance, as
-[the LP's convexity check](lp.md#the-quadratic-part) states, so a semidefinite objective such as `(x + y)²` passes.
+[the program's convexity check](program.md#the-quadratic-part) states, so a semidefinite objective such as `(x + y)²`
+passes.
 
 ```rust
 use culmen::prelude::*;
@@ -238,9 +240,9 @@ fn main() -> Result<(), ModelError> {
     let x = m.add_var(Var::free().name("x"));
     let y = m.add_var(Var::free().name("y"));
     m.minimize(x * x + 2.0 * x * y + y * y - 4.0 * x);
-    let lp = m.build()?;
-    assert_eq!(lp.class(), ModelClass::Qp);
-    assert_eq!(lp.quadratic().entries().collect::<Vec<_>>(), [(x, x, 1.0), (x, y, 2.0), (y, y, 1.0)]);
+    let program = m.build()?;
+    assert_eq!(program.class(), ModelClass::Qp);
+    assert_eq!(program.quadratic().entries().collect::<Vec<_>>(), [(x, x, 1.0), (x, y, 2.0), (y, y, 1.0)]);
 
     m.maximize(5.0 - (x - 3) * (x - 3) - y * y);
     assert!(m.build().is_ok(), "a concave objective is maximized");
@@ -298,8 +300,8 @@ fn main() -> Result<(), culmen::ModelError> {
     assert_eq!(x.get(&(2, 0)), None);
     assert_eq!(m.var_name(x[(1, 0)]), Some("x[1,0]"));
     assert_eq!(m.constraint_name(once[2]), Some("once[2]"));
-    let lp = m.build()?;
-    assert_eq!((lp.num_cols(), lp.num_rows()), (5, 5));
+    let program = m.build()?;
+    assert_eq!((program.num_cols(), program.num_rows()), (5, 5));
     Ok(())
 }
 ```
@@ -348,20 +350,20 @@ number of indices.
 ## Names
 
 A name is optional on every variable and constraint. It appears in [`ModelError`](#building-and-modelerror)
-messages, in solver logs, and in [LP files](lp.md#lp-files); an unnamed variable is shown by its column, `Col(3)`,
+messages, in solver logs, and in [LP files](program.md#lp-files); an unnamed variable is shown by its column, `Col(3)`,
 and an unnamed constraint by its row. `m.var_name(col)` and `m.constraint_name(row)` read a name back, `None` when
-there is none or the model has no such handle; `lp.columns()[col].name` and `lp.row(row).name()` read it from the
-built LP. Names need not be unique.
+there is none or the model has no such handle; `program.columns()[col].name` and `program.row(row).name()` read it from
+the built program. Names need not be unique.
 
 ## Building and `ModelError`
 
-`m.build()` checks every number and handle and returns the [`Lp`](lp.md#lp), or a `ModelError` naming the first
-variable or constraint at fault. The model is left as it was, so it can be changed and built again. Every model
-`build` accepts gives a valid LP: the checks are the LP's own, made in the model's terms.
+`m.build()` checks every number and handle and returns the [`Program`](program.md#program), or a `ModelError` naming the
+first variable or constraint at fault. The model is left as it was, so it can be changed and built again. Every model
+`build` accepts gives a valid program: the checks are the program's own, made in the model's terms.
 
 | Variant | When |
 |---|---|
-| `VarBounds { var, source }` | A variable's bounds are invalid; `source` is the [`InvalidBounds`](lp.md#bounds). |
+| `VarBounds { var, source }` | A variable's bounds are invalid; `source` is the [`InvalidBounds`](program.md#bounds). |
 | `ObjectiveCoefficient { var, value }` | A variable's objective coefficient is NaN or infinite, as given or added up. |
 | `ObjectiveConstant { value }` | The objective's constant is NaN or infinite. |
 | `Coefficient { constraint, var, value }` | A constraint's coefficient is NaN or infinite, as given or added up. |
@@ -407,6 +409,6 @@ assert_eq!(error.to_string(), "Model: the objective names Col(1), which this mod
 ## See also
 
 - [Macros](macros.md): the same model with `variable!`, `constraint!`, `objective!` and `sum!`.
-- [The LP as data](lp.md): what `build` produces.
+- [The program as data](program.md): what `build` produces.
 - [Solving](solving.md#reading-a-solution): reading a solution with the model's handles.
 - [Documentation index](README.md).

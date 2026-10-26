@@ -8,9 +8,9 @@ use core::fmt;
 use super::context::{
     CutContext, HeuristicContext, LazyContext, LogContext, PollContext, ProgressContext, SolutionContext,
 };
-use crate::{Events, Lp, ModelClasses, Settings, Solved};
+use crate::{Events, ModelClasses, Program, Settings, Solved};
 
-/// A solver culmen can drive: it loads an [`Lp`], solves it under [`Settings`], and calls a [`Callback`] as the
+/// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls a [`Callback`] as the
 /// search goes.
 ///
 /// The trait is open: any crate may implement it for its solver. Each associated context type implements the
@@ -20,11 +20,11 @@ use crate::{Events, Lp, ModelClasses, Settings, Solved};
 ///
 /// # Contract
 ///
-/// - [`Solver::new`](crate::Solver::new) calls [`Backend::load`] only with an LP whose
-///   [`class`](Lp::class) is in [`Backend::CLASSES`], so `load` need not check it.
-/// - [`Backend::solve`] solves the last LP [`Backend::load`] accepted, and its [`Solved`] reads with that LP's
-///   handles: a [`Solution`](crate::Solution) holds one value per column, every objective value and bound
-///   includes the LP's quadratic part and offset.
+/// - [`Solver::new`](crate::Solver::new) calls [`Backend::load`] only with a program whose
+///   [`class`](Program::class) is in [`Backend::CLASSES`], so `load` need not check it.
+/// - [`Backend::solve`] solves the last program [`Backend::load`] accepted, and its [`Solved`] reads with that
+///   program's handles: a [`Solution`](crate::Solution) holds one value per column, every objective value and
+///   bound includes the program's quadratic part and offset.
 /// - It calls a callback method only for an event in both [`Backend::EVENTS`] and the callback's
 ///   [`Callback::events`], and only while `solve` runs; it never calls two callback methods at once.
 /// - A panic in a callback stops the solve as soon as the solver allows and then continues unwinding out of
@@ -58,17 +58,17 @@ pub trait Backend: Sized {
     /// The classes of program this backend solves; [`Solver::new`](crate::Solver::new) refuses any other.
     const CLASSES: ModelClasses;
 
-    /// Loads an LP, replacing the one before.
+    /// Loads a program, replacing the one before.
     ///
-    /// Called by [`Solver::new`](crate::Solver::new) only with an LP of a class in [`Backend::CLASSES`]; called
-    /// directly with another, it may refuse the LP or fail to solve it.
+    /// Called by [`Solver::new`](crate::Solver::new) only with a program of a class in [`Backend::CLASSES`]; called
+    /// directly with another, it may refuse the program or fail to solve it.
     ///
     /// # Errors
     ///
-    /// When the solver refuses the LP.
-    fn load(&mut self, lp: &Lp) -> Result<(), Self::Error>;
+    /// When the solver refuses the program.
+    fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
 
-    /// Solves the loaded LP, calling `callback` as the search goes.
+    /// Solves the loaded program, calling `callback` as the search goes.
     ///
     /// # Errors
     ///
