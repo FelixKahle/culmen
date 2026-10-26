@@ -292,7 +292,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The request's stop and observer are themselves a callback, `Watch`, which `solve_with` pairs with yours as
-`(watch, callback)`. `Request::into_watch()` hands out that `Watch` and the settings, for code that drives a
+`(watch, callback)`. `Request::into_watch()` hands out that `Watch`, the settings and the start, for code that drives a
 `Backend` directly; `Watch::finish` reports a last log line that never got its line break.
 
 ## `Unsupported`
