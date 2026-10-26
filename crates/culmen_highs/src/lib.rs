@@ -316,7 +316,8 @@ fn run_hooked(instance: &mut Instance, loaded: &Loaded, callback: &mut dyn Callb
         offered: None,
         incumbent: None,
     });
-    let user = (&raw const hook).cast_mut().cast();
+    let user: *mut core::ffi::c_void = (&raw const hook).cast_mut().cast();
+    debug_assert!(!user.is_null(), "run_hooked: a run is installed with no data");
     // SAFETY: `hook` lives on this frame until after the second `hook` call below uninstalls it, and the
     // trampoline reaches it only through a shared reference to its `Mutex`; `trampoline` treats its arguments as
     // HiGHS passes them.

@@ -10,11 +10,11 @@ use std::ffi::CString;
 use culmen_core::{Integrality, Lp, Sense};
 use highs_sys::{
     Highs_create, Highs_destroy, Highs_getDoubleInfoValue, Highs_getInt64InfoValue, Highs_getIntInfoValue,
-    Highs_getModelStatus, Highs_getObjectiveValue, Highs_getSolution, Highs_passModel, Highs_resetOptions, Highs_run,
-    Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue, Highs_setIntOptionValue,
-    Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_zeroAllClocks, HighsCCallbackType,
-    HighsInt, kHighsMatrixFormatRowwise, kHighsObjSenseMaximize, kHighsObjSenseMinimize, kHighsStatusError,
-    kHighsVarTypeContinuous, kHighsVarTypeInteger,
+    Highs_getModelStatus, Highs_getNumCol, Highs_getObjectiveValue, Highs_getSolution, Highs_passModel,
+    Highs_resetOptions, Highs_run, Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue,
+    Highs_setIntOptionValue, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_zeroAllClocks,
+    HighsCCallbackType, HighsInt, kHighsMatrixFormatRowwise, kHighsObjSenseMaximize, kHighsObjSenseMinimize,
+    kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger,
 };
 
 use crate::{CallStatus, Dimension, HighsError, ModelStatus, OptionValue};
@@ -51,6 +51,14 @@ impl Instance {
         self.0.as_ptr()
     }
 
+    /// The number of columns of the model HiGHS holds.
+    fn num_col(&self) -> usize {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live.
+        let count = unsafe { Highs_getNumCol(self.raw()) };
+        usize::try_from(count).unwrap_or(0)
+    }
+
     /// Passes `lp` to HiGHS, replacing any model before.
     ///
     /// # Errors
@@ -74,6 +82,11 @@ impl Instance {
             ptr::null()
         };
         let (no_int, no_double) = (ptr::null(), ptr::null());
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        debug_assert!(
+            a.agrees_with(lp),
+            "Instance: the arrays passed to HiGHS do not match the LP's counts"
+        );
         // SAFETY: the instance is live and borrowed exclusively. The column arrays hold `num_col` values, the row
         // bounds `num_row`, `starts` holds `num_row + 1` row starts (HiGHS reads the first `num_row`), `cols` and
         // the values hold `num_nz` entries, and `integrality` is null or holds `num_col` values. There is no
@@ -111,6 +124,7 @@ impl Instance {
 
     /// Resets every option to HiGHS's default.
     pub(crate) fn reset_options(&mut self) {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively.
         let _ = unsafe { Highs_resetOptions(self.raw()) };
     }
@@ -126,6 +140,7 @@ impl Instance {
         let c_name = CString::new(name).map_err(|_| HighsError::OptionName { name: name.to_owned() })?;
         let raw = self.raw();
         let name_ptr = c_name.as_ptr();
+        debug_assert!(!raw.is_null(), "Instance: the HiGHS instance is null");
         let status = match value {
             // SAFETY: the instance is live and borrowed exclusively, the name a NUL-terminated string HiGHS reads
             // during the call.
@@ -137,6 +152,10 @@ impl Instance {
             OptionValue::String(v) => {
                 let c_value =
                     CString::new(v.as_str()).map_err(|_| HighsError::OptionString { name: name.to_owned() })?;
+                debug_assert!(
+                    !c_value.as_bytes().contains(&0),
+                    "Instance: the option value holds a NUL byte"
+                );
                 // SAFETY: as above, and the value is a NUL-terminated string HiGHS copies during the call.
                 unsafe { Highs_setStringOptionValue(raw, name_ptr, c_value.as_ptr()) }
             }
@@ -152,6 +171,7 @@ impl Instance {
 
     /// Restarts HiGHS's run clock, which `time_limit` is measured on and which otherwise counts across runs.
     pub(crate) fn zero_clocks(&mut self) {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively.
         let _ = unsafe { Highs_zeroAllClocks(self.raw()) };
     }
@@ -164,6 +184,11 @@ impl Instance {
     /// `user` is null or points to data `callback` may use until this is called again with a null `user`, and
     /// `callback` treats its arguments as HiGHS passes them.
     pub(crate) unsafe fn hook(&mut self, callback: HighsCCallbackType, user: *mut c_void, kinds: &[c_int]) {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        debug_assert!(
+            user.is_null() || callback.is_some(),
+            "Instance: callback data is installed without a callback"
+        );
         // SAFETY: the instance is live and borrowed exclusively; the caller vouches for `user` and `callback`.
         let _ = unsafe { Highs_setCallback(self.raw(), callback, user) };
         for kind in 0..=highs_sys::kHighsCallbackCallbackMipUserSolution {
@@ -180,6 +205,7 @@ impl Instance {
 
     /// Runs HiGHS on the loaded model.
     pub(crate) fn run(&mut self) -> CallStatus {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively. Any callback it calls was installed by `hook`,
         // whose caller keeps the callback's data alive for the run.
         CallStatus::from_raw(unsafe { Highs_run(self.raw()) })
@@ -187,12 +213,14 @@ impl Instance {
 
     /// The model status of the last run.
     pub(crate) fn model_status(&self) -> ModelStatus {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live.
         ModelStatus::from_raw(unsafe { Highs_getModelStatus(self.raw()) })
     }
 
     /// The objective value of the last run's solution, offset included.
     pub(crate) fn objective(&self) -> f64 {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live.
         unsafe { Highs_getObjectiveValue(self.raw()) }
     }
@@ -200,6 +228,7 @@ impl Instance {
     /// An integer info value, `None` when HiGHS does not know the name or has no valid info.
     pub(crate) fn info_int(&self, name: &CStr) -> Option<i32> {
         let mut value: HighsInt = 0;
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
         let status = unsafe { Highs_getIntInfoValue(self.raw(), name.as_ptr(), &raw mut value) };
         (status != kHighsStatusError).then_some(value)
@@ -208,6 +237,7 @@ impl Instance {
     /// A 64-bit integer info value, `None` when HiGHS does not know the name or has no valid info.
     pub(crate) fn info_i64(&self, name: &CStr) -> Option<i64> {
         let mut value: i64 = 0;
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one 64-bit integer to write.
         let status = unsafe { Highs_getInt64InfoValue(self.raw(), name.as_ptr(), &raw mut value) };
         (status != kHighsStatusError).then_some(value)
@@ -216,6 +246,7 @@ impl Instance {
     /// A floating-point info value, `None` when HiGHS does not know the name or has no valid info.
     pub(crate) fn info_double(&self, name: &CStr) -> Option<f64> {
         let mut value = 0.0;
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one double to write.
         let status = unsafe { Highs_getDoubleInfoValue(self.raw(), name.as_ptr(), &raw mut value) };
         (status != kHighsStatusError).then_some(value)
@@ -227,6 +258,11 @@ impl Instance {
     /// columns.
     pub(crate) fn primal_values(&self, num_cols: usize) -> Vec<f64> {
         let mut values = vec![0.0; num_cols];
+        debug_assert_eq!(
+            self.num_col(),
+            num_cols,
+            "Instance: the buffer does not fit HiGHS's model"
+        );
         // SAFETY: the instance is live. A run that reports a primal solution holds one value per column of its
         // model, `num_cols` values, which is what `values` has room for; the dual and row arrays are null, which
         // HiGHS skips.
@@ -245,6 +281,7 @@ impl Instance {
 
 impl Drop for Instance {
     fn drop(&mut self) {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and is never used again. `Highs_destroy` also shuts down the HiGHS task
         // scheduler of the dropping thread, which the next run on that thread starts afresh; no run is in progress
         // on this thread while it drops.
@@ -293,6 +330,20 @@ impl Arrays {
                 })
                 .collect(),
         }
+    }
+}
+
+impl Arrays {
+    /// Whether every array holds the length `Highs_passModel` reads for `lp`: one value per column or row, one
+    /// start per row and one more, one column per entry.
+    fn agrees_with(&self, lp: &Lp) -> bool {
+        let (cols, rows, entries) = (lp.num_cols(), lp.num_rows(), lp.num_entries());
+        [&self.costs, &self.lower, &self.upper].iter().all(|a| a.len() == cols)
+            && self.integrality.len() == cols
+            && [&self.row_lower, &self.row_upper].iter().all(|a| a.len() == rows)
+            && self.starts.len() == rows + 1
+            && self.cols.len() == entries
+            && lp.matrix().values.len() == entries
     }
 }
 
