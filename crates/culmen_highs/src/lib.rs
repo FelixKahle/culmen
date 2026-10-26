@@ -279,58 +279,60 @@ impl Highs {
     /// when it reports a QP optimal with a primal-dual objective error above [`Highs::QP_OBJECTIVE_ERROR`], or
     /// unbounded although every column is bounded.
     fn outcome(&self, loaded: &Loaded, settings: &Settings, status: &HighsStatus) -> Result<Outcome, HighsError> {
-        let failed = || HighsError::Run {
-            status: status.model,
-            message: status.last_error.clone(),
-        };
         if status.run == CallStatus::Error {
-            return Err(failed());
+            return Err(run_failed(status));
         }
         if let Some(why) = unsound_qp(loaded, status) {
             return Err(HighsError::UnsoundQp(why));
         }
         let best = (status.primal == SolutionStatus::Feasible).then(|| self.solution(loaded));
-        let bound = self
-            .instance
-            .info_double(c"mip_dual_bound")
-            .filter(|b| loaded.is_mip && !loaded.several() && b.is_finite());
-        let stopped = |reason| {
-            Ok(Outcome::Stopped {
-                reason,
-                best: best.clone(),
-                bound,
-            })
-        };
-        match status.model {
-            ModelStatus::Optimal => {
-                let solution = best.clone().ok_or_else(failed)?;
-                match bound {
-                    Some(bound) if gap_open(solution.objective, bound) => Ok(Outcome::GapReached { solution, bound }),
-                    _ => Ok(Outcome::Optimal(solution)),
-                }
-            }
-            ModelStatus::ModelEmpty => Ok(Outcome::Optimal(Solution {
+        let bound = self.mip_bound(loaded);
+        match self.ending(settings, status) {
+            Ending::Optimal => best
+                .map(|solution| optimum(solution, bound))
+                .ok_or_else(|| run_failed(status)),
+            Ending::Empty => Ok(Outcome::Optimal(Solution {
                 objective: loaded.offset,
                 values: Vec::new().into(),
             })),
-            ModelStatus::Infeasible => Ok(Outcome::Infeasible),
-            ModelStatus::Unbounded => Ok(Outcome::Unbounded),
-            ModelStatus::UnboundedOrInfeasible => Ok(Outcome::InfeasibleOrUnbounded),
-            ModelStatus::TimeLimit => stopped(StopReason::TimeLimit),
-            ModelStatus::Interrupt => stopped(StopReason::Interrupted),
-            ModelStatus::IterationLimit => stopped(StopReason::IterationLimit),
-            ModelStatus::ObjectiveBound | ModelStatus::ObjectiveTarget => stopped(StopReason::ObjectiveLimit),
-            ModelStatus::MemoryLimit => stopped(StopReason::MemoryLimit),
-            ModelStatus::SolutionLimit => stopped(self.search_limit(settings, status.mip_nodes)),
-            ModelStatus::Unknown | ModelStatus::HighsInterrupt => stopped(StopReason::Other),
+            Ending::Infeasible => Ok(Outcome::Infeasible),
+            Ending::Unbounded => Ok(Outcome::Unbounded),
+            Ending::Either => Ok(Outcome::InfeasibleOrUnbounded),
+            Ending::Stopped(reason) => Ok(Outcome::Stopped { reason, best, bound }),
+            Ending::Failed => Err(run_failed(status)),
+        }
+    }
+
+    /// How a run HiGHS reports with `status` ended, in culmen's terms.
+    fn ending(&self, settings: &Settings, status: &HighsStatus) -> Ending {
+        match status.model {
+            ModelStatus::Optimal => Ending::Optimal,
+            ModelStatus::ModelEmpty => Ending::Empty,
+            ModelStatus::Infeasible => Ending::Infeasible,
+            ModelStatus::Unbounded => Ending::Unbounded,
+            ModelStatus::UnboundedOrInfeasible => Ending::Either,
+            ModelStatus::TimeLimit => Ending::Stopped(StopReason::TimeLimit),
+            ModelStatus::Interrupt => Ending::Stopped(StopReason::Interrupted),
+            ModelStatus::IterationLimit => Ending::Stopped(StopReason::IterationLimit),
+            ModelStatus::ObjectiveBound | ModelStatus::ObjectiveTarget => Ending::Stopped(StopReason::ObjectiveLimit),
+            ModelStatus::MemoryLimit => Ending::Stopped(StopReason::MemoryLimit),
+            ModelStatus::SolutionLimit => Ending::Stopped(self.search_limit(settings, status.mip_nodes)),
+            ModelStatus::Unknown | ModelStatus::HighsInterrupt => Ending::Stopped(StopReason::Other),
             ModelStatus::NotSet
             | ModelStatus::LoadError
             | ModelStatus::ModelError
             | ModelStatus::PresolveError
             | ModelStatus::SolveError
             | ModelStatus::PostsolveError
-            | ModelStatus::Other(_) => Err(failed()),
+            | ModelStatus::Other(_) => Ending::Failed,
         }
+    }
+
+    /// The best bound HiGHS proved for a MIP with one objective; `None` for any other program or without one.
+    fn mip_bound(&self, loaded: &Loaded) -> Option<f64> {
+        self.instance
+            .info_double(c"mip_dual_bound")
+            .filter(|b| loaded.is_mip && !loaded.several() && b.is_finite())
     }
 
     /// The last run's primal solution, valued with the program's own objective: HiGHS's objective value is the
@@ -380,6 +382,42 @@ fn unsound_qp(loaded: &Loaded, status: &HighsStatus) -> Option<UnsoundQp> {
             .map(|error| UnsoundQp::ObjectiveError { error }),
         ModelStatus::Unbounded => loaded.bounded.then_some(UnsoundQp::UnboundedInABox),
         _ => None,
+    }
+}
+
+/// How a run ended, as [`Highs::ending`] reads HiGHS's model status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ending {
+    /// Optimal, which a solution must back.
+    Optimal,
+    /// The program has no columns: optimal at its offset.
+    Empty,
+    /// No point is feasible.
+    Infeasible,
+    /// The objective improves without limit.
+    Unbounded,
+    /// Infeasible or unbounded, HiGHS did not tell which.
+    Either,
+    /// Stopped before proving optimality.
+    Stopped(StopReason),
+    /// HiGHS failed.
+    Failed,
+}
+
+/// The error of a run that failed with `status`.
+fn run_failed(status: &HighsStatus) -> HighsError {
+    HighsError::Run {
+        status: status.model,
+        message: status.last_error.clone(),
+    }
+}
+
+/// An optimal solution's outcome: [`Outcome::GapReached`] when the bound lies beyond HiGHS's default gaps, so a wider
+/// requested gap ended the search, else [`Outcome::Optimal`].
+fn optimum(solution: Solution, bound: Option<f64>) -> Outcome {
+    match bound {
+        Some(bound) if gap_open(solution.objective, bound) => Outcome::GapReached { solution, bound },
+        _ => Outcome::Optimal(solution),
     }
 }
 

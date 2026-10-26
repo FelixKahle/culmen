@@ -236,29 +236,49 @@ pub(crate) unsafe extern "C" fn trampoline(
         out,
         data_in,
     };
+    // SAFETY: the caller's contract for this call holds for `call`.
+    let stop = unsafe { guarded(&mut hook, &call) };
+    INSIDE.set(outer);
+    drop(hook);
+    if stop && matches!(kind, Kind::Poll(_)) {
+        // SAFETY: at an interrupt kind `data_in` is the call's valid input record, which HiGHS reads after the
+        // callback returns.
+        unsafe { interrupt(data_in) };
+    }
+}
+
+/// Hands the call to the run's callback, unless an earlier one panicked, and keeps a new panic for the run; whether
+/// the run must stop: the callback asked to interrupt it, or a callback of the run panicked.
+///
+/// # Safety
+///
+/// `call` is a call of the trampoline whose contract holds.
+unsafe fn guarded(hook: &mut Hook<'_>, call: &Call) -> bool {
     let mut interrupt = false;
     if hook.panic.is_none() {
-        let hook = &mut *hook;
         let caught = catch_unwind(AssertUnwindSafe(|| {
             // SAFETY: the caller's contract for this call holds for `call`.
-            unsafe { dispatch(hook, &call, &mut interrupt) };
+            unsafe { dispatch(hook, call, &mut interrupt) };
         }));
         if let Err(payload) = caught {
             hook.panic = Some(payload);
         }
     }
-    let stop = interrupt || hook.panic.is_some();
-    INSIDE.set(outer);
-    drop(hook);
-    if stop && matches!(kind, Kind::Poll(_)) {
-        debug_assert!(
-            !data_in.is_null(),
-            "trampoline: HiGHS passed no input record to an interrupt poll"
-        );
-        // SAFETY: at an interrupt kind `data_in` is the call's valid input record, which HiGHS reads after the
-        // callback returns.
-        unsafe { (&raw mut (*data_in).user_interrupt).write(1) };
-    }
+    interrupt || hook.panic.is_some()
+}
+
+/// Asks HiGHS to stop the run, through the input record of an interrupt poll.
+///
+/// # Safety
+///
+/// `data_in` is the valid input record of an interrupt kind's call, which HiGHS reads after the callback returns.
+unsafe fn interrupt(data_in: *mut HighsCallbackDataIn) {
+    debug_assert!(
+        !data_in.is_null(),
+        "trampoline: HiGHS passed no input record to an interrupt poll"
+    );
+    // SAFETY: the caller vouches that `data_in` is the call's valid input record.
+    unsafe { (&raw mut (*data_in).user_interrupt).write(1) };
 }
 
 /// One call of the trampoline, as HiGHS made it.

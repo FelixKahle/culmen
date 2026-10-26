@@ -142,8 +142,8 @@ pub use culmen_highs::Highs;
 #[cfg(feature = "macros")]
 pub use culmen_macros::{constraint, objective, sum, variable};
 
-/// The README and the user guide under `docs/`, compiled as doctests so every snippet in it stays true. A page whose snippets
-/// need a feature is included only with that feature.
+/// The README and the user guide under `docs/`, compiled as doctests so every snippet in it stays true. A page whose
+/// snippets need a feature is included only with that feature.
 #[cfg(doctest)]
 mod docs {
     #[cfg(all(feature = "highs", feature = "macros"))]
