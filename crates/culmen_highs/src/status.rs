@@ -187,6 +187,15 @@ pub struct HighsStatus {
     pub simplex_iterations: u64,
     /// The number of interior-point iterations.
     pub ipm_iterations: u64,
+    /// The number of iterations of the QP solver.
+    pub qp_iterations: u64,
+    /// The relative difference of the primal and dual objective values, `|P - D| / (1 + |P| + |D|)`; `None` when
+    /// HiGHS computed none, as for a MIP.
+    ///
+    /// A QP that HiGHS reports optimal with an error above
+    /// [`Highs::QP_OBJECTIVE_ERROR`](crate::Highs::QP_OBJECTIVE_ERROR) fails with
+    /// [`HighsError::UnsoundQp`](crate::HighsError::UnsoundQp).
+    pub primal_dual_objective_error: Option<f64>,
     /// The last error line of HiGHS's log, if it wrote one.
     pub last_error: Option<String>,
 }

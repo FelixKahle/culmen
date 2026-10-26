@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Linear and mixed-integer programming in Rust: a model written the way the mathematics reads, solved on a
-//! switchable backend, with a live view of the search (best solution, bound, gap, solver log) and a cooperative
-//! stop.
+//! Linear, mixed-integer and convex quadratic programming in Rust: a model written the way the mathematics reads,
+//! solved on a switchable backend, with a live view of the search (best solution, bound, gap, solver log) and a
+//! cooperative stop.
 //!
 //! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as [`Highs`] (and
 //! the whole backend as [`highs`]) with the default `highs` feature, and the modelling macros with the `macros`
@@ -76,7 +76,7 @@
 //! | `constraint!(m, c, e >= f)` | `let c = m.add_named_constraint("c", Linear::geq(e, f));` |
 //! | `constraint!(m, c[i in I], e <= f)` | `let c = m.add_constraint_map(I, \|&i\| (format!("c[{i}]"), Linear::leq(e, f)));` |
 //! | `objective!(m, Min, e)` | `m.set_objective(Sense::Minimize, e)` |
-//! | `sum!(e for i in I, j in J if g)` | `LinExpr` summed with `+=` over nested `for` loops |
+//! | `sum!(e for i in I, j in J if g)` | `LinExpr` or, for a quadratic `e`, `QuadExpr`, summed in nested `for` loops |
 //! | `x[i, j]` inside a macro | `x[(i.clone(), j.clone())]` |
 //!
 //! Each domain is evaluated where its loop starts and iterated as an [`IndexSet`], which yields members by value:
@@ -196,7 +196,8 @@ pub mod prelude {
 
     pub use culmen_core::{
         Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Improvement, IndexSet, LinExpr, Linear,
-        LogLine, Lp, Model, Observer, Outcome, Progress, Request, Row, Sense, Settings, Solution, Solved, Solver, Stop,
-        StopReason, Var, VarMap, absolute_gap, bounds, product, relative_gap, set, stop_fn, threads,
+        LogLine, Lp, Model, Observer, Outcome, Progress, QuadExpr, Quadratic, Request, Row, Sense, Settings, Solution,
+        Solved, Solver, Stop, StopReason, Var, VarMap, absolute_gap, bounds, product, relative_gap, set, stop_fn,
+        threads,
     };
 }

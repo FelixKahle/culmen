@@ -1,8 +1,8 @@
 # Modelling
 
-A `Model` holds variables, constraints and an objective written with handles and expressions, and builds them into a
-checked [`Lp`](lp.md#lp). This page covers every part of a model with the plain methods and operators;
-[Macros](macros.md) writes the same calls more briefly.
+A `Model` holds variables, linear constraints and a linear or convex quadratic objective written with handles and
+expressions, and builds them into a checked [`Lp`](lp.md#lp). This page covers every part of a model with the plain
+methods and operators; [Macros](macros.md) writes the same calls more briefly.
 
 ## Models and handles
 
@@ -118,6 +118,51 @@ when a term's column has no value there.
 The trait behind all of this is `Linear`: anything that adds to an expression. `Col`, `Term`, `LinExpr`, `&LinExpr`,
 `f64` and `i32` implement it, and every operator, sum and comparison takes `impl Linear`.
 
+## Quadratic expressions
+
+A product of two linear items is quadratic, for an objective:
+
+- `QuadTerm`, a product of two columns scaled by a coefficient: `QuadTerm { first, second, coefficient }`, meaning
+  `coefficient · first · second`. `x * y`, `x * x` and `2.0 * x * y` make one without allocating.
+- `QuadExpr`, the expression `Σ coefficient · first · second + linear`: plain data with `pub terms: Vec<QuadTerm>`
+  and `pub linear: LinExpr`. Pairs may repeat, in either order; `x * y` and `y * x` add up when the model is built.
+
+| Expression | Gives |
+|---|---|
+| `x * y`, `x * (2.0 * y)`, `(2.0 * x) * y`, `2.0 * x * y` with `x`, `y` a `Col` or `Term` | `QuadTerm` |
+| `q * 2.0`, `2.0 * q`, `q * 2`, `2 * q`, `q / 2.0`, `-q` with `q` a `QuadTerm` | `QuadTerm` |
+| `a * b` with one side a `LinExpr` and the other a `Col`, `Term` or `LinExpr`, as in `(x - 1) * (x - 1)` | `QuadExpr`, expanded |
+| `a + b`, `a - b` with either side a `QuadTerm` or `QuadExpr` and the other any linear or quadratic item | `QuadExpr` |
+| `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `-e` with `e` a `QuadExpr` | `QuadExpr` |
+| `e += b`, `e -= b` with `b` any linear or quadratic item; `e *= 2.0` | in place |
+
+`QuadExpr::sum`, `Iterator::sum` and `collect` add up quadratic items and `extend` adds them to an expression,
+`QuadExpr::add_term(first, second, coefficient)` adds one product, `QuadExpr::value(&values)` evaluates the expression at a point, and `From` converts a `QuadTerm`, a
+`LinExpr`, a `Col`, a `Term` or an `f64` into a `QuadExpr`. The trait behind them is `Quadratic`, which every
+`Linear` item, `QuadTerm`, `QuadExpr` and `&QuadExpr` implement; the objective setters take `impl Quadratic`.
+
+```rust
+use culmen::prelude::*;
+use culmen::QuadExpr;
+
+let mut m = Model::new();
+let x = m.add_var(Var::free());
+let y = m.add_var(Var::free());
+
+let e = x * x + 2.0 * x * y + y * y - 4.0 * x + 3.0;
+assert_eq!((e.terms.len(), e.linear.terms.len(), e.linear.constant), (3, 1, 3.0));
+
+let distance = (x - 1) * (x - 1) + (y - 2) * (y - 2);
+let point: culmen::TiVec<Col, f64> = vec![4.0, 6.0].into();
+assert_eq!(distance.value(&point), 9.0 + 16.0);
+
+let squares: QuadExpr = [x, y].into_iter().map(|v| v * v).sum();
+assert_eq!(squares.terms.len(), 2);
+```
+
+Constraints stay linear: `leq`, `geq`, `equals` and `between` are methods of `Linear`, which no quadratic item
+implements, so a quadratic constraint does not compile.
+
 ## Comparisons
 
 `Linear` also turns an expression into a `Constraint`:
@@ -162,9 +207,9 @@ assert_eq!((band.lower, band.upper), (-1.0, 1.0));
 ## The objective
 
 `m.set_objective(sense, expr)` sets the objective, replacing any before. `m.minimize(expr)` and `m.maximize(expr)`
-are the same with the sense written in the name. The expression's constant becomes the LP's
-[offset](lp.md#lp), which every reported objective value and bound includes. A column that appears several times
-in the objective has its coefficients added up.
+are the same with the sense written in the name. The expression is linear or quadratic. Its constant becomes the
+LP's [offset](lp.md#lp), which every reported objective value and bound includes. A column that appears several
+times in the objective has its coefficients added up, and so has a pair of columns in a product.
 
 ```rust
 use culmen::prelude::*;
@@ -175,6 +220,37 @@ fn main() -> Result<(), culmen::ModelError> {
     m.set_objective(Sense::Maximize, 3.0 * x + 1.5 + x);
     let lp = m.build()?;
     assert_eq!((lp.sense(), lp.offset(), lp.columns()[x].cost), (Sense::Maximize, 1.5, 4.0));
+    Ok(())
+}
+```
+
+A quadratic objective must be convex to minimize and concave to maximize: `build` checks it, block by block of
+variables the products join, and refuses any other with `ModelError::NonConvexObjective`, which names the first
+variable of the first block at fault. The check factors each block's Hessian with a small tolerance, as
+[the LP's convexity check](lp.md#the-quadratic-part) states, so a semidefinite objective such as `(x + y)²` passes.
+
+```rust
+use culmen::prelude::*;
+use culmen::{ModelClass, ModelError};
+
+fn main() -> Result<(), ModelError> {
+    let mut m = Model::new();
+    let x = m.add_var(Var::free().name("x"));
+    let y = m.add_var(Var::free().name("y"));
+    m.minimize(x * x + 2.0 * x * y + y * y - 4.0 * x);
+    let lp = m.build()?;
+    assert_eq!(lp.class(), ModelClass::Qp);
+    assert_eq!(lp.quadratic().entries().collect::<Vec<_>>(), [(x, x, 1.0), (x, y, 2.0), (y, y, 1.0)]);
+
+    m.maximize(5.0 - (x - 3) * (x - 3) - y * y);
+    assert!(m.build().is_ok(), "a concave objective is maximized");
+
+    m.minimize(x * y);
+    let error = m.build().unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Model: the objective is not convex, as minimizing needs, in the block of variable `x`"
+    );
     Ok(())
 }
 ```
@@ -291,6 +367,8 @@ variable or constraint at fault. The model is left as it was, so it can be chang
 | `Coefficient { constraint, var, value }` | A constraint's coefficient is NaN or infinite, as given or added up. |
 | `ConstraintBounds { constraint, source }` | A constraint's bounds are invalid after its constant moved into them. |
 | `UnknownVar { place, col }` | An expression names a column this model did not hand out, in the objective or a constraint. |
+| `ObjectiveQuadCoefficient { first, second, value }` | A quadratic objective coefficient is NaN or infinite, as given or added up over its pair. |
+| `NonConvexObjective { sense, var }` | The quadratic objective is not convex to minimize, or not concave to maximize. |
 
 `var` is a `ModelVar { col, name }` and `constraint` a `ModelConstraint { row, name }`; each displays as its name
 in backticks, or as its handle when it has none. `place` is an `ExprPlace`: `Objective` or `Constraint(..)`.

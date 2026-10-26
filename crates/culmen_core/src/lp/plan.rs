@@ -78,6 +78,9 @@ pub struct LpRow {
 
 /// An LP as plain data, checked into an [`Lp`] by [`LpPlan::build`].
 ///
+/// Its objective is `Σ cost · x + Σ q · xᵢ · xⱼ + offset`, the quadratic terms `(i, j, q)` in
+/// [`LpPlan::quadratic`].
+///
 /// ```
 /// use culmen_core::{Bounds, LpColumn, LpPlan, Sense, bounds};
 ///
@@ -103,6 +106,13 @@ pub struct LpPlan {
     pub columns: TiVec<Col, LpColumn>,
     /// The rows, in handle order.
     pub rows: TiVec<Row, LpRow>,
+    /// The objective's quadratic terms as `(i, j, q)`, each adding `q · xᵢ · xⱼ`; empty for a linear objective.
+    ///
+    /// A pair may come in either order and repeat, and its coefficients add up when the plan is built; pairs that
+    /// cancel to zero are dropped. Absent from serialized data written before quadratic objectives, it reads as
+    /// empty.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub quadratic: Vec<(Col, Col, f64)>,
 }
 
 impl LpPlan {
@@ -114,6 +124,7 @@ impl LpPlan {
             offset: 0.0,
             columns: TiVec::new(),
             rows: TiVec::new(),
+            quadratic: Vec::new(),
         }
     }
 
@@ -131,12 +142,12 @@ impl LpPlan {
         })
     }
 
-    /// Checks every number and every handle and builds the LP.
+    /// Checks every number and every handle and the convexity of the quadratic part, and builds the LP.
     ///
     /// # Errors
     ///
-    /// [`LpError`] naming the first non-finite offset, cost or coefficient, or a term whose column the plan does
-    /// not have.
+    /// [`LpError`] naming the first non-finite offset, cost or coefficient, a term whose column the plan does not
+    /// have, or a quadratic part that is not convex for minimizing or concave for maximizing.
     pub fn build(self) -> Result<Lp, LpError> {
         Lp::from_plan(self)
     }

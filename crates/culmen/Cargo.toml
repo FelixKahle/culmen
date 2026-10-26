@@ -3,7 +3,7 @@
 
 [package]
 name = "culmen"
-description = "Linear and mixed-integer programming: models that read like the mathematics, a switchable backend, live observation and a cooperative stop."
+description = "Linear, mixed-integer and convex quadratic programming: models that read like the mathematics, a switchable backend, live observation and a cooperative stop."
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true

@@ -1,7 +1,8 @@
 # The LP as data
 
-An `Lp` is a linear or mixed-integer program: minimize or maximize `cost · x + offset` over `x`, with every column in
-its bounds, the integer columns whole, and every row's activity `Σ coefficient · column` in its bounds. It is an
+An `Lp` is a linear, mixed-integer or convex quadratic program: minimize or maximize
+`cost · x + Σ q · xᵢ · xⱼ + offset` over `x`, with every column in its bounds, the integer columns whole, and every
+row's activity `Σ coefficient · column` in its bounds. Its constraints are linear. It is an
 immutable value, built once and checked then, and it is what a [backend](solving.md#solver) loads. A
 [model](modelling.md) builds one; this page builds them directly and reads them back.
 
@@ -15,6 +16,7 @@ An `LpPlan` is an LP as plain data, with `pub` fields, checked into an `Lp` by `
 | `offset` | The constant added to the objective. |
 | `columns` | A `TiVec<Col, LpColumn>`: each column's `cost`, `bounds`, `integrality` and `name`. |
 | `rows` | A `TiVec<Row, LpRow>`: each row's `bounds`, `terms` as `(Col, f64)`, and `name`. |
+| `quadratic` | The objective's quadratic terms as `(Col, Col, f64)`, each `(i, j, q)` adding `q · xᵢ · xⱼ`; empty for a linear objective. See [The quadratic part](#the-quadratic-part). |
 
 `plan.col(column)` pushes a column and returns its `Col`; `plan.row(bounds, terms)` pushes an unnamed row and
 returns its `Row`. `LpColumn::continuous(cost, bounds)`, `LpColumn::integer(cost, bounds)` and
@@ -55,6 +57,8 @@ An `Lp` is read through methods; it has no public fields and no constructor that
 | `sense()`, `offset()` | The objective's sense and constant. |
 | `num_cols()`, `num_rows()`, `num_entries()` | The counts; entries are the non-zero coefficients. |
 | `is_mip()` | Whether any column is integer. |
+| `quadratic()` | The objective's [quadratic part](#the-quadratic-part), a `QuadObjective`. |
+| `class()` | The [`ModelClass`](#model-classes): `Lp`, `Milp`, `Qp` or `Miqp`. |
 | `cols()`, `rows()` | Every `Col`, every `Row`, in order. |
 | `columns()` | The columns' `LpColumn` data, indexed by `Col`: `lp.columns()[x]`. |
 | `row_bounds()` | The rows' bounds, indexed by `Row`. |
@@ -182,12 +186,91 @@ fn main() -> Result<(), culmen::LpError> {
 The iterators (`Cols`, `Rows`, `RowEntries`, and the family iterators of [Modelling](modelling.md#keyed-families))
 are named types that run both ways and know their exact length.
 
+## The quadratic part
+
+`lp.quadratic()` is a `QuadObjective`, the objective's `Σ q · xᵢ · xⱼ` in one canonical form: entries `(i, j, q)`
+with `i <= j`, each pair at most once, every coefficient finite and non-zero, sorted by `(i, j)`. The model's `x * x`
+is the entry `(x, x, 1)` and `2.0 * x * y` the entry `(x, y, 2)`. A plan's terms may name a pair in either order and
+repeat it; the coefficients of a pair are added up in the order given, and a pair that sums to zero is dropped.
+
+Solvers take the quadratic part as `½ xᵀHx` with a symmetric Hessian `H`. In that form `Hᵢᵢ = 2q` on the diagonal and
+`Hᵢⱼ = Hⱼᵢ = q` off it; `quadratic().hessian()` gives its lower triangle column by column, `(column, row, value)` with
+`row >= column`, which is the layout HiGHS reads.
+
+| Method | Gives |
+|---|---|
+| `entries()`, `&q` in a `for` loop | The entries `(i, j, q)`, as a `QuadEntries` iterator. |
+| `hessian()` | The lower triangle of `H`, as a `HessianEntries` iterator. |
+| `len()`, `is_empty()` | The number of entries. |
+| `value(values)` | `Σ q · xᵢ · xⱼ` at a point. |
+
+```rust
+use culmen::{Bounds, LpColumn, LpPlan, TiSlice};
+
+fn main() -> Result<(), culmen::LpError> {
+    // x² + 2xy + 3y², written with the cross term split in both orders.
+    let mut plan = LpPlan::new();
+    let x = plan.col(LpColumn::continuous(0.0, Bounds::FREE));
+    let y = plan.col(LpColumn::continuous(0.0, Bounds::FREE));
+    plan.quadratic = vec![(y, x, 1.0), (x, x, 1.0), (x, y, 1.0), (y, y, 3.0)];
+    let lp = plan.build()?;
+
+    let q = lp.quadratic();
+    assert_eq!(q.entries().collect::<Vec<_>>(), [(x, x, 1.0), (x, y, 2.0), (y, y, 3.0)]);
+    assert_eq!(q.hessian().collect::<Vec<_>>(), [(x, x, 2.0), (x, y, 2.0), (y, y, 6.0)]);
+    assert_eq!(lp.objective_value(TiSlice::from_ref(&[1.0, 1.0])), 6.0);
+    Ok(())
+}
+```
+
+The class of program is *convex* quadratic. Convexity is a property of real numbers that floating point cannot
+decide exactly, so `build` checks it with a stated tolerance: `H` splits into blocks of columns its entries join,
+and for every block `s · H + δ · I` must have a Cholesky factor, where `s` is `1` to minimize and `-1` to maximize and
+`δ` is `Lp::CONVEXITY_TOLERANCE` (`1e-9`) times the block's largest `|Hᵢⱼ|`. Every `Lp` therefore has an objective
+convex to minimize, or concave to maximize, up to that tolerance; a semidefinite one passes. Each block costs a dense
+factorization cubic in its number of columns, so a separable objective, a sum of squares of single columns, costs
+next to nothing.
+
+## Model classes
+
+`lp.class()` is a `ModelClass`, the kind of program the LP is: whether it has an integer column, and whether its
+objective has a quadratic part.
+
+| Class | Integer columns | Objective |
+|---|---|---|
+| `ModelClass::Lp` | none | linear |
+| `ModelClass::Milp` | some | linear |
+| `ModelClass::Qp` | none | convex quadratic |
+| `ModelClass::Miqp` | some | convex quadratic |
+
+`is_integer()` and `is_quadratic()` read the two properties back, and a class displays as its abbreviation: `LP`,
+`MILP`, `QP`, `MIQP`. A backend declares the classes it solves as a `ModelClasses` set, and
+[`Solver::new`](solving.md#model-classes-and-refusal) refuses any other. `ModelClass` is non-exhaustive: quadratic
+constraints would come as further classes, which a backend that does not declare them refuses.
+
+```rust
+use culmen::{ModelClass, ModelClasses};
+
+let linear = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]);
+let classes = linear | ModelClass::Qp.into();
+assert!(classes.contains(ModelClass::Qp) && !classes.contains(ModelClass::Miqp));
+assert_eq!(classes & linear, linear);
+assert_eq!(classes.iter().collect::<Vec<_>>(), [ModelClass::Lp, ModelClass::Milp, ModelClass::Qp]);
+assert_eq!(classes.to_string(), "{LP, MILP, QP}");
+assert_eq!(format!("{classes:?}"), "ModelClasses(LP | MILP | QP)");
+assert_eq!(ModelClasses::ALL.len(), 4);
+```
+
+`ModelClasses` is a small set: `NONE`, `ALL`, `of(&[..])` in a `const`, `From<ModelClass>`, `contains`, `union` and
+`intersection` (also `|`, `&`, `|=`, `&=`), `len`, `is_empty`, an `iter()` that runs both ways, `FromIterator` and
+`Extend` of classes.
+
 ## Checking a point
 
-`lp.objective_value(values)` is the objective at a point, offset included. `lp.max_violation(values)` is the largest
-amount by which the point violates a column bound, a row, or integrality, and zero for a feasible point. Both panic
-when `values` holds fewer values than the LP has columns. They are the way to check a solution against the LP
-independently of any solver:
+`lp.objective_value(values)` is the objective at a point, quadratic part and offset included.
+`lp.max_violation(values)` is the largest amount by which the point violates a column bound, a row, or integrality,
+and zero for a feasible point. Both panic when `values` holds fewer values than the LP has columns. They are the way
+to check a solution against the LP independently of any solver:
 
 ```rust
 use culmen::prelude::*;
@@ -217,6 +300,8 @@ fn main() -> Result<(), culmen::ModelError> {
   `r<index>`; distinct names that reduce to the same text are not told apart.
 - A ranged row becomes two rows suffixed `_lo` and `_hi`; a row with no finite bound is left out.
 - Integer columns are listed under `General`; bounds equal to the format's default `0 ..` are not written.
+- A quadratic part is written doubled in the format's brackets halved: `x² + 2xy` as `[ 2 x ^ 2 + 2 x * y ] / 2`.
+  HiGHS reads it back as the same objective.
 
 ```rust
 use culmen::prelude::*;
@@ -233,6 +318,10 @@ fn main() -> Result<(), culmen::ModelError> {
         "Maximize\n obj: 3 x + 1 y\nSubject To\n band_lo: 1 x - 1 y >= -1\n band_hi: 1 x - 1 y <= 1\n\
          Bounds\n 0 <= x <= 5\n y free\nGeneral\n x\nEnd\n"
     );
+
+    m.maximize(3.0 * x - x * x - 0.5 * x * y - y * y);
+    let text = m.build()?.to_lp_string();
+    assert!(text.starts_with("Maximize\n obj: 3 x + [ -2 x ^ 2 - 1 x * y - 2 y ^ 2 ] / 2\n"));
     Ok(())
 }
 ```
@@ -240,7 +329,9 @@ fn main() -> Result<(), culmen::ModelError> {
 ## Checks and `LpError`
 
 `LpPlan::build` accepts a plan when its offset and costs are finite, every term names a column of the plan with a
-finite coefficient, and in every row the coefficients of each column, added up in the order given, are finite.
+finite coefficient, in every row the coefficients of each column, added up in the order given, are finite, every
+quadratic term names columns of the plan with a finite coefficient, the coefficients of each pair, added up in the
+order given, are finite, and the quadratic part passes the [convexity check](#the-quadratic-part).
 Bounds and integrality need no check there: their types already guarantee them. Otherwise it returns an `LpError`
 naming the first defect:
 
@@ -250,6 +341,9 @@ naming the first defect:
 | `NonFiniteCost { col, value }` | `Lp: the cost {value} of {col:?} is not finite` |
 | `NonFiniteCoefficient { row, col, value }` | `Lp: the coefficient {value} of {col:?} in {row:?} is not finite` |
 | `UnknownColumn { row, col }` | `Lp: {row:?} names {col:?}, which the plan does not have` |
+| `UnknownQuadColumn { col }` | `Lp: a quadratic term names {col:?}, which the plan does not have` |
+| `NonFiniteQuadCoefficient { first, second, value }` | `Lp: the quadratic coefficient {value} of {first:?} · {second:?} is not finite` |
+| `NonConvexObjective { sense, col }` | `Lp: the quadratic objective is not convex in the block of {col:?}`, or `not concave` to maximize |
 
 ```rust
 use culmen::{Col, LpColumn, LpError, LpPlan, Row, bounds};

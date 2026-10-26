@@ -21,6 +21,8 @@ serde = ["dep:serde", "typed-index-collections/serde"]
 [dependencies]
 typed-index-collections.workspace = true
 derive-where.workspace = true
+itertools.workspace = true
+nalgebra.workspace = true
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]

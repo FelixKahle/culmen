@@ -11,7 +11,7 @@ use typed_index_collections::{TiSlice, TiVec};
 use crate::solve::context::{check_constraint, check_entries, check_solution};
 use crate::{
     ActionError, AddedRow, Backend, Callback, Col, Constraint, CutContext, Events, HeuristicContext, LazyContext,
-    LogContext, LogLevel, Lp, Outcome, Phase, PollContext, Progress, ProgressContext, Settings, Solution,
+    LogContext, LogLevel, Lp, ModelClasses, Outcome, Phase, PollContext, Progress, ProgressContext, Settings, Solution,
     SolutionContext, Solved, StopReason,
 };
 
@@ -99,9 +99,10 @@ pub struct Record {
 
 /// A backend that delivers a fixed list of [`Step`]s to the callback and then ends with a fixed [`Outcome`].
 ///
-/// It supports every generic event, so it exercises the whole callback layer without a solver, and it runs under
-/// Miri. A poll that interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent
-/// and the last bound reported before. The outcome and the elapsed time count every step, whichever events the
+/// It supports every generic event and loads every [`ModelClass`](crate::ModelClass), since it replays rather
+/// than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
+/// interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent and the last bound
+/// reported before. The outcome and the elapsed time count every step, whichever events the
 /// callback asks for.
 ///
 /// ```
@@ -291,6 +292,7 @@ impl Backend for Script {
     type Native<'a> = ScriptNote<'a>;
 
     const EVENTS: Events = Events::ALL;
+    const CLASSES: ModelClasses = ModelClasses::ALL;
 
     fn load(&mut self, lp: &Lp) -> Result<(), ScriptError> {
         self.num_cols = Some(lp.num_cols());

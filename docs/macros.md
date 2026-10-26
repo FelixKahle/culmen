@@ -118,13 +118,31 @@ A named constraint's handle is bound but need not be read; the macro marks it us
 ## `objective!`
 
 `objective!(model, Min, expr)` or `objective!(model, Max, expr)`, also spelled `Minimize` and `Maximize`, sets the
-objective, replacing any before.
+objective, replacing any before. The expression may be [quadratic](modelling.md#quadratic-expressions), convex to
+minimize or concave to maximize:
+
+```rust
+use culmen::prelude::*;
+
+fn main() -> Result<(), culmen::ModelError> {
+    // Least squares on a budget: track the targets, spending at most 4 in all.
+    let (items, target) = (0..3, [1.0, 2.0, 3.0]);
+    let mut m = Model::new();
+    variable!(m, x[i in items]);
+    constraint!(m, budget, sum!(x[i] for i in items) <= 4);
+    objective!(m, Min, sum!((x[i] - target[i]) * (x[i] - target[i]) for i in items));
+    assert_eq!(m.build()?.quadratic().len(), 3);
+    Ok(())
+}
+```
 
 ## `sum!`
 
-`sum!(body for i in I, j in J if cond)` is the `LinExpr` sum of `body` over a loop nest, the first loop outermost,
-keeping the combinations the filter accepts. A later domain may use an earlier index, as in `j in i + 1..n`. A body
-may be any linear item: a variable, a term, an expression or a number.
+`sum!(body for i in I, j in J if cond)` is the sum of `body` over a loop nest, the first loop outermost, keeping the
+combinations the filter accepts. A later domain may use an earlier index, as in `j in i + 1..n`. A body may be any
+linear item, a variable, a term, an expression or a number, and the sum is then a `LinExpr`, which a constraint
+takes; or a quadratic item, a `QuadTerm` or `QuadExpr`, and the sum is a `QuadExpr`, for an objective. The trait
+`Summand` picks the sum's type from the body's.
 
 ```rust
 use culmen::prelude::*;
@@ -143,6 +161,9 @@ assert_eq!(from_zero, flow[(0, 1)] + flow[(0, 2)]);
 let pairs = sum!(1 for i in 0..4, _j in i + 1..4);
 assert_eq!(pairs.constant, 6.0);
 assert_eq!(m.var_name(flow[(1, 2)]), Some("flow[1,2]"));
+
+let squares: culmen::QuadExpr = sum!(flow[a, b] * flow[a, b] for (a, b) in arcs);
+assert_eq!(squares.terms.len(), 3);
 ```
 
 Inside `sum!` a pattern may be `_j` or `_`, since nothing is named after it; a family's index must name every key.
@@ -201,7 +222,7 @@ Each form beside the calls it writes:
 | `constraint!(m, c, e >= f)` | `let c = m.add_named_constraint("c", Linear::geq(e, f));` |
 | `constraint!(m, c[i in I], e <= f)` | `let c = m.add_constraint_map(keys, \|&i\| (format!("c[{i}]"), Linear::leq(e, f)));` |
 | `objective!(m, Min, e)` | `m.set_objective(Sense::Minimize, e)` |
-| `sum!(e for i in I, j in J if g)` | a `LinExpr` summed with `+=` over nested `for` loops |
+| `sum!(e for i in I, j in J if g)` | a `LinExpr` (linear `e`) or `QuadExpr` (quadratic `e`), each `e` added with `Summand::add_into` in nested `for` loops |
 | `x[i, j]` inside a macro | `x[(i.clone(), j.clone())]` |
 
 A family's keys are collected into a `Vec` by the same loop nest before `add_var_map` or `add_constraint_map` runs,

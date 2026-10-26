@@ -14,6 +14,7 @@ it is `culmen::highs`, and its backend type is also `culmen::Highs` and in the p
 | `Highs::with_options(options)` | A backend with the given `HighsOptions`. |
 | `highs.options()`, `highs.options_mut()` | The options, to read or to change between solves. |
 | `Highs::EVENTS` | `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `HEURISTIC` and `NATIVE`. |
+| `Highs::CLASSES` | `Lp`, `Milp` and `Qp`; see [Quadratic programs](#quadratic-programs). |
 | `culmen_highs::version()` | The version of the linked HiGHS; it displays as `1.15.x`. |
 
 HiGHS is built from the sources bundled with `highs-sys`, with cmake and libclang, so the version is fixed by the
@@ -146,7 +147,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `model` | The `ModelStatus`: every value of HiGHS's `HighsModelStatus`, and `Other(i32)` for a value HiGHS 1.15 does not define. |
 | `primal`, `dual` | Whether a primal or dual solution exists: a `SolutionStatus`, `None`, `Infeasible` or `Feasible`. |
 | `mip_gap` | HiGHS's relative MIP gap; `None` for an LP or when HiGHS reports none. |
-| `mip_nodes`, `simplex_iterations`, `ipm_iterations` | The work done. |
+| `mip_nodes`, `simplex_iterations`, `ipm_iterations`, `qp_iterations` | The work done. |
+| `primal_dual_objective_error` | HiGHS's relative primal-dual objective error, `\|P - D\| / (1 + \|P\| + \|D\|)`; `None` when it computed none, as for a MIP. |
 | `last_error` | The last error line of HiGHS's log, if it wrote one. |
 
 `ModelStatus` displays in HiGHS's own wording, lower-cased: `"optimal"`, `"time limit reached"`,
@@ -187,6 +189,61 @@ page lists the outcome of every `ModelStatus`. Two of them are decided by more t
 
 An empty model, one without columns, is `Optimal` at its offset.
 
+## Quadratic programs
+
+HiGHS 1.15 solves LPs, MILPs and convex QPs, so `Highs::CLASSES` is `{LP, MILP, QP}`. It refuses a QP with integer
+columns when it runs ("Cannot solve MIQP problems with HiGHS"), so a MIQP is refused by
+[`Solver::new`](solving.md#model-classes-and-refusal) with `LoadError::Unsupported` before HiGHS sees it.
+
+The backend passes the quadratic part as HiGHS reads it, the lower triangle of the Hessian `H` of `½ xᵀHx` column by
+column ([The quadratic part](lp.md#the-quadratic-part)): the model's `x * x` reaches HiGHS as `Hₓₓ = 2`, and
+`x * y` as `Hᵧₓ = 1`. Every `Lp` passed the convexity check when it was built, so HiGHS's own refusal of a Hessian
+with a diagonal of the wrong sign never arises.
+
+```rust
+use culmen::prelude::*;
+use culmen::ModelClass;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The point of x + y <= 1 nearest (1, 2): (0, 1), at squared distance 2.
+    let mut m = Model::new();
+    let x = m.add_var(Var::free());
+    let y = m.add_var(Var::free());
+    m.add_constraint((x + y).leq(1));
+    m.minimize((x - 1) * (x - 1) + (y - 2) * (y - 2));
+    let lp = m.build()?;
+    assert_eq!(lp.class(), ModelClass::Qp);
+
+    let solved = Solver::new(Highs::new(), lp)?.solve(Request::new())?;
+    let Outcome::Optimal(best) = solved.outcome else { return Err("no optimum".into()) };
+    assert!((best.objective - 2.0).abs() < 1e-6);
+    assert!((best.values[x] - 0.0).abs() < 1e-6 && (best.values[y] - 1.0).abs() < 1e-6);
+    assert!(solved.status.qp_iterations > 0);
+    Ok(())
+}
+```
+
+HiGHS's QP solver differs from its LP and MIP solvers in what a solve can see and in how far its answer can be
+trusted:
+
+- **Only the log.** It calls no interrupt, solution or MIP callback, so a QP solve delivers `LOG` alone: a
+  [`Stop`](callbacks.md#stop) is never polled and an observer gets no progress. The time limit of the
+  [`Settings`](solving.md#settings) still applies.
+- **A row is always passed.** On a QP without rows HiGHS 1.15 starts from the unconstrained minimizer clamped into
+  the bounds and can report that point optimal after no iteration when it is not. The backend passes such a QP
+  with one free row without entries, which constrains nothing and makes HiGHS find its starting point with its LP
+  solver.
+- **An unsound ending is an error.** On a small share of QPs, after its iterates turned NaN, HiGHS 1.15 reports an
+  optimum its own primal and dual objectives contradict, at a point that need not be feasible, or reports
+  unbounded a QP whose every column is bounded. The backend fails such a solve with
+  [`HighsError::UnsoundQp`](#errors): an optimum whose relative primal-dual objective error exceeds
+  `Highs::QP_OBJECTIVE_ERROR`, `1e-5` (correct optima stay below `1e-6`), or unboundedness with every column
+  bounded. An `Optimal` outcome of a QP is therefore
+  one HiGHS's own measures support.
+- **It may not terminate.** On a rare QP HiGHS 1.15's QP solver iterates without end, its memory growing. A
+  [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`; set one for any QP
+  whose solve must end.
+
 ## Errors
 
 `HighsError` says why loading or solving failed:
@@ -194,13 +251,14 @@ An empty model, one without columns, is `Optimal` at its offset.
 | Variant | When |
 |---|---|
 | `NotLoaded` | A solve was asked for before an LP was loaded. |
-| `TooLarge { what, count }` | The LP has more columns, rows or entries (`what`, a `Dimension`) than HiGHS's 32-bit indices hold. |
+| `TooLarge { what, count }` | The LP has more columns, rows, entries or Hessian entries (`what`, a `Dimension`) than HiGHS's 32-bit indices hold. |
 | `Load { message }` | HiGHS refused the LP. |
 | `Option { name, value }` | HiGHS refused an option: an unknown name, or a value of the wrong kind or out of range. |
 | `OptionName { name }` | An option name holds a NUL byte, which HiGHS's C strings cannot carry. |
 | `OptionString { name }` | A string option's value holds a NUL byte. |
 | `OutOfRange { name, value }` | A seed or thread count is above `i32::MAX`, beyond HiGHS's integers. |
 | `Run { status, message }` | The run failed, as a thread-count conflict makes it; `message` is HiGHS's last error line. |
+| `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
 
 ```rust
 use culmen::prelude::*;
@@ -389,7 +447,9 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 - **An interrupt is honoured only at a poll.** Only `HighsPoll` has `interrupt`, and only `HighsHeuristic` accepts
   a solution.
 - **One thread count per thread.** See [Threads](#threads).
-- **32-bit indices.** An LP with more than `i32::MAX` columns, rows or entries is refused with `HighsError::TooLarge`.
+- **32-bit indices.** An LP with more than `i32::MAX` columns, rows, entries or Hessian entries is refused with
+  `HighsError::TooLarge`.
+- **No MIQP, and a QP solve sees only the log.** See [Quadratic programs](#quadratic-programs).
 - **Options do not persist inside HiGHS.** Each solve resets them; set them through `HighsOptions`.
 
 ## See also

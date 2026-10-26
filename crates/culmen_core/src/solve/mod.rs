@@ -6,6 +6,7 @@
 mod backend;
 pub mod context;
 mod events;
+mod load;
 mod outcome;
 mod settings;
 mod watch;
@@ -16,6 +17,7 @@ pub use context::{
     SolutionContext, Unsupported,
 };
 pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
+pub use load::LoadError;
 pub use outcome::{Outcome, Solution, Solved, StopReason};
 pub use settings::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, RelativeGap, Settings};
 pub use watch::{Improvement, LogLine, Observer, Request, Stop, StopFn, Watch, stop_fn};
@@ -46,13 +48,21 @@ pub struct Solver<B> {
 }
 
 impl<B: Backend> Solver<B> {
-    /// Loads `lp` into `backend`.
+    /// Loads `lp` into `backend`, when the backend solves its class.
     ///
     /// # Errors
     ///
-    /// When the backend refuses the LP.
-    pub fn new(mut backend: B, lp: Lp) -> Result<Self, B::Error> {
-        backend.load(&lp)?;
+    /// [`LoadError::Unsupported`] when [`Backend::CLASSES`] lacks the LP's [`class`](Lp::class), before the
+    /// backend sees it; [`LoadError::Backend`] when the backend refuses the LP.
+    pub fn new(mut backend: B, lp: Lp) -> Result<Self, LoadError<B::Error>> {
+        let class = lp.class();
+        if !B::CLASSES.contains(class) {
+            return Err(LoadError::Unsupported {
+                class,
+                supported: B::CLASSES,
+            });
+        }
+        backend.load(&lp).map_err(LoadError::Backend)?;
         Ok(Self { backend, lp })
     }
 

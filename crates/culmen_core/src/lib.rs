@@ -6,8 +6,8 @@
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
-//! The core of culmen: linear and mixed-integer programs as data, a modelling layer that reads like the
-//! mathematics, and a solver-neutral seam with rich callbacks, a cooperative stop and a throttled observer.
+//! The core of culmen: linear, mixed-integer and convex quadratic programs as data, a modelling layer that reads
+//! like the mathematics, and a solver-neutral seam with rich callbacks, a cooperative stop and a throttled observer.
 //!
 //! This crate holds no solver and no `unsafe`. A solver plugs in by implementing [`Backend`]; the `culmen` facade
 //! re-exports this crate with the HiGHS backend and the modelling macros.
@@ -19,11 +19,13 @@
 //!   columns and rows of the LP it builds.
 //! - **Models read like the mathematics.** [`Var`] builds a variable, the operators on [`Col`], [`Term`] and
 //!   [`LinExpr`] build expressions, [`Linear::leq`], [`Linear::geq`], [`Linear::equals`] and [`Linear::between`]
-//!   compare them into a [`Constraint`], and [`Model::add_var_map`] keys a family by domain keys.
+//!   compare them into a [`Constraint`], and [`Model::add_var_map`] keys a family by domain keys. A product of
+//!   columns is a [`QuadTerm`], and a convex quadratic objective a [`QuadExpr`]; constraints stay linear.
 //! - **The solver is a seam.** A [`Backend`] loads an [`Lp`] and solves it under [`Settings`], calling a
 //!   [`Callback`] with one typed context per event kind ([`Events`]); what it cannot deliver it declares, and its
-//!   context for that event is [`Unsupported`], so such a callback never runs. Whatever a solver offers beyond the
-//!   neutral contexts is on its own context types.
+//!   context for that event is [`Unsupported`], so such a callback never runs. It declares the [`ModelClasses`] it
+//!   solves, and [`Solver::new`] refuses an LP of any other [`ModelClass`] with a typed [`LoadError`]. Whatever a
+//!   solver offers beyond the neutral contexts is on its own context types.
 //! - **A solve is a value.** A [`Solver`] holds a loaded backend; each [`Solver::solve`] takes a [`Request`] of
 //!   settings, a [`Stop`] and an [`Observer`], and returns [`Solved`]: a generic [`Outcome`] and the backend's own
 //!   status.
@@ -75,12 +77,13 @@ mod script;
 mod solve;
 
 pub use lp::{
-    Bounds, Col, Cols, Integrality, InvalidBounds, Lp, LpColumn, LpError, LpPlan, LpRow, Row, RowEntries, RowMatrix,
-    RowView, Rows, Sense,
+    Bounds, Col, Cols, HessianEntries, Integrality, InvalidBounds, Lp, LpColumn, LpError, LpPlan, LpRow, ModelClass,
+    ModelClasses, ModelClassesIter, QuadEntries, QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense,
 };
 pub use model::{
     Constraint, ConstraintMap, ExprPlace, Handles, IndexSet, Keyed, KeyedIter, Keys, LinExpr, Linear, Members, Model,
-    ModelConstraint, ModelError, ModelVar, Product, Term, Values, Var, VarMap, product, set,
+    ModelConstraint, ModelError, ModelVar, Product, QuadExpr, QuadTerm, Quadratic, Summand, Term, Values, Var, VarMap,
+    product, set,
 };
 pub use script::{
     Found, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote, ScriptPoll,
@@ -89,8 +92,8 @@ pub use script::{
 pub use solve::context;
 pub use solve::{
     AbsoluteGap, ActionError, AddedRow, Backend, Callback, CutContext, Events, EventsIter, HeuristicContext,
-    Improvement, InvalidAbsoluteGap, InvalidRelativeGap, LazyContext, LogContext, LogLevel, LogLine, Observer, Outcome,
-    Phase, PollContext, Progress, ProgressContext, RelativeGap, Request, Settings, Solution, SolutionContext, Solved,
-    Solver, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
+    Improvement, InvalidAbsoluteGap, InvalidRelativeGap, LazyContext, LoadError, LogContext, LogLevel, LogLine,
+    Observer, Outcome, Phase, PollContext, Progress, ProgressContext, RelativeGap, Request, Settings, Solution,
+    SolutionContext, Solved, Solver, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
 };
 pub use typed_index_collections::{TiSlice, TiVec};

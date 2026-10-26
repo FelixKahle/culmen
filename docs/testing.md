@@ -188,18 +188,21 @@ With `small_lp()`, a property test states that a backend agrees with the referen
 
 With the `serde` feature, the plain data derives `Serialize` and `Deserialize`:
 
-- The LP: `Lp`, `LpPlan`, `LpColumn`, `LpRow`, `Bounds`, `Integrality`, `Sense`, `Col`, `Row`.
+- The LP: `Lp`, `LpPlan` (its `quadratic` terms included), `LpColumn`, `LpRow`, `Bounds`, `Integrality`, `Sense`,
+  `Col`, `Row`, `ModelClass`, `ModelClasses` (as a list of classes).
 - The solve: `Settings`, `RelativeGap`, `AbsoluteGap`, `Solved`, `Outcome`, `Solution`, `StopReason`, `Progress`,
   `Phase`, `LogLevel`.
 - With `highs`: `HighsOptions` and its option types, `OptionValue`, `HighsStatus`, `ModelStatus`, `SolutionStatus`,
   `CallStatus`.
 
-The model (`Model`, `Var`, `LinExpr`, `Constraint`, the families) is not serializable: serialize the `Lp` it builds.
+The model (`Model`, `Var`, `LinExpr`, `QuadExpr`, `Constraint`, the families) is not serializable: serialize the
+`Lp` it builds.
 
 A checked value is checked again as it is read, so a document cannot smuggle in what the constructors refuse:
 
-- An `Lp` is written as its plan and read back through `LpPlan::build`; a defect is the
-  [`LpError`](lp.md#checks-and-lperror) as a deserialization error.
+- An `Lp` is written as its plan and read back through `LpPlan::build`, the convexity check of its quadratic part
+  included; a defect is the [`LpError`](lp.md#checks-and-lperror) as a deserialization error. A plan without the
+  `quadratic` field, as written before quadratic objectives, reads as linear.
 - `Bounds` is written as `{"lower": …, "upper": …}`, an infinite end as `null`, since JSON has no infinity; it is
   read back through `Bounds::new`, an end that is `null` or left out read as infinite.
 - `RelativeGap` and `AbsoluteGap` are written as plain numbers and read back through their checked constructors;

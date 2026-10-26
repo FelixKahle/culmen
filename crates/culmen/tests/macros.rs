@@ -9,7 +9,7 @@
 )]
 
 use culmen::prelude::*;
-use culmen::{Integrality, LpError};
+use culmen::{Integrality, LpError, QuadExpr};
 
 #[test]
 fn test_assignment_written_both_ways_builds_the_same_lp() {
@@ -129,6 +129,34 @@ fn test_sum_runs_its_loop_nest_with_patterns_and_filters() {
     let triangle = sum!(1 for i in 0..4, _j in i + 1..4);
     assert_eq!(triangle.constant, 6.0);
     assert_eq!(m.var_name(flow[(1, 2)]), Some("flow[1,2]"));
+}
+
+#[test]
+fn test_a_quadratic_objective_written_both_ways_builds_the_same_lp() {
+    // Least squares on a budget: track targets, spending at most 4 in all.
+    let (items, target) = (0..3_usize, [1.0, 2.0, 3.0]);
+
+    let mut plain = Model::new();
+    let x_plain = plain.add_var_map(items.clone(), |&i| Var::continuous().name(format!("x[{i}]")));
+    plain.add_named_constraint("budget", LinExpr::sum(items.clone().map(|i| x_plain[i])).leq(4));
+    let squares = QuadExpr::sum(items.clone().map(|i| x_plain[i] * x_plain[i]));
+    let linear = LinExpr::sum(items.clone().map(|i| -2.0 * target[i] * x_plain[i]));
+    plain.minimize(squares + linear);
+
+    let mut m = Model::new();
+    variable!(m, x[i in items]);
+    constraint!(m, budget, sum!(x[i] for i in items) <= 4);
+    objective!(
+        m,
+        Min,
+        sum!(x[i] * x[i] for i in items) + sum!(-2.0 * target[i] * x[i] for i in items)
+    );
+
+    assert_eq!(m.build().unwrap(), plain.build().unwrap());
+    let energy: QuadExpr = sum!(x[i] * x[i] for i in items);
+    let load: LinExpr = sum!(x[i] for i in items);
+    assert_eq!((energy.terms.len(), load.terms.len()), (3, 3));
+    let _ = budget;
 }
 
 #[test]
