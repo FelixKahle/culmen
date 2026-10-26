@@ -272,7 +272,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = HighsOptions { log_file: Some("a\0b".to_owned()), ..HighsOptions::default() };
     let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
 
-    let error = solver.solve(Request::new()).unwrap_err();
+    let Err(SolveError::Backend(error)) = solver.solve(Request::new()) else { panic!("the option is refused") };
     assert_eq!(error, HighsError::OptionString { name: "log_file".to_owned() });
     assert_eq!(error.to_string(), "HiGHS: the value of option `log_file` holds a NUL byte");
     Ok(())

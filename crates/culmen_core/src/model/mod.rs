@@ -7,6 +7,7 @@
 mod error;
 mod expr;
 mod keyed;
+mod objective;
 mod quad;
 
 use core::hash::Hash;
@@ -18,10 +19,14 @@ pub use expr::{Constraint, LinExpr, Linear, Term};
 pub use keyed::{
     ConstraintMap, Handles, IndexSet, Keyed, KeyedIter, Keys, Members, Product, Values, VarMap, product, set,
 };
+pub use objective::{Combination, Objective};
 pub use quad::{QuadExpr, QuadTerm, Quadratic, Summand};
 
-use crate::program::{check_convex, merge_pairs, merge_terms};
-use crate::{Bounds, Col, Integrality, Program, ProgramColumn, ProgramPlan, ProgramRow, QuadObjective, Row, Sense};
+use crate::program::{check_convex, merge_pairs, merge_terms, semi_bounds};
+use crate::{
+    Bounds, Col, Integrality, LinearObjective, ObjectiveId, Objectives, Program, ProgramColumn, ProgramPlan,
+    ProgramRow, QuadObjective, Row, Sense, Stage, Tolerance, Weight, Weighted,
+};
 
 /// A variable to add to a [`Model`]: its integrality, bounds and name.
 ///
@@ -81,6 +86,37 @@ impl Var {
             integrality: Integrality::Integer,
             lower: 0.0,
             upper: 1.0,
+            name: None,
+        }
+    }
+
+    /// A semi-continuous variable: zero, or any value in its bounds, which it needs: `lower ..= upper` with
+    /// `0 < lower` and `upper` finite, as [`Model::build`] checks.
+    ///
+    /// ```
+    /// use culmen_core::{Model, ModelError, Var};
+    /// let mut m = Model::new();
+    /// m.add_var(Var::semi_continuous().bounds(2, 10).name("flow"));
+    /// assert!(m.build().is_ok());
+    /// m.add_var(Var::semi_continuous().name("unbounded"));
+    /// assert!(matches!(m.build(), Err(ModelError::SemiBounds { .. })));
+    /// ```
+    pub const fn semi_continuous() -> Self {
+        Self {
+            integrality: Integrality::SemiContinuous,
+            lower: 0.0,
+            upper: f64::INFINITY,
+            name: None,
+        }
+    }
+
+    /// A semi-integer variable: zero, or a whole value in its bounds, which it needs as
+    /// [`Var::semi_continuous`] does.
+    pub const fn semi_integer() -> Self {
+        Self {
+            integrality: Integrality::SemiInteger,
+            lower: 0.0,
+            upper: f64::INFINITY,
             name: None,
         }
     }
@@ -156,6 +192,10 @@ pub struct Model {
     rows: TiVec<Row, Named>,
     sense: Sense,
     objective: QuadExpr,
+    further: Vec<Objective>,
+    combination: Combination,
+    first_tolerance: Tolerance,
+    first_weight: Weight,
 }
 
 impl Model {
@@ -167,6 +207,10 @@ impl Model {
             rows: TiVec::new(),
             sense: Sense::Minimize,
             objective: QuadExpr::new(),
+            further: Vec::new(),
+            combination: Combination::Lexicographic,
+            first_tolerance: Tolerance::EXACT,
+            first_weight: Weight::ONE,
         }
     }
 
@@ -293,6 +337,48 @@ impl Model {
         self.set_objective(Sense::Maximize, objective);
     }
 
+    /// Adds a further linear objective and returns its id; the model's own objective is [`ObjectiveId::FIRST`] and
+    /// the further ones follow in the order added.
+    ///
+    /// With a further objective the model's objectives combine as [`Model::set_combination`] says, lexicographically
+    /// unless set otherwise, and its own objective must be linear.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Objective, Objectives, TiSlice, Var};
+    ///
+    /// // Least cost first; among the cheapest plans, the least emissions.
+    /// let mut m = Model::new();
+    /// let coal = m.add_var(Var::continuous());
+    /// let gas = m.add_var(Var::continuous());
+    /// m.add_constraint((coal + gas).geq(10));
+    /// m.minimize(2.0 * coal + 2.0 * gas);
+    /// let co2 = m.add_objective(Objective::minimize(3.0 * coal + gas));
+    /// let program = m.build()?;
+    /// assert!(matches!(program.objectives(), Objectives::Lexicographic { then, .. } if then.len() == 1));
+    /// assert_eq!(program.objective_values(TiSlice::from_ref(&[0.0, 10.0]))[co2], 10.0);
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    pub fn add_objective(&mut self, objective: Objective) -> ObjectiveId {
+        self.further.push(objective);
+        ObjectiveId::new(self.further.len())
+    }
+
+    /// How the objectives combine once there is a further one; [`Combination::Lexicographic`] until set.
+    pub const fn set_combination(&mut self, combination: Combination) {
+        self.combination = combination;
+    }
+
+    /// How far later stages of a lexicographic solve may move the model's own objective from its optimum;
+    /// [`Tolerance::EXACT`] until set.
+    pub const fn set_objective_tolerance(&mut self, tolerance: Tolerance) {
+        self.first_tolerance = tolerance;
+    }
+
+    /// The weight of the model's own objective in a blend; [`Weight::ONE`] until set.
+    pub const fn set_objective_weight(&mut self, weight: Weight) {
+        self.first_weight = weight;
+    }
+
     /// The number of variables.
     #[must_use]
     pub fn num_vars(&self) -> usize {
@@ -320,38 +406,140 @@ impl Model {
     /// Checks every number and handle and builds the program; the model stays as it is, to be changed and built again.
     ///
     /// These checks are the program's own, made in the model's terms, so every model they accept builds and every error
-    /// names the variable or constraint at fault.
+    /// names the variable, constraint or objective at fault.
     ///
     /// # Errors
     ///
-    /// [`ModelError`] naming the first variable or constraint at fault: invalid bounds, a non-finite objective or
-    /// constraint coefficient, a handle the model did not hand out, or a quadratic objective that is not convex to
-    /// minimize or concave to maximize, as [`Program::CONVEXITY_TOLERANCE`] states.
+    /// [`ModelError`] naming the first variable, constraint or objective at fault: invalid bounds, a semi variable
+    /// whose bounds are not `lower ..= upper` with `0 < lower` and `upper` finite, a non-finite objective or
+    /// constraint coefficient or constant, a handle the model did not hand out, a quadratic objective that is not
+    /// convex to minimize or concave to maximize, as [`Program::CONVEXITY_TOLERANCE`] states, or a quadratic
+    /// objective beside further objectives.
     pub fn build(&self) -> Result<Program, ModelError> {
         let mut plan = ProgramPlan {
             sense: self.sense,
             ..ProgramPlan::new()
         };
-        for (col, var) in self.vars.iter_enumerated() {
-            let bounds = Bounds::new(var.lower, var.upper).map_err(|source| ModelError::VarBounds {
+        plan.columns = self
+            .vars
+            .iter_enumerated()
+            .map(|(col, var)| self.build_column(col, var))
+            .collect::<Result<_, _>>()?;
+        self.build_objective(&mut plan)?;
+        plan.objectives = self.build_objectives()?;
+        if plan.objectives.are_several() && !self.objective.terms.is_empty() {
+            return Err(ModelError::QuadraticWithObjectives);
+        }
+        plan.rows = self
+            .rows
+            .iter_enumerated()
+            .map(|(row, named)| self.build_row(row, named))
+            .collect::<Result<_, _>>()?;
+        // The checks above are the program's own, made in the model's terms: every bound is a `Bounds`, a semi
+        // column's as the program needs, every cost and offset finite, every row's and objective's terms known and
+        // finite as given and as merged the way the program merges, the quadratic part convex as the program checks
+        // it, and absent beside further objectives: the model refuses any quadratic term there, even one that cancels.
+        Ok(Program::from_plan_unchecked(plan))
+    }
+
+    /// One variable as a plan column without cost.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelError::VarBounds`] or [`ModelError::SemiBounds`].
+    fn build_column(&self, col: Col, var: &Var) -> Result<ProgramColumn, ModelError> {
+        let bounds = Bounds::new(var.lower, var.upper).map_err(|source| ModelError::VarBounds {
+            var: self.model_var(col),
+            source,
+        })?;
+        if var.integrality.is_semi() && !semi_bounds(bounds) {
+            return Err(ModelError::SemiBounds {
                 var: self.model_var(col),
-                source,
-            })?;
-            plan.columns.push(ProgramColumn {
-                cost: 0.0,
                 bounds,
-                integrality: var.integrality,
-                name: var.name.clone(),
             });
         }
-        self.build_objective(&mut plan)?;
-        for (row, named) in self.rows.iter_enumerated() {
-            plan.rows.push(self.build_row(row, named)?);
+        Ok(ProgramColumn {
+            cost: 0.0,
+            bounds,
+            integrality: var.integrality,
+            name: var.name.clone(),
+        })
+    }
+
+    /// The further objectives, checked, combined as the model's [`Combination`] says.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelError::UnknownVar`], [`ModelError::FurtherCoefficient`] or [`ModelError::FurtherConstant`] for the first
+    /// further objective at fault.
+    fn build_objectives(&self) -> Result<Objectives, ModelError> {
+        let built: Vec<(LinearObjective, &Objective)> = self
+            .further
+            .iter()
+            .zip(1..)
+            .map(|(objective, index)| Ok((self.build_further(ObjectiveId::new(index), objective)?, objective)))
+            .collect::<Result<_, ModelError>>()?;
+        Ok(match self.combination {
+            Combination::Lexicographic => Objectives::Lexicographic {
+                first: self.first_tolerance,
+                then: built
+                    .into_iter()
+                    .map(|(objective, given)| Stage {
+                        objective,
+                        tolerance: given.tolerance,
+                    })
+                    .collect(),
+            },
+            Combination::Blended => Objectives::Blended {
+                first: self.first_weight,
+                with: built
+                    .into_iter()
+                    .map(|(objective, given)| Weighted {
+                        objective,
+                        weight: given.weight,
+                    })
+                    .collect(),
+            },
+        })
+    }
+
+    /// One further objective as plan data, each column once, every coefficient and the constant finite.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelError::UnknownVar`], [`ModelError::FurtherCoefficient`] or [`ModelError::FurtherConstant`].
+    fn build_further(&self, id: ObjectiveId, objective: &Objective) -> Result<LinearObjective, ModelError> {
+        let expr = &objective.expr;
+        let unknown = expr.terms.iter().find(|t| t.col.index() >= self.vars.len());
+        if let Some(term) = unknown {
+            return Err(ModelError::UnknownVar {
+                place: ExprPlace::Further(id),
+                col: term.col,
+            });
         }
-        // The checks above are the program's own, made in the model's terms: every bound is a `Bounds`, every cost and
-        // the offset finite, every row's and the objective's terms known and finite as given and as merged the way
-        // the program merges, and the quadratic part convex as the program checks it.
-        Ok(Program::from_plan_unchecked(plan))
+        let given = expr.terms.iter().map(|t| (t.col, t.coefficient));
+        // The program adds repeated columns up the same way, so a sum that passes here passes there.
+        let merged = merge_terms(given.clone().collect());
+        let bad = given
+            .chain(merged.iter().copied())
+            .find(|(_, value)| !value.is_finite());
+        if let Some((col, value)) = bad {
+            let var = self.model_var(col);
+            return Err(ModelError::FurtherCoefficient {
+                objective: id,
+                var,
+                value,
+            });
+        }
+        if !expr.constant.is_finite() {
+            let value = expr.constant;
+            return Err(ModelError::FurtherConstant { objective: id, value });
+        }
+        Ok(LinearObjective {
+            sense: objective.sense,
+            terms: merged,
+            offset: expr.constant,
+        })
     }
 
     /// Writes the objective's coefficients, constant and quadratic terms into the plan.

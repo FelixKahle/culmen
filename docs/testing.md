@@ -54,7 +54,11 @@ use culmen::prelude::*;
 use culmen::{Found, Phase, Script, ScriptStatus, Step};
 
 /// The code under test: solve with a time limit and a stop, and return the best objective found.
-fn best_within<B: Backend>(solver: &mut Solver<B>, limit: Duration, stop: &AtomicBool) -> Result<Option<f64>, B::Error> {
+fn best_within<B: Backend>(
+    solver: &mut Solver<B>,
+    limit: Duration,
+    stop: &AtomicBool,
+) -> Result<Option<f64>, SolveError<B::Error>> {
     let solved = solver.solve(Request::new().time_limit(limit).stop(stop))?;
     Ok(solved.outcome.solution().map(|s| s.objective))
 }

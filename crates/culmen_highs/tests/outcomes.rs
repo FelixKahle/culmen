@@ -7,7 +7,7 @@
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
 
-use culmen_core::{Backend, Linear, Model, Outcome, Request, Settings, Solver, Var, threads};
+use culmen_core::{Backend, Linear, Model, Outcome, Request, Settings, SolveError, Solver, Var, threads};
 use culmen_highs::{
     CallStatus, Dimension, Highs, HighsError, HighsOptions, ModelStatus, OptionValue, RawOption, SimplexStrategy,
     SolutionStatus, Version,
@@ -118,25 +118,29 @@ fn test_options_are_applied_and_refused_by_name() {
     let error = solver.solve(Request::new()).unwrap_err();
     assert_eq!(
         error,
-        HighsError::Option {
+        SolveError::Backend(HighsError::Option {
             name: "no_such_option".to_owned(),
             value: OptionValue::Int(1)
-        }
+        })
     );
 
     let wrong_kind = HighsOptions::default().option("mip_rel_gap", "large");
     let mut solver = Solver::new(Highs::with_options(wrong_kind), program).unwrap();
-    assert!(matches!(solver.solve(Request::new()), Err(HighsError::Option { .. })));
+    assert!(matches!(
+        solver.solve(Request::new()),
+        Err(SolveError::Backend(HighsError::Option { .. }))
+    ));
 }
 
 #[test]
 fn test_a_nul_byte_is_blamed_on_the_name_or_the_value_that_holds_it() {
     let program = infeasible(false).build().unwrap();
-    let solve = |options: HighsOptions| {
-        Solver::new(Highs::with_options(options), program.clone())
-            .unwrap()
-            .solve(Request::new())
-            .unwrap_err()
+    let solve = |options: HighsOptions| match Solver::new(Highs::with_options(options), program.clone())
+        .unwrap()
+        .solve(Request::new())
+    {
+        Err(SolveError::Backend(error)) => error,
+        other => panic!("{other:?}"),
     };
     let typed = HighsOptions {
         log_file: Some("a\0b".to_owned()),
@@ -203,7 +207,7 @@ fn test_a_thread_count_conflict_on_one_thread_is_an_error() {
     };
     solver.solve(on(threads!(2))).unwrap();
     let error = solver.solve(on(threads!(3))).unwrap_err();
-    let HighsError::Run { message, .. } = error else {
+    let SolveError::Backend(HighsError::Run { message, .. }) = error else {
         panic!("{error:?}")
     };
     assert!(message.unwrap().contains("threads"));
@@ -234,7 +238,7 @@ fn test_a_seed_beyond_highs_integers_is_refused() {
     };
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let solved = solver.solve(Request::new().settings_from(settings));
-    assert_eq!(solved.unwrap_err(), refused);
+    assert_eq!(solved.unwrap_err(), SolveError::Backend(refused.clone()));
 
     let options = HighsOptions {
         random_seed: Some(u32::MAX),
@@ -242,7 +246,7 @@ fn test_a_seed_beyond_highs_integers_is_refused() {
     };
     let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
     let solved = solver.solve(Request::new());
-    assert_eq!(solved.unwrap_err(), refused);
+    assert_eq!(solved.unwrap_err(), SolveError::Backend(refused.clone()));
     assert_eq!(
         refused.to_string(),
         "HiGHS: option `random_seed` takes at most 2147483647, not 4294967295"

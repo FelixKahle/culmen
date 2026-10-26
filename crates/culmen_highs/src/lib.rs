@@ -48,6 +48,7 @@
 mod analysis;
 pub mod callback;
 mod error;
+pub mod files;
 mod instance;
 mod options;
 mod status;
@@ -64,8 +65,8 @@ pub use callback::{
 };
 use culmen_core::{Analyses, AnalysisError, Basis, Col, Duals, Iis, Ranging, Relaxed, Row, TiVec, Weights};
 use culmen_core::{
-    Backend, Callback, Events, ModelClass, ModelClasses, Outcome, Program, QuadObjective, Sense, Settings, Solution,
-    Solved, StopReason, TiSlice, Unsupported,
+    Backend, Callback, Events, ModelClass, ModelClasses, Objectives, Outcome, Program, ProgramFeatures, QuadObjective,
+    Sense, Settings, Solution, Solved, Start, StopReason, TiSlice, Unsupported,
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
 pub use options::{
@@ -75,7 +76,7 @@ pub use options::{
 pub use status::{CallStatus, HighsStatus, ModelStatus, SolutionStatus};
 
 use callback::{Hook, NO_RUN, Payload, kinds, trampoline};
-use instance::Instance;
+use instance::{Instance, Padding, UNDEFINED};
 
 /// HiGHS's default relative MIP gap, below which an optimal status is a proof of optimality.
 const DEFAULT_RELATIVE_GAP: f64 = 1e-4;
@@ -112,11 +113,46 @@ pub(crate) struct Loaded {
     pub(crate) is_mip: bool,
     pub(crate) offset: f64,
     pub(crate) sense: Sense,
+    /// How the program's objectives combine.
+    combined: Combined,
+}
+
+/// How a loaded program's objectives combine: its own alone, or with further ones as HiGHS's option
+/// `blend_multi_objectives` picks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Combined {
+    /// The program's own objective alone.
+    Single,
+    /// Lexicographically: `blend_multi_objectives` off.
+    Lexicographic,
+    /// Blended: `blend_multi_objectives` on.
+    Blended,
+}
+
+impl Combined {
+    /// How `objectives` combine.
+    fn of(objectives: &Objectives) -> Self {
+        match objectives {
+            _ if !objectives.are_several() => Self::Single,
+            Objectives::Lexicographic { .. } => Self::Lexicographic,
+            Objectives::Single | Objectives::Blended { .. } => Self::Blended,
+        }
+    }
+
+    /// The value of `blend_multi_objectives` a solve sets, `None` for a single objective.
+    const fn blend(self) -> Option<bool> {
+        match self {
+            Self::Single => None,
+            Self::Lexicographic => Some(false),
+            Self::Blended => Some(true),
+        }
+    }
 }
 
 impl Loaded {
     fn of(program: &Program) -> Self {
         Self {
+            combined: Combined::of(program.objectives()),
             costs: program.columns().iter().map(|c| c.cost).collect(),
             quadratic: program.quadratic().clone(),
             bounded: program
@@ -131,6 +167,12 @@ impl Loaded {
 
     pub(crate) fn num_cols(&self) -> usize {
         self.costs.len()
+    }
+
+    /// Whether the program has further objectives, whose solve leaves HiGHS's objective value and MIP bound those of
+    /// its last stage or of the blend.
+    const fn several(&self) -> bool {
+        !matches!(self.combined, Combined::Single)
     }
 
     /// The objective value of a point with one value per column, quadratic part and offset included.
@@ -160,6 +202,14 @@ impl Highs {
     /// percent, after its iterates turned NaN, and that point need not even be feasible; on random convex QPs its
     /// correct optima stay below `1e-6`.
     pub const QP_OBJECTIVE_ERROR: f64 = 1e-5;
+
+    /// The largest upper bound of a semi-continuous or semi-integer column HiGHS 1.15 solves as given
+    /// (`kMaxSemiVariableUpper`); [`Backend::load`] refuses a semi column above it with [`HighsError::SemiUpper`].
+    ///
+    /// Above it, HiGHS 1.15 lowers the bound to the limit when the lower bound is at most a tenth of the limit, and
+    /// refuses the model otherwise; a solution at the lowered bound fails the run, and one below it is optimal for
+    /// the original model only by chance.
+    pub const SEMI_UPPER_LIMIT: f64 = 1e5;
 
     /// A backend with HiGHS's default options.
     ///
@@ -239,14 +289,11 @@ impl Highs {
         if let Some(why) = unsound_qp(loaded, status) {
             return Err(HighsError::UnsoundQp(why));
         }
-        let best = (status.primal == SolutionStatus::Feasible).then(|| Solution {
-            objective: self.instance.objective(),
-            values: self.instance.primal_values(loaded.num_cols()).into(),
-        });
+        let best = (status.primal == SolutionStatus::Feasible).then(|| self.solution(loaded));
         let bound = self
             .instance
             .info_double(c"mip_dual_bound")
-            .filter(|b| loaded.is_mip && b.is_finite());
+            .filter(|b| loaded.is_mip && !loaded.several() && b.is_finite());
         let stopped = |reason| {
             Ok(Outcome::Stopped {
                 reason,
@@ -283,6 +330,22 @@ impl Highs {
             | ModelStatus::SolveError
             | ModelStatus::PostsolveError
             | ModelStatus::Other(_) => Err(failed()),
+        }
+    }
+
+    /// The last run's primal solution, valued with the program's own objective: HiGHS's objective value is the
+    /// program's own unless it has further objectives, when it is the last stage's, zero after a lexicographic solve,
+    /// or the blend's.
+    fn solution(&self, loaded: &Loaded) -> Solution {
+        let values = self.instance.primal_values(loaded.num_cols());
+        let objective = if loaded.several() {
+            loaded.objective(&values)
+        } else {
+            self.instance.objective()
+        };
+        Solution {
+            objective,
+            values: values.into(),
         }
     }
 
@@ -330,6 +393,24 @@ fn gap_open(objective: f64, bound: f64) -> bool {
         absolute / objective.abs()
     };
     absolute > DEFAULT_ABSOLUTE_GAP && relative > DEFAULT_RELATIVE_GAP
+}
+
+/// Refuses a program with a semi column whose upper bound exceeds [`Highs::SEMI_UPPER_LIMIT`].
+///
+/// # Errors
+///
+/// [`HighsError::SemiUpper`] for the first such column.
+fn check_semi_upper(program: &Program) -> Result<(), HighsError> {
+    let high = program
+        .columns()
+        .iter_enumerated()
+        .find(|(_, c)| c.integrality.is_semi() && c.bounds.upper() > Highs::SEMI_UPPER_LIMIT);
+    high.map_or(Ok(()), |(col, c)| {
+        Err(HighsError::SemiUpper {
+            col,
+            upper: c.bounds.upper(),
+        })
+    })
 }
 
 /// Resets `instance`'s options, routes the log, and applies `options` and then the solve's settings.
@@ -456,12 +537,29 @@ impl Backend for Highs {
 
     /// Every analysis, each through its HiGHS call; the `analysis` module documents what HiGHS gives.
     const ANALYSES: Analyses = Analyses::ALL;
+    /// HiGHS 1.15 takes semi-continuous and semi-integer columns (up to [`Highs::SEMI_UPPER_LIMIT`]), multiple
+    /// linear objectives, and starts.
+    const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
 
     fn load(&mut self, program: &Program) -> Result<(), HighsError> {
         self.loaded = None;
-        self.instance.pass(program)?;
+        check_semi_upper(program)?;
+        self.instance.pass(program, Padding::QpFreeRow)?;
+        self.instance.pass_objectives(program)?;
         self.loaded = Some(Loaded::of(program));
         Ok(())
+    }
+
+    /// Hands HiGHS the start as its solution, which the next run starts from.
+    ///
+    /// A sparse start's other columns are HiGHS's undefined value, as `Highs_setSparseSolution` leaves them. That
+    /// call is not used: it refuses a value outside its column's bounds, a semi column's zero among them.
+    fn set_start(&mut self, start: &Start) -> Result<(), HighsError> {
+        let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
+        start.check(loaded.num_cols()).map_err(|_| HighsError::Start)?;
+        let mut values = vec![UNDEFINED; loaded.num_cols()];
+        start.entries().for_each(|(col, value)| values[col.index()] = value);
+        self.instance.set_solution(&values)
     }
 
     fn solve(
@@ -471,6 +569,10 @@ impl Backend for Highs {
     ) -> Result<Solved<HighsStatus>, HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         configure(&mut self.instance, &self.options, settings)?;
+        if let Some(blend) = loaded.combined.blend() {
+            self.instance
+                .set_option("blend_multi_objectives", &OptionValue::Bool(blend))?;
+        }
         let ran = run_hooked(&mut self.instance, loaded, callback);
         if let Some(payload) = ran.panic {
             resume_unwind(payload);

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use typed_index_collections::TiSlice;
 
 use super::context::{LogContext, PollContext, ProgressContext, SolutionContext};
-use crate::{Backend, Callback, Col, Events, LogLevel, Progress, Settings};
+use crate::{Backend, Callback, Col, Events, LogLevel, Progress, Settings, Start};
 
 /// A cooperative stop request, polled while a solve runs.
 ///
@@ -149,7 +149,7 @@ impl<O: Observer + ?Sized> Observer for &mut O {
     }
 }
 
-/// One solve's settings, stop and observer.
+/// One solve's settings, stop, observer and start.
 ///
 /// ```
 /// use core::time::Duration;
@@ -176,19 +176,21 @@ pub struct Request<'a> {
     stop: Option<&'a dyn Stop>,
     observer: Option<&'a mut dyn Observer>,
     progress_interval: Duration,
+    start: Option<Start>,
 }
 
 impl<'a> Request<'a> {
     /// The pace of progress reports when none is set.
     pub const DEFAULT_PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
-    /// The solver's defaults, no stop, no observer.
+    /// The solver's defaults, no stop, no observer, no start.
     pub const fn new() -> Self {
         Self {
             settings: Settings::new(),
             stop: None,
             observer: None,
             progress_interval: Self::DEFAULT_PROGRESS_INTERVAL,
+            start: None,
         }
     }
 
@@ -223,15 +225,34 @@ impl<'a> Request<'a> {
         self
     }
 
+    /// The start handed to the solver before the solve: a full [`TiVec<Col, f64>`](crate::TiVec) or sparse
+    /// `Vec<(Col, f64)>`, checked by [`Solver::solve`](crate::Solver::solve) against the program.
+    ///
+    /// ```
+    /// use culmen_core::{Col, Request, Start};
+    /// let request = Request::new().start(vec![(Col::new(0), 1.0)]);
+    /// assert_eq!(request.start_solution(), Some(&Start::Sparse(vec![(Col::new(0), 1.0)])));
+    /// ```
+    pub fn start(mut self, start: impl Into<Start>) -> Self {
+        self.start = Some(start.into());
+        self
+    }
+
     /// The settings the solve runs under.
     #[must_use]
     pub const fn settings(&self) -> &Settings {
         &self.settings
     }
 
-    /// The request's stop and observer as a callback, and its settings.
+    /// The start handed to the solver, `None` when there is none.
     #[must_use]
-    pub fn into_watch(self) -> (Watch<'a>, Settings) {
+    pub const fn start_solution(&self) -> Option<&Start> {
+        self.start.as_ref()
+    }
+
+    /// The request's stop and observer as a callback, its settings and its start.
+    #[must_use]
+    pub fn into_watch(self) -> (Watch<'a>, Settings, Option<Start>) {
         let watch = Watch {
             stop: self.stop,
             observer: self.observer,
@@ -241,7 +262,7 @@ impl<'a> Request<'a> {
             line_level: LogLevel::Info,
             line_elapsed: Duration::ZERO,
         };
-        (watch, self.settings)
+        (watch, self.settings, self.start)
     }
 }
 
@@ -258,6 +279,7 @@ impl fmt::Debug for Request<'_> {
             .field("stop", &self.stop.is_some())
             .field("observer", &self.observer.is_some())
             .field("progress_interval", &self.progress_interval)
+            .field("start", &self.start)
             .finish()
     }
 }

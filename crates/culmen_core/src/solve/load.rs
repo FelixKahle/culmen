@@ -5,13 +5,13 @@
 
 use core::fmt;
 
-use crate::{ModelClass, ModelClasses};
+use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 
-/// Why [`Solver::new`](crate::Solver::new) could not load a program: the backend does not solve its class, or the
-/// backend refused it with its own error `E`.
+/// Why [`Solver::new`](crate::Solver::new) could not load a program: the backend does not solve its class, does not
+/// take a feature it uses, or refused it with its own error `E`.
 ///
-/// The class check is the same for every backend: it reads [`Backend::CLASSES`](crate::Backend::CLASSES) before
-/// the backend sees the program.
+/// The class and feature checks are the same for every backend: they read [`Backend::CLASSES`](crate::Backend::CLASSES)
+/// and [`Backend::FEATURES`](crate::Backend::FEATURES) before the backend sees the program.
 ///
 /// ```
 /// use culmen_core::{LoadError, Model, ModelClass, ModelClasses, Script, Solver, Var};
@@ -36,6 +36,13 @@ pub enum LoadError<E> {
         /// The classes the backend solves.
         supported: ModelClasses,
     },
+    /// The backend does not take a feature the program uses.
+    UnsupportedFeature {
+        /// The first feature the program uses that the backend does not take, in the order of [`ProgramFeature`].
+        feature: ProgramFeature,
+        /// The features the backend takes.
+        supported: ProgramFeatures,
+    },
     /// The backend refused the program.
     Backend(E),
 }
@@ -46,6 +53,9 @@ impl<E: fmt::Display> fmt::Display for LoadError<E> {
             Self::Unsupported { class, supported } => {
                 write!(f, "Solver: the backend solves {supported}, not a {class}")
             }
+            Self::UnsupportedFeature { feature, supported } => {
+                write!(f, "Solver: the backend takes {supported}, not {feature}")
+            }
             Self::Backend(error) => write!(f, "Solver: the backend refused the program: {error}"),
         }
     }
@@ -54,7 +64,7 @@ impl<E: fmt::Display> fmt::Display for LoadError<E> {
 impl<E: core::error::Error + 'static> core::error::Error for LoadError<E> {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::Unsupported { .. } => None,
+            Self::Unsupported { .. } | Self::UnsupportedFeature { .. } => None,
             Self::Backend(error) => Some(error),
         }
     }

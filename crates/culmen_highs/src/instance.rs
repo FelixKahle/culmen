@@ -10,14 +10,19 @@ use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr::{self, NonNull};
 use std::ffi::CString;
 
-use culmen_core::{Col, Integrality, Program, Sense};
+use culmen_core::{
+    AbsoluteGap, Col, Integrality, LinearObjective, Objectives, Program, RelativeGap, Sense, Tolerance, Weight,
+};
 use highs_sys::{
-    Highs_create, Highs_destroy, Highs_getDoubleInfoValue, Highs_getInt64InfoValue, Highs_getIntInfoValue,
-    Highs_getModelStatus, Highs_getNumCol, Highs_getObjectiveValue, Highs_getSolution, Highs_passModel,
-    Highs_resetOptions, Highs_run, Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue,
-    Highs_setIntOptionValue, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_zeroAllClocks,
-    HighsCCallbackType, HighsInt, kHighsHessianFormatTriangular, kHighsMatrixFormatRowwise, kHighsObjSenseMaximize,
-    kHighsObjSenseMinimize, kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger,
+    Highs_clearLinearObjectives, Highs_create, Highs_destroy, Highs_getColName, Highs_getDoubleInfoValue,
+    Highs_getHessianNumNz, Highs_getInt64InfoValue, Highs_getIntInfoValue, Highs_getModel, Highs_getModelStatus,
+    Highs_getNumCol, Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName, Highs_getSolution, Highs_passColName,
+    Highs_passLinearObjectives, Highs_passModel, Highs_passRowName, Highs_readModel, Highs_resetOptions, Highs_run,
+    Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue, Highs_setIntOptionValue,
+    Highs_setSolution, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_writeModel,
+    Highs_zeroAllClocks, HighsCCallbackType, HighsInt, kHighsHessianFormatTriangular, kHighsMatrixFormatRowwise,
+    kHighsObjSenseMaximize, kHighsObjSenseMinimize, kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger,
+    kHighsVarTypeSemiContinuous, kHighsVarTypeSemiInteger,
 };
 
 pub(crate) use analysis::{Penalties, RangingRecord, RawIis};
@@ -64,14 +69,15 @@ impl Instance {
         usize::try_from(count).unwrap_or(0)
     }
 
-    /// Passes `program` to HiGHS, replacing any model before.
+    /// Passes `program` to HiGHS, replacing any model before; `padding` says whether a QP without rows gets the free
+    /// row HiGHS needs to solve it (see [`Arrays`]).
     ///
     /// # Errors
     ///
     /// [`HighsError::TooLarge`] when a count exceeds HiGHS's 32-bit indices, [`HighsError::Load`] when HiGHS
     /// refuses the program.
-    pub(crate) fn pass(&mut self, program: &Program) -> Result<(), HighsError> {
-        let a = Arrays::of(program);
+    pub(crate) fn pass(&mut self, program: &Program, padding: Padding) -> Result<(), HighsError> {
+        let a = Arrays::of(program, padding);
         let (num_col, num_row) = (
             index(program.num_cols(), Dimension::Columns)?,
             index(a.row_lower.len(), Dimension::Rows)?,
@@ -91,7 +97,7 @@ impl Instance {
         let (q_format, q_start, q_index, q_value) = q.raw();
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
-            a.agrees_with(program),
+            a.agrees_with(program, padding),
             "Instance: the arrays passed to HiGHS do not match the program's counts"
         );
         debug_assert!(
@@ -292,6 +298,396 @@ impl Instance {
     }
 }
 
+/// What a program hands HiGHS beyond its model: its further objectives and a start.
+impl Instance {
+    /// Replaces HiGHS's linear objectives with `program`'s: none for a program with one objective, else every
+    /// objective of the program, its own first, as [`LinearObjectives`] lays them out.
+    ///
+    /// Call it after [`Instance::pass`] passed `program`, so HiGHS holds its columns.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::TooLarge`] when the objectives' coefficients exceed HiGHS's 32-bit indices,
+    /// [`HighsError::Load`] when HiGHS refuses them.
+    pub(crate) fn pass_objectives(&mut self, program: &Program) -> Result<(), HighsError> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live and borrowed exclusively.
+        let _ = unsafe { Highs_clearLinearObjectives(self.raw()) };
+        if !program.objectives().are_several() {
+            return Ok(());
+        }
+        let o = LinearObjectives::of(program);
+        let count = index(o.weights.len(), Dimension::Objectives)?;
+        let _ = index(o.coefficients.len(), Dimension::Objectives)?;
+        debug_assert!(
+            o.agrees_with(self.num_col()),
+            "Instance: the objectives passed to HiGHS do not match its model's columns"
+        );
+        // SAFETY: the instance is live and borrowed exclusively. The weights, offsets, tolerances and priorities hold
+        // `count` values each, and the coefficients `count` times the column count of the model HiGHS holds, objective
+        // by objective, which is what HiGHS reads; it copies them before returning.
+        let status = unsafe {
+            Highs_passLinearObjectives(
+                self.raw(),
+                count,
+                o.weights.as_ptr(),
+                o.offsets.as_ptr(),
+                o.coefficients.as_ptr(),
+                o.absolute.as_ptr(),
+                o.relative.as_ptr(),
+                o.priorities.as_ptr(),
+            )
+        };
+        match CallStatus::from_raw(status) {
+            CallStatus::Error => Err(HighsError::Load { message: None }),
+            CallStatus::Ok | CallStatus::Warning => Ok(()),
+        }
+    }
+
+    /// Hands HiGHS `values`, one per column of its model, as the solution the next run starts from; a value of
+    /// [`UNDEFINED`] leaves the column to HiGHS.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Start`] when HiGHS refuses the solution.
+    pub(crate) fn set_solution(&mut self, values: &[f64]) -> Result<(), HighsError> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        debug_assert_eq!(
+            values.len(),
+            self.num_col(),
+            "Instance: the start does not fit HiGHS's model"
+        );
+        // SAFETY: the instance is live and borrowed exclusively. `values` holds one value per column of the model HiGHS
+        // holds, which is what it reads; the row values and duals are null, which it skips. It copies the values.
+        let status = unsafe { Highs_setSolution(self.raw(), values.as_ptr(), ptr::null(), ptr::null(), ptr::null()) };
+        match CallStatus::from_raw(status) {
+            CallStatus::Error => Err(HighsError::Start),
+            CallStatus::Ok | CallStatus::Warning => Ok(()),
+        }
+    }
+}
+
+/// HiGHS's `kHighsUndefined`, `kHighsInf`: a start's value HiGHS chooses itself.
+pub(crate) const UNDEFINED: f64 = f64::INFINITY;
+
+/// A program's objectives in the layout `Highs_passLinearObjectives` reads, the program's own first.
+///
+/// HiGHS's lexicographic solve optimizes the objectives by descending priority, each minimized for a positive
+/// weight and maximized otherwise, and keeps each optimum `f*` within `min(abs, rel · |f*|)` for the later ones,
+/// leaving out a negative tolerance; its blend minimizes `Σ weight · objective`. So a lexicographic objective gets
+/// the weight `±1` by its sense and its tolerances, `-1` for an absent one; a blended one its weight signed by its
+/// sense and no tolerances. Every objective gets its own priority, the first the highest, which a blend ignores.
+struct LinearObjectives {
+    weights: Vec<f64>,
+    offsets: Vec<f64>,
+    coefficients: Vec<f64>,
+    absolute: Vec<f64>,
+    relative: Vec<f64>,
+    priorities: Vec<HighsInt>,
+}
+
+/// One objective as HiGHS ranks it: its weight and its absolute and relative tolerances, `-1` for none.
+type Rank = (f64, f64, f64);
+
+impl LinearObjectives {
+    /// The objectives of `program`, which has several, whose counts the caller checks against HiGHS's index type.
+    fn of(program: &Program) -> Self {
+        let own = LinearObjective {
+            sense: program.sense(),
+            terms: program
+                .columns()
+                .iter_enumerated()
+                .map(|(col, c)| (col, c.cost))
+                .collect(),
+            offset: program.offset(),
+        };
+        let ranked: Vec<(&LinearObjective, Rank)> = match program.objectives() {
+            Objectives::Single => Vec::new(),
+            Objectives::Lexicographic { first, then } => core::iter::once((&own, lexicographic(own.sense, *first)))
+                .chain(
+                    then.iter()
+                        .map(|s| (&s.objective, lexicographic(s.objective.sense, s.tolerance))),
+                )
+                .collect(),
+            Objectives::Blended { first, with } => core::iter::once((&own, blended(own.sense, *first)))
+                .chain(
+                    with.iter()
+                        .map(|w| (&w.objective, blended(w.objective.sense, w.weight))),
+                )
+                .collect(),
+        };
+        let count = ranked.len();
+        Self {
+            weights: ranked.iter().map(|(_, rank)| rank.0).collect(),
+            offsets: ranked.iter().map(|(o, _)| o.offset).collect(),
+            coefficients: ranked.iter().flat_map(|(o, _)| dense(o, program.num_cols())).collect(),
+            absolute: ranked.iter().map(|(_, rank)| rank.1).collect(),
+            relative: ranked.iter().map(|(_, rank)| rank.2).collect(),
+            // The caller checked the count against HiGHS's index type, so every priority converts exactly.
+            priorities: (0..count).rev().map(|p| p as HighsInt).collect(),
+        }
+    }
+
+    /// Whether every array holds what `Highs_passLinearObjectives` reads for a model of `num_cols` columns.
+    fn agrees_with(&self, num_cols: usize) -> bool {
+        let count = self.weights.len();
+        [&self.offsets, &self.absolute, &self.relative]
+            .iter()
+            .all(|a| a.len() == count)
+            && self.priorities.len() == count
+            && self.coefficients.len() == count * num_cols
+    }
+}
+
+/// The rank of a lexicographic objective: the weight `±1` by its sense, and its tolerances.
+fn lexicographic(sense: Sense, tolerance: Tolerance) -> Rank {
+    (
+        signed(sense, 1.0),
+        tolerance.absolute.map_or(-1.0, AbsoluteGap::get),
+        tolerance.relative.map_or(-1.0, RelativeGap::get),
+    )
+}
+
+/// The rank of a blended objective: its weight signed by its sense, and no tolerances.
+fn blended(sense: Sense, weight: Weight) -> Rank {
+    (signed(sense, weight.get()), -1.0, -1.0)
+}
+
+/// `value` for minimizing, `-value` for maximizing.
+const fn signed(sense: Sense, value: f64) -> f64 {
+    match sense {
+        Sense::Minimize => value,
+        Sense::Maximize => -value,
+    }
+}
+
+/// An objective's coefficients, one per column of a program of `num_cols` columns.
+///
+/// # Panics
+///
+/// When a term names a column at or beyond `num_cols`.
+fn dense(objective: &LinearObjective, num_cols: usize) -> Vec<f64> {
+    let mut values = vec![0.0; num_cols];
+    objective.terms.iter().for_each(|&(col, c)| values[col.index()] += c);
+    values
+}
+
+/// Model files: HiGHS's readers and writers, and the model and names HiGHS holds.
+impl Instance {
+    /// Reads the model file at `path` into HiGHS, replacing any model before; HiGHS picks the reader by the
+    /// extension, `.mps` or `.lp`.
+    pub(crate) fn read_model(&mut self, path: &CStr) -> CallStatus {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads during
+        // the call.
+        CallStatus::from_raw(unsafe { Highs_readModel(self.raw(), path.as_ptr()) })
+    }
+
+    /// Writes the model HiGHS holds to the file at `path`; HiGHS picks the writer by the extension, `.mps` or `.lp`.
+    pub(crate) fn write_model(&mut self, path: &CStr) -> CallStatus {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads during
+        // the call.
+        CallStatus::from_raw(unsafe { Highs_writeModel(self.raw(), path.as_ptr()) })
+    }
+
+    /// Names a column or a row of the model HiGHS holds.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Load`] when HiGHS refuses the name.
+    pub(crate) fn pass_name(&mut self, line: Line, index: HighsInt, name: &CStr) -> Result<(), HighsError> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        debug_assert!(
+            usize::try_from(index).is_ok_and(|i| i < self.count(line)),
+            "Instance: a name is passed for a line HiGHS's model does not have"
+        );
+        // SAFETY: the instance is live and borrowed exclusively, `index` a line of its model, and the name a
+        // NUL-terminated string HiGHS copies during the call.
+        let status = unsafe {
+            match line {
+                Line::Col => Highs_passColName(self.raw(), index, name.as_ptr()),
+                Line::Row => Highs_passRowName(self.raw(), index, name.as_ptr()),
+            }
+        };
+        match CallStatus::from_raw(status) {
+            CallStatus::Error => Err(HighsError::Load { message: None }),
+            CallStatus::Ok | CallStatus::Warning => Ok(()),
+        }
+    }
+
+    /// The name of a column or a row of the model HiGHS holds, read through `buffer`; `None` when HiGHS has none.
+    ///
+    /// # Safety
+    ///
+    /// Every name of the model HiGHS holds is shorter than `buffer`: HiGHS copies the name with its terminating NUL
+    /// into the buffer without a bound.
+    pub(crate) unsafe fn name(&self, line: Line, index: HighsInt, buffer: &mut [u8]) -> Option<String> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        debug_assert!(
+            usize::try_from(index).is_ok_and(|i| i < self.count(line)),
+            "Instance: a name is read for a line HiGHS's model does not have"
+        );
+        debug_assert!(!buffer.is_empty(), "Instance: a name is read into no buffer");
+        let out: *mut c_char = buffer.as_mut_ptr().cast();
+        // SAFETY: the instance is live, `index` a line of its model, and the caller vouches that the name and its NUL
+        // fit `buffer`, which HiGHS writes during the call.
+        let status = unsafe {
+            match line {
+                Line::Col => Highs_getColName(self.raw(), index, out),
+                Line::Row => Highs_getRowName(self.raw(), index, out),
+            }
+        };
+        if status == kHighsStatusError {
+            return None;
+        }
+        let name = CStr::from_bytes_until_nul(buffer).ok()?.to_string_lossy().into_owned();
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// The number of columns or rows of the model HiGHS holds.
+    fn count(&self, line: Line) -> usize {
+        match line {
+            Line::Col => self.num_col(),
+            Line::Row => self.num_row(),
+        }
+    }
+
+    /// The model HiGHS holds: its matrix row-wise, its Hessian's lower triangle column-wise.
+    pub(crate) fn model(&self) -> RawModel {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live.
+        let (num_nz, q_num_nz) = unsafe { (Highs_getNumNz(self.raw()), Highs_getHessianNumNz(self.raw())) };
+        let mut m = RawModel::sized(
+            self.num_col(),
+            self.num_row(),
+            usize::try_from(num_nz).unwrap_or(0),
+            usize::try_from(q_num_nz).unwrap_or(0),
+        );
+        let (mut num_col, mut num_row, mut nz, mut q_nz): (HighsInt, HighsInt, HighsInt, HighsInt) = (0, 0, 0, 0);
+        debug_assert!(
+            m.fits(self.num_col(), self.num_row()),
+            "Instance: the model buffers are too small"
+        );
+        // SAFETY: the instance is live. Every buffer holds at least what HiGHS writes for the counts it reported just
+        // before: one value per column, per row, per matrix entry and per Hessian entry, one start per row and per
+        // column, and never less than one element, so no pointer is dangling. The counts are written to locals.
+        let _ = unsafe {
+            Highs_getModel(
+                self.raw(),
+                kHighsMatrixFormatRowwise,
+                kHighsHessianFormatTriangular,
+                &raw mut num_col,
+                &raw mut num_row,
+                &raw mut nz,
+                &raw mut q_nz,
+                &raw mut m.sense,
+                &raw mut m.offset,
+                m.costs.as_mut_ptr(),
+                m.lower.as_mut_ptr(),
+                m.upper.as_mut_ptr(),
+                m.row_lower.as_mut_ptr(),
+                m.row_upper.as_mut_ptr(),
+                m.starts.as_mut_ptr(),
+                m.indices.as_mut_ptr(),
+                m.values.as_mut_ptr(),
+                m.q_starts.as_mut_ptr(),
+                m.q_indices.as_mut_ptr(),
+                m.q_values.as_mut_ptr(),
+                m.integrality.as_mut_ptr(),
+            )
+        };
+        m.trim(num_col, num_row, nz, q_nz);
+        m
+    }
+}
+
+/// A column or a row, for the calls that take either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Line {
+    /// A column.
+    Col,
+    /// A row.
+    Row,
+}
+
+/// The model HiGHS holds as `Highs_getModel` writes it: the matrix row-wise, row `r`'s entries at
+/// `starts[r]..starts[r + 1]` of `indices` and `values`; the Hessian's lower triangle column-wise alike in `q_starts`,
+/// `q_indices` and `q_values`; HiGHS's variable types in `integrality`.
+#[derive(Debug)]
+pub(crate) struct RawModel {
+    pub(crate) sense: HighsInt,
+    pub(crate) offset: f64,
+    pub(crate) costs: Vec<f64>,
+    pub(crate) lower: Vec<f64>,
+    pub(crate) upper: Vec<f64>,
+    pub(crate) row_lower: Vec<f64>,
+    pub(crate) row_upper: Vec<f64>,
+    /// One start per row and the entry count after them.
+    pub(crate) starts: Vec<HighsInt>,
+    pub(crate) indices: Vec<HighsInt>,
+    pub(crate) values: Vec<f64>,
+    /// One start per column and the Hessian's entry count after them; empty without a Hessian.
+    pub(crate) q_starts: Vec<HighsInt>,
+    pub(crate) q_indices: Vec<HighsInt>,
+    pub(crate) q_values: Vec<f64>,
+    pub(crate) integrality: Vec<HighsInt>,
+}
+
+impl RawModel {
+    /// Buffers for a model of these counts, each at least one element long, every variable type continuous.
+    fn sized(cols: usize, rows: usize, nz: usize, q_nz: usize) -> Self {
+        let at_least_one = |n: usize| n.max(1);
+        Self {
+            sense: kHighsObjSenseMinimize,
+            offset: 0.0,
+            costs: vec![0.0; at_least_one(cols)],
+            lower: vec![0.0; at_least_one(cols)],
+            upper: vec![0.0; at_least_one(cols)],
+            row_lower: vec![0.0; at_least_one(rows)],
+            row_upper: vec![0.0; at_least_one(rows)],
+            starts: vec![0; at_least_one(rows + 1)],
+            indices: vec![0; at_least_one(nz)],
+            values: vec![0.0; at_least_one(nz)],
+            q_starts: vec![0; at_least_one(cols + 1)],
+            q_indices: vec![0; at_least_one(q_nz)],
+            q_values: vec![0.0; at_least_one(q_nz)],
+            integrality: vec![kHighsVarTypeContinuous; at_least_one(cols)],
+        }
+    }
+
+    /// Whether the buffers hold a model of `cols` columns and `rows` rows.
+    fn fits(&self, cols: usize, rows: usize) -> bool {
+        [&self.costs, &self.lower, &self.upper].iter().all(|a| a.len() >= cols)
+            && self.integrality.len() >= cols
+            && self.q_starts.len() > cols
+            && [&self.row_lower, &self.row_upper].iter().all(|a| a.len() >= rows)
+            && self.starts.len() > rows
+    }
+
+    /// Cuts the buffers to the counts HiGHS wrote and closes the starts with the entry counts.
+    fn trim(&mut self, num_col: HighsInt, num_row: HighsInt, num_nz: HighsInt, q_num_nz: HighsInt) {
+        let [cols, rows, nz, q_nz] = [num_col, num_row, num_nz, q_num_nz].map(|n| usize::try_from(n).unwrap_or(0));
+        [&mut self.costs, &mut self.lower, &mut self.upper]
+            .into_iter()
+            .for_each(|a| a.truncate(cols));
+        self.integrality.truncate(cols);
+        [&mut self.row_lower, &mut self.row_upper]
+            .into_iter()
+            .for_each(|a| a.truncate(rows));
+        self.starts.truncate(rows);
+        self.starts.push(num_nz);
+        self.indices.truncate(nz);
+        self.values.truncate(nz);
+        self.q_indices.truncate(q_nz);
+        self.q_values.truncate(q_nz);
+        self.q_starts.truncate(if q_nz == 0 { 0 } else { cols });
+        if q_nz > 0 {
+            self.q_starts.push(q_num_nz);
+        }
+    }
+}
+
 impl Drop for Instance {
     fn drop(&mut self) {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
@@ -308,12 +704,21 @@ impl core::fmt::Debug for Instance {
     }
 }
 
-/// A program's arrays in the layout `Highs_passModel` reads.
+/// Whether a QP without rows gets one free row without entries.
 ///
-/// A QP without rows gets one free row without entries. HiGHS 1.15 solves a QP without rows from the
-/// unconstrained minimizer clamped into the bounds, and can report that point optimal after no iteration when it
-/// is not; with a row it finds its starting point with its LP solver and solves correctly. A free row constrains
-/// nothing, and the backend reads no row values.
+/// HiGHS 1.15 solves a QP without rows from the unconstrained minimizer clamped into the bounds, and can report that
+/// point optimal after no iteration when it is not; with a row it finds its starting point with its LP solver and
+/// solves correctly. A free row constrains nothing, and the backend reads no row values; a model written to a file
+/// goes without it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Padding {
+    /// A QP without rows gets the free row, to be solved.
+    QpFreeRow,
+    /// The program as it is, to be written.
+    Exact,
+}
+
+/// A program's arrays in the layout `Highs_passModel` reads, with a free row for a QP without rows when padded.
 struct Arrays {
     costs: Vec<f64>,
     lower: Vec<f64>,
@@ -326,11 +731,11 @@ struct Arrays {
 }
 
 impl Arrays {
-    /// The arrays of `program`, with a free row for a QP without rows.
-    fn of(program: &Program) -> Self {
+    /// The arrays of `program`, with a free row for a QP without rows when `padding` asks for it.
+    fn of(program: &Program, padding: Padding) -> Self {
         let columns = program.columns();
         let matrix = program.matrix();
-        let free_row = needs_free_row(program);
+        let free_row = needs_free_row(program, padding);
         // Every start is at most the entry count and every column below the column count, both checked by the
         // caller before it passes the arrays, so the conversions it passes are exact.
         Self {
@@ -356,13 +761,7 @@ impl Arrays {
                 .chain(free_row.then_some(0))
                 .collect(),
             cols: matrix.cols.iter().map(|c| c.index() as HighsInt).collect(),
-            integrality: columns
-                .iter()
-                .map(|c| match c.integrality {
-                    Integrality::Continuous => kHighsVarTypeContinuous,
-                    Integrality::Integer => kHighsVarTypeInteger,
-                })
-                .collect(),
+            integrality: columns.iter().map(|c| var_type(c.integrality)).collect(),
         }
     }
 }
@@ -371,9 +770,9 @@ impl Arrays {
     /// Whether every array holds the length `Highs_passModel` reads for `program`: one value per column, one per row
     /// (the program's rows, and the free row a QP without rows gets), one start per row and one more, one column per
     /// entry.
-    fn agrees_with(&self, program: &Program) -> bool {
+    fn agrees_with(&self, program: &Program, padding: Padding) -> bool {
         let (cols, entries) = (program.num_cols(), program.num_entries());
-        let rows = program.num_rows() + usize::from(needs_free_row(program));
+        let rows = program.num_rows() + usize::from(needs_free_row(program, padding));
         [&self.costs, &self.lower, &self.upper].iter().all(|a| a.len() == cols)
             && self.integrality.len() == cols
             && [&self.row_lower, &self.row_upper].iter().all(|a| a.len() == rows)
@@ -435,9 +834,20 @@ impl Hessian {
     }
 }
 
-/// Whether `program` is a QP without rows, which HiGHS 1.15 solves only with one free, empty row added.
-fn needs_free_row(program: &Program) -> bool {
-    program.num_rows() == 0 && !program.quadratic().is_empty()
+/// Whether `program` is a QP without rows, which HiGHS 1.15 solves only with one free, empty row added, and `padding`
+/// asks for that row.
+fn needs_free_row(program: &Program, padding: Padding) -> bool {
+    padding == Padding::QpFreeRow && program.num_rows() == 0 && !program.quadratic().is_empty()
+}
+
+/// HiGHS's variable type of an integrality.
+pub(crate) const fn var_type(integrality: Integrality) -> HighsInt {
+    match integrality {
+        Integrality::Continuous => kHighsVarTypeContinuous,
+        Integrality::Integer => kHighsVarTypeInteger,
+        Integrality::SemiContinuous => kHighsVarTypeSemiContinuous,
+        Integrality::SemiInteger => kHighsVarTypeSemiInteger,
+    }
 }
 
 /// A count as HiGHS's index type.

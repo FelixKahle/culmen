@@ -5,9 +5,11 @@
 //!
 //! It enumerates every integer point of the integer columns' box and, for each, every vertex of the polytope the
 //! continuous columns span, solving each vertex's linear system in exact rational arithmetic. Every column must have
-//! finite bounds, so the polytope is bounded and an optimum, if any point is feasible, lies at a vertex.
+//! finite bounds, so the polytope is bounded and an optimum, if any point is feasible, lies at a vertex. A semi
+//! column is read from its definition, zero or in its bounds: every choice of zero or bounds for every semi column is
+//! solved as a program without semi columns, and the best of them is the optimum.
 
-use culmen_core::{Integrality, Program, Sense};
+use culmen_core::{Bounds, Col, Integrality, Program, ProgramPlan, Sense};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, ToPrimitive, Zero};
@@ -38,13 +40,60 @@ struct Inequality {
     b: BigRational,
 }
 
-/// Solves a tiny LP or MILP exactly.
+/// Solves a tiny LP or MILP exactly, semi columns included; further objectives are ignored.
 ///
 /// # Panics
 ///
-/// When a column has an infinite bound, or the integer box holds more than a million points.
+/// When a column has an infinite bound, the integer box holds more than a million points, or there are more than
+/// twelve semi columns.
 #[must_use]
 pub fn solve(program: &Program) -> Reference {
+    let semi: Vec<Col> = program
+        .cols()
+        .filter(|&col| program.columns()[col].integrality.is_semi())
+        .collect();
+    assert!(semi.len() <= 12, "too many semi columns to enumerate their choices");
+    (0..1u32 << semi.len())
+        .map(|on| solve_box(&chosen(program, &semi, on)))
+        .reduce(|a, b| better(program.sense(), a, b))
+        .unwrap_or(Reference::Infeasible)
+}
+
+/// The better of two references under `sense`; a feasible one beats an infeasible one.
+fn better(sense: Sense, a: Reference, b: Reference) -> Reference {
+    match (&a, &b) {
+        (Reference::Infeasible, _) => b,
+        (_, Reference::Infeasible) => a,
+        (Reference::Optimal(x), Reference::Optimal(y)) => {
+            let b_better = match sense {
+                Sense::Minimize => y < x,
+                Sense::Maximize => y > x,
+            };
+            if b_better { b } else { a }
+        }
+    }
+}
+
+/// The program without semi columns in which the `k`-th semi column is zero when bit `k` of `on` is clear, and
+/// continuous or integer in its bounds when it is set.
+fn chosen(program: &Program, semi: &[Col], on: u32) -> Program {
+    let mut plan = ProgramPlan::from(program.clone());
+    for (k, &col) in semi.iter().enumerate() {
+        let column = &mut plan.columns[col];
+        if on & (1 << k) == 0 {
+            column.integrality = Integrality::Continuous;
+            column.bounds = Bounds::fixed(0.0).expect("zero is finite");
+        } else if column.integrality == Integrality::SemiInteger {
+            column.integrality = Integrality::Integer;
+        } else {
+            column.integrality = Integrality::Continuous;
+        }
+    }
+    plan.build().expect("the choice of a valid program is valid")
+}
+
+/// Solves a tiny LP or MILP without semi columns exactly.
+fn solve_box(program: &Program) -> Reference {
     let exact = |v: f64| BigRational::from_float(v).expect("a finite number");
     let ints: Vec<usize> = (0..program.num_cols()).filter(|&j| is_integer(program, j)).collect();
     let conts: Vec<usize> = (0..program.num_cols()).filter(|&j| !is_integer(program, j)).collect();
@@ -90,7 +139,7 @@ pub fn solve(program: &Program) -> Reference {
 }
 
 fn is_integer(program: &Program, j: usize) -> bool {
-    program.columns()[culmen_core::Col::new(j)].integrality == Integrality::Integer
+    program.columns()[Col::new(j)].integrality.is_integral()
 }
 
 /// Steps `point` to the next integer point of the box, `false` after the last.
@@ -284,5 +333,29 @@ mod tests {
         m.add_constraint((x + y).equals(1.5));
         assert_eq!(solve(&m.build().unwrap()), Reference::Infeasible);
         assert!(close(1.0, 1.0 + 1e-9, 1e-6));
+    }
+
+    #[test]
+    fn test_reference_solves_hand_worked_semi_problems() {
+        // x is zero or in [2, 10]: maximizing it below 1.5 leaves it at zero; minimizing it above 0.5 lifts it to 2.
+        let mut m = Model::new();
+        let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+        m.add_constraint(x.leq(1.5));
+        m.maximize(x);
+        assert_eq!(solve(&m.build().unwrap()).objective(), Some(0.0));
+        let mut m = Model::new();
+        let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+        m.add_constraint(x.geq(0.5));
+        m.minimize(x);
+        assert_eq!(solve(&m.build().unwrap()).objective(), Some(2.0));
+
+        // y is zero or a whole number in [2.5, 10]: at least 0.5 makes it 3; between 0.5 and 2.9 nothing fits.
+        let mut m = Model::new();
+        let y = m.add_var(Var::semi_integer().bounds(2.5, 10));
+        m.add_constraint(y.geq(0.5));
+        m.minimize(y);
+        assert_eq!(solve(&m.build().unwrap()).objective(), Some(3.0));
+        m.add_constraint(y.leq(2.9));
+        assert_eq!(solve(&m.build().unwrap()), Reference::Infeasible);
     }
 }

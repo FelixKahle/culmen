@@ -335,10 +335,19 @@ impl TryFrom<BoundsForm> for Bounds {
     }
 }
 
-/// Whether a column takes any value in its bounds or only whole ones.
+/// Which values in its bounds a column takes: any, only whole ones, or, for a semi-continuous or semi-integer
+/// column, zero as well.
 ///
 /// A binary column is an integer column with [`Bounds::BINARY`]; the program stores no third kind, since the bounds
-/// already say it.
+/// already say it. A semi column is zero or in its bounds, which a [`Program`](super::Program) holds only when they
+/// are `lower ..= upper` with `0 < lower` and `upper` finite, so zero lies outside them.
+///
+/// ```
+/// use culmen_core::Integrality;
+/// assert!(Integrality::SemiInteger.is_integral() && Integrality::SemiInteger.is_semi());
+/// assert!(!Integrality::Continuous.is_integral() && !Integrality::Integer.is_semi());
+/// assert!(Integrality::SemiContinuous.is_discrete() && !Integrality::Continuous.is_discrete());
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Integrality {
@@ -347,6 +356,56 @@ pub enum Integrality {
     Continuous,
     /// Only whole values in the bounds.
     Integer,
+    /// Zero, or any value in the bounds.
+    SemiContinuous,
+    /// Zero, or a whole value in the bounds.
+    SemiInteger,
+}
+
+impl Integrality {
+    /// Whether the column's nonzero values are whole: [`Integrality::Integer`] or [`Integrality::SemiInteger`].
+    #[must_use]
+    pub const fn is_integral(self) -> bool {
+        matches!(self, Self::Integer | Self::SemiInteger)
+    }
+
+    /// Whether the column may also be zero outside its bounds: [`Integrality::SemiContinuous`] or
+    /// [`Integrality::SemiInteger`].
+    #[must_use]
+    pub const fn is_semi(self) -> bool {
+        matches!(self, Self::SemiContinuous | Self::SemiInteger)
+    }
+
+    /// Whether the column's values are not one interval, so a program with it is mixed-integer: anything but
+    /// [`Integrality::Continuous`].
+    #[must_use]
+    pub const fn is_discrete(self) -> bool {
+        !matches!(self, Self::Continuous)
+    }
+
+    /// How far `value` lies from the values a column of this integrality in `bounds` takes, zero for one of them.
+    ///
+    /// ```
+    /// use culmen_core::{Integrality, bounds};
+    /// let semi = Integrality::SemiInteger;
+    /// assert_eq!(semi.violation(bounds!(2.0, 5.0), 0.0), 0.0);
+    /// assert_eq!(semi.violation(bounds!(2.0, 5.0), 0.5), 0.5);
+    /// assert_eq!(semi.violation(bounds!(2.0, 5.0), 3.25), 0.25);
+    /// assert_eq!(Integrality::Integer.violation(bounds!(2.0, 5.0), 0.0), 2.0);
+    /// ```
+    #[must_use]
+    pub fn violation(self, bounds: Bounds, value: f64) -> f64 {
+        let fraction = (value - value.round()).abs();
+        let inside = match self {
+            Self::Continuous | Self::SemiContinuous => bounds.violation(value),
+            Self::Integer | Self::SemiInteger => bounds.violation(value).max(fraction),
+        };
+        if self.is_semi() {
+            inside.min(value.abs())
+        } else {
+            inside
+        }
+    }
 }
 
 /// Whether the objective is minimized or maximized.

@@ -307,13 +307,13 @@ any `fmt::Write`. The output is for reading by eye or by another solver while de
 ```rust
 use culmen::prelude::*;
 
-fn main() -> Result<(), culmen::ModelError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
     let x = m.add_var(Var::integer().bounds(0, 5).name("x"));
     let y = m.add_var(Var::free().name("y"));
     m.add_named_constraint("band", (x - y).between(-1, 1));
     m.maximize(3.0 * x + y);
-    let text = m.build()?.to_lp_string();
+    let text = m.build()?.to_lp_string()?;
     assert_eq!(
         text,
         "Maximize\n obj: 3 x + 1 y\nSubject To\n band_lo: 1 x - 1 y >= -1\n band_hi: 1 x - 1 y <= 1\n\
@@ -321,7 +321,7 @@ fn main() -> Result<(), culmen::ModelError> {
     );
 
     m.maximize(3.0 * x - x * x - 0.5 * x * y - y * y);
-    let text = m.build()?.to_lp_string();
+    let text = m.build()?.to_lp_string()?;
     assert!(text.starts_with("Maximize\n obj: 3 x + [ -2 x ^ 2 - 1 x * y - 2 y ^ 2 ] / 2\n"));
     Ok(())
 }

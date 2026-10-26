@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use culmen_core::Analysis;
+use culmen_core::{Analysis, Col};
 
 use crate::{ModelStatus, OptionValue};
 
@@ -62,6 +62,16 @@ pub enum HighsError {
     UnsoundQp(UnsoundQp),
     /// HiGHS refused or failed an analysis, as it refuses a basis it finds singular.
     Analysis(Analysis),
+    /// A semi column's upper bound exceeds [`Highs::SEMI_UPPER_LIMIT`](crate::Highs::SEMI_UPPER_LIMIT), beyond which
+    /// HiGHS 1.15 lowers the bound to the limit or refuses the model.
+    SemiUpper {
+        /// The column.
+        col: Col,
+        /// Its upper bound.
+        upper: f64,
+    },
+    /// HiGHS refused a start.
+    Start,
 }
 
 /// Why the backend does not trust the ending HiGHS's QP solver reported.
@@ -105,6 +115,12 @@ impl fmt::Display for HighsError {
             Self::Run { status, message: m } => write!(f, "HiGHS: the run failed ({status}){}", message(m)),
             Self::UnsoundQp(why) => write!(f, "HiGHS: the QP solver reported {why}, which is unsound"),
             Self::Analysis(analysis) => write!(f, "HiGHS: the {analysis} failed"),
+            Self::SemiUpper { col, upper } => write!(
+                f,
+                "HiGHS: the semi column {col:?} has the upper bound {upper}, above HiGHS's limit {}",
+                crate::Highs::SEMI_UPPER_LIMIT
+            ),
+            Self::Start => write!(f, "HiGHS: the start was refused"),
         }
     }
 }
@@ -127,6 +143,8 @@ pub enum Dimension {
     Entries,
     /// The nonzero entries of the Hessian's lower triangle.
     HessianEntries,
+    /// The objectives of a program with several, and their coefficients.
+    Objectives,
 }
 
 impl fmt::Display for Dimension {
@@ -136,6 +154,7 @@ impl fmt::Display for Dimension {
             Self::Rows => "rows",
             Self::Entries => "entries",
             Self::HessianEntries => "Hessian entries",
+            Self::Objectives => "objective coefficients",
         })
     }
 }

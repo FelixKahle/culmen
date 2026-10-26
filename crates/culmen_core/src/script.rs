@@ -11,8 +11,8 @@ use typed_index_collections::{TiSlice, TiVec};
 use crate::solve::context::{check_constraint, check_entries, check_solution};
 use crate::{
     ActionError, AddedRow, Analyses, Backend, Callback, Col, Constraint, CutContext, Events, HeuristicContext,
-    LazyContext, LogContext, LogLevel, ModelClasses, Outcome, Phase, PollContext, Program, Progress, ProgressContext,
-    Settings, Solution, SolutionContext, Solved, StopReason,
+    LazyContext, LogContext, LogLevel, ModelClasses, Outcome, Phase, PollContext, Program, ProgramFeatures, Progress,
+    ProgressContext, Settings, Solution, SolutionContext, Solved, Start, StopReason,
 };
 
 /// A solution a script step reports.
@@ -95,11 +95,14 @@ pub struct Record {
     pub cuts: Vec<AddedRow>,
     /// The heuristic solutions supplied, as entries.
     pub supplied: Vec<Vec<(Col, f64)>>,
+    /// The starts handed over, as checked, one per solve that had one.
+    pub starts: Vec<Start>,
 }
 
 /// A backend that delivers a fixed list of [`Step`]s to the callback and then ends with a fixed [`Outcome`].
 ///
-/// It supports every generic event and loads every [`ModelClass`](crate::ModelClass), since it replays rather
+/// It supports every generic event, loads every [`ModelClass`](crate::ModelClass) and takes every
+/// [`ProgramFeature`](crate::ProgramFeature), recording each start in [`Record::starts`], since it replays rather
 /// than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
 /// interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent and the last bound
 /// reported before. The outcome and the elapsed time count every step, whichever events the
@@ -143,6 +146,7 @@ impl Script {
                 lazy: Vec::new(),
                 cuts: Vec::new(),
                 supplied: Vec::new(),
+                starts: Vec::new(),
             },
         }
     }
@@ -295,9 +299,18 @@ impl Backend for Script {
     const CLASSES: ModelClasses = ModelClasses::ALL;
     /// A script replays events and an outcome; it has no duals, basis or other analysis to report honestly.
     const ANALYSES: Analyses = Analyses::NONE;
+    const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
 
     fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
         self.num_cols = Some(program.num_cols());
+        Ok(())
+    }
+
+    fn set_start(&mut self, start: &Start) -> Result<(), ScriptError> {
+        if self.num_cols.is_none() {
+            return Err(ScriptError::NotLoaded);
+        }
+        self.record.starts.push(start.clone());
         Ok(())
     }
 

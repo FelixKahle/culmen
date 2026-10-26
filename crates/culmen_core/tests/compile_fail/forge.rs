@@ -21,6 +21,7 @@ fn unchecked() -> Program {
         entry_cols: Default::default(),
         entry_values: Default::default(),
         quadratic: Default::default(),
+        objectives: Default::default(),
     }
 }
 
