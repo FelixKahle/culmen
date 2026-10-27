@@ -2,24 +2,25 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One HiGHS instance behind safe methods: the only place, with the callback trampoline, that calls HiGHS. The calls
-//! behind the analyses are in its `analysis` submodule; when a dropped instance is destroyed, in `scheduler`.
+//! behind the analyses are in its `analysis` submodule; when a dropped instance is destroyed, in `deferred_destroy`.
 
 mod analysis;
-mod scheduler;
+mod deferred_destroy;
 
-pub(crate) use scheduler::Busy;
+pub(crate) use deferred_destroy::CallbackGuard;
 
 use core::ffi::{CStr, c_char, c_int, c_void};
-use core::ptr::{self, NonNull};
+use core::mem::ManuallyDrop;
+use core::ptr;
 use std::ffi::CString;
 
 use culmen_core::{
     AbsoluteGap, Col, Integrality, LinearObjective, Objectives, Program, RelativeGap, Sense, Tolerance, Weight,
 };
 use highs_sys::{
-    Highs_clearLinearObjectives, Highs_create, Highs_destroy, Highs_getColName, Highs_getDoubleInfoValue,
-    Highs_getHessianNumNz, Highs_getInt64InfoValue, Highs_getIntInfoValue, Highs_getModel, Highs_getModelStatus,
-    Highs_getNumCol, Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName, Highs_getSolution, Highs_passColName,
+    Highs_clearLinearObjectives, Highs_getColName, Highs_getDoubleInfoValue, Highs_getHessianNumNz,
+    Highs_getInt64InfoValue, Highs_getIntInfoValue, Highs_getModel, Highs_getModelStatus, Highs_getNumCol,
+    Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName, Highs_getSolution, Highs_passColName,
     Highs_passLinearObjectives, Highs_passModel, Highs_passRowName, Highs_readModel, Highs_resetOptions, Highs_run,
     Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue, Highs_setIntOptionValue,
     Highs_setSolution, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_writeModel,
@@ -31,18 +32,15 @@ use highs_sys::{
 pub(crate) use analysis::{Penalties, RangingRecord, RawIis};
 
 use crate::{CallStatus, Dimension, HighsError, ModelStatus, OptionValue};
+use deferred_destroy::{Handle, RunGuard};
 
-/// A HiGHS instance, created by `Highs_create` and destroyed by `Highs_destroy` on drop.
+/// A HiGHS instance, live from creation to drop and destroyed once no run on the dropping thread needs HiGHS's task
+/// scheduler there.
 ///
-/// The pointer is valid from creation to drop, and every method borrows the instance as HiGHS needs it: `&mut`
-/// for anything that changes it, so no two calls ever overlap on one instance.
-pub(crate) struct Instance(NonNull<c_void>);
-
-// SAFETY: a HiGHS instance has no affinity to the thread that created it: it holds no thread-local state, and the
-// task scheduler HiGHS keeps per thread is looked up afresh on the calling thread by every `Highs_run`. Moving the
-// owner to another thread and calling it there is what HiGHS supports; `Instance` is not `Sync`, so it is never
-// called from two threads at once.
-unsafe impl Send for Instance {}
+/// Every method borrows the instance as HiGHS needs it: `&mut` for anything that changes it, so no two calls ever
+/// overlap on one instance.
+#[derive(Debug)]
+pub(crate) struct Instance(ManuallyDrop<Handle>);
 
 impl Instance {
     /// A new instance with HiGHS's default options.
@@ -51,9 +49,7 @@ impl Instance {
     ///
     /// When HiGHS cannot allocate an instance.
     pub(crate) fn new() -> Self {
-        // SAFETY: `Highs_create` takes no arguments and returns a new instance or null.
-        let raw = unsafe { Highs_create() };
-        let mut instance = Self(NonNull::new(raw).expect("HiGHS could not allocate an instance"));
+        let mut instance = Self(ManuallyDrop::new(Handle::create()));
         // HiGHS prints its banner to standard output at the first model passed while its log is on, which it is by
         // default; the log stays off until a run routes it to the callback.
         let _ = instance.set_option("output_flag", &OptionValue::Bool(false));
@@ -224,7 +220,7 @@ impl Instance {
     /// Runs HiGHS on the loaded model.
     pub(crate) fn run(&mut self) -> CallStatus {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
-        let _busy = Busy::run();
+        let _run = RunGuard::enter();
         // SAFETY: the instance is live and borrowed exclusively. Any callback it calls was installed by `hook`,
         // whose caller keeps the callback's data alive for the run.
         CallStatus::from_raw(unsafe { Highs_run(self.raw()) })
@@ -703,20 +699,9 @@ impl RawModel {
 
 impl Drop for Instance {
     fn drop(&mut self) {
-        if scheduler::defer(self.0) {
-            return;
-        }
-        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
-        // SAFETY: the instance is live and is never used again. `Highs_destroy` also shuts down the HiGHS task
-        // scheduler of the dropping thread, which the next run on that thread starts afresh; `defer` has kept the
-        // instance instead when this thread is inside a run or a callback, so no run is using that scheduler.
-        unsafe { Highs_destroy(self.raw()) };
-    }
-}
-
-impl core::fmt::Debug for Instance {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("Instance").field(&self.0).finish()
+        // SAFETY: the handle is taken once, here, and `self` is never used again.
+        let handle = unsafe { ManuallyDrop::take(&mut self.0) };
+        deferred_destroy::release(handle);
     }
 }
 
