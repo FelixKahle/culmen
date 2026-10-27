@@ -72,6 +72,16 @@ pub enum HighsError {
     },
     /// HiGHS refused a start.
     Start,
+    /// HiGHS refused an edit of the program it holds, and may hold any model after it: HiGHS 1.15 can fail halfway
+    /// through adding columns. The backend then holds no program. A [`Solver`](culmen_core::Solver) loads the program
+    /// before the edit again; when that load fails too, it loads the program before the next call that runs the
+    /// backend, and until then a solve with the backend alone fails with [`HighsError::NotLoaded`].
+    Edit {
+        /// The C function of HiGHS that refused it.
+        call: &'static str,
+        /// HiGHS's last error line, if it wrote one.
+        message: Option<String>,
+    },
     /// HiGHS 1.15 gets the analysis wrong for a program with the feature, so the backend refuses it: its feasibility
     /// relaxation keeps a semi column within its bounds, never at zero.
     AnalysisFeature {
@@ -132,6 +142,7 @@ impl fmt::Display for HighsError {
                 crate::Highs::SEMI_UPPER_LIMIT
             ),
             Self::Start => write!(f, "HiGHS: the start was refused"),
+            Self::Edit { call, message: m } => write!(f, "HiGHS: {call} refused the edit{}", message(m)),
             Self::AnalysisFeature { analysis, feature } => {
                 write!(f, "HiGHS: the {analysis} of a program with {feature} is refused")
             }

@@ -19,6 +19,7 @@ solve as often as needed, each time with its own request.
 | `program()` | The loaded program. |
 | `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
 | `into_parts()` | The backend and the program, taken apart. |
+| `set_col_bounds(..)`, `set_col_costs(..)`, `set_col_integrality(..)`, `set_row_bounds(..)`, `add_row(..)`, `add_rows(..)`, `add_col(..)`, `add_cols(..)` | Edit the loaded program, to solve it again warm ([Editing a loaded program](#editing-a-loaded-program)). |
 | `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome ([Analysis](analysis.md)). |
 
 The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Script>` replays a script
@@ -332,13 +333,95 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Editing a loaded program
+
+A `Solver` edits the program it holds, so the next solve starts from where the last one ended: a cut added to an LP
+relaxation, a column priced in by column generation, a variable fixed in a dive. Each edit is one call:
+
+| Method | Changes |
+|---|---|
+| `set_col_bounds([(col, bounds), ..])` | Columns' bounds; `bounds` is anything that converts into `Bounds`. |
+| `set_col_costs([(col, cost), ..])` | Columns' costs in the program's own objective. |
+| `set_col_integrality([(col, integrality), ..])` | Columns' integrality. |
+| `set_row_bounds([(row, bounds), ..])` | Rows' bounds; `..`, `Bounds::FREE`, switches a row off. |
+| `add_row(row)`, `add_rows(rows)` | Appends rows and returns them: a `Constraint` as a model writes it, a `(name, constraint)` pair, or a `ProgramRow`. |
+| `add_col(column)`, `add_cols(columns)` | Appends columns and returns them: a `NewCol`, a `ProgramColumn` with its `entries` in existing rows, or a bare `ProgramColumn` in no row. |
+
+Every edit keeps these rules:
+
+- **All or none.** When an edit returns `Ok`, `solver.program()` is the edited program and the backend holds it. When
+  it returns `Err`, both are as they were.
+- **Checked as `build` checks.** Every id an edit names is the program's; costs and coefficients are finite, as
+  given and after repeated terms add up, and terms that cancel are dropped; a constraint's constant moves into its
+  bounds as [`Model::build`](modelling.md#building-and-modelerror) moves it; a semi column keeps bounds a semi column
+  may have; and the backend solves the class and takes the features the edited program would have. A refusal is an
+  `EditError` naming the fault, decided before the backend sees the edit.
+- **The last value given holds.** A setter given one id twice keeps the last value; an edit that gives nothing
+  changes nothing and never reaches the backend.
+- **Ids keep their meaning.** Rows and columns are appended after every one before and never deleted. To take a row
+  out, free its bounds; to take a column out, fix it at zero.
+- **The last solve is no longer read.** An edit clears the result the [analyses](analysis.md) read, so `duals()`
+  after an edit is `NotSolved` until the next solve; an edit refused by its checks keeps it.
+
+A backend changes its model in place through [`Backend::edit`](backends.md#the-seam) and keeps its
+warm start; one that does not loads the edited program whole, which is always correct and starts cold. When the
+backend refuses an edit, `EditError::Backend`, the `Solver` restores its program and loads it into the backend again;
+should that fail too, the next call that runs the backend loads it first. [HiGHS](highs.md#editing-a-loaded-program)
+changes its model in place.
+
+```rust
+use culmen::prelude::*;
+use culmen::{EditError, NewCol, ProgramColumn};
+
+/// The optimal objective of the next solve.
+fn best(solver: &mut Solver<Highs>) -> Result<f64, Box<dyn std::error::Error>> {
+    let solved = solver.solve(Request::new())?;
+    Ok(solved.outcome.solution().ok_or("no solution")?.objective)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Maximize x + y over the unit square.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1.0));
+    let y = m.add_var(Var::continuous().upper(1.0));
+    m.maximize(x + y);
+    let mut solver = Solver::new(Highs::new(), m.build()?)?;
+    assert_eq!(best(&mut solver)?, 2.0);
+
+    // A cut, then a column worth 2 that the cut holds too.
+    let cut = solver.add_row(("cut", (x + y).leq(1.5)))?;
+    assert_eq!(best(&mut solver)?, 1.5);
+    let z = solver.add_col(NewCol {
+        column: ProgramColumn::continuous(2.0, bounds!(0.0, 1.0)),
+        entries: vec![(cut, 1.0)],
+    })?;
+    assert_eq!(best(&mut solver)?, 2.5);
+
+    // The cut switched off, and y fixed at zero.
+    solver.set_row_bounds([(cut, ..)])?;
+    solver.set_col_bounds([(y, bounds!(0.0, 0.0))])?;
+    assert_eq!(best(&mut solver)?, 3.0);
+
+    // A refused edit changes nothing.
+    let refused = solver.set_col_costs([(z, f64::INFINITY)]);
+    assert_eq!(refused, Err(EditError::NonFiniteCost { col: z, value: f64::INFINITY }));
+    assert_eq!(solver.program().columns()[z].cost, 2.0);
+    Ok(())
+}
+```
+
+The examples `cutting_planes` and `column_generation` of the `culmen` crate edit a program round after round.
+
 ## Errors
 
 `Solver::new` fails with a [`LoadError<B::Error>`](#model-classes-and-refusal): a class the backend does not solve, a
 feature it does not take, or the backend's own error when it refuses the program. `solve` and `solve_with` fail with a
 `SolveError<B::Error>`: a [start](#starts) the backend does not take or that does not fit the program, both decided
 before the backend sees the request, or `SolveError::Backend` with the backend's own error, a setting it cannot
-apply, or a failed run. For HiGHS that is [`HighsError`](highs.md#errors). A solve
+apply, or a failed run. An edit fails with an [`EditError<B::Error>`](#editing-a-loaded-program): an id the program does
+not have, a number that is not finite, invalid bounds, a class or feature the backend lacks, all decided before the
+backend sees the edit, or `EditError::Backend` when the backend refuses it. For HiGHS the backend's error is
+[`HighsError`](highs.md#errors). A solve
 that ends without a solution is not an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
 
 `solve` and `solve_with` panic when an observer or callback panics: the panic continues out of the call once the

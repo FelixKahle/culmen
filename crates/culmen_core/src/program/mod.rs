@@ -5,6 +5,7 @@
 
 mod bounds;
 mod class;
+mod edit;
 mod features;
 mod ids;
 mod lp_file;
@@ -27,7 +28,7 @@ pub use lp_file::LpFileError;
 pub use objectives::{
     FurtherObjectives, InvalidWeight, LinearObjective, ObjectiveId, Objectives, Stage, Tolerance, Weight, Weighted,
 };
-pub use plan::{ProgramColumn, ProgramPlan, ProgramRow};
+pub use plan::{NewCol, ProgramColumn, ProgramPlan, ProgramRow};
 pub use quad::{HessianEntries, QuadEntries, QuadObjective};
 pub(crate) use quad::{check_convex, merge_pairs};
 pub use row::{RowEntries, RowView};
@@ -134,7 +135,7 @@ impl Program {
     /// Whether any column is integer, semi-continuous or semi-integer: whether its values are not one interval.
     #[must_use]
     pub fn is_mip(&self) -> bool {
-        self.columns.iter().any(|c| c.integrality.is_discrete())
+        self.integralities().any(Integrality::is_discrete)
     }
 
     /// The quadratic part of the objective, empty for a linear objective.
@@ -162,12 +163,7 @@ impl Program {
     /// ```
     #[must_use]
     pub fn class(&self) -> ModelClass {
-        match (self.is_mip(), self.quadratic.is_empty()) {
-            (false, true) => ModelClass::Lp,
-            (true, true) => ModelClass::Milp,
-            (false, false) => ModelClass::Qp,
-            (true, false) => ModelClass::Miqp,
-        }
+        self.class_with(self.integralities())
     }
 
     /// How the program's own objective combines with further linear objectives.
@@ -193,7 +189,22 @@ impl Program {
     /// ```
     #[must_use]
     pub fn features(&self) -> ProgramFeatures {
-        let columns = self.columns.iter().filter_map(|c| match c.integrality {
+        self.features_with(self.integralities())
+    }
+
+    /// The class the program would have with columns of these integralities, as many as it would have.
+    pub(crate) fn class_with(&self, mut integralities: impl Iterator<Item = Integrality>) -> ModelClass {
+        match (integralities.any(Integrality::is_discrete), self.quadratic.is_empty()) {
+            (false, true) => ModelClass::Lp,
+            (true, true) => ModelClass::Milp,
+            (false, false) => ModelClass::Qp,
+            (true, false) => ModelClass::Miqp,
+        }
+    }
+
+    /// The features the program would use with columns of these integralities, as many as it would have.
+    pub(crate) fn features_with(&self, integralities: impl Iterator<Item = Integrality>) -> ProgramFeatures {
+        let columns = integralities.filter_map(|integrality| match integrality {
             Integrality::SemiContinuous => Some(ProgramFeature::SemiContinuous),
             Integrality::SemiInteger => Some(ProgramFeature::SemiInteger),
             Integrality::Continuous | Integrality::Integer => None,
@@ -203,6 +214,11 @@ impl Program {
             .are_several()
             .then_some(ProgramFeature::MultipleObjectives);
         columns.chain(objectives).collect()
+    }
+
+    /// Each column's integrality, in order.
+    fn integralities(&self) -> impl Iterator<Item = Integrality> + '_ {
+        self.columns.iter().map(|c| c.integrality)
     }
 
     /// The value of every objective at a point, offset included: the program's own at [`ObjectiveId::FIRST`], quadratic
@@ -388,15 +404,34 @@ fn check_plan(plan: &ProgramPlan) -> Result<(), ProgramError> {
 ///
 /// [`ProgramError::NonFiniteCost`] or [`ProgramError::SemiBounds`] for the first column at fault.
 fn check_columns(columns: &TiSlice<Col, ProgramColumn>) -> Result<(), ProgramError> {
-    columns.iter_enumerated().try_for_each(|(col, c)| {
-        if !c.cost.is_finite() {
-            Err(ProgramError::NonFiniteCost { col, value: c.cost })
-        } else if c.integrality.is_semi() && !semi_bounds(c.bounds) {
-            Err(ProgramError::SemiBounds { col, bounds: c.bounds })
-        } else {
-            Ok(())
-        }
-    })
+    columns
+        .iter_enumerated()
+        .try_for_each(|(col, c)| match bad_column(c.cost, c.bounds, c.integrality) {
+            Some(BadColumn::NonFiniteCost(value)) => Err(ProgramError::NonFiniteCost { col, value }),
+            Some(BadColumn::SemiBounds(bounds)) => Err(ProgramError::SemiBounds { col, bounds }),
+            None => Ok(()),
+        })
+}
+
+/// What a column may not have.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum BadColumn {
+    /// A cost that is NaN or infinite.
+    NonFiniteCost(f64),
+    /// Bounds a semi column may not have, on a semi column.
+    SemiBounds(Bounds),
+}
+
+/// What is wrong with a column of this cost, bounds and integrality: a cost that is not finite, else a semi column's
+/// bounds that are not `lower ..= upper` with `0 < lower` and `upper` finite; `None` for a column a program may hold.
+pub(crate) fn bad_column(cost: f64, bounds: Bounds, integrality: Integrality) -> Option<BadColumn> {
+    if !cost.is_finite() {
+        Some(BadColumn::NonFiniteCost(cost))
+    } else if integrality.is_semi() && !semi_bounds(bounds) {
+        Some(BadColumn::SemiBounds(bounds))
+    } else {
+        None
+    }
 }
 
 /// Whether `bounds` may be a semi column's: `0 < lower` and `upper` finite, so zero lies outside them.
@@ -429,16 +464,16 @@ fn check_objectives(plan: &ProgramPlan) -> Result<(), ProgramError> {
     })
 }
 
-/// A term a plan may not hold.
+/// A term a plan may not hold, keyed by the column of a row's term or the row of a column's entry.
 #[derive(Clone, Copy, Debug)]
-enum BadTerm {
-    /// The term names a column the plan does not have.
-    Unknown(Col),
-    /// The coefficient of the column is NaN or infinite, as given or added up.
-    NonFinite(Col, f64),
+pub(crate) enum BadTerm<I> {
+    /// The term names a line the plan does not have.
+    Unknown(I),
+    /// The coefficient of the line is NaN or infinite, as given or added up.
+    NonFinite(I, f64),
 }
 
-impl BadTerm {
+impl BadTerm<Col> {
     /// The error of a row holding this term.
     const fn in_row(self, row: Row) -> ProgramError {
         match self {
@@ -456,21 +491,21 @@ impl BadTerm {
     }
 }
 
-/// The first term naming a column at or beyond `num_cols` or holding a non-finite coefficient, as given; else the
-/// first column whose coefficients, added up in the order given, are not finite.
-fn bad_term(terms: &[(Col, f64)], num_cols: usize) -> Option<BadTerm> {
-    let given = terms.iter().find_map(|&(col, value)| {
-        if col.index() >= num_cols {
-            Some(BadTerm::Unknown(col))
+/// The first term naming a line at or beyond `count` or holding a non-finite coefficient, as given; else the first
+/// line whose coefficients, added up in the order given, are not finite.
+pub(crate) fn bad_term<I: Copy + Ord + Into<usize>>(terms: &[(I, f64)], count: usize) -> Option<BadTerm<I>> {
+    let given = terms.iter().find_map(|&(line, value)| {
+        if line.into() >= count {
+            Some(BadTerm::Unknown(line))
         } else {
-            (!value.is_finite()).then_some(BadTerm::NonFinite(col, value))
+            (!value.is_finite()).then_some(BadTerm::NonFinite(line, value))
         }
     });
     given.or_else(|| {
         merge_terms(terms.to_vec())
             .into_iter()
             .find(|(_, value)| !value.is_finite())
-            .map(|(col, value)| BadTerm::NonFinite(col, value))
+            .map(|(line, value)| BadTerm::NonFinite(line, value))
     })
 }
 
@@ -507,15 +542,15 @@ fn finite_quad(first: Col, second: Col, value: f64) -> Result<(), ProgramError> 
     }
 }
 
-/// The terms sorted by column, each column once with its coefficients added up in the order given; zeros are kept.
-pub(crate) fn merge_terms(mut terms: Vec<(Col, f64)>) -> Vec<(Col, f64)> {
-    // A stable sort keeps each column's terms in the order given, so every caller adds them up alike.
-    terms.sort_by_key(|&(col, _)| col);
-    let mut merged: Vec<(Col, f64)> = Vec::with_capacity(terms.len());
-    for (col, value) in terms {
+/// The terms sorted by line, each line once with its coefficients added up in the order given; zeros are kept.
+pub(crate) fn merge_terms<I: Copy + Ord>(mut terms: Vec<(I, f64)>) -> Vec<(I, f64)> {
+    // A stable sort keeps each line's terms in the order given, so every caller adds them up alike.
+    terms.sort_by_key(|&(line, _)| line);
+    let mut merged: Vec<(I, f64)> = Vec::with_capacity(terms.len());
+    for (line, value) in terms {
         match merged.last_mut() {
-            Some(last) if last.0 == col => last.1 += value,
-            _ => merged.push((col, value)),
+            Some(last) if last.0 == line => last.1 += value,
+            _ => merged.push((line, value)),
         }
     }
     merged

@@ -93,6 +93,54 @@ impl ProgramColumn {
     }
 }
 
+/// A column to append to a [`Solver`](crate::Solver)'s program: its data and its coefficients in rows the program already has.
+///
+/// Its coefficient in every further objective is zero, and it has no quadratic term.
+///
+/// ```
+/// use culmen_core::{Bounds, Linear, Model, NewCol, ProgramColumn, Script, Solver, Var};
+///
+/// // Cover the demands a and b, one pattern each so far.
+/// let mut m = Model::new();
+/// let only_a = m.add_var(Var::continuous());
+/// let only_b = m.add_var(Var::continuous());
+/// let a = m.add_constraint(only_a.geq(1));
+/// let b = m.add_constraint(only_b.geq(1));
+/// m.minimize(only_a + only_b);
+/// let mut solver = Solver::new(Script::optimal(2.0, vec![1.0, 1.0]), m.build()?)?;
+///
+/// // A pattern covering both.
+/// let both = solver.add_col(NewCol {
+///     column: ProgramColumn::continuous(1.5, Bounds::NON_NEGATIVE),
+///     entries: vec![(a, 1.0), (b, 1.0)],
+/// })?;
+/// assert_eq!(solver.program().row(a).entries().last(), Some((both, 1.0)));
+///
+/// // A column in no row.
+/// let spare = solver.add_col(ProgramColumn::continuous(0.0, Bounds::NON_NEGATIVE))?;
+/// assert_eq!(solver.program().columns()[spare].cost, 0.0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct NewCol {
+    /// The column's cost in the program's own objective, its bounds, integrality and name.
+    pub column: ProgramColumn,
+    /// Its coefficients as `(row, coefficient)`; a row may repeat and its coefficients add up; empty for a column in
+    /// no row.
+    pub entries: Vec<(Row, f64)>,
+}
+
+/// A column in no row.
+impl From<ProgramColumn> for NewCol {
+    fn from(column: ProgramColumn) -> Self {
+        Self {
+            column,
+            entries: Vec::new(),
+        }
+    }
+}
+
 /// A row of a [`ProgramPlan`]: the bounds of a linear activity, its terms and its name.
 ///
 /// Terms may repeat a column, and their coefficients add up when the plan is built; terms that cancel to zero are

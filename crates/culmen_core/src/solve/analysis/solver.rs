@@ -74,10 +74,11 @@ impl<B: Backend> Solver<B> {
     ///
     /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::Basis`], [`AnalysisError::Class`] for any
     /// program but an LP, [`AnalysisError::Misfit`] when the basis does not fit the program,
-    /// [`AnalysisError::Backend`] when the backend refuses it.
+    /// [`AnalysisError::Backend`] when the backend refuses it, or the program it reloads after a failed edit.
     pub fn set_basis(&mut self, basis: &Basis) -> Analyzed<(), B> {
         self.admit(Analysis::Basis)?;
         basis.check(&self.program)?;
+        self.sync().map_err(AnalysisError::Backend)?;
         self.ended = None;
         self.backend.set_basis(&self.program, basis)
     }
@@ -136,12 +137,13 @@ impl<B: Backend> Solver<B> {
     /// # Errors
     ///
     /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::Iis`], [`AnalysisError::Class`] for a MIP,
-    /// [`AnalysisError::Backend`] when the backend fails.
+    /// [`AnalysisError::Backend`] when the backend fails, or refuses the program it reloads after a failed edit.
     pub fn iis(&mut self) -> Analyzed<Option<Iis>, B> {
         self.admit(Analysis::Iis)?;
         if matches!(self.ended, Some(Ending::Optimal | Ending::Unbounded)) {
             return Ok(None);
         }
+        self.sync().map_err(AnalysisError::Backend)?;
         self.ended = None;
         self.backend.iis(&self.program)
     }
@@ -153,10 +155,11 @@ impl<B: Backend> Solver<B> {
     ///
     /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::FeasibilityRelaxation`],
     /// [`AnalysisError::Class`] for a QP, [`AnalysisError::Misfit`] when the weights do not fit the program,
-    /// [`AnalysisError::Backend`] when the backend fails.
+    /// [`AnalysisError::Backend`] when the backend fails, or refuses the program it reloads after a failed edit.
     pub fn feasibility_relaxation(&mut self, weights: &Weights) -> Analyzed<Option<Relaxed>, B> {
         self.admit(Analysis::FeasibilityRelaxation)?;
         weights.check(&self.program)?;
+        self.sync().map_err(AnalysisError::Backend)?;
         self.ended = None;
         self.backend.relax(&self.program, weights)
     }

@@ -85,7 +85,7 @@ pub use model::{
 };
 pub use program::{
     Bounds, Col, Cols, FurtherObjectives, HessianEntries, Integrality, InvalidBounds, InvalidWeight, LinearObjective,
-    LpFileError, ModelClass, ModelClasses, ModelClassesIter, ObjectiveId, Objectives, Program, ProgramColumn,
+    LpFileError, ModelClass, ModelClasses, ModelClassesIter, NewCol, ObjectiveId, Objectives, Program, ProgramColumn,
     ProgramError, ProgramFeature, ProgramFeatures, ProgramFeaturesIter, ProgramPlan, ProgramRow, QuadEntries,
     QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
 };
@@ -95,10 +95,10 @@ pub use script::{
 };
 pub use solve::context;
 pub use solve::{
-    ActionError, AddedRow, Backend, Callback, CutContext, Events, EventsIter, HeuristicContext, Improvement,
-    LazyContext, LoadError, LogContext, LogLevel, LogLine, Observer, Outcome, Phase, PollContext, Progress,
-    ProgressContext, Request, Settings, Solution, SolutionContext, SolveError, Solved, Solver, Start, StartEntries,
-    StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
+    ActionError, AddedRow, Backend, Callback, CutContext, Edit, EditError, Events, EventsIter, HeuristicContext,
+    Improvement, LazyContext, LoadError, LogContext, LogLevel, LogLine, NewRow, Observer, Outcome, Phase, PollContext,
+    Progress, ProgressContext, Request, Settings, Solution, SolutionContext, SolveError, Solved, Solver, Start,
+    StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
 };
 pub use solve::{
     Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,

@@ -324,6 +324,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `Name { name }` | A name holds a NUL byte. |
 | `Highs(HighsError)` | HiGHS refused the program. |
 
+## Editing a loaded program
+
+`Highs` changes its model in place when a [`Solver` edits its program](solving.md#editing-a-loaded-program), so HiGHS
+keeps the basis of its last solve:
+
+| Edit | HiGHS calls |
+|---|---|
+| Column bounds | `Highs_changeColsBoundsBySet` |
+| Costs | `Highs_changeColsCostBySet`; with several objectives, `Highs_passLinearObjectives` again, since HiGHS does not read the costs into them |
+| Integrality | `Highs_changeColsIntegralityBySet` |
+| Row bounds | `Highs_changeRowsBoundsBySet` |
+| New rows | `Highs_addRows` |
+| New columns | `Highs_addCols`, then `Highs_changeColsIntegralityByRange` for any that is not continuous; with several objectives, `Highs_passLinearObjectives` again, since HiGHS does not extend them |
+
+Two edits load the program whole instead: rows added to a QP without rows, which HiGHS holds with a free row
+([Quadratic programs](#quadratic-programs)), and any kind of edit a later culmen adds before this backend knows it. A
+semi column whose upper bound would exceed `Highs::SEMI_UPPER_LIMIT` is refused with `HighsError::SemiUpper` before
+HiGHS sees the edit, but the refusal comes from the backend: the `Solver` then loads the program before the edit
+again, which costs a full load, and the last solve's result is no longer read. A call HiGHS refuses is
+`HighsError::Edit { call, message }`, naming it; HiGHS 1.15 can fail halfway through adding columns, after it extended
+some of its arrays, so the `Solver` then loads the program before the edit again too.
+
+Appending columns costs time in the size of the whole matrix on both sides: the program inserts each new column's
+entries at the ends of their rows, and the backend gathers the new columns' entries from every row. So append the
+columns of one round of pricing in one `add_cols` call, not one `add_col` each.
+
+What warms the next solve is the LP basis. After a cut or a bound change, the dual simplex starts from the last
+optimal basis: on the LP relaxation of a 300-column assignment problem with presolve off, a violated cut costs 2
+simplex iterations where a fresh solve takes 103, and fixing five columns at zero 2 where a fresh solve takes 97. A
+MIP gains less: HiGHS drops its solution and its MIP search on any change of the model, so a MIP solve after an edit
+searches afresh, its root LP warmed by the basis; to start it from the last incumbent, hand that as a
+[start](solving.md#starts). Every solve after an edit also loses "the last solve's solution" HiGHS otherwise starts
+from.
+
 ## Errors
 
 `HighsError` says why loading or solving failed:
@@ -336,6 +370,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `Option { name, value }` | HiGHS refused an option: an unknown name, or a value of the wrong kind or out of range. |
 | `SemiUpper { col, upper }` | A semi column's upper bound exceeds `Highs::SEMI_UPPER_LIMIT`; see [Semi columns, several objectives and starts](#semi-columns-several-objectives-and-starts). |
 | `Start` | HiGHS refused a start. |
+| `Edit { call, message }` | HiGHS refused an edit of its model; `call` names the C function, `message` is HiGHS's last error line ([Editing a loaded program](#editing-a-loaded-program)). |
 | `OptionName { name }` | An option name holds a NUL byte, which HiGHS's C strings cannot carry. |
 | `OptionString { name }` | A string option's value holds a NUL byte. |
 | `OutOfRange { name, value }` | A seed or thread count is above `i32::MAX`, beyond HiGHS's integers. |

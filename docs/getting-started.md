@@ -142,13 +142,18 @@ Each error's message starts with the name of the type it concerns (`Model:`, `Pr
 
 ## Examples
 
-The `culmen` crate ships four examples:
+The `culmen` crate ships six examples:
 
 - `cargo run -p culmen --example knapsack`: the knapsack above, with five items.
 - `cargo run -p culmen --release --example warehouse -- 20`: a warehouse slotting problem of 60 products and 30
   locations, with live progress, stopped after 20 seconds or on Ctrl-C. Add `--log` to print HiGHS's log too.
+- `cargo run -p culmen --example cutting_planes`: cover cuts added to a knapsack's LP relaxation, each solved again
+  from the last basis ([Editing a loaded program](solving.md#editing-a-loaded-program)).
+- `cargo run -p culmen --example column_generation`: cutting stock by column generation, a pattern appended to the
+  master each round.
 
-Each has a `_macros` twin, run with `--features macros`, that writes the same model with the macros.
+`knapsack` and `warehouse` each have a `_macros` twin, run with `--features macros`, that writes the same model with
+the macros.
 
 ## See also
 
