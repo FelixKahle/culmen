@@ -45,6 +45,14 @@ name = "warehouse"
 required-features = ["highs"]
 
 [[example]]
+name = "cutting_planes"
+required-features = ["highs"]
+
+[[example]]
+name = "column_generation"
+required-features = ["highs"]
+
+[[example]]
 name = "warehouse_macros"
 required-features = ["highs", "macros"]
 
