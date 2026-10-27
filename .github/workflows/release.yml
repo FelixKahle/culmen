@@ -28,7 +28,7 @@ jobs:
       # The OIDC identity token crates.io's Trusted Publishing checks.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The full history, so the check below can see whether the tagged commit is on main.
           fetch-depth: 0
