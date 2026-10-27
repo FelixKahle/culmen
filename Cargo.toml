@@ -52,7 +52,7 @@ highs-sys = { version = "1.15.0" }
 # Token trees, quoting and spanned errors for the modelling macros: the standard proc-macro toolkit.
 proc-macro2 = { version = "1.0", default-features = false, features = ["proc-macro"] }
 quote = { version = "1.0", default-features = false, features = ["proc-macro"] }
-syn = { version = "2.0", default-features = false, features = ["parsing", "printing", "proc-macro"] }
+syn = { version = "3.0", default-features = false, features = ["parsing", "printing", "proc-macro"] }
 # Which name the calling crate gives `culmen` or `culmen_core`, read from its manifest, so the macros' paths
 # resolve under a renamed dependency.
 proc-macro-crate = { version = "3.5", default-features = false }
@@ -62,7 +62,7 @@ proptest = { version = "1.11", default-features = false, features = ["std"] }
 # Dev-only. Exact rational arithmetic for the reference solver, so it shares no floating-point reasoning with the
 # solver under test.
 num-rational = { version = "0.4", default-features = false, features = ["num-bigint-std", "std"] }
-num-bigint = { version = "0.4", default-features = false, features = ["std"] }
+num-bigint = { version = "0.5", default-features = false, features = ["std"] }
 # Dev-only. `Zero`, `One` and `Signed` over the reference solver's rationals.
 num-traits = { version = "0.2", default-features = false, features = ["std"] }
 # Dev-only. Ctrl-C handling in the warehouse example, which std does not offer portably.
