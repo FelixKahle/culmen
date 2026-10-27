@@ -1,0 +1,36 @@
+# Copyright (c) 2026 Felix Kahle
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "culmen_highs"
+description = "The HiGHS backend of culmen: every HiGHS callback as a typed, safe context, typed options and statuses."
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+# Serialize and deserialize the HiGHS options and statuses.
+serde = ["dep:serde", "culmen_core/serde"]
+
+[dependencies]
+culmen_core.workspace = true
+highs-sys.workspace = true
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+culmen_testing.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+
+# docs.rs documents the serde impls of the options and statuses too.
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true

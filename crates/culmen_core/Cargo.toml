@@ -1,0 +1,38 @@
+# Copyright (c) 2026 Felix Kahle
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "culmen_core"
+description = "The program as data, a modelling layer, a backend seam and a solve API with observation and a cooperative stop."
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+# Serialize and deserialize the plain data: programs, bounds, limits, solutions, outcomes and progress.
+serde = ["dep:serde", "typed-index-collections/serde"]
+
+[dependencies]
+typed-index-collections.workspace = true
+derive-where.workspace = true
+itertools.workspace = true
+nalgebra.workspace = true
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+trybuild.workspace = true
+serde_json.workspace = true
+
+# docs.rs documents the serde impls of the plain data too.
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true

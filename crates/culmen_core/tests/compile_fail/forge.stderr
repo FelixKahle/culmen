@@ -1,0 +1,33 @@
+error[E0451]: fields `lower` and `upper` of struct `culmen_core::Bounds` are private
+  --> tests/compile_fail/forge.rs:10:14
+   |
+10 |     Bounds { lower: 2.0, upper: 1.0 }
+   |              ^^^^^       ^^^^^ private field
+   |              |
+   |              private field
+
+error[E0451]: fields `sense`, `offset`, `columns`, `row_bounds`, `row_names`, `row_starts`, `entry_cols`, `entry_values`, `quadratic` and `objectives` of struct `Program` are private
+  --> tests/compile_fail/forge.rs:15:9
+   |
+14 |     Program {
+   |     ------- in this type
+15 |         sense: Default::default(),
+   |         ^^^^^ private field
+16 |         offset: f64::NAN,
+   |         ^^^^^^ private field
+17 |         columns: Default::default(),
+   |         ^^^^^^^ private field
+18 |         row_bounds: Default::default(),
+   |         ^^^^^^^^^^ private field
+19 |         row_names: Default::default(),
+   |         ^^^^^^^^^ private field
+20 |         row_starts: Default::default(),
+   |         ^^^^^^^^^^ private field
+21 |         entry_cols: Default::default(),
+   |         ^^^^^^^^^^ private field
+22 |         entry_values: Default::default(),
+   |         ^^^^^^^^^^^^ private field
+23 |         quadratic: Default::default(),
+   |         ^^^^^^^^^ private field
+24 |         objectives: Default::default(),
+   |         ^^^^^^^^^^ private field
