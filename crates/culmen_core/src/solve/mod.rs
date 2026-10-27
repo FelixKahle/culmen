@@ -31,7 +31,7 @@ pub use settings::Settings;
 pub use start::{SolveError, Start, StartEntries, StartError};
 pub use watch::{Improvement, LogLine, Observer, Request, Stop, StopFn, Watch, stop_fn};
 
-use crate::{Program, ProgramFeature};
+use crate::{ModelClass, Program, ProgramFeature, ProgramFeatures};
 use analysis::Ending;
 
 /// A program loaded into a backend, solved as often as needed, each solve with its own [`Request`].
@@ -57,6 +57,28 @@ pub struct Solver<B> {
     program: Program,
     /// How the last solve ended; `None` before one, after one failed, or once a later call replaced its result.
     ended: Option<Ending>,
+    /// Whether the backend holds `program`. An edit clears it while the backend changes; it stays clear when that
+    /// change and the reload after it both fail, or a panic interrupts them, until the next call that runs the
+    /// backend reloads `program`.
+    synced: bool,
+}
+
+/// What a backend lacks to hold a program: the program's class, or a feature it uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lack {
+    /// The class, which [`Backend::CLASSES`] lacks.
+    Class(ModelClass),
+    /// The first feature [`Backend::FEATURES`] lacks, in the order of [`ProgramFeature`].
+    Feature(ProgramFeature),
+}
+
+/// What `B` lacks to hold a program of `class` that uses `features`; `None` when it lacks nothing.
+fn lack<B: Backend>(class: ModelClass, features: ProgramFeatures) -> Option<Lack> {
+    if B::CLASSES.contains(class) {
+        features.difference(B::FEATURES).iter().next().map(Lack::Feature)
+    } else {
+        Some(Lack::Class(class))
+    }
 }
 
 impl<B: Backend> Solver<B> {
@@ -68,25 +90,25 @@ impl<B: Backend> Solver<B> {
     /// [`LoadError::UnsupportedFeature`] when [`Backend::FEATURES`] lacks one of its [`features`](Program::features),
     /// both before the backend sees it; [`LoadError::Backend`] when the backend refuses the program.
     pub fn new(mut backend: B, program: Program) -> Result<Self, LoadError<B::Error>> {
-        let class = program.class();
-        if !B::CLASSES.contains(class) {
-            return Err(LoadError::Unsupported {
+        match lack::<B>(program.class(), program.features()) {
+            Some(Lack::Class(class)) => Err(LoadError::Unsupported {
                 class,
                 supported: B::CLASSES,
-            });
-        }
-        if let Some(feature) = program.features().difference(B::FEATURES).iter().next() {
-            return Err(LoadError::UnsupportedFeature {
+            }),
+            Some(Lack::Feature(feature)) => Err(LoadError::UnsupportedFeature {
                 feature,
                 supported: B::FEATURES,
-            });
+            }),
+            None => {
+                backend.load(&program).map_err(LoadError::Backend)?;
+                Ok(Self {
+                    backend,
+                    program,
+                    ended: None,
+                    synced: true,
+                })
+            }
         }
-        backend.load(&program).map_err(LoadError::Backend)?;
-        Ok(Self {
-            backend,
-            program,
-            ended: None,
-        })
     }
 
     /// The loaded program.
@@ -106,7 +128,8 @@ impl<B: Backend> Solver<B> {
         &mut self.backend
     }
 
-    /// The backend and the program, taken apart.
+    /// The backend and the program, taken apart. The backend holds the program unless an edit failed and so did the
+    /// reload after it, or a panic interrupted them.
     #[must_use]
     pub fn into_parts(self) -> (B, Program) {
         (self.backend, self.program)
@@ -116,6 +139,7 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Errors
     ///
+    /// [`SolveError::Backend`] when the backend refuses the program it reloads after an edit whose reload failed;
     /// [`SolveError::UnsupportedFeature`] for a start when [`Backend::FEATURES`] lacks
     /// [`ProgramFeature::StartSolution`], else [`SolveError::Start`] for a start [`Start::check`] refuses, both before
     /// the backend sees the request; [`SolveError::Backend`] when the backend refuses the start, a setting cannot be
@@ -143,6 +167,7 @@ impl<B: Backend> Solver<B> {
         callback: &mut impl Callback<B>,
     ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
         let (watch, settings, start) = request.into_watch();
+        self.sync().map_err(SolveError::Backend)?;
         if let Some(start) = &start {
             self.hand_start(start)?;
         }
@@ -151,6 +176,19 @@ impl<B: Backend> Solver<B> {
         both.0.finish();
         self.ended = solved.as_ref().ok().map(|s| Ending::of(&s.outcome));
         solved.map_err(SolveError::Backend)
+    }
+
+    /// Loads the program into the backend again unless the backend holds it.
+    ///
+    /// # Errors
+    ///
+    /// The backend's error when it refuses the program.
+    fn sync(&mut self) -> Result<(), B::Error> {
+        if !self.synced {
+            self.backend.load(&self.program)?;
+            self.synced = true;
+        }
+        Ok(())
     }
 
     /// Checks a start against the backend's features and the program, and hands it to the backend.
