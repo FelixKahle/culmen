@@ -26,6 +26,7 @@ nalgebra.workspace = true
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+culmen_testing.workspace = true
 proptest.workspace = true
 trybuild.workspace = true
 serde_json.workspace = true

@@ -9,8 +9,8 @@ use super::context::{
     CutContext, HeuristicContext, LazyContext, LogContext, PollContext, ProgressContext, SolutionContext,
 };
 use crate::{
-    Analyses, Analysis, AnalysisError, Basis, Col, Duals, Events, Iis, ModelClasses, Program, ProgramFeatures, Ranging,
-    Relaxed, Row, Settings, Solved, Start, TiVec, Weights,
+    Analyses, Analysis, AnalysisError, Basis, Col, Duals, Edit, Events, Iis, ModelClasses, Program, ProgramFeatures,
+    Ranging, Relaxed, Row, Settings, Solved, Start, TiVec, Weights,
 };
 
 /// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls a [`Callback`] as the
@@ -26,8 +26,11 @@ use crate::{
 /// - [`Solver::new`](crate::Solver::new) calls [`Backend::load`] only with a program whose
 ///   [`class`](Program::class) is in [`Backend::CLASSES`] and whose [`features`](Program::features) are in
 ///   [`Backend::FEATURES`], so `load` need not check them.
-/// - [`Backend::solve`] solves the last program [`Backend::load`] accepted, and its [`Solved`] reads with that
-///   program's handles: a [`Solution`](crate::Solution) holds one value per column, every objective value and
+/// - A [`Solver`](crate::Solver) calls [`Backend::edit`] only right after the backend held the program before the
+///   edit, and only with an edited program whose class is in [`Backend::CLASSES`] and whose features are in
+///   [`Backend::FEATURES`]. When `edit` fails, the `Solver` calls [`Backend::load`] with the program before the edit.
+/// - [`Backend::solve`] solves the last program [`Backend::load`] or [`Backend::edit`] accepted, and its [`Solved`]
+///   reads with that program's handles: a [`Solution`](crate::Solution) holds one value per column, every objective value and
 ///   bound includes the program's quadratic part and offset.
 /// - It calls a callback method only for an event in both [`Backend::EVENTS`] and the callback's
 ///   [`Callback::events`], and only while `solve` runs; it never calls two callback methods at once.
@@ -98,6 +101,21 @@ pub trait Backend: Sized {
     fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> {
         let _ = start;
         Ok(())
+    }
+
+    /// Changes the loaded program into `program`, which is the loaded program changed as `edit` names.
+    ///
+    /// The default loads `program` whole: always correct, and without any warm start. A backend overrides it to change
+    /// its model in place and keep its warm start, and falls back to [`Backend::load`] for any [`Edit`] it does not
+    /// handle, since the enum is non-exhaustive.
+    ///
+    /// # Errors
+    ///
+    /// When the solver refuses the change. The backend may then hold any program: the [`Solver`](crate::Solver) loads
+    /// the program before the edit again.
+    fn edit(&mut self, program: &Program, edit: Edit<'_>) -> Result<(), Self::Error> {
+        let _ = edit;
+        self.load(program)
     }
 
     /// Solves the loaded program, calling `callback` as the search goes.

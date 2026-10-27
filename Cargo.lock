@@ -180,6 +180,7 @@ dependencies = [
 name = "culmen_core"
 version = "0.1.1"
 dependencies = [
+ "culmen_testing",
  "derive-where",
  "itertools 0.15.0",
  "nalgebra",
