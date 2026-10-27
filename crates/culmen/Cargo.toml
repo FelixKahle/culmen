@@ -48,5 +48,9 @@ required-features = ["highs"]
 name = "warehouse_macros"
 required-features = ["highs", "macros"]
 
+# docs.rs documents every feature, so the macros and the serde impls appear in the API docs.
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true

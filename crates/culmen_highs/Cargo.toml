@@ -28,5 +28,9 @@ culmen_testing.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 
+# docs.rs documents the serde impls of the options and statuses too.
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
