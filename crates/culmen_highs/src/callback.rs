@@ -66,7 +66,7 @@ use highs_sys::{
     kHighsCallbackMipLogging, kHighsCallbackMipSolution, kHighsCallbackSimplexInterrupt, kHighsStatusError,
 };
 
-use crate::instance::text;
+use crate::instance::{Busy, text};
 use crate::{Highs, Loaded};
 
 /// A caught panic's payload, resumed once the run has returned.
@@ -228,6 +228,9 @@ pub(crate) unsafe extern "C" fn trampoline(
     // SAFETY: `user` is not null, so it is the run's `Mutex<Hook>`, alive until the callback is uninstalled after
     // `Highs_run` returns; a shared reference to a `Mutex` is what any thread may hold.
     let shared = unsafe { &*user.cast::<Mutex<Hook<'_>>>() };
+    // An instance the callback drops waits for the run to end: this may be the run's thread or a worker of its
+    // scheduler, which destroying it now would shut down.
+    let _busy = Busy::callback();
     let mut hook = shared.lock().unwrap_or_else(PoisonError::into_inner);
     let outer = INSIDE.replace(user.cast_const());
     let call = Call {

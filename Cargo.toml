@@ -16,7 +16,7 @@ resolver = "3"
 members = ["crates/culmen", "crates/culmen_core", "crates/culmen_highs", "crates/culmen_macros", "crates/culmen_testing"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT OR Apache-2.0"
@@ -26,9 +26,9 @@ keywords = ["optimization", "linear-programming", "milp", "highs", "solver"]
 categories = ["mathematics", "science"]
 
 [workspace.dependencies]
-culmen_core = { path = "crates/culmen_core", version = "0.1.0" }
-culmen_highs = { path = "crates/culmen_highs", version = "0.1.0" }
-culmen_macros = { path = "crates/culmen_macros", version = "0.1.0" }
+culmen_core = { path = "crates/culmen_core", version = "0.1.1" }
+culmen_highs = { path = "crates/culmen_highs", version = "0.1.1" }
+culmen_macros = { path = "crates/culmen_macros", version = "0.1.1" }
 culmen_testing = { path = "crates/culmen_testing" }
 
 # Vectors indexed by `Col` and `Row`, so a column table cannot be read with a row id.

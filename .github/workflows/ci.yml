@@ -57,7 +57,13 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
+      # glibc fills freed memory with this byte, so a use of freed memory across the HiGHS boundary crashes every run
+      # instead of only when the memory has been reused.
       - name: Test, every feature
+        env:
+          MALLOC_PERTURB_: "165"
         run: cargo test --workspace --all-features
       - name: Test, no default features
+        env:
+          MALLOC_PERTURB_: "165"
         run: cargo test --workspace --no-default-features

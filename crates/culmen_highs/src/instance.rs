@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One HiGHS instance behind safe methods: the only place, with the callback trampoline, that calls HiGHS. The calls
-//! behind the analyses are in its `analysis` submodule.
+//! behind the analyses are in its `analysis` submodule; when a dropped instance is destroyed, in `scheduler`.
 
 mod analysis;
+mod scheduler;
+
+pub(crate) use scheduler::Busy;
 
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr::{self, NonNull};
@@ -221,6 +224,7 @@ impl Instance {
     /// Runs HiGHS on the loaded model.
     pub(crate) fn run(&mut self) -> CallStatus {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        let _busy = Busy::run();
         // SAFETY: the instance is live and borrowed exclusively. Any callback it calls was installed by `hook`,
         // whose caller keeps the callback's data alive for the run.
         CallStatus::from_raw(unsafe { Highs_run(self.raw()) })
@@ -699,10 +703,13 @@ impl RawModel {
 
 impl Drop for Instance {
     fn drop(&mut self) {
+        if scheduler::defer(self.0) {
+            return;
+        }
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and is never used again. `Highs_destroy` also shuts down the HiGHS task
-        // scheduler of the dropping thread, which the next run on that thread starts afresh; no run is in progress
-        // on this thread while it drops.
+        // scheduler of the dropping thread, which the next run on that thread starts afresh; `defer` has kept the
+        // instance instead when this thread is inside a run or a callback, so no run is using that scheduler.
         unsafe { Highs_destroy(self.raw()) };
     }
 }
