@@ -1,0 +1,55 @@
+# Copyright (c) 2026 Felix Kahle
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Pushing a tag `vX.Y.Z` on a commit of main publishes every crate of the workspace to crates.io. The job runs in the
+# `release` environment and authenticates by Trusted Publishing: crates.io trusts this workflow in this repository and
+# hands it a token that lasts for the job, so no token is stored anywhere.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # The workspace's `rust-version`; the release builds with exactly that toolchain.
+  RUST_TOOLCHAIN: "1.99"
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      # The OIDC identity token crates.io's Trusted Publishing checks.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The full history, so the check below can see whether the tagged commit is on main.
+          fetch-depth: 0
+      - name: Check the tag names a commit of main and the workspace's version
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "culmen") | .version')
+          test "$GITHUB_REF_NAME" = "v$version" \
+            || { echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $version"; exit 1; }
+      # highs-sys compiles HiGHS with cmake and generates its bindings with libclang.
+      - name: Install cmake and libclang
+        run: sudo apt-get update && sudo apt-get install -y cmake libclang-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      # Cargo publishes the crates in dependency order and verifies each one builds from its package first.
+      - name: Publish
+        run: cargo publish --workspace
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
