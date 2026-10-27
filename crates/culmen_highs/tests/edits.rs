@@ -11,8 +11,8 @@
 
 use culmen_core::{
     Analysis, AnalysisError, Backend, Bounds, Col, EditError, Integrality, LinExpr, Linear, Model, ModelClass, NewCol,
-    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Request, Settings, Solution, Solver, Var, bounds,
-    relative_gap,
+    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Request, Settings, Solution, SolveError, Solver, Var,
+    bounds, relative_gap,
 };
 use culmen_highs::{Highs, HighsError, HighsOptions, Switch};
 use culmen_testing::instances::assignment;
@@ -21,13 +21,30 @@ use culmen_testing::reference::{Reference, close, edit_plan, solve};
 use culmen_testing::strategy::{small_lp, small_qp, small_semi, with_edits};
 use proptest::prelude::*;
 
-/// Solves with a relative gap of zero and returns the outcome.
-fn solve_exactly<B: Backend>(solver: &mut Solver<B>) -> Outcome {
+/// Solves with a relative gap of zero and returns the outcome, or why the solve failed.
+fn try_solve_exactly<B: Backend>(solver: &mut Solver<B>) -> Result<Outcome, SolveError<B::Error>> {
     let exact = Settings {
         relative_gap: Some(relative_gap!(0.0)),
         ..Settings::new()
     };
-    solver.solve(Request::new().settings_from(exact)).unwrap().outcome
+    solver
+        .solve(Request::new().settings_from(exact))
+        .map(|solved| solved.outcome)
+}
+
+/// Solves with a relative gap of zero and returns the outcome.
+fn solve_exactly<B: Backend>(solver: &mut Solver<B>) -> Outcome {
+    try_solve_exactly(solver).unwrap()
+}
+
+/// Whether the edited solver's failure is the fresh solver's: HiGHS's own error of the same kind in both.
+fn same_failure(edited: &SolveError<MirrorError<HighsError>>, fresh: &SolveError<HighsError>) -> bool {
+    match (edited, fresh) {
+        (SolveError::Backend(MirrorError::Inner(edited)), SolveError::Backend(fresh)) => {
+            core::mem::discriminant(edited) == core::mem::discriminant(fresh)
+        }
+        _ => false,
+    }
 }
 
 /// The optimal objective value of the next solve.
@@ -396,9 +413,20 @@ proptest! {
                 }
                 (got, want) => prop_assert!(false, "{op:?}: the solver gave {got:?}, the rules {want:?}"),
             }
-            let edited = solve_exactly(&mut solver);
+            let edited = try_solve_exactly(&mut solver);
             prop_assert_eq!(solver.backend().held(), Some(solver.program()));
-            let fresh = solve_exactly(&mut Solver::new(Highs::new(), solver.program().clone()).unwrap());
+            let fresh = try_solve_exactly(&mut Solver::new(Highs::new(), solver.program().clone()).unwrap());
+            // Some edits make a QP HiGHS 1.15 cannot solve; a fresh solver failing the same way is agreement.
+            let (edited, fresh) = match (edited, fresh) {
+                (Ok(edited), Ok(fresh)) => (edited, fresh),
+                (Err(edited), Err(fresh)) => {
+                    prop_assert!(same_failure(&edited, &fresh), "edited {edited:?}, fresh {fresh:?}");
+                    continue;
+                }
+                (edited, fresh) => {
+                    return Err(TestCaseError::fail(format!("edited {edited:?}, fresh {fresh:?}")));
+                }
+            };
             prop_assert!(agree(&edited, &fresh), "edited {edited:?}, fresh {fresh:?}");
             if let Some(solution) = edited.solution() {
                 prop_assert!(solver.program().max_violation(&solution.values) <= 1e-5, "{solution:?}");
