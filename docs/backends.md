@@ -27,7 +27,7 @@ pub trait Backend: Sized {
     const ANALYSES: Analyses = Analyses::NONE; // what it reports after a solve: duals, basis, ranging, …
     const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // semi columns, objectives, starts it takes
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
-    fn edit(&mut self, program: &Program, edit: Edit<'_>) -> Result<(), Self::Error> { self.load(program) }
+    fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), Self::Error> { self.load(program) }
     fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> { Ok(()) } // only with StartSolution
     fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>)
         -> Result<Solved<Self::Status>, Self::Error>;
@@ -59,7 +59,9 @@ pub trait Backend: Sized {
   unchanged on every backend, and pairs with a backend-specific callback as `(watch, mine)`.
 - **Edits are a hook with a correct default.** A `Solver` that [edits its program](solving.md#editing-a-loaded-program)
   calls `edit` with the edited program and an `Edit` naming what changed: the columns whose bounds, costs or
-  integrality changed, the rows whose bounds changed, or the rows or columns appended. It calls `edit` only right
+  integrality changed, the rows whose bounds changed, or the rows or columns appended. Only a `Solver` makes an
+  `Edit`, and its variants are non-exhaustive, so a backend matches it (`Edit::ColBounds { cols, .. }`) and never
+  forges one. It calls `edit` only right
   after the backend held the program before the edit, and only with a class and features the backend declares. The
   default loads the program whole; a backend overrides it to change its model in place and keep its warm start, and
   falls back to `load` for any kind of `Edit` it does not handle, since the enum is non-exhaustive. When `edit`
