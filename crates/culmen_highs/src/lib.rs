@@ -649,8 +649,9 @@ impl Backend for Highs {
         Ok(())
     }
 
-    /// Changes HiGHS's model in place, so the next run starts from the basis of the last; see [`Highs::apply`] for
-    /// the HiGHS call behind each edit.
+    /// Changes HiGHS's model in place, so the next run starts from the basis of the last: bounds, costs and
+    /// integrality through HiGHS's `BySet` calls, new rows and columns through `Highs_addRows` and `Highs_addCols`.
+    /// Rows added to a QP without rows, and any edit this version does not know, load the program whole.
     fn edit(&mut self, program: &Program, edit: Edit<'_>) -> Result<(), HighsError> {
         self.loaded = None;
         self.apply(program, edit)?;
