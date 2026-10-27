@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Every pull request and every push to main is formatted, linted, documented and tested on Linux. The jobs `lint`
-# and `test` are the status checks branch protection requires before anything merges into main.
+# and `test` are the status checks branch protection requires before anything merges into main. The jobs `semver`
+# and `deny` report early what a release would regret: a breaking change the version does not allow, or a dependency
+# with an advisory, a licence or a source outside deny.toml. They are not required checks.
 name: CI
 
 on:
@@ -67,3 +69,37 @@ jobs:
         env:
           MALLOC_PERTURB_: "165"
         run: cargo test --workspace --no-default-features
+
+  # Compares the public API of every publishable crate with its latest release on crates.io, and fails when the
+  # change is breaking for the version in the manifest (for 0.x, a breaking change needs a minor bump). The release
+  # workflow runs the same check before it publishes; here a pull request learns it first.
+  semver:
+    name: semver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The check builds rustdoc JSON of culmen_highs, which compiles HiGHS through highs-sys.
+      - name: Install cmake and libclang
+        run: sudo apt-get update && sudo apt-get install -y cmake libclang-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Check semver against crates.io
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          # The pinned toolchain installed above, not the action's own stable.
+          rust-toolchain: manual
+          # culmen_testing is never published, so it has no release to compare with.
+          exclude: culmen_testing
+
+  # Checks the dependency tree against deny.toml: no RustSec advisory, only the allowed licences, only crates.io.
+  deny:
+    name: deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cargo-deny reads Cargo.lock and the advisory database and builds nothing, so it needs neither cmake nor the
+      # pinned toolchain.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
