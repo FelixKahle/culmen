@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "culmen"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ctrlc",
  "culmen_core",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "culmen_core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "derive-where",
  "itertools 0.15.0",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "culmen_highs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "culmen_core",
  "culmen_testing",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "culmen_macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -214,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "culmen_testing"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "culmen_core",
  "itertools 0.15.0",
