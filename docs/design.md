@@ -5,10 +5,15 @@ culmen, and a rule a contribution keeps.
 
 ## The program is checked data
 
-A [`Program`](program.md#program) is a value, built once and never changed. Every number in it was checked when it was
-built: costs, coefficients and the offset are finite, bounds are valid intervals, and each row holds each column at most
-once. Nothing downstream checks again, and nothing downstream can meet a program that was not checked: `Program` has no
+A [`Program`](program.md#program) is a value, built once. Every number in it was checked when it was built: costs,
+coefficients and the offset are finite, bounds are valid intervals, and each row holds each column at most once.
+Nothing downstream checks again, and nothing downstream can meet a program that was not checked: `Program` has no
 public fields, its only constructors check, and deserialization goes through the same check.
+
+The one program that changes is the one a `Solver` holds, and only through the `Solver`'s
+[edits](solving.md#editing-a-loaded-program). Each edit runs the checks `build` would run on the edited program before
+it changes anything, and is all or none, so `solver.program()` is always a program `build` accepts; ids are only ever
+appended, so a handle never changes its meaning. Everywhere else a program, once built, stays as it is.
 
 The check happens in one place, `build`, and its error names what is at fault. A model's error names the variable
 or constraint by the name you gave it (`` Model: constraint `big` has the non-finite coefficient inf on variable `x` ``),

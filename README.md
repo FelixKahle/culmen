@@ -247,10 +247,13 @@ The API reference is the rustdoc: `cargo doc --open -p culmen`.
 ```text
 cargo run -p culmen --example knapsack
 cargo run -p culmen --release --example warehouse -- 20
+cargo run -p culmen --example cutting_planes
+cargo run -p culmen --example column_generation
 ```
 
-`warehouse` assigns 60 products to 30 locations with live progress. It stops after 20 seconds or on Ctrl-C. Each
-example has a `_macros` twin, run with `--features macros`.
+`warehouse` assigns 60 products to 30 locations with live progress. It stops after 20 seconds or on Ctrl-C.
+`knapsack` and `warehouse` each have a `_macros` twin, run with `--features macros`. `cutting_planes` and
+`column_generation` edit a loaded program and solve it again warm.
 
 ## Crates
 
