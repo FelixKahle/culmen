@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! An exact reference solver for tiny problems, sharing none of a real solver's reasoning.
+//! An exact reference solver for tiny problems, sharing none of a real solver's reasoning, and a reference model of
+//! editing a loaded program, read from the edit rules alone.
 //!
 //! It enumerates every integer point of the integer columns' box and, for each, every vertex of the polytope the
 //! continuous columns span, solving each vertex's linear system in exact rational arithmetic. Every column must have
@@ -9,10 +10,15 @@
 //! column is read from its definition, zero or in its bounds: every choice of zero or bounds for every semi column is
 //! solved as a program without semi columns, and the best of them is the optimum.
 
-use culmen_core::{Bounds, Col, Integrality, Program, ProgramPlan, Sense};
+use culmen_core::{
+    Bounds, Col, Constraint, Integrality, ModelClasses, NewCol, NewRow, Program, ProgramColumn, ProgramFeatures,
+    ProgramPlan, ProgramRow, Row, Sense,
+};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, ToPrimitive, Zero};
+
+use crate::op::EditOp;
 
 /// What the reference solver proves.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -334,6 +340,165 @@ fn solve_square(rows: &[&Inequality], n: usize) -> Option<Vec<BigRational>> {
     Some(m.into_iter().map(|r| r[n].clone()).collect())
 }
 
+/// Why the edit rules refuse an edit, in words for a failing test's message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refused {
+    /// The rule the edit breaks.
+    pub reason: String,
+}
+
+/// The program a `Solver` holding `program` holds after `op`, read from the edit rules alone, or why it refuses `op`.
+///
+/// The rules, applied to the plain fields of `program`'s plan in the order the edit gives its items:
+///
+/// - Every id an edit names is one of `program`'s: a setter's target, a new row's term, a new column's entry.
+/// - A setter writes each value given into its column or row, so the last value given for an id holds.
+/// - A new constraint is the row of its terms in the bounds `lower - constant ..= upper - constant`: its bounds as
+///   given are a valid interval, its constant is finite, and no finite end becomes infinite by the move.
+/// - A new column is appended after every column, and each entry `(row, a)` adds the term `(column, a)` to `row`.
+/// - The edited plan builds, the backend solves its class (`classes`) and takes its features (`features`).
+///
+/// # Errors
+///
+/// [`Refused`] naming the first rule `op` breaks.
+pub fn edit_plan(
+    program: &Program,
+    op: &EditOp,
+    classes: ModelClasses,
+    features: ProgramFeatures,
+) -> Result<Program, Refused> {
+    let mut plan = ProgramPlan::from(program.clone());
+    let (num_cols, num_rows) = (program.num_cols(), program.num_rows());
+    match op {
+        EditOp::ColBounds(given) => given
+            .iter()
+            .try_for_each(|&(c, b)| column(&mut plan, c).map(|c| c.bounds = b))?,
+        EditOp::ColCosts(given) => given
+            .iter()
+            .try_for_each(|&(c, v)| column(&mut plan, c).map(|c| c.cost = v))?,
+        EditOp::ColIntegrality(given) => {
+            given
+                .iter()
+                .try_for_each(|&(c, i)| column(&mut plan, c).map(|c| c.integrality = i))?;
+        }
+        EditOp::RowBounds(given) => given
+            .iter()
+            .try_for_each(|&(r, b)| row(&mut plan, r).map(|r| r.bounds = b))?,
+        EditOp::AddRows(new) => {
+            for new in new {
+                let row = plan_row(new, num_cols)?;
+                plan.rows.push(row);
+            }
+        }
+        EditOp::AddCols(new) => new.iter().try_for_each(|new| append_column(&mut plan, new, num_rows))?,
+    }
+    let built = plan
+        .build()
+        .map_err(|e| refused(format!("the edited plan does not build: {e}")))?;
+    if !classes.contains(built.class()) {
+        return Err(refused(format!(
+            "the backend solves {classes}, not a {}",
+            built.class()
+        )));
+    }
+    if !features.contains_all(built.features()) {
+        return Err(refused(format!(
+            "the backend takes {features}, not {}",
+            built.features()
+        )));
+    }
+    Ok(built)
+}
+
+/// A refusal for `reason`.
+fn refused(reason: impl Into<String>) -> Refused {
+    Refused { reason: reason.into() }
+}
+
+/// The plan's column `col`.
+///
+/// # Errors
+///
+/// [`Refused`] when the plan has no such column.
+fn column(plan: &mut ProgramPlan, col: Col) -> Result<&mut ProgramColumn, Refused> {
+    plan.columns
+        .get_mut(col)
+        .ok_or_else(|| refused(format!("the program has no {col:?}")))
+}
+
+/// The plan's row `row`.
+///
+/// # Errors
+///
+/// [`Refused`] when the plan has no such row.
+fn row(plan: &mut ProgramPlan, row: Row) -> Result<&mut ProgramRow, Refused> {
+    plan.rows
+        .get_mut(row)
+        .ok_or_else(|| refused(format!("the program has no {row:?}")))
+}
+
+/// The plan row of a new row, whose terms name columns below `num_cols`.
+///
+/// # Errors
+///
+/// [`Refused`] for a term naming another column, or a constraint whose bounds the move of its constant refuses.
+fn plan_row(new: &NewRow, num_cols: usize) -> Result<ProgramRow, Refused> {
+    let row = match new {
+        NewRow::Row(row) => row.clone(),
+        NewRow::Constraint { constraint, name } => ProgramRow {
+            bounds: moved(constraint)?,
+            terms: constraint.expr.terms.iter().map(|t| (t.col, t.coefficient)).collect(),
+            name: name.clone(),
+        },
+    };
+    match row.terms.iter().find(|(col, _)| col.index() >= num_cols) {
+        Some((col, _)) => Err(refused(format!(
+            "a new row names {col:?}, which the program does not have"
+        ))),
+        None => Ok(row),
+    }
+}
+
+/// A constraint's bounds with its constant moved into them.
+///
+/// # Errors
+///
+/// [`Refused`] when the bounds as given are invalid, the constant is not finite, a finite end becomes infinite, or
+/// the moved bounds are invalid.
+fn moved(constraint: &Constraint) -> Result<Bounds, Refused> {
+    let (lower, upper, constant) = (constraint.lower, constraint.upper, constraint.expr.constant);
+    Bounds::new(lower, upper).map_err(|e| refused(format!("a new constraint's bounds are invalid: {e}")))?;
+    if !constant.is_finite() {
+        return Err(refused(format!("a new constraint's constant {constant} is not finite")));
+    }
+    let (moved_lower, moved_upper) = (lower - constant, upper - constant);
+    if (lower.is_finite() && !moved_lower.is_finite()) || (upper.is_finite() && !moved_upper.is_finite()) {
+        return Err(refused(
+            "a new constraint's finite bound overflows as its constant moves into it",
+        ));
+    }
+    Bounds::new(moved_lower, moved_upper)
+        .map_err(|e| refused(format!("a new constraint's moved bounds are invalid: {e}")))
+}
+
+/// Appends a new column and its entries, which name rows below `num_rows`.
+///
+/// # Errors
+///
+/// [`Refused`] for an entry naming another row.
+fn append_column(plan: &mut ProgramPlan, new: &NewCol, num_rows: usize) -> Result<(), Refused> {
+    if let Some((row, _)) = new.entries.iter().find(|(row, _)| row.index() >= num_rows) {
+        return Err(refused(format!(
+            "a new column names {row:?}, which the program does not have"
+        )));
+    }
+    let col = plan.columns.push_and_get_key(new.column.clone());
+    for &(row, value) in &new.entries {
+        plan.rows[row].terms.push((col, value));
+    }
+    Ok(())
+}
+
 /// Whether two objective values agree within `tolerance`, relative to their size and at least absolutely.
 #[must_use]
 pub fn close(a: f64, b: f64, tolerance: f64) -> bool {
@@ -342,7 +507,7 @@ pub fn close(a: f64, b: f64, tolerance: f64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use culmen_core::{Linear, Model, Var};
+    use culmen_core::{Linear, Model, ModelClass, ProgramFeature, Var, bounds};
 
     use super::*;
 
@@ -400,5 +565,97 @@ mod tests {
         assert_eq!(solve(&m.build().unwrap()).objective(), Some(3.0));
         m.add_constraint(y.leq(2.9));
         assert_eq!(solve(&m.build().unwrap()), Reference::Infeasible);
+    }
+
+    /// Minimize `x + y` over `x`, `y` in `[0, 4]` and the row `x + y >= 1`.
+    fn small() -> (Program, Col, Col, Row) {
+        let mut m = Model::new();
+        let x = m.add_var(Var::continuous().upper(4));
+        let y = m.add_var(Var::continuous().upper(4));
+        let row = m.add_constraint((x + y).geq(1));
+        m.minimize(x + y);
+        (m.build().unwrap(), x, y, row)
+    }
+
+    /// Every class and every feature.
+    fn any(program: &Program, op: &EditOp) -> Result<Program, Refused> {
+        edit_plan(program, op, ModelClasses::ALL, ProgramFeatures::ALL)
+    }
+
+    #[test]
+    fn test_edit_plan_moves_a_constraint_constant_into_its_bounds() {
+        let (program, x, y, _) = small();
+        let edited = any(
+            &program,
+            &EditOp::AddRows(vec![NewRow::from(("r", (x + 2.0 * y + 1).leq(7)))]),
+        )
+        .unwrap();
+        let new = edited.row(Row::new(1));
+        assert_eq!(new.bounds(), bounds!(f64::NEG_INFINITY, 6.0));
+        assert_eq!(new.entries().collect::<Vec<_>>(), [(x, 1.0), (y, 2.0)]);
+        assert_eq!(new.name(), Some("r"));
+    }
+
+    #[test]
+    fn test_edit_plan_appends_a_column_with_its_entries_added_up() {
+        let (program, x, y, row) = small();
+        let column = ProgramColumn::continuous(-1.0, bounds!(0.0, 1.0));
+        let new = NewCol {
+            column: column.clone(),
+            entries: vec![(row, 1.0), (row, 2.0)],
+        };
+        let edited = any(&program, &EditOp::AddCols(vec![new])).unwrap();
+        let z = Col::new(2);
+        assert_eq!(edited.columns()[z], column);
+        assert_eq!(
+            edited.row(row).entries().collect::<Vec<_>>(),
+            [(x, 1.0), (y, 1.0), (z, 3.0)]
+        );
+    }
+
+    #[test]
+    fn test_edit_plan_lets_the_last_value_given_hold() {
+        let (program, x, ..) = small();
+        let edited = any(&program, &EditOp::ColCosts(vec![(x, f64::NAN), (x, 5.0)])).unwrap();
+        assert_eq!(edited.columns()[x].cost, 5.0);
+        assert!(any(&program, &EditOp::ColCosts(vec![(x, 5.0), (x, f64::NAN)])).is_err());
+    }
+
+    #[test]
+    fn test_edit_plan_refuses_what_the_rules_refuse() {
+        let (program, x, _, row) = small();
+        let refused = |op: EditOp| any(&program, &op).is_err();
+        assert!(refused(EditOp::ColBounds(vec![(Col::new(2), Bounds::FREE)])));
+        assert!(refused(EditOp::RowBounds(vec![(Row::new(1), Bounds::FREE)])));
+        assert!(refused(EditOp::AddRows(vec![NewRow::from(Col::new(5).leq(1))])));
+        assert!(refused(EditOp::AddRows(vec![NewRow::from(x.between(3, 1))])));
+        assert!(refused(EditOp::AddRows(vec![NewRow::from(
+            (1e308 * x + 1e308 * x).leq(1)
+        )])));
+        let unknown_row = NewCol {
+            column: ProgramColumn::binary(0.0),
+            entries: vec![(Row::new(1), 1.0)],
+        };
+        assert!(refused(EditOp::AddCols(vec![unknown_row])));
+        assert!(refused(EditOp::ColIntegrality(vec![(x, Integrality::SemiContinuous)])));
+        assert!(!refused(EditOp::RowBounds(vec![(row, Bounds::FREE)])));
+
+        let linear = ModelClasses::of(&[ModelClass::Lp]);
+        let integer = EditOp::ColIntegrality(vec![(x, Integrality::Integer)]);
+        assert!(edit_plan(&program, &integer, linear, ProgramFeatures::ALL).is_err());
+        let semi = EditOp::AddCols(vec![NewCol::from(ProgramColumn::semi_continuous(
+            1.0,
+            bounds!(1.0, 2.0),
+        ))]);
+        assert!(edit_plan(&program, &semi, ModelClasses::ALL, ProgramFeature::SemiInteger.into()).is_err());
+        assert!(
+            edit_plan(
+                &program,
+                &semi,
+                ModelClasses::ALL,
+                ProgramFeature::SemiContinuous.into()
+            )
+            .is_ok()
+        );
     }
 }

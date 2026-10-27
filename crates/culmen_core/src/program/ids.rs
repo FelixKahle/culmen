@@ -90,15 +90,21 @@ impl From<Row> for usize {
     }
 }
 
-/// Every column of a program, in order; made by [`Program::cols`](super::Program::cols).
-#[derive(Clone, Debug)]
+/// A run of consecutive columns of a program, in order: every column, made by [`Program::cols`](super::Program::cols),
+/// or the columns one edit appended, returned by [`Solver::add_cols`](crate::Solver::add_cols).
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct Cols(Range<usize>);
 
 impl Cols {
     /// The first `count` columns.
     pub(crate) const fn new(count: usize) -> Self {
-        Self(0..count)
+        Self::range(0, count)
+    }
+
+    /// The columns from index `start` up to, not including, index `end`; none when `end <= start`.
+    pub(crate) const fn range(start: usize, end: usize) -> Self {
+        Self(start..end)
     }
 }
 
@@ -124,15 +130,21 @@ impl ExactSizeIterator for Cols {}
 
 impl FusedIterator for Cols {}
 
-/// Every row of a program, in order; made by [`Program::rows`](super::Program::rows).
-#[derive(Clone, Debug)]
+/// A run of consecutive rows of a program, in order: every row, made by [`Program::rows`](super::Program::rows), or
+/// the rows one edit appended, returned by [`Solver::add_rows`](crate::Solver::add_rows).
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct Rows(Range<usize>);
 
 impl Rows {
     /// The first `count` rows.
     pub(crate) const fn new(count: usize) -> Self {
-        Self(0..count)
+        Self::range(0, count)
+    }
+
+    /// The rows from index `start` up to, not including, index `end`; none when `end <= start`.
+    pub(crate) const fn range(start: usize, end: usize) -> Self {
+        Self(start..end)
     }
 }
 

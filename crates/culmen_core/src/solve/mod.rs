@@ -6,6 +6,7 @@
 mod analysis;
 mod backend;
 pub mod context;
+mod edit;
 mod events;
 mod load;
 mod outcome;
@@ -22,6 +23,7 @@ pub use context::{
     ActionError, AddedRow, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, ProgressContext,
     SolutionContext, Unsupported,
 };
+pub use edit::{Edit, EditError, NewCol, NewRow};
 pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
 pub use load::LoadError;
 pub use outcome::{Outcome, Solution, Solved, StopReason};

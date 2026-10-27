@@ -95,10 +95,10 @@ pub use script::{
 };
 pub use solve::context;
 pub use solve::{
-    ActionError, AddedRow, Backend, Callback, CutContext, Events, EventsIter, HeuristicContext, Improvement,
-    LazyContext, LoadError, LogContext, LogLevel, LogLine, Observer, Outcome, Phase, PollContext, Progress,
-    ProgressContext, Request, Settings, Solution, SolutionContext, SolveError, Solved, Solver, Start, StartEntries,
-    StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
+    ActionError, AddedRow, Backend, Callback, CutContext, Edit, EditError, Events, EventsIter, HeuristicContext,
+    Improvement, LazyContext, LoadError, LogContext, LogLevel, LogLine, NewCol, NewRow, Observer, Outcome, Phase,
+    PollContext, Progress, ProgressContext, Request, Settings, Solution, SolutionContext, SolveError, Solved, Solver,
+    Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
 };
 pub use solve::{
     Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,

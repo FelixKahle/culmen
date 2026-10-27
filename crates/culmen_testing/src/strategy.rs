@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Property-test strategies: tiny bounded LPs and MILPs, with semi columns or without, the reference solver
-//! enumerates, and small convex QPs.
+//! enumerates, small convex QPs, and sequences of edits of a loaded program.
 
-use culmen_core::{Bounds, Col, Integrality, Program, ProgramColumn, ProgramPlan, ProgramRow, Sense, TiVec};
+use culmen_core::{
+    Bounds, Col, Constraint, Integrality, LinExpr, NewCol, NewRow, Program, ProgramColumn, ProgramPlan, ProgramRow,
+    Row, Sense, Term, TiVec,
+};
 use itertools::Itertools;
 use proptest::prelude::*;
+
+use crate::op::EditOp;
 
 /// A column: integrality, bounds and cost, all small integers.
 fn column() -> impl Strategy<Value = ProgramColumn> {
@@ -185,5 +190,170 @@ fn row_through(point: &[f64], (coefficients, below, above): (Vec<i32>, i32, i32)
             .map(|(j, c)| (Col::new(j), f64::from(c)))
             .collect(),
         name: None,
+    }
+}
+
+/// A number in an edit: mostly a small integer, rarely NaN or an infinity.
+///
+/// No huge finite number: a solver may refuse one the program accepts, as HiGHS refuses coefficients from `1e15`.
+fn edit_number() -> impl Strategy<Value = f64> {
+    prop_oneof![
+        12 => (-3i32..=3).prop_map(f64::from),
+        1 => prop_oneof![Just(f64::NAN), Just(f64::INFINITY), Just(f64::NEG_INFINITY)],
+    ]
+}
+
+/// Bounds in an edit: a box of small integers, a box above zero as a semi column needs, one end open, or free.
+fn edit_bounds() -> impl Strategy<Value = Bounds> {
+    let between =
+        |(lower, width): (i32, i32)| Bounds::new(f64::from(lower), f64::from(lower + width)).expect("lower <= upper");
+    prop_oneof![
+        4 => (-3i32..=2, 0i32..=4).prop_map(between),
+        2 => (1i32..=2, 0i32..=2).prop_map(between),
+        1 => (-3i32..=3).prop_map(|upper| Bounds::at_most(f64::from(upper)).expect("a finite end")),
+        1 => (-3i32..=3).prop_map(|lower| Bounds::at_least(f64::from(lower)).expect("a finite end")),
+        1 => Just(Bounds::FREE),
+    ]
+}
+
+/// An integrality, the semi ones rarer.
+fn edit_integrality() -> impl Strategy<Value = Integrality> {
+    prop_oneof![
+        3 => Just(Integrality::Continuous),
+        3 => Just(Integrality::Integer),
+        1 => Just(Integrality::SemiContinuous),
+        1 => Just(Integrality::SemiInteger),
+    ]
+}
+
+/// A name or none.
+fn edit_name() -> impl Strategy<Value = Option<String>> {
+    prop::option::of(0u8..3).prop_map(|n| n.map(|n| format!("edited{n}")))
+}
+
+/// A constraint's two ends: mostly a valid interval of small integers or a half-line, rarely an empty interval or
+/// NaN.
+fn constraint_ends() -> impl Strategy<Value = (f64, f64)> {
+    prop_oneof![
+        6 => (-4i32..=4, 0i32..=6, 0u8..3).prop_map(|(lower, width, shape)| {
+            let (lower, upper) = (f64::from(lower), f64::from(lower + width));
+            match shape {
+                0 => (lower, upper),
+                1 => (f64::NEG_INFINITY, upper),
+                _ => (lower, f64::INFINITY),
+            }
+        }),
+        1 => (1i32..=3).prop_map(|gap| (f64::from(gap), 0.0)),
+        1 => Just((f64::NAN, 1.0)),
+    ]
+}
+
+/// Terms naming columns below `cols`.
+fn edit_terms(cols: usize) -> impl Strategy<Value = Vec<(Col, f64)>> {
+    prop::collection::vec(((0..cols).prop_map(Col::new), edit_number()), 0..=3)
+}
+
+/// A new row whose terms name columns below `cols`: a constraint with a constant, named or not, or a program row.
+fn new_row(cols: usize) -> impl Strategy<Value = NewRow> {
+    let constraint = (edit_terms(cols), edit_number(), constraint_ends(), edit_name()).prop_map(
+        |(terms, constant, (lower, upper), name)| NewRow::Constraint {
+            constraint: Constraint {
+                expr: LinExpr {
+                    terms: terms
+                        .into_iter()
+                        .map(|(col, coefficient)| Term { col, coefficient })
+                        .collect(),
+                    constant,
+                },
+                lower,
+                upper,
+            },
+            name,
+        },
+    );
+    let row = (edit_terms(cols), edit_bounds(), edit_name())
+        .prop_map(|(terms, bounds, name)| NewRow::Row(ProgramRow { bounds, terms, name }));
+    prop_oneof![2 => constraint, 1 => row]
+}
+
+/// A new column whose entries name rows below `rows`.
+fn new_col(rows: usize) -> impl Strategy<Value = NewCol> {
+    let entries = prop::collection::vec(((0..rows).prop_map(Row::new), edit_number()), 0..=3);
+    (edit_number(), edit_bounds(), edit_integrality(), edit_name(), entries).prop_map(
+        |(cost, bounds, integrality, name, entries)| NewCol {
+            column: ProgramColumn {
+                cost,
+                bounds,
+                integrality,
+                name,
+            },
+            entries,
+        },
+    )
+}
+
+/// One edit whose ids lie below `cols + 2` columns and `rows + 2` rows, so some name nothing.
+fn edit_op(cols: usize, rows: usize) -> impl Strategy<Value = EditOp> {
+    let (cols, rows) = (cols + 2, rows + 2);
+    let col = move || (0..cols).prop_map(Col::new);
+    let row = move || (0..rows).prop_map(Row::new);
+    prop_oneof![
+        prop::collection::vec((col(), edit_bounds()), 0..=3).prop_map(EditOp::ColBounds),
+        prop::collection::vec((col(), edit_number()), 0..=3).prop_map(EditOp::ColCosts),
+        prop::collection::vec((col(), edit_integrality()), 0..=3).prop_map(EditOp::ColIntegrality),
+        prop::collection::vec((row(), edit_bounds()), 0..=3).prop_map(EditOp::RowBounds),
+        prop::collection::vec(new_row(cols), 0..=2).prop_map(EditOp::AddRows),
+        prop::collection::vec(new_col(rows), 0..=2).prop_map(EditOp::AddCols),
+    ]
+}
+
+/// One to five edits of `program`: ids below its counts plus two, numbers mostly small integers and rarely NaN or
+/// infinite, bounds valid but not always for a semi column, integrality of every kind, rows and columns of every
+/// shape. Many are refused; every refusal is one the edit rules state.
+pub fn edits(program: &Program) -> impl Strategy<Value = Vec<EditOp>> + use<> {
+    prop::collection::vec(edit_op(program.num_cols(), program.num_rows()), 1..=5)
+}
+
+/// Programs from `programs`, each with edits of it from [`edits`].
+pub fn with_edits(programs: impl Strategy<Value = Program>) -> impl Strategy<Value = (Program, Vec<EditOp>)> {
+    programs.prop_flat_map(|program| {
+        let ops = edits(&program);
+        (Just(program), ops)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use culmen_core::{ModelClasses, ProgramFeatures};
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+
+    use super::*;
+    use crate::reference::edit_plan;
+
+    #[test]
+    fn test_edits_of_every_kind_are_both_accepted_and_refused() {
+        let mut runner = TestRunner::deterministic();
+        let strategy = with_edits(prop_oneof![small_lp(), small_semi(), small_qp()]);
+        let (mut accepted, mut refused) = ([0usize; 6], [0usize; 6]);
+        for _ in 0..2000 {
+            let (program, ops) = strategy.new_tree(&mut runner).unwrap().current();
+            for op in &ops {
+                let kind = match op {
+                    EditOp::ColBounds(_) => 0,
+                    EditOp::ColCosts(_) => 1,
+                    EditOp::ColIntegrality(_) => 2,
+                    EditOp::RowBounds(_) => 3,
+                    EditOp::AddRows(_) => 4,
+                    EditOp::AddCols(_) => 5,
+                };
+                match edit_plan(&program, op, ModelClasses::ALL, ProgramFeatures::ALL) {
+                    Ok(_) => accepted[kind] += 1,
+                    Err(_) => refused[kind] += 1,
+                }
+            }
+        }
+        assert!(accepted.iter().all(|&n| n >= 100), "accepted {accepted:?}");
+        assert!(refused.iter().all(|&n| n >= 50), "refused {refused:?}");
     }
 }
