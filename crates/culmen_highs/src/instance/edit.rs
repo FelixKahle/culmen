@@ -19,13 +19,19 @@ impl Instance {
     /// # Errors
     ///
     /// [`HighsError::Edit`] when HiGHS refuses the change.
+    ///
+    /// # Panics
+    ///
+    /// When `cols` names a column `program` lacks.
     pub(crate) fn change_col_bounds(&mut self, program: &Program, cols: &[Col]) -> Result<(), HighsError> {
         let set = indices(cols, Dimension::Columns)?;
         let (lower, upper) = ends(cols.iter().map(|&col| program.columns()[col].bounds));
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(self.holds(cols), "Instance: a column HiGHS's model lacks");
-        // SAFETY: the instance is live and borrowed exclusively. `set`, `lower` and `upper` hold `set.count` values
-        // each, every index a column of the model; HiGHS reads them during the call.
+        // SAFETY: the instance is live and borrowed exclusively. `set.indices`, `lower` and `upper` each hold exactly
+        // `set.count` values, a count `indices` converted to `HighsInt` without loss, and HiGHS reads that many from
+        // each. HiGHS checks every index against its model's columns before it uses one, and refuses the call
+        // otherwise; it reads the arrays during the call only.
         let status = unsafe {
             Highs_changeColsBoundsBySet(
                 self.raw(),
@@ -43,13 +49,19 @@ impl Instance {
     /// # Errors
     ///
     /// [`HighsError::Edit`] when HiGHS refuses the change.
+    ///
+    /// # Panics
+    ///
+    /// When `cols` names a column `program` lacks.
     pub(crate) fn change_col_costs(&mut self, program: &Program, cols: &[Col]) -> Result<(), HighsError> {
         let set = indices(cols, Dimension::Columns)?;
         let costs: Vec<f64> = cols.iter().map(|&col| program.columns()[col].cost).collect();
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(self.holds(cols), "Instance: a column HiGHS's model lacks");
-        // SAFETY: the instance is live and borrowed exclusively. `set` and `costs` hold `set.count` values each, every
-        // index a column of the model; HiGHS reads them during the call.
+        // SAFETY: the instance is live and borrowed exclusively. `set.indices` and `costs` each hold exactly
+        // `set.count` values, a count `indices` converted to `HighsInt` without loss, and HiGHS reads that many from
+        // each. HiGHS checks every index against its model's columns before it uses one, and refuses the call
+        // otherwise; it reads the arrays during the call only.
         let status = unsafe { Highs_changeColsCostBySet(self.raw(), set.count, set.indices.as_ptr(), costs.as_ptr()) };
         edited(status, "Highs_changeColsCostBySet")
     }
@@ -59,6 +71,10 @@ impl Instance {
     /// # Errors
     ///
     /// [`HighsError::Edit`] when HiGHS refuses the change.
+    ///
+    /// # Panics
+    ///
+    /// When `cols` names a column `program` lacks.
     pub(crate) fn change_col_integrality(&mut self, program: &Program, cols: &[Col]) -> Result<(), HighsError> {
         let set = indices(cols, Dimension::Columns)?;
         let types: Vec<HighsInt> = cols
@@ -67,8 +83,10 @@ impl Instance {
             .collect();
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(self.holds(cols), "Instance: a column HiGHS's model lacks");
-        // SAFETY: the instance is live and borrowed exclusively. `set` and `types` hold `set.count` values each, every
-        // index a column of the model and every type a HiGHS variable type; HiGHS reads them during the call.
+        // SAFETY: the instance is live and borrowed exclusively. `set.indices` and `types` each hold exactly
+        // `set.count` values, a count `indices` converted to `HighsInt` without loss, and HiGHS reads that many from
+        // each. HiGHS checks every index against its model's columns before it uses one, and refuses the call
+        // otherwise; every type is one `var_type` gives. It reads the arrays during the call only.
         let status =
             unsafe { Highs_changeColsIntegralityBySet(self.raw(), set.count, set.indices.as_ptr(), types.as_ptr()) };
         edited(status, "Highs_changeColsIntegralityBySet")
@@ -79,6 +97,10 @@ impl Instance {
     /// # Errors
     ///
     /// [`HighsError::Edit`] when HiGHS refuses the change.
+    ///
+    /// # Panics
+    ///
+    /// When `rows` names a row `program` lacks.
     pub(crate) fn change_row_bounds(&mut self, program: &Program, rows: &[Row]) -> Result<(), HighsError> {
         let set = indices(rows, Dimension::Rows)?;
         let (lower, upper) = ends(rows.iter().map(|&row| program.row_bounds()[row]));
@@ -87,8 +109,10 @@ impl Instance {
             rows.iter().all(|row| row.index() < self.num_row()),
             "Instance: a row HiGHS's model lacks"
         );
-        // SAFETY: the instance is live and borrowed exclusively. `set`, `lower` and `upper` hold `set.count` values
-        // each, every index a row of the model; HiGHS reads them during the call.
+        // SAFETY: the instance is live and borrowed exclusively. `set.indices`, `lower` and `upper` each hold exactly
+        // `set.count` values, a count `indices` converted to `HighsInt` without loss, and HiGHS reads that many from
+        // each. HiGHS checks every index against its model's rows before it uses one, and refuses the call
+        // otherwise; it reads the arrays during the call only.
         let status = unsafe {
             Highs_changeRowsBoundsBySet(
                 self.raw(),
@@ -108,7 +132,11 @@ impl Instance {
     ///
     /// [`HighsError::TooLarge`] when `program` exceeds HiGHS's 32-bit indices, [`HighsError::Edit`] when HiGHS
     /// refuses the rows.
-    pub(crate) fn add_rows(&mut self, program: &Program, rows: Rows) -> Result<(), HighsError> {
+    ///
+    /// # Panics
+    ///
+    /// When `rows` are not the last rows of `program`.
+    pub(crate) fn add_rows(&mut self, program: &Program, rows: &Rows) -> Result<(), HighsError> {
         let new = NewRows::of(program, rows)?;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
@@ -116,9 +144,11 @@ impl Instance {
             "Instance: HiGHS's model is not the program before its new rows"
         );
         debug_assert!(new.agrees(), "Instance: the new rows' arrays disagree");
-        // SAFETY: the instance is live and borrowed exclusively. The bounds and starts hold `new.count` values each,
-        // the columns and values `new.entries`, every start at most `new.entries` and every column one of the model;
-        // HiGHS copies them before returning.
+        // SAFETY: the instance is live and borrowed exclusively. `lower`, `upper` and `starts` each hold exactly
+        // `new.count` values and `lines` and `values` exactly `new.entries`, both counts converted to `HighsInt`
+        // without loss (`NewRows::agrees`); HiGHS reads that many from each. It checks the starts and every column
+        // index against its model before it stores an entry, and refuses the call otherwise; it copies the arrays
+        // before returning.
         let status = unsafe {
             Highs_addRows(
                 self.raw(),
@@ -141,7 +171,11 @@ impl Instance {
     ///
     /// [`HighsError::TooLarge`] when `program` exceeds HiGHS's 32-bit indices, [`HighsError::Edit`] when HiGHS
     /// refuses the columns or their integrality.
-    pub(crate) fn add_cols(&mut self, program: &Program, cols: Cols) -> Result<(), HighsError> {
+    ///
+    /// # Panics
+    ///
+    /// When `cols` are not the last columns of `program`.
+    pub(crate) fn add_cols(&mut self, program: &Program, cols: &Cols) -> Result<(), HighsError> {
         let new = NewCols::of(program, cols)?;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
@@ -149,9 +183,11 @@ impl Instance {
             "Instance: HiGHS's model is not the program before its new columns"
         );
         debug_assert!(new.agrees(), "Instance: the new columns' arrays disagree");
-        // SAFETY: the instance is live and borrowed exclusively. The costs, bounds and starts hold `new.count` values
-        // each, the rows and values `new.entries`, every start at most `new.entries` and every row one of the model;
-        // HiGHS copies them before returning.
+        // SAFETY: the instance is live and borrowed exclusively. `costs`, `lower`, `upper` and `starts` each hold
+        // exactly `new.count` values and `lines` and `values` exactly `new.entries`, both counts converted to
+        // `HighsInt` without loss (`NewCols::agrees`); HiGHS reads that many from each. It checks the starts and every
+        // row index against its model when it assesses the matrix, and refuses the call otherwise; it copies the
+        // arrays before returning.
         let status = unsafe {
             Highs_addCols(
                 self.raw(),
@@ -183,8 +219,10 @@ impl Instance {
             usize::try_from(new.last).is_ok_and(|last| last < self.num_col()) && new.first <= new.last,
             "Instance: the new columns are not the model's last"
         );
-        // SAFETY: the instance is live and borrowed exclusively. `new.first ..= new.last` are columns of the model, and
-        // `types` holds one HiGHS variable type for each; HiGHS reads them during the call.
+        // SAFETY: the instance is live and borrowed exclusively. `types` holds exactly `new.last - new.first + 1`
+        // values, one per new column (`NewCols::agrees`), which is what HiGHS reads for the range. HiGHS checks the
+        // range against its model's columns before it reads, and refuses the call otherwise; it reads `types` during
+        // the call only.
         let status = unsafe { Highs_changeColsIntegralityByRange(self.raw(), new.first, new.last, new.types.as_ptr()) };
         edited(status, "Highs_changeColsIntegralityByRange")
     }
@@ -227,10 +265,10 @@ fn ends(bounds: impl Iterator<Item = Bounds>) -> (Vec<f64>, Vec<f64>) {
 ///
 /// # Errors
 ///
-/// [`HighsError::Edit`] naming `call` when HiGHS reports an error.
+/// [`HighsError::Edit`] naming `call` when HiGHS reports an error; the C API returns no message with it.
 fn edited(status: HighsInt, call: &'static str) -> Result<(), HighsError> {
     match CallStatus::from_raw(status) {
-        CallStatus::Error => Err(HighsError::Edit { call }),
+        CallStatus::Error => Err(HighsError::Edit { call, message: None }),
         CallStatus::Ok | CallStatus::Warning => Ok(()),
     }
 }
@@ -252,13 +290,17 @@ impl NewRows {
     /// # Errors
     ///
     /// [`HighsError::TooLarge`] when the program's rows or entries exceed HiGHS's 32-bit indices.
-    fn of(program: &Program, rows: Rows) -> Result<Self, HighsError> {
+    ///
+    /// # Panics
+    ///
+    /// When `rows` are not the last rows of `program`.
+    fn of(program: &Program, rows: &Rows) -> Result<Self, HighsError> {
         index(program.num_rows(), Dimension::Rows)?;
         index(program.num_entries(), Dimension::Entries)?;
         let first = program.num_rows() - rows.len();
         let matrix = program.matrix();
         let base = matrix.starts[first];
-        let (lower, upper) = ends(rows.map(|row| program.row_bounds()[row]));
+        let (lower, upper) = ends(rows.clone().map(|row| program.row_bounds()[row]));
         Ok(Self {
             count: index(lower.len(), Dimension::Rows)?,
             entries: index(matrix.values.len() - base, Dimension::Entries)?,
@@ -306,7 +348,11 @@ impl NewCols {
     /// # Errors
     ///
     /// [`HighsError::TooLarge`] when the program's columns or entries exceed HiGHS's 32-bit indices.
-    fn of(program: &Program, cols: Cols) -> Result<Self, HighsError> {
+    ///
+    /// # Panics
+    ///
+    /// When `cols` are not the last columns of `program`.
+    fn of(program: &Program, cols: &Cols) -> Result<Self, HighsError> {
         index(program.num_cols(), Dimension::Columns)?;
         index(program.num_entries(), Dimension::Entries)?;
         let first = program.num_cols() - cols.len();
@@ -368,6 +414,10 @@ fn new_entries(program: &Program, first: Col) -> Vec<(Col, Row, f64)> {
 /// # Errors
 ///
 /// [`HighsError::TooLarge`] when a position exceeds HiGHS's 32-bit indices.
+///
+/// # Panics
+///
+/// When a position is below `base`.
 fn positions(starts: &[usize], base: usize) -> Result<Vec<HighsInt>, HighsError> {
     starts
         .iter()

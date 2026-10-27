@@ -259,6 +259,11 @@ impl Highs {
     /// [`HighsError::SemiUpper`] for a semi column above [`Highs::SEMI_UPPER_LIMIT`], [`HighsError::TooLarge`] when
     /// the program exceeds HiGHS's 32-bit indices, [`HighsError::Edit`] when HiGHS refuses a call; HiGHS may then
     /// hold any model.
+    ///
+    /// # Panics
+    ///
+    /// When `edit` names an id `program` lacks, or rows or columns that are not its last: when `program` is not the
+    /// model HiGHS holds changed as `edit` names.
     fn apply(&mut self, program: &Program, edit: &Edit) -> Result<(), HighsError> {
         match edit {
             Edit::ColBounds { cols, .. } => {
@@ -275,11 +280,11 @@ impl Highs {
             }
             Edit::RowBounds { rows, .. } => self.instance.change_row_bounds(program, rows),
             Edit::NewRows { rows, .. } if self.instance.num_row() + rows.len() == program.num_rows() => {
-                self.instance.add_rows(program, rows.clone())
+                self.instance.add_rows(program, rows)
             }
             Edit::NewCols { cols, .. } => {
                 check_semi_upper(program)?;
-                self.instance.add_cols(program, cols.clone())?;
+                self.instance.add_cols(program, cols)?;
                 self.pass_further_objectives(program)
             }
             _ => self.load(program),
@@ -297,8 +302,9 @@ impl Highs {
             return Ok(());
         }
         self.instance.pass_objectives(program).map_err(|error| match error {
-            HighsError::Load { .. } => HighsError::Edit {
+            HighsError::Load { message } => HighsError::Edit {
                 call: "Highs_passLinearObjectives",
+                message,
             },
             other => other,
         })
@@ -652,6 +658,11 @@ impl Backend for Highs {
     /// Changes HiGHS's model in place, so the next run starts from the basis of the last: bounds, costs and
     /// integrality through HiGHS's `BySet` calls, new rows and columns through `Highs_addRows` and `Highs_addCols`.
     /// Rows added to a QP without rows, and any edit this version does not know, load the program whole.
+    ///
+    /// # Panics
+    ///
+    /// When `program` is not the loaded program changed as `edit` names, which a [`Solver`](culmen_core::Solver)
+    /// never hands it.
     fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), HighsError> {
         self.loaded = None;
         self.apply(program, edit)?;
