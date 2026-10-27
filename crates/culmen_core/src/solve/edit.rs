@@ -7,35 +7,57 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-
-use super::{Backend, Lack, Solver, lack};
-use crate::program::{BadTerm, ColumnEntries, bad_term, merge_terms, semi_bounds};
+use super::{Backend, Solver, lack};
+use crate::program::{BadColumn, BadTerm, bad_column, bad_term, merge_terms};
 use crate::{
-    Bounds, Col, Cols, Constraint, Integrality, InvalidBounds, ModelClass, ModelClasses, Program, ProgramColumn,
-    ProgramFeature, ProgramFeatures, ProgramRow, Row, Rows,
+    Bounds, Col, Cols, Constraint, Integrality, InvalidBounds, ModelClass, ModelClasses, NewCol, Program,
+    ProgramColumn, ProgramFeature, ProgramFeatures, ProgramRow, Row, Rows,
 };
 
 /// What one edit changed in a [`Solver`]'s program; the new values are read from the program.
 ///
-/// Every slice is sorted ascending and holds each id once; new rows and columns follow every one before them.
-/// [`Backend::edit`] receives it beside the edited program.
+/// Only a [`Solver`] makes one, so its ids are the edited program's, sorted ascending, each once, and new rows and
+/// columns follow every one before them. [`Backend::edit`] receives it beside the edited program and matches it as
+/// `Edit::ColBounds { cols, .. }`; every variant is non-exhaustive, so a later version may add to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Edit<'a> {
-    /// The bounds of these columns.
-    ColBounds(&'a [Col]),
-    /// The costs of these columns in the program's own objective.
-    ColCosts(&'a [Col]),
-    /// The integrality of these columns.
-    ColIntegrality(&'a [Col]),
-    /// The bounds of these rows.
-    RowBounds(&'a [Row]),
-    /// These rows, appended.
-    NewRows(Rows),
-    /// These columns, appended with their entries in the rows before them.
-    NewCols(Cols),
+pub enum Edit {
+    /// The bounds of these columns changed.
+    #[non_exhaustive]
+    ColBounds {
+        /// The columns, ascending, each once.
+        cols: Vec<Col>,
+    },
+    /// The costs of these columns in the program's own objective changed.
+    #[non_exhaustive]
+    ColCosts {
+        /// The columns, ascending, each once.
+        cols: Vec<Col>,
+    },
+    /// The integrality of these columns changed.
+    #[non_exhaustive]
+    ColIntegrality {
+        /// The columns, ascending, each once.
+        cols: Vec<Col>,
+    },
+    /// The bounds of these rows changed.
+    #[non_exhaustive]
+    RowBounds {
+        /// The rows, ascending, each once.
+        rows: Vec<Row>,
+    },
+    /// These rows were appended.
+    #[non_exhaustive]
+    NewRows {
+        /// The rows, the program's last.
+        rows: Rows,
+    },
+    /// These columns were appended, with their entries in the rows before them.
+    #[non_exhaustive]
+    NewCols {
+        /// The columns, the program's last.
+        cols: Cols,
+    },
 }
 
 /// A row to append to a [`Solver`]'s program: a model constraint, named or not, or a program row.
@@ -87,42 +109,12 @@ impl From<ProgramRow> for NewRow {
     }
 }
 
-/// A column to append to a [`Solver`]'s program: its data and its coefficients in rows the program already has.
+/// Why a [`Solver`] refused an edit.
 ///
-/// Its coefficient in every further objective is zero, and it has no quadratic term.
-///
-/// ```
-/// use culmen_core::{Bounds, NewCol, ProgramColumn, Row};
-///
-/// let pattern = NewCol {
-///     column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE),
-///     entries: vec![(Row::new(0), 2.0), (Row::new(2), 1.0)],
-/// };
-/// assert_eq!(NewCol::from(pattern.column.clone()).entries, []);
-/// ```
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct NewCol {
-    /// The column's cost in the program's own objective, its bounds, integrality and name.
-    pub column: ProgramColumn,
-    /// Its coefficients as `(row, coefficient)`; a row may repeat and its coefficients add up; empty for a column in
-    /// no row.
-    pub entries: Vec<(Row, f64)>,
-}
-
-/// A column in no row.
-impl From<ProgramColumn> for NewCol {
-    fn from(column: ProgramColumn) -> Self {
-        Self {
-            column,
-            entries: Vec::new(),
-        }
-    }
-}
-
-/// Why a [`Solver`] refused an edit; the program and the backend are as they were before it.
-///
-/// The id of a new row or column in an error is the id it would have had.
+/// After every refusal [`Solver::program`] is the program before the edit. The backend holds it too, except after
+/// [`EditError::Backend`] when the backend refused the edit and then the program loaded into it again, or refused a
+/// load still pending from such a failure: the solver then loads the program again before the next call that runs
+/// the backend. The id of a new row or column in an error is the id it would have had.
 ///
 /// ```
 /// use culmen_core::{Col, EditError};
@@ -187,7 +179,8 @@ pub enum EditError<E> {
         /// The features the backend takes.
         supported: ProgramFeatures,
     },
-    /// The backend refused the edit.
+    /// The backend refused the edit, or the program the solver loaded into it first, after an earlier edit the
+    /// backend refused and whose reload failed.
     Backend(E),
 }
 
@@ -236,9 +229,9 @@ impl<E: core::error::Error + 'static> core::error::Error for EditError<E> {
 }
 
 /// Edits of the loaded program. Each call is one edit, all or none: when it returns `Ok`, [`Solver::program`] is
-/// the edited program and the backend holds it; when it returns `Err`, both are as they were before it. Ids never
-/// change meaning: an edit appends rows and columns after every one before, and nothing is deleted. To switch a row
-/// off, free its bounds; to take a column out, fix it at zero.
+/// the edited program and the backend holds it; when it returns `Err`, the program is as it was before it (see
+/// [`EditError`] for the backend). Ids never change meaning: an edit appends rows and columns after every one before,
+/// and nothing is deleted. To switch a row off, free its bounds; to take a column out, fix it at zero.
 impl<B: Backend> Solver<B> {
     /// Sets the bounds of columns, all or none, the last bounds given for a column holding.
     ///
@@ -246,7 +239,7 @@ impl<B: Backend> Solver<B> {
     ///
     /// [`EditError::UnknownCol`] for a column the program does not have, [`EditError::SemiBounds`] for a semi column
     /// given bounds it may not have, both before the backend sees the edit; [`EditError::Backend`] when the backend
-    /// refuses it.
+    /// refuses it, or refuses the program the solver loads first after an earlier failed edit.
     pub fn set_col_bounds<T: Into<Bounds>>(
         &mut self,
         bounds: impl IntoIterator<Item = (Col, T)>,
@@ -260,7 +253,8 @@ impl<B: Backend> Solver<B> {
     /// # Errors
     ///
     /// [`EditError::UnknownCol`] for a column the program does not have, [`EditError::NonFiniteCost`] for a cost that
-    /// is NaN or infinite, both before the backend sees the edit; [`EditError::Backend`] when the backend refuses it.
+    /// is NaN or infinite, both before the backend sees the edit; [`EditError::Backend`] when the backend refuses it,
+    /// or refuses the program the solver loads first after an earlier failed edit.
     pub fn set_col_costs<T: Into<f64>>(
         &mut self,
         costs: impl IntoIterator<Item = (Col, T)>,
@@ -275,7 +269,8 @@ impl<B: Backend> Solver<B> {
     /// [`EditError::UnknownCol`] for a column the program does not have, [`EditError::SemiBounds`] for a column made
     /// semi whose bounds a semi column may not have, [`EditError::Unsupported`] or [`EditError::UnsupportedFeature`]
     /// when the backend does not solve the class or take a feature the edited program would have, all before the
-    /// backend sees the edit; [`EditError::Backend`] when the backend refuses it.
+    /// backend sees the edit; [`EditError::Backend`] when the backend refuses it, or refuses the program the solver
+    /// loads first after an earlier failed edit.
     pub fn set_col_integrality(
         &mut self,
         integrality: impl IntoIterator<Item = (Col, Integrality)>,
@@ -289,7 +284,8 @@ impl<B: Backend> Solver<B> {
     /// # Errors
     ///
     /// [`EditError::UnknownRow`] for a row the program does not have, before the backend sees the edit;
-    /// [`EditError::Backend`] when the backend refuses it.
+    /// [`EditError::Backend`] when the backend refuses it, or refuses the program the solver loads first after an
+    /// earlier failed edit.
     pub fn set_row_bounds<T: Into<Bounds>>(
         &mut self,
         bounds: impl IntoIterator<Item = (Row, T)>,
@@ -304,7 +300,7 @@ impl<B: Backend> Solver<B> {
     /// As [`Solver::add_rows`].
     pub fn add_row(&mut self, row: impl Into<NewRow>) -> Result<Row, EditError<B::Error>> {
         let new = Row::new(self.program.num_rows());
-        self.add_rows([row.into()]).map(|_| new)
+        self.append_rows(vec![row.into()]).map(|_| new)
     }
 
     /// Appends rows, all or none, and returns them in order after every row before.
@@ -314,7 +310,8 @@ impl<B: Backend> Solver<B> {
     /// [`EditError::UnknownCol`] for a term naming a column the program does not have,
     /// [`EditError::NonFiniteCoefficient`] for a coefficient that is NaN or infinite as given or added up,
     /// [`EditError::RowBounds`] for a constraint whose bounds are invalid once its constant moved into them, all
-    /// before the backend sees the edit; [`EditError::Backend`] when the backend refuses it.
+    /// before the backend sees the edit; [`EditError::Backend`] when the backend refuses it, or refuses the program
+    /// the solver loads first after an earlier failed edit.
     pub fn add_rows<R: Into<NewRow>>(
         &mut self,
         rows: impl IntoIterator<Item = R>,
@@ -329,7 +326,7 @@ impl<B: Backend> Solver<B> {
     /// As [`Solver::add_cols`].
     pub fn add_col(&mut self, column: impl Into<NewCol>) -> Result<Col, EditError<B::Error>> {
         let new = Col::new(self.program.num_cols());
-        self.add_cols([column.into()]).map(|_| new)
+        self.append_cols(vec![column.into()]).map(|_| new)
     }
 
     /// Appends columns, all or none, and returns them in order after every column before.
@@ -341,7 +338,8 @@ impl<B: Backend> Solver<B> {
     /// infinite as given or added up, [`EditError::SemiBounds`] for a semi column whose bounds a semi column may not
     /// have, [`EditError::Unsupported`] or [`EditError::UnsupportedFeature`] when the backend does not solve the
     /// class or take a feature the edited program would have, all before the backend sees the edit;
-    /// [`EditError::Backend`] when the backend refuses it.
+    /// [`EditError::Backend`] when the backend refuses it, or refuses the program the solver loads first after an
+    /// earlier failed edit.
     pub fn add_cols<C: Into<NewCol>>(
         &mut self,
         columns: impl IntoIterator<Item = C>,
@@ -360,19 +358,11 @@ impl<B: Backend> Solver<B> {
     fn apply_col_bounds(&mut self, bounds: BTreeMap<Col, Bounds>) -> Result<(), EditError<B::Error>> {
         self.sync().map_err(EditError::Backend)?;
         known_cols(&bounds, self.program.num_cols())?;
-        let columns = self.program.columns();
-        let semi = bounds
-            .iter()
-            .find(|&(&col, &bounds)| columns[col].integrality.is_semi() && !semi_bounds(bounds));
-        if let Some((&col, &bounds)) = semi {
-            return Err(EditError::SemiBounds { col, bounds });
-        }
-        self.set(
-            bounds,
-            Program::replace_col_bounds,
-            |ids| Edit::ColBounds(ids),
-            Undo::ColBounds,
-        )
+        check_edited(&self.program, &bounds, |c, bounds| {
+            bad_column(c.cost, bounds, c.integrality)
+        })?;
+        let edit = |cols| Edit::ColBounds { cols };
+        self.set(bounds, Program::replace_col_bounds, edit, Undo::ColBounds)
     }
 
     /// [`Solver::set_col_costs`] with each column once.
@@ -383,15 +373,11 @@ impl<B: Backend> Solver<B> {
     fn apply_col_costs(&mut self, costs: BTreeMap<Col, f64>) -> Result<(), EditError<B::Error>> {
         self.sync().map_err(EditError::Backend)?;
         known_cols(&costs, self.program.num_cols())?;
-        if let Some((&col, &value)) = costs.iter().find(|(_, cost)| !cost.is_finite()) {
-            return Err(EditError::NonFiniteCost { col, value });
-        }
-        self.set(
-            costs,
-            Program::replace_col_cost,
-            |ids| Edit::ColCosts(ids),
-            Undo::ColCosts,
-        )
+        check_edited(&self.program, &costs, |c, cost| {
+            bad_column(cost, c.bounds, c.integrality)
+        })?;
+        let edit = |cols| Edit::ColCosts { cols };
+        self.set(costs, Program::replace_col_cost, edit, Undo::ColCosts)
     }
 
     /// [`Solver::set_col_integrality`] with each column once.
@@ -402,24 +388,20 @@ impl<B: Backend> Solver<B> {
     fn apply_col_integrality(&mut self, integrality: BTreeMap<Col, Integrality>) -> Result<(), EditError<B::Error>> {
         self.sync().map_err(EditError::Backend)?;
         known_cols(&integrality, self.program.num_cols())?;
-        let columns = self.program.columns();
-        let semi = integrality
-            .iter()
-            .find(|&(&col, integrality)| integrality.is_semi() && !semi_bounds(columns[col].bounds));
-        if let Some((&col, _)) = semi {
-            return Err(EditError::SemiBounds {
-                col,
-                bounds: columns[col].bounds,
-            });
-        }
-        let edited = columns
+        check_edited(&self.program, &integrality, |c, integrality| {
+            bad_column(c.cost, c.bounds, integrality)
+        })?;
+        let edited = self
+            .program
+            .columns()
             .iter_enumerated()
             .map(|(col, c)| integrality.get(&col).copied().unwrap_or(c.integrality));
         self.supports(edited)?;
+        let edit = |cols| Edit::ColIntegrality { cols };
         self.set(
             integrality,
             Program::replace_col_integrality,
-            |ids| Edit::ColIntegrality(ids),
+            edit,
             Undo::ColIntegrality,
         )
     }
@@ -434,12 +416,8 @@ impl<B: Backend> Solver<B> {
         if let Some((&row, _)) = bounds.range(Row::new(self.program.num_rows())..).next() {
             return Err(EditError::UnknownRow { row });
         }
-        self.set(
-            bounds,
-            Program::replace_row_bounds,
-            |ids| Edit::RowBounds(ids),
-            Undo::RowBounds,
-        )
+        let edit = |rows| Edit::RowBounds { rows };
+        self.set(bounds, Program::replace_row_bounds, edit, Undo::RowBounds)
     }
 
     /// [`Solver::add_rows`] of rows as given.
@@ -455,12 +433,15 @@ impl<B: Backend> Solver<B> {
             .zip(num_rows..)
             .map(|(new, row)| new.checked(Row::new(row), num_cols))
             .collect::<Result<Vec<_>, _>>()?;
-        let added = self.program.push_rows(rows);
+        let added = Rows::range(num_rows, num_rows + rows.len());
         let undo = Undo::Appended {
             cols: num_cols,
             rows: num_rows,
         };
-        self.commit(Edit::NewRows(added.clone()), undo)?;
+        self.commit(Edit::NewRows { rows: added.clone() }, |program| {
+            program.push_rows(rows);
+            undo
+        })?;
         Ok(added)
     }
 
@@ -478,18 +459,21 @@ impl<B: Backend> Solver<B> {
             .map(|(new, col)| new.checked(Col::new(col), num_rows))
             .collect::<Result<Vec<_>, _>>()?;
         let old = self.program.columns().iter().map(|c| c.integrality);
-        self.supports(old.chain(columns.iter().map(|(c, _)| c.integrality)))?;
-        let added = self.program.push_cols(columns);
+        self.supports(old.chain(columns.iter().map(|new| new.column.integrality)))?;
+        let added = Cols::range(num_cols, num_cols + columns.len());
         let undo = Undo::Appended {
             cols: num_cols,
             rows: num_rows,
         };
-        self.commit(Edit::NewCols(added.clone()), undo)?;
+        self.commit(Edit::NewCols { cols: added.clone() }, |program| {
+            program.push_cols(columns);
+            undo
+        })?;
         Ok(added)
     }
 
-    /// Writes each value of `given` with `replace`, then has the backend apply `edit` of the ids written, as
-    /// [`Solver::commit`] does.
+    /// Writes each value of `given` with `replace` as one edit, which `edit` names by the ids written, through
+    /// [`Solver::commit`].
     ///
     /// # Errors
     ///
@@ -497,35 +481,48 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Panics
     ///
-    /// When `replace` panics for an id of `given`; the callers checked every id.
+    /// When `replace` panics for an id of `given`, as it does for an id the program lacks; the callers checked every
+    /// id.
     fn set<I: Copy + Ord, V>(
         &mut self,
         given: BTreeMap<I, V>,
         replace: fn(&mut Program, I, V) -> V,
-        edit: for<'a> fn(&'a [I]) -> Edit<'a>,
+        edit: fn(Vec<I>) -> Edit,
         undo: fn(Vec<(I, V)>) -> Undo,
     ) -> Result<(), EditError<B::Error>> {
-        let ids: Vec<I> = given.keys().copied().collect();
-        let old = given
-            .into_iter()
-            .map(|(id, value)| (id, replace(&mut self.program, id, value)))
-            .collect();
-        self.commit(edit(&ids), undo(old))
+        let ids = given.keys().copied().collect();
+        self.commit(edit(ids), |program| {
+            undo(
+                given
+                    .into_iter()
+                    .map(|(id, value)| (id, replace(program, id, value)))
+                    .collect(),
+            )
+        })
     }
 
-    /// Has the backend apply `edit`, which the program already shows, unless it names nothing; when the backend
-    /// refuses it, undoes it with `undo` and loads the program before it into the backend again.
+    /// Unless `edit` names nothing, applies `change` to the program, which then shows `edit`, and has the backend
+    /// apply `edit`; when the backend refuses it, undoes `change` with the [`Undo`] it returned and loads the program
+    /// before it into the backend again.
+    ///
+    /// The backend counts as behind the program before `change` runs, so a panic in `change`, the backend or the
+    /// undo leaves the solver to load its program before the next call that runs the backend.
     ///
     /// # Errors
     ///
     /// [`EditError::Backend`] when the backend refuses the edit, the program then as before it.
-    fn commit(&mut self, edit: Edit<'_>, undo: Undo) -> Result<(), EditError<B::Error>> {
+    ///
+    /// # Panics
+    ///
+    /// When `change`, the backend or the undo panics.
+    fn commit(&mut self, edit: Edit, change: impl FnOnce(&mut Program) -> Undo) -> Result<(), EditError<B::Error>> {
         if edit.is_empty() {
             return Ok(());
         }
         self.synced = false;
         self.ended = None;
-        match self.backend.edit(&self.program, edit) {
+        let undo = change(&mut self.program);
+        match self.backend.edit(&self.program, &edit) {
             Ok(()) => {
                 self.synced = true;
                 Ok(())
@@ -538,36 +535,26 @@ impl<B: Backend> Solver<B> {
         }
     }
 
-    /// Checks that the backend solves the class and takes the features the program would have with its columns'
-    /// integralities `integralities`, one per column, new columns included.
+    /// Checks that the backend solves the class and takes the features the program would have with columns of
+    /// these integralities, as many as it would have.
     ///
     /// # Errors
     ///
     /// [`EditError::Unsupported`] or [`EditError::UnsupportedFeature`].
     fn supports(&self, integralities: impl Iterator<Item = Integrality> + Clone) -> Result<(), EditError<B::Error>> {
         let class = self.program.class_with(integralities.clone());
-        match lack::<B>(class, self.program.features_with(integralities)) {
-            Some(Lack::Class(class)) => Err(EditError::Unsupported {
-                class,
-                supported: B::CLASSES,
-            }),
-            Some(Lack::Feature(feature)) => Err(EditError::UnsupportedFeature {
-                feature,
-                supported: B::FEATURES,
-            }),
-            None => Ok(()),
-        }
+        Ok(lack::<B>(class, self.program.features_with(integralities))?)
     }
 }
 
-impl Edit<'_> {
+impl Edit {
     /// Whether the edit names no id.
     fn is_empty(&self) -> bool {
         match self {
-            Self::ColBounds(cols) | Self::ColCosts(cols) | Self::ColIntegrality(cols) => cols.is_empty(),
-            Self::RowBounds(rows) => rows.is_empty(),
-            Self::NewRows(rows) => rows.len() == 0,
-            Self::NewCols(cols) => cols.len() == 0,
+            Self::ColBounds { cols } | Self::ColCosts { cols } | Self::ColIntegrality { cols } => cols.is_empty(),
+            Self::RowBounds { rows } => rows.is_empty(),
+            Self::NewRows { rows } => rows.len() == 0,
+            Self::NewCols { cols } => cols.len() == 0,
         }
     }
 }
@@ -594,8 +581,17 @@ enum Undo {
 
 impl Undo {
     /// Restores `program` to what it was before the edit.
+    ///
+    /// # Panics
+    ///
+    /// When `program` is not the program the edit made: it lacks an id the undo names, or has fewer rows than it
+    /// had before the edit.
     fn apply(self, program: &mut Program) {
         /// Writes each old value back with `replace`.
+        ///
+        /// # Panics
+        ///
+        /// When `replace` panics for an id of `old`.
         fn restore<I, V>(program: &mut Program, old: Vec<(I, V)>, replace: fn(&mut Program, I, V) -> V) {
             old.into_iter().for_each(|(id, value)| {
                 replace(program, id, value);
@@ -631,6 +627,36 @@ fn known_cols<V, E>(given: &BTreeMap<Col, V>, num_cols: usize) -> Result<(), Edi
         .map_or(Ok(()), |(&col, _)| Err(EditError::UnknownCol { col }))
 }
 
+/// Checks each column `given` names as it would be with its new value, which `bad` judges from the column and the
+/// value.
+///
+/// # Errors
+///
+/// [`EditError::NonFiniteCost`] or [`EditError::SemiBounds`] for the first column `bad` finds at fault.
+///
+/// # Panics
+///
+/// When `given` names a column the program lacks.
+fn check_edited<V: Copy, E>(
+    program: &Program,
+    given: &BTreeMap<Col, V>,
+    bad: impl Fn(&ProgramColumn, V) -> Option<BadColumn>,
+) -> Result<(), EditError<E>> {
+    let columns = program.columns();
+    given
+        .iter()
+        .find_map(|(&col, &value)| bad(&columns[col], value).map(|fault| column_error(col, fault)))
+        .map_or(Ok(()), Err)
+}
+
+/// The refusal of column `col` for `fault`.
+const fn column_error<E>(col: Col, fault: BadColumn) -> EditError<E> {
+    match fault {
+        BadColumn::NonFiniteCost(value) => EditError::NonFiniteCost { col, value },
+        BadColumn::SemiBounds(bounds) => EditError::SemiBounds { col, bounds },
+    }
+}
+
 impl NewRow {
     /// The program row of this new row, which would be `row` of a program with `num_cols` columns.
     ///
@@ -641,11 +667,7 @@ impl NewRow {
     fn checked<E>(self, row: Row, num_cols: usize) -> Result<ProgramRow, EditError<E>> {
         let (terms, bounds, name) = match self {
             Self::Row(ProgramRow { bounds, terms, name }) => (terms, Ok(bounds), name),
-            Self::Constraint { constraint, name } => (
-                constraint.expr.terms.iter().map(|t| (t.col, t.coefficient)).collect(),
-                Bounds::new(constraint.lower, constraint.upper).and_then(|b| b.shifted(-constraint.expr.constant)),
-                name,
-            ),
+            Self::Constraint { constraint, name } => (constraint.row_terms(), constraint.row_bounds(), name),
         };
         match bad_term(&terms, num_cols) {
             Some(BadTerm::Unknown(col)) => return Err(EditError::UnknownCol { col }),
@@ -658,36 +680,27 @@ impl NewRow {
 }
 
 impl NewCol {
-    /// The column and its entries, each row once with its coefficients added up and none zero, of this new column,
-    /// which would be `col` of a program with `num_rows` rows.
+    /// This new column, which would be `col` of a program with `num_rows` rows, with its entries sorted by row,
+    /// each row once with its coefficients added up, and none zero.
     ///
     /// # Errors
     ///
-    /// [`EditError::NonFiniteCost`], [`EditError::UnknownRow`], [`EditError::NonFiniteCoefficient`] or
-    /// [`EditError::SemiBounds`], for the first fault in that order.
-    fn checked<E>(self, col: Col, num_rows: usize) -> Result<ColumnEntries, EditError<E>> {
+    /// [`EditError::NonFiniteCost`] or [`EditError::SemiBounds`] for the column, else [`EditError::UnknownRow`] or
+    /// [`EditError::NonFiniteCoefficient`] for the first entry at fault.
+    fn checked<E>(self, col: Col, num_rows: usize) -> Result<Self, EditError<E>> {
         let Self { column, entries } = self;
-        if !column.cost.is_finite() {
-            return Err(EditError::NonFiniteCost {
-                col,
-                value: column.cost,
-            });
+        if let Some(fault) = bad_column(column.cost, column.bounds, column.integrality) {
+            return Err(column_error(col, fault));
         }
         match bad_term(&entries, num_rows) {
             Some(BadTerm::Unknown(row)) => return Err(EditError::UnknownRow { row }),
             Some(BadTerm::NonFinite(row, value)) => return Err(EditError::NonFiniteCoefficient { row, col, value }),
             None => {}
         }
-        if column.integrality.is_semi() && !semi_bounds(column.bounds) {
-            return Err(EditError::SemiBounds {
-                col,
-                bounds: column.bounds,
-            });
-        }
         let entries = merge_terms(entries)
             .into_iter()
             .filter(|&(_, value)| value != 0.0)
             .collect();
-        Ok((column, entries))
+        Ok(Self { column, entries })
     }
 }

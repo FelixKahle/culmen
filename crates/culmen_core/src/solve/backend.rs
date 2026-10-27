@@ -113,7 +113,7 @@ pub trait Backend: Sized {
     ///
     /// When the solver refuses the change. The backend may then hold any program: the [`Solver`](crate::Solver) loads
     /// the program before the edit again.
-    fn edit(&mut self, program: &Program, edit: Edit<'_>) -> Result<(), Self::Error> {
+    fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), Self::Error> {
         let _ = edit;
         self.load(program)
     }

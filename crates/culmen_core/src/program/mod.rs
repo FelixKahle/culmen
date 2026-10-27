@@ -22,14 +22,13 @@ use typed_index_collections::{TiSlice, TiVec};
 
 pub use bounds::{Bounds, Integrality, InvalidBounds, Sense};
 pub use class::{ModelClass, ModelClasses, ModelClassesIter};
-pub(crate) use edit::ColumnEntries;
 pub use features::{ProgramFeature, ProgramFeatures, ProgramFeaturesIter};
 pub use ids::{Col, Cols, Row, Rows};
 pub use lp_file::LpFileError;
 pub use objectives::{
     FurtherObjectives, InvalidWeight, LinearObjective, ObjectiveId, Objectives, Stage, Tolerance, Weight, Weighted,
 };
-pub use plan::{ProgramColumn, ProgramPlan, ProgramRow};
+pub use plan::{NewCol, ProgramColumn, ProgramPlan, ProgramRow};
 pub use quad::{HessianEntries, QuadEntries, QuadObjective};
 pub(crate) use quad::{check_convex, merge_pairs};
 pub use row::{RowEntries, RowView};
@@ -405,15 +404,34 @@ fn check_plan(plan: &ProgramPlan) -> Result<(), ProgramError> {
 ///
 /// [`ProgramError::NonFiniteCost`] or [`ProgramError::SemiBounds`] for the first column at fault.
 fn check_columns(columns: &TiSlice<Col, ProgramColumn>) -> Result<(), ProgramError> {
-    columns.iter_enumerated().try_for_each(|(col, c)| {
-        if !c.cost.is_finite() {
-            Err(ProgramError::NonFiniteCost { col, value: c.cost })
-        } else if c.integrality.is_semi() && !semi_bounds(c.bounds) {
-            Err(ProgramError::SemiBounds { col, bounds: c.bounds })
-        } else {
-            Ok(())
-        }
-    })
+    columns
+        .iter_enumerated()
+        .try_for_each(|(col, c)| match bad_column(c.cost, c.bounds, c.integrality) {
+            Some(BadColumn::NonFiniteCost(value)) => Err(ProgramError::NonFiniteCost { col, value }),
+            Some(BadColumn::SemiBounds(bounds)) => Err(ProgramError::SemiBounds { col, bounds }),
+            None => Ok(()),
+        })
+}
+
+/// What a column may not have.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum BadColumn {
+    /// A cost that is NaN or infinite.
+    NonFiniteCost(f64),
+    /// Bounds a semi column may not have, on a semi column.
+    SemiBounds(Bounds),
+}
+
+/// What is wrong with a column of this cost, bounds and integrality: a cost that is not finite, else a semi column's
+/// bounds that are not `lower ..= upper` with `0 < lower` and `upper` finite; `None` for a column a program may hold.
+pub(crate) fn bad_column(cost: f64, bounds: Bounds, integrality: Integrality) -> Option<BadColumn> {
+    if !cost.is_finite() {
+        Some(BadColumn::NonFiniteCost(cost))
+    } else if integrality.is_semi() && !semi_bounds(bounds) {
+        Some(BadColumn::SemiBounds(bounds))
+    } else {
+        None
+    }
 }
 
 /// Whether `bounds` may be a semi column's: `0 < lower` and `upper` finite, so zero lies outside them.

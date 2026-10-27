@@ -70,14 +70,14 @@ pub enum Edited {
 
 impl Edited {
     /// The owned form of `edit`.
-    fn of(edit: &Edit<'_>) -> Self {
+    fn of(edit: &Edit) -> Self {
         match edit {
-            Edit::ColBounds(cols) => Self::ColBounds(cols.to_vec()),
-            Edit::ColCosts(cols) => Self::ColCosts(cols.to_vec()),
-            Edit::ColIntegrality(cols) => Self::ColIntegrality(cols.to_vec()),
-            Edit::RowBounds(rows) => Self::RowBounds(rows.to_vec()),
-            Edit::NewRows(rows) => Self::NewRows(rows.clone().collect()),
-            Edit::NewCols(cols) => Self::NewCols(cols.clone().collect()),
+            Edit::ColBounds { cols, .. } => Self::ColBounds(cols.clone()),
+            Edit::ColCosts { cols, .. } => Self::ColCosts(cols.clone()),
+            Edit::ColIntegrality { cols, .. } => Self::ColIntegrality(cols.clone()),
+            Edit::RowBounds { rows, .. } => Self::RowBounds(rows.clone()),
+            Edit::NewRows { rows, .. } => Self::NewRows(rows.clone().collect()),
+            Edit::NewCols { cols, .. } => Self::NewCols(cols.clone().collect()),
             other => Self::Other(format!("{other:?}")),
         }
     }
@@ -278,8 +278,8 @@ impl<B: Backend> Backend for Mirror<B> {
     /// When the mirror holds no program, when `program` is not the held program changed only as `edit` names with
     /// sorted ids each once, when its class or features are beyond the declarations, and when a
     /// [`Faults::panic_edits`] count fires.
-    fn edit(&mut self, program: &Program, edit: Edit<'_>) -> Result<(), Self::Error> {
-        let edited = Edited::of(&edit);
+    fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), Self::Error> {
+        let edited = Edited::of(edit);
         self.calls.push(Call::Edit(edited.clone(), program.clone()));
         let before = self.held.take().expect("Mirror: an edit while holding no program");
         assert!(
@@ -354,7 +354,7 @@ impl<B: Backend> Backend for Mirror<B> {
 
 #[cfg(test)]
 mod tests {
-    use culmen_core::{Linear, Model, Script, Var};
+    use culmen_core::{EditError, Linear, Model, Script, Solver, Var};
 
     use super::*;
 
@@ -373,40 +373,52 @@ mod tests {
     #[test]
     fn test_a_mirror_holds_what_it_loaded_and_what_it_was_edited_into() {
         let (before, after, y) = programs();
-        let mut mirror = Mirror::new(Script::optimal(0.0, vec![]));
-        mirror.load(&before).unwrap();
-        assert_eq!(mirror.held(), Some(&before));
-        mirror.edit(&after, Edit::ColCosts(&[y])).unwrap();
-        assert_eq!(mirror.held(), Some(&after));
+        let mut solver = Solver::new(Mirror::new(Script::optimal(0.0, vec![])), before.clone()).unwrap();
+        assert_eq!(solver.backend().held(), Some(&before));
+        solver.set_col_costs([(y, 3.0)]).unwrap();
+        assert_eq!(solver.backend().held(), Some(&after));
         assert_eq!(
-            mirror.calls,
+            solver.backend().calls,
             [Call::Load(before), Call::Edit(Edited::ColCosts(vec![y]), after)]
         );
     }
 
     #[test]
-    #[should_panic(expected = "changed more than it names")]
-    fn test_a_mirror_panics_on_an_edit_that_changed_what_it_does_not_name() {
-        let (before, after, _) = programs();
-        let mut mirror = Mirror::new(Script::optimal(0.0, vec![]));
-        mirror.load(&before).unwrap();
-        let _ = mirror.edit(&after, Edit::ColBounds(&[Col::new(0)]));
+    fn test_a_mirror_finds_an_edit_that_changed_what_it_does_not_name() {
+        // Only a solver makes an `Edit`, and it never names one wrongly, so the check is tested on its own.
+        let (before, after, y) = programs();
+        assert!(!changed_only_as_named(
+            &before,
+            &after,
+            &Edited::ColBounds(vec![Col::new(0)])
+        ));
+        assert!(changed_only_as_named(&before, &after, &Edited::ColCosts(vec![y])));
     }
 
     #[test]
     fn test_a_mirror_injects_its_faults_and_then_holds_nothing() {
         let (before, after, y) = programs();
         let mut mirror = Mirror::new(Script::optimal(0.0, vec![]));
-        mirror.faults = Faults {
+        mirror.faults.refuse_loads = 1;
+        assert_eq!(mirror.load(&before), Err(MirrorError::Injected));
+        assert_eq!(mirror.held(), None);
+        let mut solver = Solver::new(mirror, before.clone()).unwrap();
+        solver.backend_mut().faults = Faults {
             refuse_edits: 1,
             refuse_loads: 1,
             ..Faults::default()
         };
-        assert_eq!(mirror.load(&before), Err(MirrorError::Injected));
-        assert_eq!(mirror.held(), None);
-        mirror.load(&before).unwrap();
-        assert_eq!(mirror.edit(&after, Edit::ColCosts(&[y])), Err(MirrorError::Injected));
-        assert_eq!(mirror.held(), None);
-        assert_eq!(mirror.faults, Faults::default());
+        assert_eq!(
+            solver.set_col_costs([(y, 3.0)]),
+            Err(EditError::Backend(MirrorError::Injected))
+        );
+        assert_eq!(solver.backend().held(), None);
+        assert_eq!(solver.backend().faults, Faults::default());
+        assert!(
+            solver
+                .backend()
+                .calls
+                .contains(&Call::Edit(Edited::ColCosts(vec![y]), after))
+        );
     }
 }

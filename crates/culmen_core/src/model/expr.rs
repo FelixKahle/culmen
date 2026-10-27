@@ -8,7 +8,7 @@ use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use typed_index_collections::TiSlice;
 
-use crate::Col;
+use crate::{Bounds, Col, InvalidBounds};
 
 /// A column scaled by a coefficient: `coefficient · col`.
 ///
@@ -436,4 +436,21 @@ pub struct Constraint {
     pub lower: f64,
     /// The greatest value the expression may take; `+∞` for none.
     pub upper: f64,
+}
+
+impl Constraint {
+    /// Its terms as `(column, coefficient)`, as given: a repeated column kept, a zero coefficient too.
+    pub(crate) fn row_terms(&self) -> Vec<(Col, f64)> {
+        self.expr.terms.iter().map(|t| (t.col, t.coefficient)).collect()
+    }
+
+    /// The interval its terms' activity must lie in: its bounds with its expression's constant moved into them.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidBounds`] when its bounds are no interval, its constant is not finite, or moving the constant
+    /// overflows a finite end.
+    pub(crate) fn row_bounds(&self) -> Result<Bounds, InvalidBounds> {
+        Bounds::new(self.lower, self.upper).and_then(|bounds| bounds.shifted(-self.expr.constant))
+    }
 }

@@ -636,12 +636,10 @@ impl Model {
     fn build_row(&self, row: Row, named: &Named) -> Result<ProgramRow, ModelError> {
         let c = &named.constraint;
         let terms = self.row_terms(row, &c.expr)?;
-        let bounds = Bounds::new(c.lower, c.upper)
-            .and_then(|b| b.shifted(-c.expr.constant))
-            .map_err(|source| ModelError::ConstraintBounds {
-                constraint: self.model_constraint(row),
-                source,
-            })?;
+        let bounds = c.row_bounds().map_err(|source| ModelError::ConstraintBounds {
+            constraint: self.model_constraint(row),
+            source,
+        })?;
         Ok(ProgramRow {
             bounds,
             terms,

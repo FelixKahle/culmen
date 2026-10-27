@@ -23,7 +23,7 @@ pub use context::{
     ActionError, AddedRow, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, ProgressContext,
     SolutionContext, Unsupported,
 };
-pub use edit::{Edit, EditError, NewCol, NewRow};
+pub use edit::{Edit, EditError, NewRow};
 pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
 pub use load::LoadError;
 pub use outcome::{Outcome, Solution, Solved, StopReason};
@@ -31,7 +31,7 @@ pub use settings::Settings;
 pub use start::{SolveError, Start, StartEntries, StartError};
 pub use watch::{Improvement, LogLine, Observer, Request, Stop, StopFn, Watch, stop_fn};
 
-use crate::{ModelClass, Program, ProgramFeature, ProgramFeatures};
+use crate::{ModelClass, ModelClasses, Program, ProgramFeature, ProgramFeatures};
 use analysis::Ending;
 
 /// A program loaded into a backend, solved as often as needed, each solve with its own [`Request`].
@@ -66,18 +66,61 @@ pub struct Solver<B> {
 /// What a backend lacks to hold a program: the program's class, or a feature it uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Lack {
-    /// The class, which [`Backend::CLASSES`] lacks.
-    Class(ModelClass),
-    /// The first feature [`Backend::FEATURES`] lacks, in the order of [`ProgramFeature`].
-    Feature(ProgramFeature),
+    /// The backend does not solve the class.
+    Class {
+        /// The class.
+        class: ModelClass,
+        /// The classes the backend solves.
+        supported: ModelClasses,
+    },
+    /// The backend does not take the feature.
+    Feature {
+        /// The first feature the backend lacks, in the order of [`ProgramFeature`].
+        feature: ProgramFeature,
+        /// The features the backend takes.
+        supported: ProgramFeatures,
+    },
 }
 
-/// What `B` lacks to hold a program of `class` that uses `features`; `None` when it lacks nothing.
-fn lack<B: Backend>(class: ModelClass, features: ProgramFeatures) -> Option<Lack> {
-    if B::CLASSES.contains(class) {
-        features.difference(B::FEATURES).iter().next().map(Lack::Feature)
-    } else {
-        Some(Lack::Class(class))
+/// Checks that `B` solves `class` and takes `features`.
+///
+/// # Errors
+///
+/// [`Lack`] naming the class, else the first feature, `B` lacks.
+fn lack<B: Backend>(class: ModelClass, features: ProgramFeatures) -> Result<(), Lack> {
+    if !B::CLASSES.contains(class) {
+        return Err(Lack::Class {
+            class,
+            supported: B::CLASSES,
+        });
+    }
+    features
+        .difference(B::FEATURES)
+        .iter()
+        .next()
+        .map_or(Ok(()), |feature| {
+            Err(Lack::Feature {
+                feature,
+                supported: B::FEATURES,
+            })
+        })
+}
+
+impl<E> From<Lack> for LoadError<E> {
+    fn from(lack: Lack) -> Self {
+        match lack {
+            Lack::Class { class, supported } => Self::Unsupported { class, supported },
+            Lack::Feature { feature, supported } => Self::UnsupportedFeature { feature, supported },
+        }
+    }
+}
+
+impl<E> From<Lack> for EditError<E> {
+    fn from(lack: Lack) -> Self {
+        match lack {
+            Lack::Class { class, supported } => Self::Unsupported { class, supported },
+            Lack::Feature { feature, supported } => Self::UnsupportedFeature { feature, supported },
+        }
     }
 }
 
@@ -90,25 +133,14 @@ impl<B: Backend> Solver<B> {
     /// [`LoadError::UnsupportedFeature`] when [`Backend::FEATURES`] lacks one of its [`features`](Program::features),
     /// both before the backend sees it; [`LoadError::Backend`] when the backend refuses the program.
     pub fn new(mut backend: B, program: Program) -> Result<Self, LoadError<B::Error>> {
-        match lack::<B>(program.class(), program.features()) {
-            Some(Lack::Class(class)) => Err(LoadError::Unsupported {
-                class,
-                supported: B::CLASSES,
-            }),
-            Some(Lack::Feature(feature)) => Err(LoadError::UnsupportedFeature {
-                feature,
-                supported: B::FEATURES,
-            }),
-            None => {
-                backend.load(&program).map_err(LoadError::Backend)?;
-                Ok(Self {
-                    backend,
-                    program,
-                    ended: None,
-                    synced: true,
-                })
-            }
-        }
+        lack::<B>(program.class(), program.features())?;
+        backend.load(&program).map_err(LoadError::Backend)?;
+        Ok(Self {
+            backend,
+            program,
+            ended: None,
+            synced: true,
+        })
     }
 
     /// The loaded program.

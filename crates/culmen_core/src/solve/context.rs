@@ -276,10 +276,8 @@ pub struct AddedRow {
 ///
 /// [`ActionError::UnknownColumn`], [`ActionError::NotFinite`] or [`ActionError::Bounds`].
 pub fn check_constraint(constraint: &Constraint, num_cols: usize) -> Result<AddedRow, ActionError> {
-    let terms: Vec<(Col, f64)> = constraint.expr.terms.iter().map(|t| (t.col, t.coefficient)).collect();
+    let terms = constraint.row_terms();
     check_entries(&terms, num_cols)?;
-    let bounds = Bounds::new(constraint.lower, constraint.upper)
-        .and_then(|b| b.shifted(-constraint.expr.constant))
-        .map_err(ActionError::Bounds)?;
+    let bounds = constraint.row_bounds().map_err(ActionError::Bounds)?;
     Ok(AddedRow { terms, bounds })
 }

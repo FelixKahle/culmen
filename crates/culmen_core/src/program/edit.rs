@@ -11,10 +11,7 @@ use core::mem;
 
 use itertools::Itertools;
 
-use super::{Bounds, Col, Cols, Integrality, Program, ProgramColumn, ProgramRow, Row, Rows};
-
-/// A column to append and its entries as `(row, coefficient)`, sorted by row, each row once and none zero.
-pub(crate) type ColumnEntries = (ProgramColumn, Vec<(Row, f64)>);
+use super::{Bounds, Col, Integrality, NewCol, Program, ProgramRow, Row};
 
 impl Program {
     /// Sets a column's bounds and returns the bounds it had.
@@ -53,22 +50,19 @@ impl Program {
         mem::replace(&mut self.row_bounds[row], bounds)
     }
 
-    /// Appends rows, as [`Program::from_plan`] appends a plan's, and returns them.
-    pub(crate) fn push_rows(&mut self, rows: impl IntoIterator<Item = ProgramRow>) -> Rows {
-        let start = self.num_rows();
+    /// Appends rows, as [`Program::from_plan`] appends a plan's.
+    pub(crate) fn push_rows(&mut self, rows: impl IntoIterator<Item = ProgramRow>) {
         rows.into_iter().for_each(|row| self.push_row(row));
-        Rows::range(start, self.num_rows())
     }
 
-    /// Appends columns, each with its entries, and returns them.
+    /// Appends columns, each with its entries sorted by row, each row once and none zero.
     ///
     /// # Panics
     ///
     /// When an entry names a row the program does not have.
-    pub(crate) fn push_cols(&mut self, cols: impl IntoIterator<Item = ColumnEntries>) -> Cols {
-        let start = self.num_cols();
+    pub(crate) fn push_cols(&mut self, cols: impl IntoIterator<Item = NewCol>) {
         let mut added: Vec<(Row, Col, f64)> = Vec::new();
-        for (column, entries) in cols {
+        for NewCol { column, entries } in cols {
             let col = self.columns.push_and_get_key(column);
             added.extend(entries.into_iter().map(|(row, value)| (row, col, value)));
         }
@@ -81,7 +75,6 @@ impl Program {
         // A stable sort keeps each row's new entries in column order, which every new column follows.
         added.sort_by_key(|&(row, ..)| row);
         self.append_to_rows(&added);
-        Cols::range(start, self.num_cols())
     }
 
     /// Appends `added`, sorted by row and within a row by column, each beyond every column the row holds, to the
@@ -148,7 +141,7 @@ impl Program {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ProgramPlan, bounds};
+    use crate::{ProgramColumn, ProgramPlan, bounds};
 
     /// Two columns, two rows: `x + y` in `[0, 4]`, `-x` free.
     fn program() -> Program {
@@ -164,20 +157,23 @@ mod tests {
     fn test_appending_columns_and_rows_and_truncating_restores_the_program() {
         let before = program();
         let mut program = before.clone();
-        let cols = program.push_cols([
-            (ProgramColumn::binary(0.0), vec![(Row::new(1), 3.0)]),
-            (
-                ProgramColumn::binary(1.0),
-                vec![(Row::new(0), 2.0), (Row::new(1), -1.0)],
-            ),
+        program.push_cols([
+            NewCol {
+                column: ProgramColumn::binary(0.0),
+                entries: vec![(Row::new(1), 3.0)],
+            },
+            NewCol {
+                column: ProgramColumn::binary(1.0),
+                entries: vec![(Row::new(0), 2.0), (Row::new(1), -1.0)],
+            },
         ]);
-        assert_eq!(cols.collect::<Vec<_>>(), [Col::new(2), Col::new(3)]);
-        let rows = program.push_rows([ProgramRow {
+        assert_eq!(program.num_cols(), 4);
+        program.push_rows([ProgramRow {
             bounds: Bounds::FREE,
             terms: vec![(Col::new(3), 1.0), (Col::new(0), 1.0)],
             name: None,
         }]);
-        assert_eq!(rows.collect::<Vec<_>>(), [Row::new(2)]);
+        assert_eq!(program.num_rows(), 3);
         assert_eq!(
             program.row(Row::new(1)).entries().collect::<Vec<_>>(),
             [(Col::new(0), -1.0), (Col::new(2), 3.0), (Col::new(3), -1.0)]
