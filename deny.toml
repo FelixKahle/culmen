@@ -1,0 +1,52 @@
+# Copyright (c) 2026 Felix Kahle
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# cargo-deny's policy for the dependency tree: no crate with a known advisory, only the licences below, only crates
+# from crates.io. CI runs `cargo deny check` on every pull request and every push to main.
+#
+# The graph is checked for every target, not only Linux, because users build culmen on every platform and a
+# platform-only dependency is shipped to them all the same.
+
+[graph]
+# Every feature of the workspace's crates, so a dependency behind an optional feature (`serde`, `highs`, `macros`)
+# is checked as well.
+all-features = true
+
+[advisories]
+# A crate the RustSec database marks yanked fails the check rather than warning: a release must not depend on one.
+yanked = "deny"
+
+[licenses]
+# Exactly the licences the current tree needs. A crate offering a choice (`MIT OR Apache-2.0`) needs only one of them.
+#   MIT, Apache-2.0  most of the tree, and culmen itself
+#   BSD-3-Clause     bindgen, which generates the HiGHS bindings at build time
+#   ISC              libloading, through clang-sys
+#   Unicode-3.0      unicode-ident's Unicode data tables
+# A new licence is added here only after reading it, so a dependency update cannot bring one in unnoticed.
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0"]
+# The bar a licence text must clear for cargo-deny to recognise it from the file instead of the manifest's SPDX
+# expression; 0.93 is the documented recommendation, stricter than the 0.8 default.
+confidence-threshold = 0.93
+
+[licenses.private]
+# culmen_testing is `publish = false` and carries the workspace licence; it is checked like any published crate
+# rather than skipped.
+ignore = false
+
+[bans]
+# Two versions of one crate are reported but do not fail the check: they cost build time, not correctness, and are
+# often outside the workspace's control until an upstream crate updates.
+multiple-versions = "warn"
+# A `*` version requirement would let any release in, including a breaking one.
+wildcards = "deny"
+# The workspace's own path dependencies carry a version for crates.io, but culmen_testing is path-only by design
+# (it is never published), so path dependencies are exempt from the wildcard rule.
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io: no git dependency and no other registry, since crates.io refuses to publish a crate that depends on
+# either.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

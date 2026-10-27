@@ -46,6 +46,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      # Refuses the release when a crate's public API breaks in a way its version bump does not allow (for 0.x, a
+      # breaking change needs a minor bump), comparing each publishable crate with its latest release on crates.io.
+      # It runs before the crates.io token is requested, so a refused release never holds one.
+      - name: Check semver against crates.io
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          # The pinned toolchain installed above, not the action's own stable.
+          rust-toolchain: manual
+          # culmen_testing is never published, so it has no release to compare with.
+          exclude: culmen_testing
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
       # Cargo publishes the crates in dependency order and verifies each one builds from its package first.
