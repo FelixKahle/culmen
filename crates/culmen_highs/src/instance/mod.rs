@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One HiGHS instance behind safe methods: the only place, with the callback trampoline, that calls HiGHS. The calls
-//! behind the analyses are in its `analysis` submodule; when a dropped instance is destroyed, in `deferred_destroy`.
+//! behind the analyses are in its `analysis` submodule, those behind an edit of the model in `edit`; when a dropped
+//! instance is destroyed, in `deferred_destroy`.
 
 mod analysis;
 mod deferred_destroy;
+mod edit;
 
 pub(crate) use deferred_destroy::CallbackGuard;
 

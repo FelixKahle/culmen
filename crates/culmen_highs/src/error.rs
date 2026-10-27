@@ -72,6 +72,12 @@ pub enum HighsError {
     },
     /// HiGHS refused a start.
     Start,
+    /// HiGHS refused an edit of the program it holds, and may hold any program after it: HiGHS 1.15 can fail
+    /// halfway through adding columns.
+    Edit {
+        /// The C function of HiGHS that refused it.
+        call: &'static str,
+    },
     /// HiGHS 1.15 gets the analysis wrong for a program with the feature, so the backend refuses it: its feasibility
     /// relaxation keeps a semi column within its bounds, never at zero.
     AnalysisFeature {
@@ -132,6 +138,7 @@ impl fmt::Display for HighsError {
                 crate::Highs::SEMI_UPPER_LIMIT
             ),
             Self::Start => write!(f, "HiGHS: the start was refused"),
+            Self::Edit { call } => write!(f, "HiGHS: {call} refused the edit"),
             Self::AnalysisFeature { analysis, feature } => {
                 write!(f, "HiGHS: the {analysis} of a program with {feature} is refused")
             }

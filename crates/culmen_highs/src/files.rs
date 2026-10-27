@@ -259,7 +259,7 @@ unsafe fn names(instance: &Instance, line: Line, count: usize, buffer: &mut [u8]
 /// # Errors
 ///
 /// [`FileError::ColumnBounds`], [`FileError::RowBounds`], [`FileError::VarType`] or [`FileError::Program`].
-fn program_of(
+pub(crate) fn program_of(
     model: &RawModel,
     col_names: Vec<Option<String>>,
     row_names: Vec<Option<String>>,

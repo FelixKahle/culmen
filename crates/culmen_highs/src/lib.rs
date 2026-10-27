@@ -65,8 +65,8 @@ pub use callback::{
 };
 use culmen_core::{Analyses, AnalysisError, Basis, Col, Duals, Iis, Ranging, Relaxed, Row, TiVec, Weights};
 use culmen_core::{
-    Backend, Callback, Events, ModelClass, ModelClasses, Objectives, Outcome, Program, ProgramFeatures, QuadObjective,
-    Sense, Settings, Solution, Solved, Start, StopReason, TiSlice, Unsupported,
+    Backend, Callback, Edit, Events, ModelClass, ModelClasses, Objectives, Outcome, Program, ProgramFeatures,
+    QuadObjective, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice, Unsupported,
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
 pub use options::{
@@ -244,6 +244,64 @@ impl Highs {
     /// The options every solve applies, to change between solves.
     pub const fn options_mut(&mut self) -> &mut HighsOptions {
         &mut self.options
+    }
+
+    /// Changes HiGHS's model, which is the program before `edit`, into `program`.
+    ///
+    /// Bounds, costs, integrality and row bounds change through HiGHS's `BySet` calls, rows and columns are appended
+    /// with `Highs_addRows` and `Highs_addCols`, and further objectives are passed again after a change of costs or
+    /// columns, since HiGHS 1.15 neither reads the costs into them nor extends them. A QP without rows carries a free
+    /// row HiGHS needs (see [`Padding`]); rows appended to it, and any edit this version does not know, load the
+    /// program whole.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::SemiUpper`] for a semi column above [`Highs::SEMI_UPPER_LIMIT`], [`HighsError::TooLarge`] when
+    /// the program exceeds HiGHS's 32-bit indices, [`HighsError::Edit`] when HiGHS refuses a call; HiGHS may then
+    /// hold any model.
+    fn apply(&mut self, program: &Program, edit: Edit<'_>) -> Result<(), HighsError> {
+        match edit {
+            Edit::ColBounds(cols) => {
+                check_semi_upper(program)?;
+                self.instance.change_col_bounds(program, cols)
+            }
+            Edit::ColCosts(cols) => {
+                self.instance.change_col_costs(program, cols)?;
+                self.pass_further_objectives(program)
+            }
+            Edit::ColIntegrality(cols) => {
+                check_semi_upper(program)?;
+                self.instance.change_col_integrality(program, cols)
+            }
+            Edit::RowBounds(rows) => self.instance.change_row_bounds(program, rows),
+            Edit::NewRows(rows) if self.instance.num_row() + rows.len() == program.num_rows() => {
+                self.instance.add_rows(program, rows)
+            }
+            Edit::NewCols(cols) => {
+                check_semi_upper(program)?;
+                self.instance.add_cols(program, cols)?;
+                self.pass_further_objectives(program)
+            }
+            _ => self.load(program),
+        }
+    }
+
+    /// Passes `program`'s objectives to HiGHS again when it has further ones.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::TooLarge`] when the objectives exceed HiGHS's 32-bit indices, [`HighsError::Edit`] when HiGHS
+    /// refuses them.
+    fn pass_further_objectives(&mut self, program: &Program) -> Result<(), HighsError> {
+        if !program.objectives().are_several() {
+            return Ok(());
+        }
+        self.instance.pass_objectives(program).map_err(|error| match error {
+            HighsError::Load { .. } => HighsError::Edit {
+                call: "Highs_passLinearObjectives",
+            },
+            other => other,
+        })
     }
 
     /// Reads HiGHS's account of the last run.
@@ -587,6 +645,15 @@ impl Backend for Highs {
         check_semi_upper(program)?;
         self.instance.pass(program, Padding::QpFreeRow)?;
         self.instance.pass_objectives(program)?;
+        self.loaded = Some(Loaded::of(program));
+        Ok(())
+    }
+
+    /// Changes HiGHS's model in place, so the next run starts from the basis of the last; see [`Highs::apply`] for
+    /// the HiGHS call behind each edit.
+    fn edit(&mut self, program: &Program, edit: Edit<'_>) -> Result<(), HighsError> {
+        self.loaded = None;
+        self.apply(program, edit)?;
         self.loaded = Some(Loaded::of(program));
         Ok(())
     }
