@@ -276,8 +276,18 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
-The code follows the style guide in [`CLAUDE.md`](CLAUDE.md): typed handles and newtypes, checked literals,
-documented `unsafe`, and property tests against simple reference models.
+The code keeps to typed handles and newtypes, checked literals, documented `unsafe`, and property tests against
+simple reference models; [Design](docs/design.md) explains the choices behind it.
+
+## Contributing
+
+Contributions are welcome, from a typo fix to a new backend. Open an issue for a bug or an idea, or send a pull
+request straight away.
+
+- **Bugs:** the smallest program that shows it helps most. A fix comes with a test that fails without it.
+- **Backends:** HiGHS is the only one so far. [Backends](docs/backends.md) describes the contract a new solver
+  implements.
+- **Pull requests:** CI must pass: formatting, clippy and the docs with warnings denied, and the tests.
 
 ## Licence
 
