@@ -187,7 +187,8 @@ page lists the outcome of every `ModelStatus`. Two of them are decided by more t
   backend reports `StopReason::NodeLimit` when a node limit is set (in `Settings` or `HighsOptions`) and the node
   count reached it, and `StopReason::SolutionLimit` otherwise.
 
-An empty model, one without columns, is `Optimal` at its offset.
+An empty model, one without columns, is `Optimal` at its offset when every row admits an activity of zero, and
+`Infeasible` when a row such as `0 = 1` does not.
 
 ## Quadratic programs
 
