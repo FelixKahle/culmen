@@ -96,6 +96,31 @@ fn test_empty_model_is_optimal_at_its_offset() {
 }
 
 #[test]
+fn test_empty_model_with_a_false_row_is_infeasible() {
+    // Without columns every row's activity is zero, so a row whose bounds exclude zero has no satisfying point.
+    for (lower, upper) in [(1.0, 1.0), (f64::NEG_INFINITY, -1.0), (0.5, f64::INFINITY)] {
+        let mut m = Model::new();
+        m.add_constraint(culmen_core::LinExpr::from(0.0).between(lower, upper));
+        let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
+        let solved = solver.solve(Request::new()).unwrap();
+        assert_eq!(solved.outcome, Outcome::Infeasible, "{lower} ..= {upper}");
+    }
+}
+
+#[test]
+fn test_empty_model_with_true_rows_is_optimal_at_its_offset() {
+    let mut m = Model::new();
+    m.add_constraint(culmen_core::LinExpr::from(0.0).equals(0));
+    m.add_constraint(culmen_core::LinExpr::from(2.0).between(-1.0, 3.0));
+    m.minimize(culmen_core::LinExpr::from(-1.5));
+    let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
+    let Outcome::Optimal(solution) = solver.solve(Request::new()).unwrap().outcome else {
+        panic!()
+    };
+    assert_eq!((solution.objective, solution.values.len()), (-1.5, 0));
+}
+
+#[test]
 fn test_options_are_applied_and_refused_by_name() {
     let mut m = Model::new();
     let x = m.add_var(Var::binary());

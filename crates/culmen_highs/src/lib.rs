@@ -355,6 +355,7 @@ impl Highs {
             Ending::Optimal => best
                 .map(|solution| optimum(solution, bound))
                 .ok_or_else(|| run_failed(status)),
+            Ending::Empty if !self.zero_is_feasible() => Ok(Outcome::Infeasible),
             Ending::Empty => Ok(Outcome::Optimal(Solution {
                 objective: loaded.offset,
                 values: Vec::new().into(),
@@ -365,6 +366,18 @@ impl Highs {
             Ending::Stopped(reason) => Ok(Outcome::Stopped { reason, best, bound }),
             Ending::Failed => Err(run_failed(status)),
         }
+    }
+
+    /// Whether every row HiGHS holds admits an activity of zero, the only activity a row has without columns.
+    ///
+    /// HiGHS reports a program without columns as empty, whatever its rows say, so a row such as `0 = 1` is read here.
+    fn zero_is_feasible(&self) -> bool {
+        let model = self.instance.model();
+        model
+            .row_lower
+            .iter()
+            .zip(&model.row_upper)
+            .all(|(&lower, &upper)| lower <= 0.0 && 0.0 <= upper)
     }
 
     /// How a run HiGHS reports with `status` ended, in culmen's terms.
@@ -457,7 +470,7 @@ fn unsound_qp(loaded: &Loaded, status: &HighsStatus, best: Option<&Solution>) ->
 enum Ending {
     /// Optimal, which a solution must back.
     Optimal,
-    /// The program has no columns: optimal at its offset.
+    /// The program has no columns: optimal at its offset when every row admits zero, infeasible otherwise.
     Empty,
     /// No point is feasible.
     Infeasible,
