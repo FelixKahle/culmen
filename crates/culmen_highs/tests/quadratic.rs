@@ -293,7 +293,7 @@ fn test_a_miqp_is_refused_before_highs_sees_it() {
 
 #[test]
 fn test_highs_itself_cannot_solve_a_miqp() {
-    // The declaration matches HiGHS 1.15: loaded around the class check, a MIQP fails at the run.
+    // The declaration matches HiGHS 1.16: loaded around the class check, a MIQP fails at the run.
     let mut highs = Highs::new();
     highs.load(&miqp()).unwrap();
     let error = highs.solve(&culmen_core::Settings::new(), &mut ()).unwrap_err();

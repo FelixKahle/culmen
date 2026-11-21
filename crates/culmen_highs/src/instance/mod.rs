@@ -207,8 +207,8 @@ impl Instance {
         );
         // SAFETY: the instance is live and borrowed exclusively; the caller vouches for `user` and `callback`.
         let _ = unsafe { Highs_setCallback(self.raw(), callback, user) };
-        for kind in 0..=highs_sys::kHighsCallbackCallbackMipUserSolution {
-            // SAFETY: the instance is live and borrowed exclusively, and `kind` is a callback kind of HiGHS 1.15.
+        for kind in 0..=highs_sys::kHighsCallbackQpInterrupt {
+            // SAFETY: the instance is live and borrowed exclusively, and `kind` is a callback kind of HiGHS 1.16.
             let _ = unsafe {
                 if !user.is_null() && kinds.contains(&kind) {
                     Highs_startCallback(self.raw(), kind)
@@ -269,21 +269,19 @@ impl Instance {
         (status != kHighsStatusError).then_some(value)
     }
 
-    /// The column values of the last run's primal solution.
-    ///
-    /// Call it only when the last run reports a feasible primal solution of the loaded model with `num_cols`
-    /// columns.
-    pub(crate) fn primal_values(&self, num_cols: usize) -> Vec<f64> {
+    /// The column values of the last run's primal solution, one per column of the loaded model with `num_cols`
+    /// columns; `None` when HiGHS holds no primal solution.
+    pub(crate) fn primal_values(&self, num_cols: usize) -> Option<Vec<f64>> {
         let mut values = vec![0.0; num_cols];
         debug_assert_eq!(
             self.num_col(),
             num_cols,
             "Instance: the buffer does not fit HiGHS's model"
         );
-        // SAFETY: the instance is live. A run that reports a primal solution holds one value per column of its
-        // model, `num_cols` values, which is what `values` has room for; the dual and row arrays are null, which
-        // HiGHS skips.
-        let _ = unsafe {
+        // SAFETY: the instance is live. HiGHS's solution holds one value per column of its model, `num_cols` values,
+        // which is what `values` has room for, and HiGHS writes nothing when it holds no solution; the dual and row
+        // arrays are null, which HiGHS skips.
+        let status = unsafe {
             Highs_getSolution(
                 self.raw(),
                 values.as_mut_ptr(),
@@ -292,7 +290,8 @@ impl Instance {
                 ptr::null_mut(),
             )
         };
-        values
+        // HiGHS refuses the call, and leaves `values` unwritten, when its primal solution status is none.
+        (status != kHighsStatusError).then_some(values)
     }
 }
 

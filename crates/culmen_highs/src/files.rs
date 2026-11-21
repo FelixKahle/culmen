@@ -162,13 +162,13 @@ pub fn write(program: &Program, path: impl AsRef<Path>) -> Result<(), FileError>
 /// Writes `program` to the model file at `path` in `format`, whatever its extension, replacing any file there.
 ///
 /// Columns and rows keep their names where the format allows them; HiGHS names the others. Reading the file back
-/// gives the same program up to names and the order of columns and rows.
+/// gives the same program up to names and the order of columns and rows, except that an LP file holds a ranged row
+/// as two rows, its name suffixed `lo` and `up`; the optimum is the same.
 ///
 /// # Errors
 ///
-/// [`FileError::Unsupported`] for a program the format, as HiGHS writes it, loses part of: further objectives in
-/// either format, a semi-integer column in an LP file (HiGHS lists it as semi-continuous only), and a semi column
-/// with equal bounds in an MPS file (HiGHS writes it fixed); [`FileError::Name`] for a name holding a NUL byte;
+/// [`FileError::Unsupported`] for a program with further objectives, which neither format, as HiGHS writes it,
+/// keeps; [`FileError::Name`] for a name holding a NUL byte;
 /// [`FileError::Highs`] when HiGHS refuses the program, [`FileError::Path`] for a path HiGHS cannot take,
 /// [`FileError::Write`] when HiGHS cannot write the file and [`FileError::Io`] when the file cannot be moved into
 /// place.
@@ -194,26 +194,13 @@ pub fn write_as(program: &Program, path: impl AsRef<Path>, format: ModelFormat) 
 ///
 /// [`FileError::Unsupported`] as [`write_as`] states.
 fn writable(program: &Program, format: ModelFormat) -> Result<(), FileError> {
-    let unsupported = |feature| FileError::Unsupported { format, feature };
     if program.objectives().are_several() {
-        return Err(unsupported(ProgramFeature::MultipleObjectives));
+        return Err(FileError::Unsupported {
+            format,
+            feature: ProgramFeature::MultipleObjectives,
+        });
     }
-    let columns = program.columns();
-    let lost = match format {
-        ModelFormat::Lp => columns
-            .iter()
-            .find(|c| c.integrality == Integrality::SemiInteger)
-            .map(|c| c.integrality),
-        ModelFormat::Mps => columns
-            .iter()
-            .find(|c| c.integrality.is_semi() && c.bounds.lower() == c.bounds.upper())
-            .map(|c| c.integrality),
-    };
-    match lost {
-        Some(Integrality::SemiInteger) => Err(unsupported(ProgramFeature::SemiInteger)),
-        Some(_) => Err(unsupported(ProgramFeature::SemiContinuous)),
-        None => Ok(()),
-    }
+    Ok(())
 }
 
 /// Passes every column's and row's name to HiGHS; an unnamed one stays blank for HiGHS to name.

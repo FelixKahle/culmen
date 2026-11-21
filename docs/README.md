@@ -2,7 +2,7 @@
 
 culmen is a Rust library for linear, mixed-integer and convex quadratic programming. A model is written the way the
 mathematics reads, built into a checked program, and solved on a backend chosen by type, with a live view of the search
-and a cooperative stop. HiGHS 1.15 is the first backend.
+and a cooperative stop. HiGHS 1.16 is the first backend.
 
 These pages are the user guide. The API reference is the rustdoc of each crate (`cargo doc --open -p culmen`).
 Every Rust snippet on these pages is compiled and run as a doctest of the `culmen` crate, so each one shows the
@@ -54,4 +54,4 @@ Then, as needed:
 | [HiGHS](highs.md) | [The backend](highs.md#the-backend), [Options](highs.md#options), [How options and settings layer](highs.md#how-options-and-settings-layer), [Threads](highs.md#threads), [Statuses and outcomes](highs.md#statuses-and-outcomes), [Quadratic programs](highs.md#quadratic-programs), [Semi columns, several objectives and starts](highs.md#semi-columns-several-objectives-and-starts), [Model files](highs.md#model-files), [Editing a loaded program](highs.md#editing-a-loaded-program), [Errors](highs.md#errors), [Callback contexts](highs.md#callback-contexts), [Heuristic solutions](highs.md#heuristic-solutions), [The cut pool](highs.md#the-cut-pool), [Limitations](highs.md#limitations) |
 | [Testing](testing.md) | [The `Script` backend](testing.md#the-script-backend), [Testing callbacks](testing.md#testing-callbacks), [`culmen_testing`](testing.md#culmen_testing), [Serialization](testing.md#serialization) |
 | [Design](design.md) | [The program is checked data](design.md#the-program-is-checked-data), [Typed handles](design.md#typed-handles), [Literals are checked when compiled](design.md#literals-are-checked-when-compiled), [Plain data and sealed values](design.md#plain-data-and-sealed-values), [The solver-neutral seam](design.md#the-solver-neutral-seam), [A solve never aborts](design.md#a-solve-never-aborts), [Where `unsafe` lives](design.md#where-unsafe-lives) |
-| [Backends](backends.md) | The `Backend` trait and how HiGHS 1.15, Gurobi 12 and SCIP map onto its events, settings and outcomes. |
+| [Backends](backends.md) | The `Backend` trait and how HiGHS 1.16, Gurobi 12 and SCIP map onto its events, settings and outcomes. |

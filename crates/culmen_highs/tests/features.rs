@@ -71,7 +71,7 @@ fn test_a_semi_integer_column_is_zero_or_whole_in_its_bounds() {
 
 #[test]
 fn test_a_semi_upper_bound_above_highs_limit_is_refused() {
-    // HiGHS 1.15 lowers a semi column's upper bound above 1e5 to 1e5 (HighsLpUtils.cpp, assessSemiVariables), so
+    // HiGHS 1.16 lowers a semi column's upper bound above 1e5 to 1e5 (HighsLpUtils.cpp, assessSemiVariables), so
     // the optimum x = 2e5 of this program would be out of its reach.
     let mut m = Model::new();
     let x = m.add_var(Var::semi_continuous().bounds(1, 2e5));
@@ -280,47 +280,6 @@ fn test_a_sparse_start_may_hold_a_semi_columns_zero() {
 }
 
 #[test]
-fn test_highs_sparse_start_refuses_a_semi_columns_zero() {
-    // HiGHS 1.15's Highs_setSparseSolution refuses any value outside its column's bounds (Highs.cpp, setSolution),
-    // a semi column's zero among them: the reason the backend does not call it.
-    let lower = [2.0];
-    let upper = [10.0];
-    let cost = [1.0];
-    let integrality = [highs_sys::kHighsVarTypeSemiContinuous];
-    let (index, value) = ([0], [0.0]);
-    // SAFETY: the instance is created here, used only on this thread, and destroyed before the block ends. The model
-    // has one column and no rows: each column array holds one value, the row and matrix arrays are null with zero
-    // counts, which HiGHS skips; the sparse solution names one column with one value.
-    let (passed, set) = unsafe {
-        let highs = highs_sys::Highs_create();
-        debug_assert!(!highs.is_null(), "HiGHS allocates an instance");
-        highs_sys::Highs_setBoolOptionValue(highs, c"output_flag".as_ptr(), 0);
-        let passed = highs_sys::Highs_passMip(
-            highs,
-            1,
-            0,
-            0,
-            highs_sys::kHighsMatrixFormatRowwise,
-            highs_sys::kHighsObjSenseMinimize,
-            0.0,
-            cost.as_ptr(),
-            lower.as_ptr(),
-            upper.as_ptr(),
-            core::ptr::null(),
-            core::ptr::null(),
-            core::ptr::null(),
-            core::ptr::null(),
-            core::ptr::null(),
-            integrality.as_ptr(),
-        );
-        let set = highs_sys::Highs_setSparseSolution(highs, 1, index.as_ptr(), value.as_ptr());
-        highs_sys::Highs_destroy(highs);
-        (passed, set)
-    };
-    assert_eq!((passed, set), (highs_sys::kHighsStatusOk, highs_sys::kHighsStatusError));
-}
-
-#[test]
 fn test_a_start_that_does_not_fit_is_refused_typed() {
     let program = knapsack();
     let mut solver = Solver::new(Highs::new(), program).unwrap();
@@ -400,7 +359,7 @@ fn semi_relaxation() -> (Program, Col, Col) {
 
 #[test]
 fn test_highs_relaxation_of_a_semi_program_is_refused() {
-    // HiGHS 1.15's feasibility relaxation keeps x within [2, 10]: it returns x = 2, a penalty of 15, however high the
+    // HiGHS 1.16's feasibility relaxation keeps x within [2, 10]: it returns x = 2, a penalty of 15, however high the
     // second row's price, where x = 0 costs 0.8 (a raw fixture below). The backend refuses it.
     let (program, ..) = semi_relaxation();
     let weights = Weights::uniform(&program, None, Some(penalty!(1.0)));

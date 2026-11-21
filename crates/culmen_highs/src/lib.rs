@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The HiGHS backend of culmen: HiGHS 1.15 through `highs-sys`, with every HiGHS callback as a typed, safe
+//! The HiGHS backend of culmen: HiGHS 1.16 through `highs-sys`, with every HiGHS callback as a typed, safe
 //! context, typed options, and every status.
 //!
 //! [`Highs`] implements [`Backend`]: load a [`Program`], solve it under [`Settings`], and HiGHS's callbacks reach a
@@ -92,8 +92,8 @@ const DEFAULT_ABSOLUTE_GAP: f64 = 1e-6;
 /// let highs = Highs::with_options(HighsOptions { presolve: Some(Switch::Off), ..HighsOptions::default() });
 /// assert_eq!(highs.options().presolve, Some(Switch::Off));
 /// assert!(Highs::EVENTS.contains(Events::HEURISTIC));
-/// assert!(!Highs::EVENTS.contains(Events::LAZY), "HiGHS 1.15 never calls its lazy-constraint callback");
-/// assert!(!Highs::CLASSES.contains(ModelClass::Miqp), "HiGHS 1.15 refuses to solve a MIQP");
+/// assert!(!Highs::EVENTS.contains(Events::LAZY), "HiGHS 1.16 never calls its lazy-constraint callback");
+/// assert!(!Highs::CLASSES.contains(ModelClass::Miqp), "HiGHS 1.16 refuses to solve a MIQP");
 /// ```
 #[derive(Debug)]
 pub struct Highs {
@@ -203,10 +203,10 @@ impl Highs {
     /// correct optima stay below `1e-6`.
     pub const QP_OBJECTIVE_ERROR: f64 = 1e-5;
 
-    /// The largest upper bound of a semi-continuous or semi-integer column HiGHS 1.15 solves as given
+    /// The largest upper bound of a semi-continuous or semi-integer column HiGHS 1.16 solves as given
     /// (`kMaxSemiVariableUpper`); [`Backend::load`] refuses a semi column above it with [`HighsError::SemiUpper`].
     ///
-    /// Above it, HiGHS 1.15 lowers the bound to the limit when the lower bound is at most a tenth of the limit, and
+    /// Above it, HiGHS 1.16 lowers the bound to the limit when the lower bound is at most a tenth of the limit, and
     /// refuses the model otherwise; a solution at the lowered bound fails the run, and one below it is optimal for
     /// the original model only by chance.
     pub const SEMI_UPPER_LIMIT: f64 = 1e5;
@@ -346,7 +346,9 @@ impl Highs {
         if status.run == CallStatus::Error {
             return Err(run_failed(status));
         }
-        let best = (status.primal == SolutionStatus::Feasible).then(|| self.solution(loaded));
+        let best = (status.primal == SolutionStatus::Feasible)
+            .then(|| self.solution(loaded))
+            .flatten();
         if let Some(why) = unsound_qp(loaded, status, best.as_ref()) {
             return Err(HighsError::UnsoundQp(why));
         }
@@ -414,18 +416,18 @@ impl Highs {
 
     /// The last run's primal solution, valued with the program's own objective: HiGHS's objective value is the
     /// program's own unless it has further objectives, when it is the last stage's, zero after a lexicographic solve,
-    /// or the blend's.
-    fn solution(&self, loaded: &Loaded) -> Solution {
-        let values = self.instance.primal_values(loaded.num_cols());
+    /// or the blend's. `None` when HiGHS holds no primal solution.
+    fn solution(&self, loaded: &Loaded) -> Option<Solution> {
+        let values = self.instance.primal_values(loaded.num_cols())?;
         let objective = if loaded.several() {
             loaded.objective(&values)
         } else {
             self.instance.objective()
         };
-        Solution {
+        Some(Solution {
             objective,
             values: values.into(),
-        }
+        })
     }
 
     /// Which of HiGHS's search limits a run that ended at its solution limit reached: the node limit when one is
@@ -649,13 +651,13 @@ impl Backend for Highs {
         .union(Events::HEURISTIC)
         .union(Events::NATIVE);
 
-    /// HiGHS 1.15 solves LPs, MILPs and convex QPs; `Highs::run` refuses a QP with integer columns ("Cannot solve
+    /// HiGHS 1.16 solves LPs, MILPs and convex QPs; `Highs::run` refuses a QP with integer columns ("Cannot solve
     /// MIQP problems with HiGHS").
     const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp, ModelClass::Qp]);
 
     /// Every analysis, each through its HiGHS call; the `analysis` module documents what HiGHS gives.
     const ANALYSES: Analyses = Analyses::ALL;
-    /// HiGHS 1.15 takes semi-continuous and semi-integer columns (up to [`Highs::SEMI_UPPER_LIMIT`]), multiple
+    /// HiGHS 1.16 takes semi-continuous and semi-integer columns (up to [`Highs::SEMI_UPPER_LIMIT`]), multiple
     /// linear objectives, and starts.
     const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
 
@@ -685,8 +687,7 @@ impl Backend for Highs {
 
     /// Hands HiGHS the start as its solution, which the next run starts from.
     ///
-    /// A sparse start's other columns are HiGHS's undefined value, as `Highs_setSparseSolution` leaves them. That
-    /// call is not used: it refuses a value outside its column's bounds, a semi column's zero among them.
+    /// A sparse start's other columns are HiGHS's undefined value, the solution `Highs_setSparseSolution` builds.
     fn set_start(&mut self, start: &Start) -> Result<(), HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         start.check(loaded.num_cols()).map_err(|_| HighsError::Start)?;
@@ -774,8 +775,8 @@ impl fmt::Display for Version {
 ///
 /// ```
 /// let version = culmen_highs::version();
-/// assert_eq!((version.major, version.minor), (1, 15));
-/// assert_eq!(version.to_string(), format!("1.15.{}", version.patch));
+/// assert_eq!((version.major, version.minor), (1, 16));
+/// assert_eq!(version.to_string(), format!("1.16.{}", version.patch));
 /// ```
 #[must_use]
 pub fn version() -> Version {

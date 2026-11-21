@@ -116,21 +116,19 @@ impl Instance {
         usize::try_from(count).unwrap_or(0)
     }
 
-    /// The column duals and row duals of the last run, one per column and per row of HiGHS's model.
-    ///
-    /// Call it only when the last run reports a dual solution.
-    pub(crate) fn duals(&self) -> (Vec<f64>, Vec<f64>) {
+    /// The column duals and row duals of the last run, one per column and per row of HiGHS's model; `None` unless
+    /// HiGHS reports a feasible dual solution.
+    pub(crate) fn duals(&self) -> Option<(Vec<f64>, Vec<f64>)> {
+        // `Highs_getSolution` checks only the primal solution status, so the dual one is checked here.
+        if self.info_int(c"dual_solution_status") != Some(2) {
+            return None;
+        }
         let (mut cols, mut rows) = (vec![0.0; self.num_col()], vec![0.0; self.num_row()]);
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
-        debug_assert_eq!(
-            self.info_int(c"dual_solution_status"),
-            Some(2),
-            "Instance: duals are read without a dual solution"
-        );
-        // SAFETY: the instance is live. A run that reports a dual solution holds one column dual per column and one
-        // row dual per row of its model, which is what the buffers have room for; the value arrays are null, which
-        // HiGHS skips.
-        let _ = unsafe {
+        // SAFETY: the instance is live. HiGHS's solution holds one column dual per column and one row dual per row of
+        // its model, which is what the buffers have room for, and HiGHS writes nothing when it holds no solution; the
+        // value arrays are null, which HiGHS skips.
+        let status = unsafe {
             Highs_getSolution(
                 self.raw(),
                 ptr::null_mut(),
@@ -139,20 +137,19 @@ impl Instance {
                 rows.as_mut_ptr(),
             )
         };
-        (cols, rows)
+        // HiGHS refuses the call, and leaves the buffers unwritten, when its primal solution status is none.
+        (CallStatus::from_raw(status) != CallStatus::Error).then_some((cols, rows))
     }
 
     /// The basis statuses of every column and row, as `kHighsBasisStatus*`; `None` when HiGHS holds no valid basis.
     pub(crate) fn basis(&self) -> Option<(Vec<HighsInt>, Vec<HighsInt>)> {
-        if self.info_int(c"basis_validity") != Some(1) {
-            return None;
-        }
         let (mut cols, mut rows) = (vec![0; self.num_col()], vec![0; self.num_row()]);
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
-        // SAFETY: the instance is live, and its basis is valid, so it holds one status per column and one per row of
-        // the model, which is what the buffers have room for.
-        let _ = unsafe { Highs_getBasis(self.raw(), cols.as_mut_ptr(), rows.as_mut_ptr()) };
-        Some((cols, rows))
+        // SAFETY: the instance is live. HiGHS's basis holds one status per column and one per row of its model, which
+        // is what the buffers have room for, and HiGHS writes nothing when the basis is not valid.
+        let status = unsafe { Highs_getBasis(self.raw(), cols.as_mut_ptr(), rows.as_mut_ptr()) };
+        // HiGHS refuses the call, and leaves the buffers unwritten, when its basis is not valid.
+        (CallStatus::from_raw(status) != CallStatus::Error).then_some((cols, rows))
     }
 
     /// Sets the basis the next run starts from, as `kHighsBasisStatus*` per column and per row.
@@ -303,8 +300,7 @@ impl Instance {
         }
         // HiGHS restores the model after solving its elastic LP and, as after every call that changes the model,
         // resizes its solution to the model's columns, so the relaxed point is read as any primal solution is.
-        let values = self.primal_values(n);
-        Some(values)
+        self.primal_values(n)
     }
 }
 

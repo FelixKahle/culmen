@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! HiGHS's options: the documented ones typed, any other by name.
+//! HiGHS's options: the commonly used ones typed, any other by name.
 
 use core::fmt;
 use core::time::Duration;
@@ -362,7 +362,7 @@ macro_rules! options {
     ($($(#[$doc:meta])* $field:ident: $ty:ty = $name:literal,)*) => {
         /// HiGHS's options for every solve of a [`Highs`](crate::Highs) backend.
         ///
-        /// The documented options are typed fields, each named as HiGHS names it and `None` for HiGHS's default;
+        /// The commonly used options are typed fields, each named as HiGHS names it and `None` for HiGHS's default;
         /// any other option is set by name through [`HighsOptions::option`], after the typed ones. The
         /// [`Settings`](culmen_core::Settings) of a solve apply after both, so a per-solve limit always wins.
         ///
@@ -539,7 +539,8 @@ options! {
     pdlp_optimality_tolerance: f64 = "pdlp_optimality_tolerance",
     /// Whether to solve the continuous relaxation of a MIP.
     solve_relaxation: bool = "solve_relaxation",
-    /// Whether HiGHS may end as infeasible-or-unbounded without telling which.
+    /// Whether HiGHS may end as infeasible-or-unbounded without trying to tell which; it ends so either way when it
+    /// cannot tell.
     allow_unbounded_or_infeasible: bool = "allow_unbounded_or_infeasible",
     /// The limit on presolve reductions; HiGHS's -1 is no limit.
     presolve_reduction_limit: i32 = "presolve_reduction_limit",

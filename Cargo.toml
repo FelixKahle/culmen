@@ -16,7 +16,7 @@ resolver = "3"
 members = ["crates/culmen", "crates/culmen_core", "crates/culmen_highs", "crates/culmen_macros", "crates/culmen_testing"]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT OR Apache-2.0"
@@ -26,9 +26,9 @@ keywords = ["optimization", "linear-programming", "milp", "highs", "solver"]
 categories = ["mathematics", "science"]
 
 [workspace.dependencies]
-culmen_core = { path = "crates/culmen_core", version = "0.2.1" }
-culmen_highs = { path = "crates/culmen_highs", version = "0.2.1" }
-culmen_macros = { path = "crates/culmen_macros", version = "0.2.1" }
+culmen_core = { path = "crates/culmen_core", version = "0.3.0" }
+culmen_highs = { path = "crates/culmen_highs", version = "0.3.0" }
+culmen_macros = { path = "crates/culmen_macros", version = "0.3.0" }
 culmen_testing = { path = "crates/culmen_testing" }
 
 # Vectors indexed by `Col` and `Row`, so a column table cannot be read with a row id.
@@ -45,9 +45,9 @@ itertools = { version = "0.15", default-features = false, features = ["use_std"]
 # `std` gives it floating-point square roots without `libm`; its macros are not used.
 nalgebra = { version = "0.35", default-features = false, features = ["std"] }
 
-# The raw C API of HiGHS 1.15. Its default `build` feature compiles the bundled HiGHS sources with cmake, so no
+# The raw C API of HiGHS 1.16. Its default `build` feature compiles the bundled HiGHS sources with cmake, so no
 # system HiGHS is needed; `highs_release` builds HiGHS optimised and without its debug assertions.
-highs-sys = { version = "1.15.0" }
+highs-sys = { version = "1.16.0" }
 
 # Token trees, quoting and spanned errors for the modelling macros: the standard proc-macro toolkit.
 proc-macro2 = { version = "1.0", default-features = false, features = ["proc-macro"] }
@@ -58,7 +58,7 @@ syn = { version = "3.0", default-features = false, features = ["parsing", "print
 proc-macro-crate = { version = "3.5", default-features = false }
 
 # Dev-only. Property tests against reference models.
-proptest = { version = "1.11", default-features = false, features = ["std"] }
+proptest = { version = "1.12", default-features = false, features = ["std"] }
 # Dev-only. Exact rational arithmetic for the reference solver, so it shares no floating-point reasoning with the
 # solver under test.
 num-rational = { version = "0.4", default-features = false, features = ["num-bigint-std", "std"] }

@@ -33,10 +33,9 @@ const fn failed(analysis: Analysis) -> AnalysisError<HighsError> {
 ///
 /// When HiGHS reports no dual solution.
 pub(crate) fn duals(highs: &Highs, program: &Program) -> Analyzed<Duals> {
-    if highs.instance.info_int(c"dual_solution_status") != Some(2) {
+    let Some((cols, mut rows)) = highs.instance.duals() else {
         return Err(failed(Analysis::Duals));
-    }
-    let (cols, mut rows) = highs.instance.duals();
+    };
     rows.truncate(program.num_rows());
     Ok(Duals {
         rows: rows.into(),

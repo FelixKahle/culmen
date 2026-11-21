@@ -8,7 +8,7 @@ use core::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// HiGHS's model status at the end of a run: every value of `HighsModelStatus` in HiGHS 1.15.
+/// HiGHS's model status at the end of a run: every value of `HighsModelStatus` in HiGHS 1.16.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ModelStatus {
@@ -52,7 +52,7 @@ pub enum ModelStatus {
     MemoryLimit,
     /// HiGHS interrupted itself, as a concurrent run does.
     HighsInterrupt,
-    /// A value HiGHS 1.15 does not define.
+    /// A value HiGHS 1.16 does not define.
     Other(i32),
 }
 

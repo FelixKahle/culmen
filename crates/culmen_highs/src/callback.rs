@@ -5,7 +5,7 @@
 //!
 //! # Which kind becomes which event
 //!
-//! | HiGHS 1.15 callback | culmen event | context |
+//! | HiGHS 1.16 callback | culmen event | context |
 //! |---|---|---|
 //! | `kHighsCallbackLogging` | [`Events::LOG`] | [`HighsLog`] |
 //! | `kHighsCallbackSimplexInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`PollSource::Simplex`] |
@@ -16,7 +16,9 @@
 //! | `kHighsCallbackMipImprovingSolution` | [`Events::INCUMBENT`] | [`HighsSolution`] |
 //! | `kHighsCallbackMipUserSolution` | [`Events::HEURISTIC`] | [`HighsHeuristic`] |
 //! | `kHighsCallbackMipGetCutPool` | [`Events::NATIVE`] | [`HighsNative::CutPool`] |
-//! | `kHighsCallbackMipDefineLazyConstraints` | none | HiGHS 1.15 declares it and never calls it |
+//! | `kHighsCallbackMipDefineLazyConstraints` | none | HiGHS 1.16 declares it and never calls it |
+//! | `kHighsCallbackQpFirstFeasiblePoint` | none | never started |
+//! | `kHighsCallbackQpInterrupt` | none | never started |
 //!
 //! HiGHS has no user cuts and never calls its lazy-constraint callback, so [`Events::LAZY`] and [`Events::CUT`]
 //! take [`Unsupported`](culmen_core::Unsupported). An interrupt is honoured only at the three interrupt kinds,
@@ -25,16 +27,19 @@
 //!
 //! # Threads, and why the trampoline is sound
 //!
-//! HiGHS calls the MIP kinds from its serial search loop: `HighsMipSolverData::checkLimits` calls the interrupt only
-//! while no parallel section holds the lock (`!parallelLockActive()`), and the solution, logging, cut-pool and
-//! user-solution kinds come from `addIncumbent`, `printDisplayLine`, `evaluateRootNode` and `queryExternalSolution`,
-//! all on the thread running `Highs_run`. The simplex and IPM polls come from the solvers' main loops. The logging
-//! kind, though, fires from `highsLogUser`, which code inside HiGHS's task pool may reach on a worker thread. So
-//! the trampoline does not rely on a single thread: everything a callback touches sits behind one `Mutex`, the
-//! callback is `Send` and the stop `Sync`, and every call takes the lock, so calls are serialised whatever thread
-//! makes them. A call that re-enters the same run on a thread already inside its callback, as the log lines HiGHS
-//! writes while [`HighsHeuristic::supply_partial`] repairs a solution do, is not delivered, since the callback is
-//! busy; a solve of another instance started from inside a callback gets its own callbacks.
+//! HiGHS calls the MIP kinds from its serial search loop, also when its parallel tree search, on by default since
+//! HiGHS 1.16, runs workers. `HighsMipSolverData::checkLimits` calls the interrupt only while no parallel section
+//! holds the lock (`!parallelLockActive()`), and the search reaches `printDisplayLine` only under the same check. A
+//! worker's `HighsMipWorker::addIncumbent` only buffers its solutions, which the serial loop passes to
+//! `HighsMipSolverData::addIncumbent`. The solution, logging, cut-pool and user-solution kinds come from that
+//! `addIncumbent`, `printDisplayLine`, `evaluateRootNode` and `queryExternalSolution`, all on the thread running
+//! `Highs_run`. The simplex and IPM polls come from the solvers' main loops. The logging kind, though, fires from
+//! `highsLogUser`, which code inside HiGHS's task pool may reach on a worker thread. So the trampoline does not rely
+//! on a single thread: everything a callback touches sits behind one `Mutex`, the callback is `Send` and the stop
+//! `Sync`, and every call takes the lock, so calls are serialised whatever thread makes them. A call that re-enters
+//! the same run on a thread already inside its callback, as the log lines HiGHS writes while
+//! [`HighsHeuristic::supply_partial`] repairs a solution do, is not delivered, since the callback is busy; a solve of
+//! another instance started from inside a callback gets its own callbacks.
 //!
 //! The per-run data lives on the stack of [`Highs::solve`](crate::Highs) and is registered for that run only: the
 //! callback is installed just before `Highs_run` and uninstalled (every kind stopped, the data pointer null) just
@@ -85,7 +90,7 @@ const _: () = {
     shared::<Mutex<Hook<'static>>>();
 };
 
-/// A HiGHS callback kind the trampoline handles: every kind HiGHS 1.15 calls.
+/// A HiGHS callback kind the trampoline handles: every kind HiGHS 1.16 calls that the backend starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     /// `kHighsCallbackLogging`.
@@ -116,7 +121,7 @@ enum Poller {
 }
 
 impl Kind {
-    /// The kind of HiGHS's number, `None` for one HiGHS 1.15 never calls.
+    /// The kind of HiGHS's number, `None` for one the backend never starts.
     #[expect(
         non_upper_case_globals,
         reason = "the patterns are HiGHS's constants under their C names"
@@ -786,7 +791,7 @@ pub enum QueryOrigin {
     BeforeDive,
     /// During root-node evaluation.
     EvaluateRootNode(RootNodePoint),
-    /// A value HiGHS 1.15 does not define.
+    /// A value HiGHS 1.16 does not define.
     Other(i32),
 }
 

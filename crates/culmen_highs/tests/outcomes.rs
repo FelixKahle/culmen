@@ -239,6 +239,27 @@ fn test_a_thread_count_conflict_on_one_thread_is_an_error() {
 }
 
 #[test]
+fn test_dropping_the_backend_frees_the_threads_scheduler_for_another_count() {
+    // A thread of its own, so no other test's scheduler is in play: once the solver that started the scheduler at two
+    // threads is dropped, a new one on the same thread may ask for three.
+    let on = |threads| {
+        Request::new().settings_from(Settings {
+            threads: Some(threads),
+            ..Settings::new()
+        })
+    };
+    std::thread::spawn(move || {
+        let mut first = Solver::new(Highs::new(), infeasible(true).build().unwrap()).unwrap();
+        first.solve(on(threads!(2))).unwrap();
+        drop(first);
+        let mut second = Solver::new(Highs::new(), infeasible(true).build().unwrap()).unwrap();
+        second.solve(on(threads!(3))).unwrap();
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
 fn test_a_moved_backend_solves_on_another_thread() {
     let mut solver = Solver::new(Highs::new(), infeasible(false).build().unwrap()).unwrap();
     let solved = std::thread::spawn(move || solver.solve(Request::new()).unwrap())

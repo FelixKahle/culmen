@@ -63,7 +63,7 @@ pub enum HighsError {
     /// HiGHS refused or failed an analysis, as it refuses a basis it finds singular.
     Analysis(Analysis),
     /// A semi column's upper bound exceeds [`Highs::SEMI_UPPER_LIMIT`](crate::Highs::SEMI_UPPER_LIMIT), beyond which
-    /// HiGHS 1.15 lowers the bound to the limit or refuses the model.
+    /// HiGHS 1.16 lowers the bound to the limit or refuses the model.
     SemiUpper {
         /// The column.
         col: Col,
@@ -82,7 +82,7 @@ pub enum HighsError {
         /// HiGHS's last error line, if it wrote one.
         message: Option<String>,
     },
-    /// HiGHS 1.15 gets the analysis wrong for a program with the feature, so the backend refuses it: its feasibility
+    /// HiGHS 1.16 gets the analysis wrong for a program with the feature, so the backend refuses it: its feasibility
     /// relaxation keeps a semi column within its bounds, never at zero.
     AnalysisFeature {
         /// The analysis asked for.

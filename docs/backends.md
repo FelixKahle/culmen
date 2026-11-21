@@ -5,7 +5,7 @@ it declares the model classes it solves, loads a `Program`, applies the generic 
 drives the solver's callbacks as culmen's generic events, and maps the solver's statuses to the generic `Outcome`,
 keeping its own status beside it.
 HiGHS (`culmen_highs`) is the first backend. This page shows that the seam fits the other serious MIP solvers too:
-each core concept is listed with what HiGHS 1.15 offers for it, and what Gurobi 12 and SCIP would offer a backend
+each core concept is listed with what HiGHS 1.16 offers for it, and what Gurobi 12 and SCIP would offer a backend
 written later.
 
 ## The seam
@@ -76,7 +76,7 @@ That is evidence that nothing in the core assumes HiGHS.
 
 ## Model classes
 
-| Class | HiGHS 1.15 (`culmen_highs`) | Gurobi 12 | SCIP |
+| Class | HiGHS 1.16 (`culmen_highs`) | Gurobi 12 | SCIP |
 |---|---|---|---|
 | `Lp` | yes | yes | yes |
 | `Milp` | yes | yes | yes |
@@ -92,7 +92,7 @@ Gurobi and SCIP solve and HiGHS does not, would be further classes that a backen
 
 ## Features
 
-| Feature | HiGHS 1.15 (`culmen_highs`) | Gurobi 12 | SCIP |
+| Feature | HiGHS 1.16 (`culmen_highs`) | Gurobi 12 | SCIP |
 |---|---|---|---|
 | `SemiContinuous` | yes: `kHighsVarTypeSemiContinuous`, upper bound at most `1e5` (`Highs::SEMI_UPPER_LIMIT`) | yes: `GRB_SEMICONT` | yes: a binary indicator and two linear rows |
 | `SemiInteger` | yes: `kHighsVarTypeSemiInteger`, alike | yes: `GRB_SEMIINT` | yes, alike with an integer column |
@@ -103,7 +103,7 @@ Gurobi and SCIP solve and HiGHS does not, would be further classes that a backen
 
 ## Events
 
-| Core concept | HiGHS 1.15 (`culmen_highs`) | Gurobi 12 | SCIP |
+| Core concept | HiGHS 1.16 (`culmen_highs`) | Gurobi 12 | SCIP |
 |---|---|---|---|
 | `LOG`: a log chunk, its level | `kHighsCallbackLogging`: message, `log_type` (only field set) | `GRB_CB_MESSAGE`: `GRB_CB_MSG_STRING` | a message handler (`SCIPmessagehdlrCreate`) |
 | `PROGRESS`: the solver's own pace | `kHighsCallbackMipLogging` (fires when a MIP log line is printed) | `GRB_CB_MIP`: `MIP_OBJBST`, `MIP_OBJBND`, `MIP_NODCNT`, `MIP_ITRCNT`; `GRB_CB_SIMPLEX`, `GRB_CB_BARRIER` for LPs | event handler on `SCIP_EVENTTYPE_NODESOLVED` with `SCIPgetPrimalbound`, `SCIPgetDualbound`, `SCIPgetNNodes` |
@@ -111,7 +111,7 @@ Gurobi and SCIP solve and HiGHS does not, would be further classes that a backen
 | `Progress` fields | `running_time`, `mip_primal_bound`, `mip_dual_bound`, `mip_node_count`, `mip_total_lp_iterations`, `simplex_iteration_count`, `ipm_iteration_count` | `cbGet` codes above, `GRB_CB_RUNTIME` | `SCIPgetSolvingTime` and the getters above |
 | `FEASIBLE`: any new solution | `kHighsCallbackMipSolution`: `mip_solution`, `objective_function_value` | `GRB_CB_MIPSOL`: `MIPSOL_SOL`, `MIPSOL_OBJ` | event handler on `SCIP_EVENTTYPE_SOLFOUND` |
 | `INCUMBENT`: a better solution | `kHighsCallbackMipImprovingSolution`; an accepted user solution is reported at the next MIP poll, as HiGHS skips its solution callbacks for it | `GRB_CB_MIPSOL` when `MIPSOL_OBJ` beats `MIPSOL_OBJBST` | `SCIP_EVENTTYPE_BESTSOLFOUND` |
-| `LAZY`: cut off a candidate | none: `kHighsCallbackMipDefineLazyConstraints` exists in 1.15 but is never called, so `Unsupported` | `GRB_CB_MIPSOL` (and `MIPNODE`): `GRBcblazy`, with `LazyConstraints = 1` | a constraint handler: `CONSCHECK` / `CONSENFOLP` adding rows |
+| `LAZY`: cut off a candidate | none: `kHighsCallbackMipDefineLazyConstraints` exists in 1.16 but is never called, so `Unsupported` | `GRB_CB_MIPSOL` (and `MIPNODE`): `GRBcblazy`, with `LazyConstraints = 1` | a constraint handler: `CONSCHECK` / `CONSENFOLP` adding rows |
 | `CUT`: cut off a node relaxation | none, so `Unsupported` | `GRB_CB_MIPNODE` with `MIPNODE_STATUS == OPTIMAL`: `GRBcbget(MIPNODE_REL)`, `GRBcbcut` | a separator (`SEPAEXECLP`): `SCIPgetSolVal` of the LP, `SCIPaddRow` |
 | `HEURISTIC`: supply a solution | `kHighsCallbackMipUserSolution`: `user_solution` + `user_has_solution`; partial via `Highs_setCallbackSparseSolution` + `Highs_repairCallbackSolution` | `GRB_CB_MIPNODE` (and `MIP`): `GRBcbsolution` (partial values allowed), `GRBcbusesolution` | a primal heuristic plugin (`HEUREXEC`): `SCIPcreateSol`, `SCIPtrySolFree` |
 | `NATIVE`: solver-only events | `kHighsCallbackMipGetCutPool` as `HighsNative::CutPool` (presolved-space cuts) | `GRB_CB_PRESOLVE`, `GRB_CB_MULTIOBJ`, `GRB_CB_IIS`, and `MIPNODE` node data beyond the relaxation | any other event type (`SCIP_EVENTTYPE_*`), branching or node-selection data |
@@ -124,7 +124,7 @@ allow a solver that calls back from other threads.
 
 ## Settings
 
-| `Settings` field | HiGHS 1.15 option | Gurobi 12 parameter | SCIP parameter |
+| `Settings` field | HiGHS 1.16 option | Gurobi 12 parameter | SCIP parameter |
 |---|---|---|---|
 | `time_limit` | `time_limit` (clock zeroed per run) | `TimeLimit` | `limits/time` |
 | `relative_gap` | `mip_rel_gap` | `MIPGap` | `limits/gap` |
@@ -143,7 +143,7 @@ same with `GRBsetintparam` / `GRBsetdblparam` / `GRBsetstrparam`, and SCIP with 
 
 ## Outcomes and statuses
 
-| `Outcome` | HiGHS 1.15 `ModelStatus` | Gurobi 12 status | SCIP `SCIP_STATUS` |
+| `Outcome` | HiGHS 1.16 `ModelStatus` | Gurobi 12 status | SCIP `SCIP_STATUS` |
 |---|---|---|---|
 | `Optimal` | `Optimal` with a gap within HiGHS's defaults; `ModelEmpty` | `GRB_OPTIMAL` within the default gap | `OPTIMAL` |
 | `GapReached` | `Optimal` with a gap wider than the defaults (a requested gap was reached) | `GRB_OPTIMAL` with a gap wider than the defaults | `GAPLIMIT` |
