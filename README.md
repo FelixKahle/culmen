@@ -9,7 +9,7 @@ cooperatively at any moment.
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
 [![Rust 1.99+](https://img.shields.io/badge/rust-1.99%2B-orange.svg)](https://www.rust-lang.org)
 [![Edition 2024](https://img.shields.io/badge/edition-2024-orange.svg)](https://doc.rust-lang.org/edition-guide/)
-[![Backend: HiGHS 1.15](https://img.shields.io/badge/backend-HiGHS%201.15-green.svg)](https://highs.dev)
+[![Backend: HiGHS 1.16](https://img.shields.io/badge/backend-HiGHS%201.16-green.svg)](https://highs.dev)
 
 ```rust
 use culmen::prelude::*;
@@ -152,7 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-HiGHS 1.15 solves LPs, MILPs and convex QPs, not QPs with integer columns: `Solver::new` refuses a MIQP on HiGHS
+HiGHS 1.16 solves LPs, MILPs and convex QPs, not QPs with integer columns: `Solver::new` refuses a MIQP on HiGHS
 with `LoadError::Unsupported`.
 
 ## Watching and stopping a solve
@@ -218,7 +218,7 @@ culmen is not on crates.io yet. Depend on it from git:
 culmen = { git = "https://github.com/FelixKahle/culmen", features = ["macros"] }
 ```
 
-The HiGHS backend builds HiGHS 1.15 from source through `highs-sys`, which needs **cmake** and **libclang**. The
+The HiGHS backend builds HiGHS 1.16 from source through `highs-sys`, which needs **cmake** and **libclang**. The
 first build takes a few minutes.
 
 | Feature | Default | What it adds |

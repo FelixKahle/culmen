@@ -55,7 +55,7 @@ sees a class it did not declare.
 
 | Backend | `CLASSES` |
 |---|---|
-| `Highs` | `{LP, MILP, QP}`: HiGHS 1.15 refuses to solve a QP with integer columns. |
+| `Highs` | `{LP, MILP, QP}`: HiGHS 1.16 refuses to solve a QP with integer columns. |
 | `Script` | Every class: it replays its script rather than solving. |
 
 The same holds for [features](program.md#features): every backend declares the features it takes as
@@ -71,7 +71,7 @@ use culmen::prelude::*;
 use culmen::{LoadError, ModelClass};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // A QP with an integer column: a MIQP, which HiGHS 1.15 cannot solve.
+    // A QP with an integer column: a MIQP, which HiGHS 1.16 cannot solve.
     let mut m = Model::new();
     let x = m.add_var(Var::free());
     let n = m.add_var(Var::integer().upper(3));

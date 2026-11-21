@@ -1,18 +1,18 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! When a HiGHS instance is destroyed. `Highs_destroy` also shuts down the HiGHS task scheduler of the destroying
-//! thread, so an instance released while that thread is inside a run, or inside a callback on a HiGHS worker thread,
-//! would free the scheduler the run is still using. Such an instance waits until a run ends with its thread outside
-//! every other run and callback, and is destroyed then, on that thread; an instance released anywhere else is
-//! destroyed at once.
+//! When a HiGHS instance is destroyed. Destroying one also shuts down the HiGHS task scheduler of the destroying
+//! thread, which HiGHS keeps per thread and not per instance, so an instance released while that thread is inside a
+//! run, or inside a callback on a HiGHS worker thread, would free the scheduler the run is still using. Such an
+//! instance waits until a run ends with its thread outside every other run and callback, and is destroyed then, on
+//! that thread; an instance released anywhere else is destroyed at once.
 
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::sync::{Mutex, PoisonError};
 
-use highs_sys::{Highs_create, Highs_destroy};
+use highs_sys::{Highs_create, Highs_destroy, Highs_resetThreadScheduler};
 
 thread_local! {
     /// How many runs and callbacks this thread is inside.
@@ -22,8 +22,8 @@ thread_local! {
 /// The instances released inside a run or a callback, waiting for a run to end.
 static WAITING: Mutex<Vec<Handle>> = Mutex::new(Vec::new());
 
-/// A live HiGHS instance, destroyed by `Highs_destroy` when it drops. Only [`release`] and the end of a run drop
-/// one, so it never drops while its thread is inside a run or a callback.
+/// A live HiGHS instance, destroyed by `Highs_destroy`, with its thread's scheduler shut down, when it drops. Only
+/// [`release`] and the end of a run drop one, so it never drops while its thread is inside a run or a callback.
 pub(super) struct Handle(NonNull<c_void>);
 
 // SAFETY: a HiGHS instance has no affinity to the thread that created it: it holds no thread-local state, and the
@@ -52,10 +52,15 @@ impl Handle {
 impl Drop for Handle {
     fn drop(&mut self) {
         debug_assert!(DEPTH.get() == 0, "Handle: destroyed inside a run or a callback");
-        // SAFETY: the instance is live and is never used again. `Highs_destroy` also shuts down the HiGHS task
-        // scheduler of this thread, which the next run on it starts afresh; a handle drops only outside every run
-        // and callback on this thread, so no run is using that scheduler.
-        unsafe { Highs_destroy(self.as_ptr()) };
+        // The scheduler is shut down before the instance is destroyed, as `Highs_destroy` itself did before HiGHS
+        // 1.16, so the next run on this thread starts it afresh at its own thread count; blocking, so its workers
+        // have stopped when this returns.
+        // SAFETY: a handle drops only outside every run and callback on this thread, so no run is using this
+        // thread's scheduler; the instance is live and is never used again.
+        unsafe {
+            Highs_resetThreadScheduler(1);
+            Highs_destroy(self.as_ptr());
+        }
     }
 }
 

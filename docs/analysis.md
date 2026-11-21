@@ -305,13 +305,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `Highs` provides every analysis through HiGHS's own calls: `Highs_getSolution` for duals, `Highs_getBasis` and
 `Highs_setBasis`, `Highs_getRanging`, `Highs_getPrimalRay` and `Highs_getDualRay`, `Highs_getIis` with its full IIS
 strategy, and `Highs_feasibilityRelaxation`. An IIS and a relaxation reset HiGHS's options to the backend's
-`HighsOptions` first, as a solve does. What the backend adds to HiGHS 1.15:
+`HighsOptions` first, as a solve does. What the backend adds to HiGHS 1.16:
 
 - **An LP without rows has a primal ray.** HiGHS reports none; the backend returns the unit direction of the first
   column whose cost improves toward an infinite bound.
 - **A relaxation that cannot meet its hard constraints is `None`.** HiGHS does not report whether its elastic program
   was feasible, so the backend checks the point it returns against the hard bounds, rows and integrality.
-- **No relaxation of a program with semi columns.** HiGHS 1.15 solves its elastic program without the step of
+- **No relaxation of a program with semi columns.** HiGHS 1.16 solves its elastic program without the step of
   `Highs::run` that reformulates semi columns, so it keeps a semi column within its bounds, never at zero, and its
   point can miss the least violation by any amount. The backend refuses such a program with
   `HighsError::AnalysisFeature { analysis, feature }`.

@@ -541,6 +541,28 @@ fn test_a_relaxation_violates_the_cheaper_row_by_the_gap() {
 }
 
 #[test]
+fn test_a_relaxation_of_a_maximized_program_minimizes_the_violation() {
+    // `gap_of_two` maximized: the program's sense does not reach the relaxation, so the rows are still violated by
+    // the gap of 2 at the cheaper one, never by more.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(10.0));
+    let y = m.add_var(Var::continuous().upper(10.0));
+    let r1 = m.add_constraint((x + y).geq(5.0));
+    let r2 = m.add_constraint((x + y).leq(3.0));
+    m.maximize(x - y + 7);
+    let program = m.build().unwrap();
+    let mut weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    weights.rows[r2] = Some(penalty!(3.0));
+    let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
+    let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
+    let violations: Vec<Violation> = relaxed.violations(&program).collect();
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert_eq!((violations[0].line, violations[0].bound), (Line::Row(r1), Bound::Lower));
+    assert!(near(violations[0].amount, 2.0));
+    assert!(near(weights.penalty(violations), 2.0));
+}
+
+#[test]
 fn test_a_relaxation_may_move_a_column_past_a_soft_bound() {
     // x in [0, 1] with the row x >= 3 hard: x's upper bound gives way by 2.
     let mut m = Model::new();
@@ -578,7 +600,7 @@ fn test_a_relaxation_with_only_hard_bounds_and_rows_finds_nothing() {
 #[test]
 fn test_highs_restores_the_relaxed_solution_to_the_columns_of_the_model() {
     // What the backend's buffer relies on: after `Highs_feasibilityRelaxation` solved its elastic LP (2 columns and 2
-    // elastic ones here), HiGHS 1.15's solution holds one value per column of the model, and `Highs_getSolution`
+    // elastic ones here), HiGHS 1.16's solution holds one value per column of the model, and `Highs_getSolution`
     // writes 2 values, not 4.
     let (program, _) = gap_of_two();
     let path = std::env::temp_dir().join(format!("culmen-relax-{}.lp", std::process::id()));

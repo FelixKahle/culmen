@@ -310,7 +310,7 @@ assert!(!Highs::EVENTS.contains(Events::CUT));
 assert!(culmen::Script::EVENTS.contains(Events::ALL));
 ```
 
-HiGHS 1.15 offers neither lazy constraints nor user cuts; see [Limitations](highs.md#limitations).
+HiGHS 1.16 offers neither lazy constraints nor user cuts; see [Limitations](highs.md#limitations).
 
 ## Panics and threads
 
