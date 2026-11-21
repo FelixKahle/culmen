@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/img/logo.svg" alt="culmen" width="640">
+  <img src="https://raw.githubusercontent.com/FelixKahle/culmen/main/docs/img/logo.svg" alt="culmen" width="640">
 </p>
 
 **Linear, mixed-integer and convex quadratic programming in Rust.** Write a model the way the mathematics reads,
@@ -229,16 +229,16 @@ first build takes a few minutes.
 
 ## Documentation
 
-The user guide is in [`docs/`](docs/README.md), and every Rust snippet in it runs as a doctest:
+The user guide is in [`docs/`](https://github.com/FelixKahle/culmen/blob/main/docs/README.md), and every Rust snippet in it runs as a doctest:
 
-- [Getting started](docs/getting-started.md): requirements, features, and a first model.
-- [Modelling](docs/modelling.md) and [Macros](docs/macros.md): variables, linear and quadratic expressions,
+- [Getting started](https://github.com/FelixKahle/culmen/blob/main/docs/getting-started.md): requirements, features, and a first model.
+- [Modelling](https://github.com/FelixKahle/culmen/blob/main/docs/modelling.md) and [Macros](https://github.com/FelixKahle/culmen/blob/main/docs/macros.md): variables, linear and quadratic expressions,
   constraints, objectives and keyed families, written with methods or with macros.
-- [Solving](docs/solving.md) and [Callbacks](docs/callbacks.md): model classes, requests, settings, outcomes,
+- [Solving](https://github.com/FelixKahle/culmen/blob/main/docs/solving.md) and [Callbacks](https://github.com/FelixKahle/culmen/blob/main/docs/callbacks.md): model classes, requests, settings, outcomes,
   observers, stops and every callback event.
-- [HiGHS](docs/highs.md): options, threads, statuses, quadratic programs, callback contexts, and limitations.
-- [The program as data](docs/program.md), [Testing](docs/testing.md), [Design](docs/design.md), and
-  [Backends](docs/backends.md) for backend authors.
+- [HiGHS](https://github.com/FelixKahle/culmen/blob/main/docs/highs.md): options, threads, statuses, quadratic programs, callback contexts, and limitations.
+- [The program as data](https://github.com/FelixKahle/culmen/blob/main/docs/program.md), [Testing](https://github.com/FelixKahle/culmen/blob/main/docs/testing.md), [Design](https://github.com/FelixKahle/culmen/blob/main/docs/design.md), and
+  [Backends](https://github.com/FelixKahle/culmen/blob/main/docs/backends.md) for backend authors.
 
 The API reference is the rustdoc: `cargo doc --open -p culmen`.
 
@@ -259,11 +259,11 @@ cargo run -p culmen --example column_generation
 
 | Crate | What it holds |
 |---|---|
-| [`culmen`](crates/culmen) | The crate to depend on: re-exports, a `prelude`, and the `highs` and `macros` features. |
-| [`culmen_core`](crates/culmen_core) | The program as data, the modelling layer, the backend seam and the solve API. No solver and no `unsafe`. |
-| [`culmen_highs`](crates/culmen_highs) | The HiGHS backend: every callback as a typed, safe context, typed options and every status. |
-| [`culmen_macros`](crates/culmen_macros) | The modelling macros, which expand to `culmen_core`'s methods. |
-| [`culmen_testing`](crates/culmen_testing) | Dev-only: an exact reference solver, property-test strategies and hard instances. |
+| [`culmen`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen) | The crate to depend on: re-exports, a `prelude`, and the `highs` and `macros` features. |
+| [`culmen_core`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_core) | The program as data, the modelling layer, the backend seam and the solve API. No solver and no `unsafe`. |
+| [`culmen_highs`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_highs) | The HiGHS backend: every callback as a typed, safe context, typed options and every status. |
+| [`culmen_macros`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_macros) | The modelling macros, which expand to `culmen_core`'s methods. |
+| [`culmen_testing`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_testing) | Dev-only: an exact reference solver, property-test strategies and hard instances. |
 
 `culmen_core::Script` is an in-memory backend that replays scripted events, for testing code that drives a solve
 without a solver.
@@ -277,7 +277,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
 The code keeps to typed handles and newtypes, checked literals, documented `unsafe`, and property tests against
-simple reference models; [Design](docs/design.md) explains the choices behind it.
+simple reference models; [Design](https://github.com/FelixKahle/culmen/blob/main/docs/design.md) explains the choices behind it.
 
 ## Contributing
 
@@ -285,13 +285,13 @@ Contributions are welcome, from a typo fix to a new backend. Open an issue for a
 request straight away.
 
 - **Bugs:** the smallest program that shows it helps most. A fix comes with a test that fails without it.
-- **Backends:** HiGHS is the only one so far. [Backends](docs/backends.md) describes the contract a new solver
+- **Backends:** HiGHS is the only one so far. [Backends](https://github.com/FelixKahle/culmen/blob/main/docs/backends.md) describes the contract a new solver
   implements.
 - **Pull requests:** CI must pass: formatting, clippy and the docs with warnings denied, and the tests.
 
 ## Licence
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your
+Licensed under either of [Apache License, Version 2.0](https://github.com/FelixKahle/culmen/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/FelixKahle/culmen/blob/main/LICENSE-MIT), at your
 option.
 
 Unless you explicitly state otherwise, any contribution you intentionally submit for inclusion in this work, as
