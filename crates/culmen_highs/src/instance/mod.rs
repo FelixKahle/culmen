@@ -17,7 +17,8 @@ use core::ptr;
 use std::ffi::CString;
 
 use culmen_core::{
-    AbsoluteGap, Col, Integrality, LinearObjective, Objectives, Program, RelativeGap, Sense, Tolerance, Weight,
+    AbsoluteGap, Col, Integrality, LinearObjective, Objectives, Program, RelativeGap, Sense, StartEntries, Tolerance,
+    Weight,
 };
 use highs_sys::{
     Highs_clearLinearObjectives, Highs_getColName, Highs_getDoubleInfoValue, Highs_getHessianNumNz,
@@ -25,7 +26,7 @@ use highs_sys::{
     Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName, Highs_getSolution, Highs_passColName,
     Highs_passLinearObjectives, Highs_passModel, Highs_passRowName, Highs_readModel, Highs_resetOptions, Highs_run,
     Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue, Highs_setIntOptionValue,
-    Highs_setSolution, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_writeModel,
+    Highs_setSparseSolution, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_writeModel,
     Highs_zeroAllClocks, HighsCCallbackType, HighsInt, kHighsHessianFormatTriangular, kHighsMatrixFormatRowwise,
     kHighsObjSenseMaximize, kHighsObjSenseMinimize, kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger,
     kHighsVarTypeSemiContinuous, kHighsVarTypeSemiInteger,
@@ -341,31 +342,41 @@ impl Instance {
         }
     }
 
-    /// Hands HiGHS `values`, one per column of its model, as the solution the next run starts from; a value of
-    /// [`UNDEFINED`] leaves the column to HiGHS.
+    /// Hands HiGHS `entries`, each a column of its model at most once, as the solution the next run starts from;
+    /// HiGHS chooses the value of every column the entries leave out. No entries leave HiGHS's solution as it is.
     ///
     /// # Errors
     ///
+    /// [`HighsError::TooLarge`] when a column or the number of entries exceeds HiGHS's 32-bit indices,
     /// [`HighsError::Start`] when HiGHS refuses the solution.
-    pub(crate) fn set_solution(&mut self, values: &[f64]) -> Result<(), HighsError> {
+    pub(crate) fn set_solution(&mut self, entries: StartEntries<'_>) -> Result<(), HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
-        debug_assert_eq!(
-            values.len(),
-            self.num_col(),
-            "Instance: the start does not fit HiGHS's model"
+        let mut indices = Vec::with_capacity(entries.size_hint().0);
+        let mut values = Vec::with_capacity(entries.size_hint().0);
+        for (col, value) in entries {
+            indices.push(index(col.index(), Dimension::Columns)?);
+            values.push(value);
+        }
+        // HiGHS sets nothing for no entries and logs a warning, so the call is skipped.
+        if indices.is_empty() {
+            return Ok(());
+        }
+        let count = index(indices.len(), Dimension::Columns)?;
+        debug_assert!(
+            indices
+                .iter()
+                .all(|&c| usize::try_from(c).is_ok_and(|c| c < self.num_col())),
+            "Instance: the start names a column HiGHS's model lacks"
         );
-        // SAFETY: the instance is live and borrowed exclusively. `values` holds one value per column of the model HiGHS
-        // holds, which is what it reads; the row values and duals are null, which it skips. It copies the values.
-        let status = unsafe { Highs_setSolution(self.raw(), values.as_ptr(), ptr::null(), ptr::null(), ptr::null()) };
+        // SAFETY: the instance is live and borrowed exclusively. `indices` and `values` hold `count` entries each, which
+        // is what HiGHS reads; it copies them and checks each index against its model.
+        let status = unsafe { Highs_setSparseSolution(self.raw(), count, indices.as_ptr(), values.as_ptr()) };
         match CallStatus::from_raw(status) {
             CallStatus::Error => Err(HighsError::Start),
             CallStatus::Ok | CallStatus::Warning => Ok(()),
         }
     }
 }
-
-/// HiGHS's `kHighsUndefined`, `kHighsInf`: a start's value HiGHS chooses itself.
-pub(crate) const UNDEFINED: f64 = f64::INFINITY;
 
 /// A program's objectives in the layout `Highs_passLinearObjectives` reads, the program's own first.
 ///

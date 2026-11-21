@@ -308,6 +308,7 @@ fn test_options_and_statuses_round_trip() {
     }
     let options = HighsOptions {
         presolve: Some(culmen_highs::Switch::Off),
+        presolve_mode: Some(culmen_highs::PresolveMode::Light),
         time_limit: Some(core::time::Duration::from_secs(3)),
         mip_rel_gap: Some(0.01),
         ..HighsOptions::default()

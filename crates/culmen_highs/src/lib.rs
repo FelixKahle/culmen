@@ -70,13 +70,13 @@ use culmen_core::{
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
 pub use options::{
-    EdgeWeight, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OnOff, OptionValue, RawOption, ScaleStrategy,
-    SimplexStrategy, Switch,
+    EdgeWeight, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OnOff, OptionValue, PresolveMode, RawOption,
+    ScaleStrategy, SimplexStrategy, Switch,
 };
 pub use status::{CallStatus, HighsStatus, ModelStatus, SolutionStatus};
 
 use callback::{Hook, NO_RUN, Payload, kinds, trampoline};
-use instance::{Instance, Padding, UNDEFINED};
+use instance::{Instance, Padding};
 
 /// HiGHS's default relative MIP gap, below which an optimal status is a proof of optimality.
 const DEFAULT_RELATIVE_GAP: f64 = 1e-4;
@@ -685,15 +685,14 @@ impl Backend for Highs {
         Ok(())
     }
 
-    /// Hands HiGHS the start as its solution, which the next run starts from.
+    /// Hands HiGHS the start as its solution, which the next run starts from, through `Highs_setSparseSolution`.
     ///
-    /// A sparse start's other columns are HiGHS's undefined value, the solution `Highs_setSparseSolution` builds.
+    /// HiGHS chooses the columns a sparse start leaves out, and for a MIP completes them by a sub-MIP. A sparse start
+    /// without entries leaves HiGHS starting from its last solution, as a request without a start does.
     fn set_start(&mut self, start: &Start) -> Result<(), HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         start.check(loaded.num_cols()).map_err(|_| HighsError::Start)?;
-        let mut values = vec![UNDEFINED; loaded.num_cols()];
-        start.entries().for_each(|(col, value)| values[col.index()] = value);
-        self.instance.set_solution(&values)
+        self.instance.set_solution(start.entries())
     }
 
     fn solve(

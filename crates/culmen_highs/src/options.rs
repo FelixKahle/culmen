@@ -357,6 +357,32 @@ impl ToOption for EdgeWeight {
     }
 }
 
+/// Which presolve rules HiGHS allows: `presolve_mode`, HiGHS's `PresolveMode`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum PresolveMode {
+    /// HiGHS decides: the light rules for a PDLP solver, every rule otherwise.
+    Choose,
+    /// Only the rules of presolve's initial sweep.
+    InitialSweep,
+    /// The light rules.
+    Light,
+    /// Every rule.
+    Full,
+}
+
+impl ToOption for PresolveMode {
+    fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
+        let value = match self {
+            Self::Choose => 0,
+            Self::InitialSweep => 1,
+            Self::Light => 2,
+            Self::Full => 3,
+        };
+        Ok(OptionValue::Int(value))
+    }
+}
+
 /// Declares the typed options: the struct, its field docs, and the list of `(name, value)` it sets.
 macro_rules! options {
     ($($(#[$doc:meta])* $field:ident: $ty:ty = $name:literal,)*) => {
@@ -412,6 +438,8 @@ macro_rules! options {
 options! {
     /// Whether to presolve.
     presolve: Switch = "presolve",
+    /// Which presolve rules HiGHS allows when it presolves.
+    presolve_mode: PresolveMode = "presolve_mode",
     /// The LP solver.
     solver: LpSolver = "solver",
     /// Whether to use parallelism.
@@ -621,6 +649,17 @@ mod tests {
                 presolve: Some(s),
                 parallel: Some(s),
                 run_crossover: Some(s),
+                ..HighsOptions::default()
+            });
+        }
+        for p in [
+            PresolveMode::Choose,
+            PresolveMode::InitialSweep,
+            PresolveMode::Light,
+            PresolveMode::Full,
+        ] {
+            every.push(HighsOptions {
+                presolve_mode: Some(p),
                 ..HighsOptions::default()
             });
         }
