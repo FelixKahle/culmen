@@ -2,20 +2,22 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Convex quadratic objectives on HiGHS: hand-worked optima, the ½ factor of HiGHS's Hessian, the refusal of a
-//! MIQP, the LP file read back by HiGHS, and random convex QPs.
+//! MIQP, the QP solver's polls and first feasible point, the LP file read back by HiGHS, and random convex QPs.
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
 
 use std::ffi::CString;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use culmen_core::{
-    Backend, Bounds, Col, Events, Linear, LoadError, Model, ModelClass, Outcome, Program, ProgramColumn, ProgramPlan,
-    Request, Sense, Solution, SolveError, Solved, Solver, StopReason, TiVec, Var,
+    Backend, Bounds, Col, Events, Linear, LoadError, Model, ModelClass, Outcome, Phase, PollContext, Program,
+    ProgramColumn, ProgramPlan, Progress, Request, Sense, Solution, SolutionContext, SolveError, Solved, Solver,
+    StopReason, TiSlice, TiVec, Var, stop_fn,
 };
-use culmen_highs::{Highs, HighsError, UnsoundQp};
+use culmen_highs::{Highs, HighsError, PollSource, UnsoundQp};
 use culmen_testing::reference::close;
 use culmen_testing::strategy::small_qp;
 use proptest::prelude::*;
@@ -327,17 +329,128 @@ impl culmen_core::Callback<Highs> for Kinds {
     }
 }
 
-#[test]
-fn test_a_qp_solve_reports_its_log_alone() {
+/// The point of `x + y <= 1` nearest (1, 2): a QP whose solve takes iterations.
+fn projection() -> Program {
     let mut m = Model::new();
     let x = m.add_var(Var::free());
     let y = m.add_var(Var::free());
     m.add_constraint((x + y).leq(1));
     m.minimize((x - 1) * (x - 1) + (y - 2) * (y - 2));
-    let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
+    m.build().unwrap()
+}
+
+#[test]
+fn test_a_qp_solve_reports_its_log_its_polls_and_its_first_feasible_point() {
+    let mut solver = Solver::new(Highs::new(), projection()).unwrap();
     let mut kinds = Kinds(Events::NONE);
     solver.solve_with(Request::new(), &mut kinds).unwrap();
-    assert_eq!(kinds.0, Events::LOG);
+    assert_eq!(kinds.0, Events::LOG | Events::POLL | Events::FEASIBLE);
+}
+
+/// Every QP poll's source, interrupting at the first when asked to.
+#[derive(Default)]
+struct Polls {
+    sources: Vec<PollSource>,
+    phases: Vec<Phase>,
+    interrupt: bool,
+}
+
+impl culmen_core::Callback<Highs> for Polls {
+    fn poll(&mut self, ctx: &mut culmen_highs::HighsPoll<'_>) {
+        self.sources.push(*ctx.source());
+        self.phases.push(ctx.progress().phase);
+        if self.interrupt {
+            ctx.interrupt();
+        }
+    }
+}
+
+#[test]
+fn test_a_qp_poll_reports_qp_iterations_and_interrupts_the_solve() {
+    let mut solver = Solver::new(Highs::new(), projection()).unwrap();
+    let mut watched = Polls::default();
+    let solved = solver.solve_with(Request::new(), &mut watched).unwrap();
+    assert!(matches!(solved.outcome, Outcome::Optimal(_)), "{solved:?}");
+    // HiGHS polls once after the starting point, before the first iteration, then at every iteration.
+    assert_eq!(watched.sources.first(), Some(&PollSource::Qp { iterations: 0 }));
+    assert!(
+        watched.sources.iter().all(|s| matches!(s, PollSource::Qp { .. })),
+        "{:?}",
+        watched.sources
+    );
+    assert!(watched.phases.iter().all(|&p| p == Phase::Other));
+
+    let mut interrupting = Polls {
+        interrupt: true,
+        ..Polls::default()
+    };
+    let solved = solver.solve_with(Request::new(), &mut interrupting).unwrap();
+    assert_eq!(interrupting.sources, [PollSource::Qp { iterations: 0 }]);
+    assert!(
+        matches!(
+            solved.outcome,
+            Outcome::Stopped {
+                reason: StopReason::Interrupted,
+                ..
+            }
+        ),
+        "{solved:?}"
+    );
+}
+
+#[test]
+fn test_a_stop_ends_a_qp_solve_as_interrupted() {
+    let polled = AtomicUsize::new(0);
+    let stop = stop_fn(|| {
+        polled.fetch_add(1, Ordering::Relaxed);
+        true
+    });
+    let mut solver = Solver::new(Highs::new(), projection()).unwrap();
+    let solved = solver.solve(Request::new().stop(&stop)).unwrap();
+    assert_eq!(polled.load(Ordering::Relaxed), 1);
+    assert!(
+        matches!(
+            solved.outcome,
+            Outcome::Stopped {
+                reason: StopReason::Interrupted,
+                ..
+            }
+        ),
+        "{solved:?}"
+    );
+}
+
+/// The feasible solutions a callback is handed, with their contexts' figures.
+#[derive(Default)]
+struct Feasible(Vec<(f64, Vec<f64>, bool, Progress)>);
+
+impl culmen_core::Callback<Highs> for Feasible {
+    fn feasible(&mut self, ctx: &mut culmen_highs::HighsSolution<'_>) {
+        let point = (
+            ctx.objective(),
+            ctx.values().raw.to_vec(),
+            ctx.mip().is_some(),
+            ctx.progress(),
+        );
+        self.0.push(point);
+    }
+}
+
+#[test]
+fn test_the_first_feasible_point_of_a_qp_is_feasible_and_valued_on_the_program() {
+    let program = projection();
+    let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
+    let mut feasible = Feasible::default();
+    solver.solve_with(Request::new(), &mut feasible).unwrap();
+    let [(objective, values, mip, progress)] = feasible.0.as_slice() else {
+        panic!("expected one feasible point, got {:?}", feasible.0)
+    };
+    let values = TiSlice::from_ref(values.as_slice());
+    assert!(program.max_violation(values) <= 1e-7, "{values:?}");
+    assert!(close(program.objective_value(values), *objective, 1e-9));
+    assert!(!mip);
+    assert_eq!(progress.phase, Phase::Other);
+    assert_eq!(progress.objective, Some(*objective));
 }
 
 /// The program written to a file, read by HiGHS's own LP-file reader and solved there: its objective value.
@@ -457,6 +570,23 @@ proptest! {
         if program.num_rows() == 0 {
             let step = gradient_step(&program, &best.values);
             prop_assert!(at_best <= loss(&program, &step) + tolerance, "{best:?} loses to its step {step:?}");
+        }
+    }
+
+    /// On random convex QPs the QP solver's first feasible point, when HiGHS reports one, is feasible and valued as
+    /// `Program::objective_value` values it.
+    #[test]
+    fn test_the_first_feasible_point_of_a_random_qp_is_feasible(program in small_qp()) {
+        let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
+        let mut feasible = Feasible::default();
+        // The time limit ends a solve HiGHS's QP solver does not; the point comes before its iterations.
+        let _ = solver.solve_with(Request::new().time_limit(Duration::from_secs(2)), &mut feasible);
+        prop_assert!(feasible.0.len() <= 1, "{:?}", feasible.0);
+        for (objective, values, mip, _) in &feasible.0 {
+            let values = TiSlice::from_ref(values.as_slice());
+            prop_assert!(program.max_violation(values) <= 1e-6, "{values:?} on {program:?}");
+            prop_assert!(close(program.objective_value(values), *objective, 1e-9));
+            prop_assert!(!mip);
         }
     }
 }

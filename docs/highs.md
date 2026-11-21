@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Options
 
 `HighsOptions` is plain data. Each documented HiGHS option is a field named as HiGHS names it, `None` for HiGHS's
-default: `presolve`, `solver`, `parallel`, `run_crossover`, `time_limit`, `ranging`, the tolerances
+default: `presolve`, `presolve_mode`, `solver`, `parallel`, `run_crossover`, `time_limit`, `ranging`, the tolerances
 (`primal_feasibility_tolerance`, `dual_feasibility_tolerance`, `optimality_tolerance`, `kkt_tolerance`, …),
 `objective_bound` and `objective_target`, `random_seed`, `threads`, the simplex options (`simplex_strategy`,
 `simplex_scale_strategy`, the edge weights, the iteration and update limits), the logging options (`output_flag`,
@@ -70,6 +70,7 @@ A field whose HiGHS option takes one of a few values is an enum:
 | Type | Variants | Options |
 |---|---|---|
 | `Switch` | `Off`, `Choose`, `On` | `presolve`, `parallel`, `run_crossover` |
+| `PresolveMode` | `Choose`, `InitialSweep`, `Light`, `Full` | `presolve_mode` |
 | `OnOff` | `Off`, `On` | `ranging` |
 | `LpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo`, `Pdlp`, `Hipdlp` | `solver` |
 | `MipLpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo` | `mip_lp_solver` |
@@ -231,10 +232,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 HiGHS's QP solver differs from its LP and MIP solvers in what a solve can see and in how far its answer can be
 trusted:
 
-- **Only the log.** HiGHS 1.16's QP solver offers an interrupt and a first-feasible-point callback, but the backend
-  starts neither, so a QP solve delivers `LOG` alone: a [`Stop`](callbacks.md#stop) is never polled and an observer
-  gets no progress. The time limit of the
-  [`Settings`](solving.md#settings) still applies.
+- **A poll, a first feasible point and the log.** HiGHS 1.16's active-set QP solver polls for an interrupt once its
+  starting point is found and then at every iteration, and reports that starting point once. A QP solve therefore
+  delivers `POLL`, with `PollSource::Qp { iterations }`, so a [`Stop`](callbacks.md#stop) ends it as
+  `Stopped { reason: Interrupted, .. }`; it delivers `FEASIBLE` once, for the starting point, valued by the backend
+  since HiGHS reports no objective with it; and `LOG`. It delivers no `PROGRESS` and no `INCUMBENT`, so an observer
+  sees no progress and no improvement. The time limit of the [`Settings`](solving.md#settings) applies as before.
 - **A row is always passed.** On a QP without rows HiGHS 1.15 starts from the unconstrained minimizer clamped into
   the bounds and can report that point optimal after no iteration when it is not. The backend passes such a QP
   with one free row without entries, which constrains nothing and makes HiGHS find its starting point with its LP
@@ -246,8 +249,8 @@ trusted:
   objective error exceeds `Highs::QP_OBJECTIVE_ERROR`, `1e-5` (correct optima stay below `1e-6`), or unboundedness
   with every column bounded. An `Optimal` outcome of a QP is therefore one HiGHS's own measures support.
 - **It may not terminate.** On a rare QP HiGHS 1.15's QP solver iterates without end, its memory growing. A
-  [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`; set one for any QP
-  whose solve must end.
+  [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`, and a `Stop` as
+  `Stopped { reason: Interrupted, .. }`; set one for any QP whose solve must end.
 
 ## Semi columns, several objectives and starts
 
@@ -271,11 +274,11 @@ trusted:
   stage or the blend: the backend reports the program's own objective, computed from the solution, and no bound, so a
   MIP's outcome is `Optimal` or `Stopped`. Objective values HiGHS reports to callbacks during such a solve are those
   of the stage it is solving or of the blend.
-- **A start** reaches HiGHS through `Highs_setSolution` before the run: a full one as given, a sparse one with
-  HiGHS's undefined value (`kHighsUndefined`, `+inf`) for the other columns, which HiGHS completes, for a MIP, by a
-  sub-MIP over the columns left open, the solution `Highs_setSparseSolution` builds. A feasible start of a MIP is the
-  first incumbent HiGHS reports.
-  HiGHS also starts from the last solve's solution when a request gives none.
+- **A start** reaches HiGHS through `Highs_setSparseSolution` before the run, a full one with every column. HiGHS
+  refuses no value for lying outside its column's bounds (`Highs::setSolution` in `Highs.cpp`), so a semi column's
+  zero is kept, and leaves the other columns of a sparse start open; for a MIP it completes them by a
+  sub-MIP over the columns left open. A feasible start of a MIP is the first incumbent HiGHS reports.
+  HiGHS also starts from the last solve's solution when a request gives none, or a sparse start without entries.
 
 ## Model files
 
@@ -417,8 +420,8 @@ A `Callback<Highs>` receives HiGHS's own context types. Each implements the neut
 |---|---|---|---|
 | `LOG` | `HighsLog` | `kHighsCallbackLogging` | `log_type()`: a `HighsLogType`, `Info`, `Detailed`, `Verbose`, `Warning` or `Error` |
 | `PROGRESS` | `HighsMipProgress` | `kHighsCallbackMipLogging`, when HiGHS writes a MIP log line | `mip()`: the `MipData` |
-| `POLL` | `HighsPoll` | the simplex, interior-point and MIP interrupt callbacks | `source()`: a `PollSource`, `Simplex { iterations }`, `Ipm { iterations }` or `Mip(MipData)` |
-| `FEASIBLE` | `HighsSolution` | `kHighsCallbackMipSolution` | `mip()` |
+| `POLL` | `HighsPoll` | the simplex, interior-point, MIP and QP interrupt callbacks | `source()`: a `PollSource`, `Simplex { iterations }`, `Ipm { iterations }`, `Mip(MipData)` or `Qp { iterations }` |
+| `FEASIBLE` | `HighsSolution` | `kHighsCallbackMipSolution`, and `kHighsCallbackQpFirstFeasiblePoint` once per QP solve | `mip()`: the `MipData`, `None` for the QP's point |
 | `INCUMBENT` | `HighsSolution` | `kHighsCallbackMipImprovingSolution` | `mip()` |
 | `HEURISTIC` | `HighsHeuristic` | `kHighsCallbackMipUserSolution` | `origin()`, a `QueryOrigin`; `mip()` |
 | `NATIVE` | `HighsNative` | `kHighsCallbackMipGetCutPool` | the [cut pool](#the-cut-pool) |
@@ -434,9 +437,9 @@ A `Callback<Highs>` receives HiGHS's own context types. Each implements the neut
 | `gap` | HiGHS's relative gap; `None` while it is infinite. |
 | `nodes`, `lp_iterations` | Branch-and-bound nodes, and LP iterations over all nodes. |
 
-A context's `progress()` carries the elapsed time since the solve began; a poll's phase is `Simplex`, `Barrier` or
-`Mip` after its source. A solution HiGHS reports with another number of values than the program has columns is not
-delivered.
+A context's `progress()` carries the elapsed time since the solve began; a poll's phase is `Simplex`, `Barrier`,
+`Mip` or, for the QP solver, `Other` after its source. A solution HiGHS reports with another number of values than the
+program has columns is not delivered.
 
 The interrupt and logging callbacks are always installed, whatever the callback asks for: the polls so that a panic
 can stop the run, the log so that a failed run can name HiGHS's last error line. Calls are serialised behind one
@@ -576,7 +579,7 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 - **One thread count per thread.** See [Threads](#threads).
 - **32-bit indices.** A program with more than `i32::MAX` columns, rows, entries or Hessian entries is refused with
   `HighsError::TooLarge`.
-- **No MIQP, and a QP solve sees only the log.** See [Quadratic programs](#quadratic-programs).
+- **No MIQP, and a QP solve sees no progress or improvement.** See [Quadratic programs](#quadratic-programs).
 - **Options do not persist inside HiGHS.** Each solve resets them; set them through `HighsOptions`.
 - **Semi columns up to `1e5`, linear objectives only.** See
   [Semi columns, several objectives and starts](#semi-columns-several-objectives-and-starts).

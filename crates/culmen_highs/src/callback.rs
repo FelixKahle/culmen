@@ -17,13 +17,22 @@
 //! | `kHighsCallbackMipUserSolution` | [`Events::HEURISTIC`] | [`HighsHeuristic`] |
 //! | `kHighsCallbackMipGetCutPool` | [`Events::NATIVE`] | [`HighsNative::CutPool`] |
 //! | `kHighsCallbackMipDefineLazyConstraints` | none | HiGHS 1.16 declares it and never calls it |
-//! | `kHighsCallbackQpFirstFeasiblePoint` | none | never started |
-//! | `kHighsCallbackQpInterrupt` | none | never started |
+//! | `kHighsCallbackQpFirstFeasiblePoint` | [`Events::FEASIBLE`] | [`HighsSolution`], no [`MipData`] |
+//! | `kHighsCallbackQpInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`PollSource::Qp`] |
 //!
 //! HiGHS has no user cuts and never calls its lazy-constraint callback, so [`Events::LAZY`] and [`Events::CUT`]
-//! take [`Unsupported`](culmen_core::Unsupported). An interrupt is honoured only at the three interrupt kinds,
-//! which is the only context with [`PollContext::interrupt`]; a solution is taken only at the user-solution kind,
-//! the only context with [`HeuristicContext::supply`].
+//! take [`Unsupported`](culmen_core::Unsupported). An interrupt is honoured only at the four interrupt kinds, the
+//! only context with [`PollContext::interrupt`]; a solution is taken only at the user-solution kind, the only context
+//! with [`HeuristicContext::supply`].
+//!
+//! The QP solver's first feasible point is a feasible solution of the loaded program, so it is [`Events::FEASIBLE`].
+//! HiGHS's active-set QP solver works on the incumbent model itself, unpresolved and unscaled (`callSolveQp` in
+//! `Highs.cpp`, `solveQpAsm` in `QpAsmWrapper.cpp`), so the point holds one value per loaded column. `solveqp` in
+//! `a_quass.cpp` reports it only after the starting-point computation left the QP's status unset: the point HiGHS's LP
+//! solver found for the constraints (the backend passes every QP with at least one row), or, for a QP without rows,
+//! the unconstrained minimizer clamped into the bounds.
+//! The point is never reported again as the solve improves it, so it is no incumbent. HiGHS reports no objective with
+//! it, so the trampoline values it on the loaded program.
 //!
 //! # Threads, and why the trampoline is sound
 //!
@@ -33,13 +42,14 @@
 //! worker's `HighsMipWorker::addIncumbent` only buffers its solutions, which the serial loop passes to
 //! `HighsMipSolverData::addIncumbent`. The solution, logging, cut-pool and user-solution kinds come from that
 //! `addIncumbent`, `printDisplayLine`, `evaluateRootNode` and `queryExternalSolution`, all on the thread running
-//! `Highs_run`. The simplex and IPM polls come from the solvers' main loops. The logging kind, though, fires from
-//! `highsLogUser`, which code inside HiGHS's task pool may reach on a worker thread. So the trampoline does not rely
-//! on a single thread: everything a callback touches sits behind one `Mutex`, the callback is `Send` and the stop
-//! `Sync`, and every call takes the lock, so calls are serialised whatever thread makes them. A call that re-enters
-//! the same run on a thread already inside its callback, as the log lines HiGHS writes while
-//! [`HighsHeuristic::supply_partial`] repairs a solution do, is not delivered, since the callback is busy; a solve of
-//! another instance started from inside a callback gets its own callbacks.
+//! `Highs_run`. The simplex, IPM and QP polls come from the solvers' main loops, and the QP's first feasible point
+//! from `solveqp` before its loop starts. The logging kind, though, fires from `highsLogUser`, which code inside
+//! HiGHS's task pool may reach on a worker thread. So the trampoline does not rely on a single thread: everything a
+//! callback touches sits behind one `Mutex`, the callback is `Send` and the stop `Sync`, and every call takes the
+//! lock, so calls are serialised whatever thread makes them. A call that re-enters the same run on a thread already
+//! inside its callback, as the log lines HiGHS writes while [`HighsHeuristic::supply_partial`] repairs a solution do,
+//! is not delivered, since the callback is busy; a solve of another instance started from inside a callback gets its
+//! own callbacks.
 //!
 //! The per-run data lives on the stack of [`Highs::solve`](crate::Highs) and is registered for that run only: the
 //! callback is installed just before `Highs_run` and uninstalled (every kind stopped, the data pointer null) just
@@ -68,7 +78,8 @@ use highs_sys::{
     Highs_repairCallbackSolution, Highs_setCallbackSparseSolution, HighsCallbackDataIn, HighsCallbackDataOut, HighsInt,
     kHighsCallbackCallbackMipUserSolution, kHighsCallbackIpmInterrupt, kHighsCallbackLogging,
     kHighsCallbackMipGetCutPool, kHighsCallbackMipImprovingSolution, kHighsCallbackMipInterrupt,
-    kHighsCallbackMipLogging, kHighsCallbackMipSolution, kHighsCallbackSimplexInterrupt, kHighsStatusError,
+    kHighsCallbackMipLogging, kHighsCallbackMipSolution, kHighsCallbackQpFirstFeasiblePoint, kHighsCallbackQpInterrupt,
+    kHighsCallbackSimplexInterrupt, kHighsStatusError,
 };
 
 use crate::instance::{CallbackGuard, text};
@@ -107,6 +118,8 @@ enum Kind {
     MipUserSolution,
     /// `kHighsCallbackMipGetCutPool`.
     MipGetCutPool,
+    /// `kHighsCallbackQpFirstFeasiblePoint`.
+    QpFirstFeasiblePoint,
 }
 
 /// The solver of an interrupt poll.
@@ -118,6 +131,8 @@ enum Poller {
     Ipm,
     /// `kHighsCallbackMipInterrupt`.
     Mip,
+    /// `kHighsCallbackQpInterrupt`.
+    Qp,
 }
 
 impl Kind {
@@ -137,6 +152,8 @@ impl Kind {
             kHighsCallbackMipImprovingSolution => Self::MipImprovingSolution,
             kHighsCallbackCallbackMipUserSolution => Self::MipUserSolution,
             kHighsCallbackMipGetCutPool => Self::MipGetCutPool,
+            kHighsCallbackQpFirstFeasiblePoint => Self::QpFirstFeasiblePoint,
+            kHighsCallbackQpInterrupt => Self::Poll(Poller::Qp),
             _ => return None,
         })
     }
@@ -153,6 +170,8 @@ impl Kind {
             Self::MipImprovingSolution => kHighsCallbackMipImprovingSolution,
             Self::MipUserSolution => kHighsCallbackCallbackMipUserSolution,
             Self::MipGetCutPool => kHighsCallbackMipGetCutPool,
+            Self::QpFirstFeasiblePoint => kHighsCallbackQpFirstFeasiblePoint,
+            Self::Poll(Poller::Qp) => kHighsCallbackQpInterrupt,
         }
     }
 }
@@ -165,10 +184,12 @@ pub(crate) fn kinds(wanted: Events) -> Vec<c_int> {
         Kind::Poll(Poller::Simplex),
         Kind::Poll(Poller::Ipm),
         Kind::Poll(Poller::Mip),
+        Kind::Poll(Poller::Qp),
     ];
     let by_event = [
         (Events::PROGRESS, Kind::MipLogging),
         (Events::FEASIBLE, Kind::MipSolution),
+        (Events::FEASIBLE, Kind::QpFirstFeasiblePoint),
         (Events::INCUMBENT, Kind::MipImprovingSolution),
         (Events::HEURISTIC, Kind::MipUserSolution),
         (Events::NATIVE, Kind::MipGetCutPool),
@@ -330,6 +351,8 @@ unsafe fn dispatch(hook: &mut Hook<'_>, call: &Call, interrupt: &mut bool) {
             let pool = unsafe { cut_pool(call) };
             hook.callback.native(&mut HighsNative::CutPool(pool));
         }
+        // SAFETY: the caller's contract holds for `call`, the QP's first-feasible-point kind.
+        Kind::QpFirstFeasiblePoint => unsafe { qp_feasible(hook, call, elapsed) },
     }
 }
 
@@ -346,6 +369,9 @@ fn poll(hook: &mut Hook<'_>, call: &Call, poller: Poller, elapsed: Duration, int
             report_offer(hook, call, elapsed);
             PollSource::Mip(mip_data(call))
         }
+        Poller::Qp => PollSource::Qp {
+            iterations: count(field!(call, qpasm_iteration_count)),
+        },
     };
     if hook.wanted.contains(Events::POLL) {
         hook.callback.poll(&mut HighsPoll {
@@ -428,7 +454,7 @@ unsafe fn solution(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
         elapsed,
         objective: field!(call, objective_function_value),
         values: TiSlice::from_ref(values),
-        mip: mip_data(call),
+        mip: Some(mip_data(call)),
     };
     if call.kind == Kind::MipSolution {
         hook.callback.feasible(&mut ctx);
@@ -436,6 +462,27 @@ unsafe fn solution(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
         hook.incumbent = Some(ctx.objective);
         hook.callback.incumbent(&mut ctx);
     }
+}
+
+/// Hands the QP solver's first feasible point to the callback, valued on the loaded program; a record whose size is
+/// not the column count is skipped.
+///
+/// # Safety
+///
+/// `call` is the QP's first-feasible-point kind of a call whose contract holds.
+unsafe fn qp_feasible(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
+    let (values, size) = (field!(call, qp_solution), position(field!(call, qp_solution_size)));
+    // SAFETY: HiGHS's record holds `size` values at `qp_solution`, valid for the call, or a null pointer.
+    let values = unsafe { slice(values, size) };
+    if values.len() != hook.program.num_cols() {
+        return;
+    }
+    hook.callback.feasible(&mut HighsSolution {
+        elapsed,
+        objective: hook.program.objective(values),
+        values: TiSlice::from_ref(values),
+        mip: None,
+    });
 }
 
 /// Reports a supplied solution HiGHS took as its incumbent: HiGHS calls neither solution kind for a user solution,
@@ -464,7 +511,7 @@ fn report_offer(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
             elapsed,
             objective: offer.objective,
             values,
-            mip: mip_data(call),
+            mip: Some(mip_data(call)),
         };
         hook.callback.incumbent(&mut ctx);
     }
@@ -715,10 +762,15 @@ pub enum PollSource {
     },
     /// The MIP solver: `kHighsCallbackMipInterrupt`.
     Mip(MipData),
+    /// The active-set QP solver: `kHighsCallbackQpInterrupt`.
+    Qp {
+        /// QP iterations so far; 0 at the poll after the starting point is found, before the first iteration.
+        iterations: u64,
+    },
 }
 
-/// An interrupt poll: `kHighsCallbackSimplexInterrupt`, `kHighsCallbackIpmInterrupt` or
-/// `kHighsCallbackMipInterrupt`.
+/// An interrupt poll: `kHighsCallbackSimplexInterrupt`, `kHighsCallbackIpmInterrupt`, `kHighsCallbackMipInterrupt`
+/// or `kHighsCallbackQpInterrupt`.
 #[derive(Debug)]
 pub struct HighsPoll<'a> {
     elapsed: Duration,
@@ -746,6 +798,10 @@ impl PollContext for HighsPoll<'_> {
                 ..Progress::at(self.elapsed, Phase::Barrier)
             },
             PollSource::Mip(mip) => mip.progress(self.elapsed),
+            PollSource::Qp { iterations } => Progress {
+                iterations: Some(iterations),
+                ..Progress::at(self.elapsed, Phase::Other)
+            },
         }
     }
     fn interrupt(&mut self) {
@@ -753,26 +809,33 @@ impl PollContext for HighsPoll<'_> {
     }
 }
 
-/// A feasible or improving solution: `kHighsCallbackMipSolution` or `kHighsCallbackMipImprovingSolution`.
+/// A feasible or improving solution: `kHighsCallbackMipSolution`, `kHighsCallbackMipImprovingSolution` or
+/// `kHighsCallbackQpFirstFeasiblePoint`.
 #[derive(Debug)]
 pub struct HighsSolution<'a> {
     elapsed: Duration,
     objective: f64,
     values: &'a TiSlice<Col, f64>,
-    mip: MipData,
+    mip: Option<MipData>,
 }
 
 impl HighsSolution<'_> {
-    /// HiGHS's MIP figures.
+    /// HiGHS's MIP figures; `None` for the QP solver's first feasible point.
     #[must_use]
-    pub const fn mip(&self) -> &MipData {
-        &self.mip
+    pub const fn mip(&self) -> Option<&MipData> {
+        self.mip.as_ref()
     }
 }
 
 impl SolutionContext for HighsSolution<'_> {
     fn progress(&self) -> Progress {
-        self.mip.progress(self.elapsed)
+        match &self.mip {
+            Some(mip) => mip.progress(self.elapsed),
+            None => Progress {
+                objective: Some(self.objective),
+                ..Progress::at(self.elapsed, Phase::Other)
+            },
+        }
     }
     fn objective(&self) -> f64 {
         self.objective

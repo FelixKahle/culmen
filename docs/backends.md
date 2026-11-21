@@ -97,7 +97,7 @@ Gurobi and SCIP solve and HiGHS does not, would be further classes that a backen
 | `SemiContinuous` | yes: `kHighsVarTypeSemiContinuous`, upper bound at most `1e5` (`Highs::SEMI_UPPER_LIMIT`) | yes: `GRB_SEMICONT` | yes: a binary indicator and two linear rows |
 | `SemiInteger` | yes: `kHighsVarTypeSemiInteger`, alike | yes: `GRB_SEMIINT` | yes, alike with an integer column |
 | `MultipleObjectives` | yes: `Highs_passLinearObjectives`, lexicographic by priority or blended by `blend_multi_objectives`; linear only | yes: `GRBsetobjectiven`, priorities, weights and tolerances | no native support |
-| `StartSolution` | yes: `Highs_setSolution`, a sparse start padded with HiGHS's undefined value | yes: the `Start` attribute, `GRB_UNDEFINED` for a partial one | yes: `SCIPcreateSol` and `SCIPaddSolFree`, partial solutions completed |
+| `StartSolution` | yes: `Highs_setSparseSolution`, HiGHS completing the columns a sparse start leaves out | yes: the `Start` attribute, `GRB_UNDEFINED` for a partial one | yes: `SCIPcreateSol` and `SCIPaddSolFree`, partial solutions completed |
 
 `Script` declares every feature and records each start in `record.starts`.
 

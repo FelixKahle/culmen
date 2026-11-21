@@ -240,6 +240,41 @@ fn test_a_sparse_start_is_completed_by_highs() {
     assert_eq!(seen.0.first(), Some(&best.objective), "{:?}", seen.0);
 }
 
+/// The values of every improvement an observer is told of, in order.
+#[derive(Default)]
+struct ImprovedValues(Vec<Vec<f64>>);
+
+impl Observer for ImprovedValues {
+    fn improved(&mut self, improvement: &Improvement<'_>) {
+        self.0.push(improvement.values.raw.to_vec());
+    }
+}
+
+#[test]
+fn test_a_sparse_starts_unset_columns_are_completed_by_highs() {
+    // `x + y = 3` and `y + z = 2` over integers in [0, 3] leave x in {1, 2, 3}, and x fixes y and z. The start sets x
+    // to 3 alone; HiGHS completes it to y = 0, z = 2, at 11, its first incumbent, before it finds the optimum x = 1,
+    // y = 2, z = 0, at 5.
+    let mut m = Model::new();
+    let x = m.add_var(Var::integer().upper(3));
+    let y = m.add_var(Var::integer().upper(3));
+    let z = m.add_var(Var::integer().upper(3));
+    m.add_constraint((x + y).equals(3));
+    m.add_constraint((y + z).equals(2));
+    m.minimize(3 * x + y + z);
+    let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
+    let mut seen = ImprovedValues::default();
+    let best = solver
+        .solve(Request::new().observer(&mut seen).start(vec![(x, 3.0)]))
+        .unwrap()
+        .outcome
+        .into_solution()
+        .unwrap();
+    assert_eq!(seen.0.first(), Some(&vec![3.0, 0.0, 2.0]), "{:?}", seen.0);
+    assert_eq!(best.objective, 5.0);
+    assert_eq!((best.values[x], best.values[y], best.values[z]), (1.0, 2.0, 0.0));
+}
+
 #[test]
 fn test_a_start_of_an_lp_leaves_its_optimum() {
     let mut m = Model::new();
@@ -262,8 +297,8 @@ fn test_a_start_of_an_lp_leaves_its_optimum() {
 
 #[test]
 fn test_a_sparse_start_may_hold_a_semi_columns_zero() {
-    // Zero lies outside a semi column's bounds, which HiGHS's own sparse start refuses (see the fixture below); the
-    // backend passes a sparse start whole, so the zero is taken.
+    // Zero lies outside a semi column's bounds; HiGHS 1.16's sparse start refuses no value for its bounds, so the zero
+    // is taken.
     let mut m = Model::new();
     let x = m.add_var(Var::semi_continuous().bounds(2, 10));
     let y = m.add_var(Var::integer().upper(3));
