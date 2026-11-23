@@ -280,6 +280,19 @@ fn test_keyed_families_over_filtered_products() {
 }
 
 #[test]
+fn test_keyed_families_are_read_by_a_borrowed_key() {
+    let products = vec!["cork".to_owned(), "glass".to_owned()];
+    let mut m = Model::new();
+    let take = m.add_var_map(products.clone(), |p| Var::binary().name(format!("take[{p}]")));
+    for p in &products {
+        assert_eq!(Some(take[p]), take.get(p.as_str()));
+        assert_eq!(take[p], take[p.clone()]);
+    }
+    assert!(take.contains_key("glass") && !take.contains_key("tin"));
+    assert_eq!(m.var_name(take[&products[1]]), Some("take[glass]"));
+}
+
+#[test]
 #[should_panic(expected = "a key is inserted twice")]
 fn test_keyed_family_refuses_repeated_keys() {
     let mut m = Model::new();

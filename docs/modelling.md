@@ -390,14 +390,16 @@ order and reads them back:
 
 | Method | Gives |
 |---|---|
-| `family[key]` | The handle; panics when the family does not hold the key. |
+| `family[key]`, `family[&key]` | The handle; panics when the family does not hold the key. |
 | `family.get(&key)` | The handle, `None` when the family does not hold the key. |
+| `family.contains_key(&key)` | Whether the family holds the key. |
 | `family.len()`, `family.is_empty()` | The number of keys. |
 | `family.iter()`, `&family` in a `for` loop | `(&key, handle)` pairs. |
 | `family.keys()`, `family.handles()` | The keys, the handles. |
 | `vars.values(&solution.values)` | `(&key, value)` pairs at a point; `VarMap` only. |
 
-The iterators run both ways and know their exact length. `values` panics when a variable of the family has no value
+`get` and `contains_key` take any borrowed form of the key, as `HashMap`'s do, so a family keyed by `String` is
+read with a `&str`. The iterators run both ways and know their exact length. `values` panics when a variable of the family has no value
 in the point. `Keyed::new()` and `Keyed::insert(key, handle)` build a family by hand; `insert` panics on a key
 already held.
 
