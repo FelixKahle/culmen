@@ -18,7 +18,7 @@ use super::{Col, Sense};
 /// Each entry `(i, j, q)` adds `q · xᵢ · xⱼ`, so the model's `x * x` is the entry `(x, x, 1)` and `2 · x · y` the
 /// entry `(x, y, 2)`. The entries are canonical: `i <= j`, each pair at most once, every coefficient finite and
 /// non-zero, sorted by `(i, j)`. In the solver's form `½ xᵀHx`, the symmetric Hessian `H` has `Hᵢᵢ = 2q` on the
-/// diagonal and `Hᵢⱼ = Hⱼᵢ = q` off it; [`QuadObjective::hessian`] gives its lower triangle.
+/// diagonal and `Hᵢⱼ = Hⱼᵢ = q` off it, every value finite; [`QuadObjective::hessian`] gives its lower triangle.
 ///
 /// A `Program` holds one only when its objective is convex for minimizing or concave for maximizing, as
 /// [`Program::CONVEXITY_TOLERANCE`](super::Program::CONVEXITY_TOLERANCE) states.
@@ -110,8 +110,8 @@ pub(crate) fn merge_pairs(terms: impl IntoIterator<Item = (Col, Col, f64)>) -> V
         .collect()
 }
 
-/// The Hessian value of a canonical entry: twice the coefficient on the diagonal.
-const fn hessian_value((i, j, q): (Col, Col, f64)) -> f64 {
+/// The Hessian value of an entry `(i, j, q)` with `i <= j`: twice the coefficient on the diagonal.
+pub(crate) const fn hessian_value((i, j, q): (Col, Col, f64)) -> f64 {
     if i.index() == j.index() { 2.0 * q } else { q }
 }
 

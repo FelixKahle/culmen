@@ -30,7 +30,7 @@ pub use objectives::{
 };
 pub use plan::{NewCol, ProgramColumn, ProgramPlan, ProgramRow};
 pub use quad::{HessianEntries, QuadEntries, QuadObjective};
-pub(crate) use quad::{check_convex, merge_pairs};
+pub(crate) use quad::{check_convex, hessian_value, merge_pairs};
 pub use row::{RowEntries, RowView};
 
 /// A linear, mixed-integer or convex quadratic program: minimize or maximize
@@ -330,8 +330,8 @@ impl Program {
     /// The plan is accepted when its offset and costs are finite, every term names a column of the plan with a
     /// finite coefficient, in every row the coefficients of each column, added up in the order given, are finite,
     /// every quadratic term names columns of the plan with a finite coefficient, the coefficients of each unordered
-    /// pair of columns, added up in the order given, are finite, and the quadratic part passes the convexity check
-    /// of [`Program::CONVEXITY_TOLERANCE`] under the plan's sense.
+    /// pair of columns, added up in the order given, are finite, and twice so for a square, and the quadratic part
+    /// passes the convexity check of [`Program::CONVEXITY_TOLERANCE`] under the plan's sense.
     ///
     /// # Errors
     ///
@@ -514,7 +514,7 @@ pub(crate) fn bad_term<I: Copy + Ord + Into<usize>>(terms: &[(I, f64)], count: u
 /// # Errors
 ///
 /// [`ProgramError::UnknownQuadColumn`] or [`ProgramError::NonFiniteQuadCoefficient`] for the first defective term, as
-/// given or merged, or [`ProgramError::NonConvexObjective`].
+/// given or merged, a square whose Hessian value overflows included, or [`ProgramError::NonConvexObjective`].
 fn check_quadratic(plan: &ProgramPlan) -> Result<(), ProgramError> {
     let num_cols = plan.columns.len();
     plan.quadratic.iter().try_for_each(|&(first, second, value)| {
@@ -523,9 +523,10 @@ fn check_quadratic(plan: &ProgramPlan) -> Result<(), ProgramError> {
             None => finite_quad(first, second, value),
         }
     })?;
+    // A square's Hessian value is twice its coefficient, so a finite coefficient may still overflow it.
     merge_pairs(plan.quadratic.iter().copied())
         .into_iter()
-        .try_for_each(|(first, second, value)| finite_quad(first, second, value))?;
+        .try_for_each(|entry| finite_quad(entry.0, entry.1, hessian_value(entry)))?;
     let quadratic = QuadObjective::from_terms(plan.quadratic.iter().copied());
     check_convex(plan.sense, &quadratic, num_cols)
         .map_err(|col| ProgramError::NonConvexObjective { sense: plan.sense, col })
@@ -621,13 +622,14 @@ pub enum ProgramError {
         /// The column named.
         col: Col,
     },
-    /// A quadratic coefficient is NaN or infinite, as given or after the terms of its pair were added up.
+    /// A quadratic coefficient is NaN or infinite, as given or after the terms of its pair were added up, or a
+    /// square's coefficient is so large that its Hessian value, twice it, is infinite.
     NonFiniteQuadCoefficient {
         /// The first column of the pair.
         first: Col,
         /// The second column of the pair.
         second: Col,
-        /// The coefficient.
+        /// The coefficient, or a square's infinite Hessian value when the coefficient itself is finite.
         value: f64,
     },
     /// The quadratic part is not convex for minimizing, or not concave for maximizing, within
@@ -784,7 +786,7 @@ mod tests {
 
     /// Whether the plan meets `Program::from_plan`'s precondition, read from its prose: each row's coefficients are
     /// summed per column in a map, in the order given, and so are the squares' coefficients, whose sums a convex
-    /// objective of squares alone has non-negative.
+    /// objective of squares alone has non-negative and whose doubled sums, the Hessian's diagonal, are finite.
     fn accepted(plan: &ProgramPlan) -> bool {
         let num_cols = plan.columns.len();
         let finite = plan.offset.is_finite() && plan.columns.iter().all(|c| c.cost.is_finite());
@@ -793,7 +795,8 @@ mod tests {
             .iter()
             .all(|row| sums(row.terms.iter().copied(), num_cols).is_some());
         let squares = sums(plan.quadratic.iter().map(|&(i, _, q)| (i, q)), num_cols);
-        finite && rows_ok && squares.is_some_and(|sums| sums.values().all(|&sum| sum >= 0.0))
+        let squares_ok = squares.is_some_and(|sums| sums.values().all(|&sum| sum >= 0.0 && (2.0 * sum).is_finite()));
+        finite && rows_ok && squares_ok
     }
 
     /// The coefficients summed per column, when every term names one of `num_cols` columns with a finite

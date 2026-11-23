@@ -625,6 +625,38 @@ fn test_a_product_with_a_zero_factor_keeps_a_non_finite_coefficient() {
 }
 
 #[test]
+fn test_a_square_whose_hessian_value_overflows_is_refused() {
+    // The coefficient 1e308 is finite, but the Hessian HiGHS reads holds it twice on the diagonal.
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    plan.quadratic = vec![(x, x, 1e308)];
+    assert_eq!(
+        plan.clone().build(),
+        Err(ProgramError::NonFiniteQuadCoefficient {
+            first: x,
+            second: x,
+            value: f64::INFINITY
+        })
+    );
+    plan.quadratic = vec![(x, x, 5e307)];
+    let program = plan.build().unwrap();
+    assert_eq!(program.quadratic().hessian().collect::<Vec<_>>(), [(x, x, 1e308)]);
+
+    let (mut m, x, y) = xy();
+    m.maximize(-1e308 * x * x);
+    assert!(
+        matches!(m.build(), Err(ModelError::ObjectiveQuadCoefficient { first, value, .. })
+            if first.col == x && value == f64::NEG_INFINITY),
+    );
+    m.minimize(1e308 * x * y + 1e308 * y * y);
+    assert!(
+        matches!(m.build(), Err(ModelError::ObjectiveQuadCoefficient { first, value, .. })
+            if first.col == y && value == f64::INFINITY),
+        "an off-diagonal coefficient is its own Hessian value; the square overflows"
+    );
+}
+
+#[test]
 fn test_linear_items_stay_linear_in_sums_and_constraints() {
     let (_, x, y) = xy();
     // A linear sum stays a `LinExpr`, which constraints take.

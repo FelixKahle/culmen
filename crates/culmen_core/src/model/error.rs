@@ -97,13 +97,14 @@ pub enum ModelError {
         /// The constant.
         value: f64,
     },
-    /// A quadratic objective coefficient is NaN or infinite, as given or added up over its pair of variables.
+    /// A quadratic objective coefficient is NaN or infinite, as given or added up over its pair of variables, or a
+    /// square's coefficient is so large that its Hessian value, twice it, is infinite.
     ObjectiveQuadCoefficient {
         /// The first variable of the product.
         first: ModelVar,
         /// The second variable of the product.
         second: ModelVar,
-        /// The coefficient.
+        /// The coefficient, or a square's infinite Hessian value when the coefficient itself is finite.
         value: f64,
     },
     /// The quadratic objective is not convex to minimize, or not concave to maximize, within
