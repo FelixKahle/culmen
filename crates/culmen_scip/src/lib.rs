@@ -30,9 +30,11 @@
 //! # Options and settings
 //!
 //! Each solve starts from the program as loaded: it frees the last solve's transformed problem, resets SCIP's
-//! parameters to their defaults, keeps SCIP from catching `SIGINT` (`misc/catchctrlc`), then applies the backend's
-//! [`ScipOptions`] and then the solve's [`Settings`], so a per-solve setting always wins. SCIP's log stays off
-//! standard output unless [`Settings::console`] asks for it. Every field of [`Settings`] maps to SCIP:
+//! parameters to their defaults, keeps SCIP from catching `SIGINT` (`misc/catchctrlc`), turns off SCIP's
+//! reformulation of products of binary variables in nonlinear constraints (`constraints/nonlinear/reformbinprods`;
+//! see [`Scip::CLASSES`] for why), then applies the backend's [`ScipOptions`] and then the solve's [`Settings`], so a
+//! per-solve setting always wins and an option naming either parameter overrides the backend's choice. SCIP's log
+//! stays off standard output unless [`Settings::console`] asks for it. Every field of [`Settings`] maps to SCIP:
 //!
 //! | `Settings` field | SCIP |
 //! |---|---|
@@ -203,7 +205,8 @@ fn refuse_unsupported(program: &Program) -> Result<(), ScipError> {
     }
 }
 
-/// Resets SCIP's parameters, keeps SCIP from catching `SIGINT`, and applies `options` and then the solve's settings.
+/// Resets SCIP's parameters, keeps SCIP from catching `SIGINT`, turns off the reformulation of binary products in
+/// nonlinear constraints, and applies `options` and then the solve's settings.
 ///
 /// # Errors
 ///
@@ -214,6 +217,13 @@ fn configure(instance: &mut Instance, options: &ScipOptions, settings: &Settings
     let params = settings_params(settings)?;
     instance.reset_params()?;
     instance.set_param("misc/catchctrlc", &ParamValue::Bool(false))?;
+    // The epigraph of a quadratic objective is the only nonlinear constraint the backend creates. SCIP's presolve
+    // rewrites a product of two binary variables in it through a clique of its clique table (`x·y = x` from
+    // `x <= y`), and that table can hold a clique probing derived under the incumbent's cutoff, which no constraint
+    // enforces; the rewritten epigraph then admits points whose `t` lies below `q(x)`, and SCIP reports one of them as
+    // optimal (it prints "best solution is not feasible in original problem"). Without the rewrite the epigraph stays
+    // exact and the clique only prunes.
+    instance.set_param("constraints/nonlinear/reformbinprods", &ParamValue::Bool(false))?;
     let emphases = [
         (Group::Heuristics, options.heuristics),
         (Group::Presolving, options.presolving),
@@ -348,9 +358,13 @@ impl Backend for Scip {
     /// Every class: a quadratic objective `q(x)` becomes an epigraph variable `t` with cost one, bounded by the
     /// quadratic constraint `q(x) - t <= 0` and `t >= 0` when minimizing, `q(x) - t >= 0` and `t <= 0` when
     /// maximizing, where a convex `q` is never negative and a concave one never positive. SCIP solves the constraint
-    /// as a convex nonlinear constraint by cutting planes. A solution's objective takes `q(x)` itself in the place of
-    /// `t`, which meets it only to SCIP's feasibility tolerance; so an optimum's objective is close to the optimal
-    /// value, and its point, where the objective is flat, less close to the optimal point.
+    /// as a convex nonlinear constraint by cutting planes. Each solve turns off SCIP's presolve rewrite of binary
+    /// products in it (`constraints/nonlinear/reformbinprods`), which rewrites a product through a clique that may hold
+    /// only for solutions better than the incumbent and that no constraint enforces, so the rewritten constraint can
+    /// admit a point below the epigraph and SCIP can report a wrong optimum for an MIQP whose integer columns presolve
+    /// makes binary. A solution's objective takes `q(x)` itself in the place of `t`, which meets it only to SCIP's
+    /// feasibility tolerance; so an optimum's objective is close to the optimal value, and its point, where the
+    /// objective is flat, less close to the optimal point.
     const CLASSES: ModelClasses = ModelClasses::ALL;
 
     /// Starts: a full start as a SCIP solution, a sparse one as a partial solution SCIP completes.

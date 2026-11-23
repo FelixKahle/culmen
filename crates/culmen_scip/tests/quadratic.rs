@@ -118,6 +118,37 @@ fn test_a_miqp_with_a_continuous_column_and_a_row() {
     assert_point(&optimum(&m.build().unwrap()), 10.0, &[2.0, 0.5]);
 }
 
+/// The MIQP `-2a + 2b + q(a, b, c)` over integers `a, b` in `[-1, 1]` and `c` in `[-1, 0]`, with the convex
+/// `q = 2.05a² - 6ab + 2ac + 9.05b² - 12bc + 5.05c²`, in `sense`; maximizing negates the objective. Of its 18 whole
+/// points the origin is the only one at 0; every other is at least 0.05, at (1, 0, 0), then 0.1 at (0, -1, -1) and
+/// 0.15 at (-1, -1, -1). Presolve makes `b` and `c` binary, and probing under the cutoff of the incumbent 0 finds
+/// that `c = 0` forces `b = 0`, a clique only better solutions obey.
+fn binary_products_miqp(sense: Sense) -> Program {
+    let mut m = Model::new();
+    let a = m.add_var(Var::integer().bounds(-1, 1));
+    let b = m.add_var(Var::integer().bounds(-1, 1));
+    let c = m.add_var(Var::integer().bounds(-1, 0));
+    let objective =
+        -2.0 * a + 2.0 * b + 2.05 * a * a - 6.0 * a * b + 2.0 * a * c + 9.05 * b * b - 12.0 * b * c + 5.05 * c * c;
+    match sense {
+        Sense::Minimize => m.minimize(objective),
+        Sense::Maximize => m.maximize(-objective),
+    }
+    m.build().unwrap()
+}
+
+#[test]
+fn test_a_miqp_whose_columns_presolve_makes_binary_keeps_its_optimum() {
+    let program = binary_products_miqp(Sense::Minimize);
+    assert_eq!(program.class(), ModelClass::Miqp);
+    assert_point(&optimum(&program), 0.0, &[0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn test_the_concave_mirror_of_that_miqp_keeps_its_optimum() {
+    assert_point(&optimum(&binary_products_miqp(Sense::Maximize)), 0.0, &[0.0, 0.0, 0.0]);
+}
+
 #[test]
 fn test_a_qp_with_conflicting_rows_is_infeasible() {
     let mut m = Model::new();
