@@ -28,6 +28,7 @@ Each step is one event, in the generic terms of [`Callback`](callbacks.md#callba
 | `Step::Lazy(found)` | `LAZY` | the candidate; `add_lazy` |
 | `Step::Cut { progress, relaxation }` | `CUT` | the relaxation; `add_cut` |
 | `Step::Heuristic(progress)` | `HEURISTIC` | `supply`, `supply_partial` |
+| `Step::Price { progress, mode, duals }` | `PRICE` | a `ScriptPrice`: the mode, the program's sense, the duals, `tolerance()` of `ScriptPrice::TOLERANCE`; `add_col`, `branch_early`, `report_bound` |
 | `Step::Note(text)` | `NATIVE` | a `ScriptNote` with `text()` |
 
 A `Found` is `{ progress, objective, values }`. `step.event()` names a step's event kind.
@@ -40,7 +41,11 @@ The script behaves as a solver would:
   incumbent delivered before as `best` and the last bound reported as `bound`.
 - Actions are checked as a solver's would be ([`ActionError`](callbacks.md#contexts)) and recorded in
   `script.record`: the `settings` of each solve, the `lazy` constraints and `cuts` added, the solutions
-  `supplied`, and the `starts` handed over, across every solve.
+  `supplied`, the `starts` handed over, and one `PriceRound` per price step in `priced`, across every solve.
+- A priced column is checked and numbered by the solve's `Priced`, so every later step of the solve counts it: a
+  lazy constraint may name it, and a supplied solution holds a value for it. A `PriceRound` holds the ids it `added`,
+  the last `bound` reported, and whether the round ended `early`; the columns themselves are the program's
+  (`solver.program()`), which a `Solver` grows when the solve ends. A bound reported in Farkas mode is refused.
 - `Solved::status` is a `ScriptStatus`: `Finished`, or `Interrupted { step }` with the position of the interrupting
   step. Solving before loading is `ScriptError::NotLoaded`.
 
@@ -145,6 +150,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 An `AddedRow` is a constraint as the backend received it: its terms as given and its bounds with the constraint's
 constant moved into them. Observers, stops, pairs of callbacks and panics are tested the same way.
+
+A pricer is tested with price steps that hand it the duals a solver would: the record shows each round, and the
+program the columns it added.
+
+```rust
+use std::time::Duration;
+
+use culmen::prelude::*;
+use culmen::{NewCol, Phase, PriceContext, PriceMode, ProgramColumn, Script, Step};
+
+/// Adds the pattern when it improves, else reports a bound and stops pricing.
+struct Pattern(NewCol);
+
+impl<B: Backend> Callback<B> for Pattern {
+    fn events(&self) -> Events {
+        Events::PRICE
+    }
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        if ctx.improves(&self.0) {
+            let _ = ctx.add_col(self.0.clone());
+        } else if let PriceMode::ReducedCost { objective } = ctx.mode() {
+            let _ = ctx.report_bound(objective);
+            ctx.branch_early();
+        }
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Cover one unit of demand; the column x costs 3, a pattern costing 1 is withheld.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous());
+    let demand = m.add_constraint(x.geq(1));
+    m.minimize(3.0 * x);
+    let pattern = NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries: vec![(demand, 1.0)] };
+
+    let at = Progress::at(Duration::ZERO, Phase::Simplex);
+    let round = |objective: f64, dual: f64| Step::Price {
+        progress: at,
+        mode: PriceMode::ReducedCost { objective },
+        duals: vec![dual].into(),
+    };
+    // At the dual 3 the pattern prices at 1 - 3 = -2 and is added; at the dual 1 it prices at 0.
+    let script = Script::new([round(3.0, 3.0), round(1.0, 1.0)], Outcome::Infeasible);
+    let mut solver = Solver::new(script, m.build()?)?;
+    solver.solve_with(Request::new(), &mut Pattern(pattern))?;
+
+    let rounds = &solver.backend().record.priced;
+    assert_eq!(rounds[0].added.clone().collect::<Vec<_>>(), [Col::new(1)]);
+    assert_eq!((rounds[1].added.len(), rounds[1].bound, rounds[1].early), (0, Some(1.0), true));
+    assert_eq!(solver.program().columns()[Col::new(1)].cost, 1.0);
+    Ok(())
+}
+```
 
 ## `culmen_testing`
 

@@ -21,6 +21,7 @@ pub trait Backend: Sized {
     type Lazy<'a>: LazyContext;           // Events::LAZY
     type Cut<'a>: CutContext;             // Events::CUT
     type Heuristic<'a>: HeuristicContext; // Events::HEURISTIC
+    type Price<'a>: PriceContext;         // Events::PRICE
     type Native<'a>: Debug;               // Events::NATIVE: whatever only this solver reports
     const EVENTS: Events;                 // what this backend delivers
     const CLASSES: ModelClasses;          // the model classes this backend solves
@@ -29,7 +30,7 @@ pub trait Backend: Sized {
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
     fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), Self::Error> { self.load(program) }
     fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> { Ok(()) } // only with StartSolution
-    fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>)
+    fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>, priced: &mut Priced)
         -> Result<Solved<Self::Status>, Self::Error>;
 }
 ```
@@ -47,7 +48,8 @@ pub trait Backend: Sized {
   default bodies refuse. The `Solver` checks the declaration, the program's class, the fit of a basis or weights
   and the solve read before it asks, for every backend alike ([Analysis](analysis.md)).
 - **Actions are typed per event.** Only `PollContext` has `interrupt`, only `LazyContext` has `add_lazy`, only
-  `CutContext` has `add_cut`, only `HeuristicContext` has `supply` and `supply_partial`. An action that a solver
+  `CutContext` has `add_cut`, only `HeuristicContext` has `supply` and `supply_partial`, only `PriceContext` has
+  `add_col`, `branch_early` and `report_bound`. An action that a solver
   honours only at certain points exists only on the context of those points.
 - **Extras stay with the backend.** Each context type is the backend's own struct. What the solver reports beyond
   the neutral trait is an inherent method on it (`HighsPoll::source`, `HighsSolution::mip`) or a native event
@@ -66,12 +68,25 @@ pub trait Backend: Sized {
   default loads the program whole; a backend overrides it to change its model in place and keep its warm start, and
   falls back to `load` for any kind of `Edit` it does not handle, since the enum is non-exhaustive. When `edit`
   fails, the backend may hold anything: the `Solver` loads the program before the edit again.
-- **The contract** (on `Backend`): solve the last program `load` or `edit` accepted; report every objective and bound with the program's
-  quadratic part and offset in the model's sense; call only events in `EVENTS ∩ callback.events()`, only during `solve`,
-  never two at once; a panic in a callback stops the solve and unwinds out of `solve`, never aborts.
+- **Priced columns go to a sink the caller owns.** `solve` takes a `Priced`, made for the loaded program. A backend
+  that delivers `PRICE` hands every column a callback adds to `Priced::push`, which checks it (rows the program has,
+  finite numbers, bounds that hold zero, no semi column, a class the backend solves) and returns its id, the next
+  after the program's columns and every one priced before. The core owns the checks and the numbering, so every
+  backend refuses the same columns the same way, and a backend that declared `PRICE` but forgot the sink would not
+  compile. A `Solver` appends the columns to its program however `solve` ends, unwinding included, and loads the
+  grown program at its next call; code that drives a backend directly makes its own `Priced` and takes the columns
+  with `Priced::into_cols`. A backend that does not price ignores the parameter.
+- **The contract** (on `Backend`): solve the last program `load` or `edit` accepted; report every objective and
+  bound with the program's quadratic part and offset in the model's sense, and every point with one value per
+  column, the ones priced so far included; call only events in `EVENTS ∩ callback.events()`, only during `solve`, never two at once; a panic in a
+  callback stops the solve and unwinds out of `solve`, never aborts. A backend that declares `PRICE` delivers it
+  only for a solved node LP, optimal (`PriceMode::ReducedCost`) or infeasible (`PriceMode::Farkas`), ends pricing at
+  a node only after a round that added nothing and did not branch early, and keeps every added column for the rest
+  of the solve.
 
 `Script`, the in-memory backend in culmen_core, delivers every generic event from a scripted list. Its tests drive
-lazy constraints, cuts, heuristic solutions, native events, the observer, stops and panics without any solver.
+lazy constraints, cuts, heuristic solutions, pricing, native events, the observer, stops and panics without any
+solver.
 That is evidence that nothing in the core assumes HiGHS.
 
 ## Model classes
@@ -114,6 +129,7 @@ Gurobi and SCIP solve and HiGHS does not, would be further classes that a backen
 | `LAZY`: cut off a candidate | none: `kHighsCallbackMipDefineLazyConstraints` exists in 1.16 but is never called, so `Unsupported` | `GRB_CB_MIPSOL` (and `MIPNODE`): `GRBcblazy`, with `LazyConstraints = 1` | a constraint handler without constraints, checked and enforced last: `CONSCHECK` rejects, `CONSENFOLP` / `CONSENFOPS` / `CONSENFORELAX` add global linear constraints (`SCIPaddCons`, `CONSADDED`) |
 | `CUT`: cut off a node relaxation | none, so `Unsupported` | `GRB_CB_MIPNODE` with `MIPNODE_STATUS == OPTIMAL`: `GRBcbget(MIPNODE_REL)`, `GRBcbcut` | a separator (`SEPAEXECLP`): `SCIPgetSolVal` of the LP, `SCIPaddRow` and `SCIPaddPoolCut` |
 | `HEURISTIC`: supply a solution | `kHighsCallbackMipUserSolution`: `user_solution` + `user_has_solution`; partial via `Highs_setCallbackSparseSolution` + `Highs_repairCallbackSolution` | `GRB_CB_MIPNODE` (and `MIP`): `GRBcbsolution` (partial values allowed), `GRBcbusesolution` | a primal heuristic (`HEUREXEC`): `SCIPcreateOrigSol`, `SCIPtrySolFree`; no partial solution during the search |
+| `PRICE`: answer a node LP's duals with columns | none, so `Unsupported` | none: Gurobi 12 has no pricing callback | a pricer plugin (`SCIPincludePricerBasic`, `PRICERREDCOST` and `PRICERFARKAS`, `SCIPaddPricedVar`), in the next stage; until then `Unsupported` and not in `Scip::EVENTS` |
 | `NATIVE`: solver-only events | `kHighsCallbackMipGetCutPool` as `HighsNative::CutPool` (presolved-space cuts) | `GRB_CB_PRESOLVE`, `GRB_CB_MULTIOBJ`, `GRB_CB_IIS`, and `MIPNODE` node data beyond the relaxation | none in `culmen_scip`; any other event type (`SCIP_EVENTTYPE_*`), branching or node-selection data would fit |
 
 HiGHS's threading is handled inside culmen_highs. The MIP kinds come from its serial search loop. Logging may come
@@ -170,9 +186,10 @@ A `culmen_gurobi` crate would hold an `Env`/`Model` pair over `grb-sys`. `load` 
 arrays. `solve` sets parameters from its own typed `GurobiOptions`, then from `Settings`, installs one
 `GRBsetcallbackfunc` trampoline for the run, and maps `where` codes to events as in the table above. Its context
 types would be `GurobiMessage`, `GurobiMip`, `GurobiMipSol` and `GurobiMipNode`. `GurobiMipNode` would implement
-`CutContext` and `HeuristicContext` and offer `cbGet` codes as inherent methods. `EVENTS` would be `Events::ALL`,
-and `CLASSES` would be `ModelClasses::ALL`, the quadratic part passed with `GRBaddqpterms`.
+`CutContext` and `HeuristicContext` and offer `cbGet` codes as inherent methods. `EVENTS` would be `Events::ALL`
+without `PRICE`, and `CLASSES` would be `ModelClasses::ALL`, the quadratic part passed with `GRBaddqpterms`.
 None of this needs a change to culmen_core. SCIP needs more plumbing, since its callbacks are plugins (an event
 handler, a message handler, a constraint handler, a separator and a heuristic, each registered on the `SCIP*`), but
 each plugin maps onto the event kinds above; `culmen_scip` includes them in every instance and delivers every
-generic event that way, with none of culmen_core changed.
+generic event but `PRICE` that way, with none of culmen_core changed. `PRICE` is the one event whose seam a pricer
+plugin needed: the sink `Priced` beside the callback, since the columns a solve prices outlive it.

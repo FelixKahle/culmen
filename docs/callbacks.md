@@ -141,7 +141,8 @@ asks for it.
 ## `Callback`
 
 `Callback<B>` has one method per event kind, each taking the backend's context for it, and `events()`, the set of
-events it wants. Every method does nothing by default, and `events()` defaults to every event. A backend calls a
+events it wants. Every method does nothing by default, and `events()` defaults to every event but `PRICE`, which a
+callback asks for explicitly ([Pricing](#pricing)). A backend calls a
 method only for an event in both its own `Backend::EVENTS` and the callback's `events()`, so asking for fewer events
 costs the solver less.
 
@@ -155,6 +156,7 @@ costs the solver less.
 | `lazy` | `Events::LAZY` | `B::Lazy<'_>`: `LazyContext` |
 | `cut` | `Events::CUT` | `B::Cut<'_>`: `CutContext` |
 | `heuristic` | `Events::HEURISTIC` | `B::Heuristic<'_>`: `HeuristicContext` |
+| `price` | `Events::PRICE` | `B::Price<'_>`: `PriceContext` |
 | `native` | `Events::NATIVE` | `B::Native<'_>`: whatever only this backend reports |
 
 Write it once for every backend, `impl<B: Backend> Callback<B>`, and it sees each context through its neutral
@@ -196,7 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## `Events`
 
 `Events` is a set of event kinds: `NONE`, `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `LAZY`, `CUT`,
-`HEURISTIC`, `NATIVE`, and `ALL`. Combine sets with `|`, `&` and `-` (or `union`, `intersection` and
+`HEURISTIC`, `PRICE`, `NATIVE`, and `ALL`. Combine sets with `|`, `&` and `-` (or `union`, `intersection` and
 `difference`), take every other event with `!` (`complement`), test them with `contains`, and iterate the single
 events with `iter()`; `Display` prints `{LOG, POLL}`.
 
@@ -210,6 +212,7 @@ assert_eq!(wanted.len(), 2);
 assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
 assert_eq!((Events::ALL - Events::LOG).len(), 9);
 assert!(Highs::EVENTS.contains(Events::HEURISTIC));
+assert!(!Highs::EVENTS.contains(Events::PRICE));
 ```
 
 `FEASIBLE` is any solution the solver found; `INCUMBENT` is one better than every one before, so the same solution
@@ -228,8 +231,10 @@ Each event's context reads where the solve stands and offers only the actions th
 | `LazyContext` | `progress()`, `objective()`, `candidate()` | `add_lazy(constraint)`: a constraint the candidate may violate, kept for the rest of the search |
 | `CutContext` | `progress()`, `relaxation()` | `add_cut(cut)`: a constraint every integer-feasible point satisfies |
 | `HeuristicContext` | `progress()` | `supply(values)`: a full solution; `supply_partial(entries)`: some columns' values, for the solver to complete |
+| `PriceContext` | `progress()`, `mode()`, `sense()`, `duals()`, `tolerance()`; `reduced_cost(column)` and `improves(column)` computed from them | `add_col(column)`: a column to add to the search, returning its id; `branch_early()`: stop pricing at this node; `report_bound(bound)`: a bound on this node's subtree |
 
-Values are `TiSlice<Col, f64>` read with the model's handles, and constraints are the same
+Values are `TiSlice<Col, f64>` read with the model's handles, one per column the problem holds when the event is
+delivered, the columns priced earlier in the solve included, and constraints are the same
 [`Constraint`](modelling.md#comparisons) values a model adds, so `ctx.add_lazy(x.leq(y))` reads as the model does.
 The traits are at the crate root, `culmen::PollContext` and so on; bring the one you call into scope.
 
@@ -241,13 +246,109 @@ An action returns `Err(ActionError)` when it is refused:
 | `UnknownColumn { col }` | An entry names a column the problem does not have. |
 | `NotFinite { col }` | A value or coefficient is NaN or infinite. |
 | `Bounds(InvalidBounds)` | A constraint's bounds are invalid after its constant moved into them; `Error::source` is the `InvalidBounds`. |
+| `UnknownRow { row }` | An entry of a new column names a row the program does not have. |
+| `NotFiniteEntry { row, col }` | A coefficient of a new column is NaN or infinite, as given or once its repeated entries were added up. |
+| `ExcludesZero { col, bounds }` | A priced column's bounds do not hold zero. |
+| `Integrality { col, integrality }` | A priced column is semi, or of an integrality the backend's classes do not allow beside the program's. |
+| `NotFiniteBound { bound }` | A reported bound is NaN or infinite. |
 | `Refused(reason)` | The solver refused the action, for the reason given. |
+
+## Pricing
+
+`Events::PRICE` is column generation inside the solve, branch-and-price on a solver whose search branches: after the
+solver has solved a node LP, it hands the callback the LP's row multipliers and asks for columns that would improve
+it. The callback adds them with `add_col`, as `NewCol`s with entries in the program's rows, and the solver solves the
+node LP again and asks again, until a round adds nothing. A callback asks for pricing explicitly, since a solver that
+prices gives up reductions that need every column known up front: `events()` defaults to every event but `PRICE`.
+
+- **Two modes.** In `PriceMode::ReducedCost { objective }` the node LP is optimal, and `duals()` holds each row's
+  dual in the sign convention of [`Duals`](analysis.md): the rate at which the LP optimum changes as the row's active
+  bound rises. A column's reduced cost is `cost − Σ duals[r]·a_r`. In `PriceMode::Farkas` the node LP is infeasible,
+  `duals()` holds the Farkas multipliers, and the cost counts as zero, so the reduced cost is `−Σ duals[r]·a_r`.
+  `reduced_cost(&column)` computes it, and `improves(&column)` says whether the column could improve the LP, or make
+  it feasible, beyond `tolerance()`, by the column's bounds and the program's sense: a column rising from zero
+  improves a minimisation (and every Farkas round) when its reduced cost is below `−tolerance`, a maximisation when
+  it is above `tolerance`. A callback that ignores Farkas rounds leaves an infeasible node unrepaired, and the solver
+  then counts it infeasible.
+- **What is refused.** A priced column's bounds hold zero, so a column left out is the same as one fixed at zero
+  (`ExcludesZero`); it is continuous or integer, of a class the backend solves (`Integrality`); its cost and entries
+  are finite and name the program's rows. A refused column takes no id.
+- **Ids.** `add_col` returns the column's id, the next after the program's columns and every one priced before: the
+  first is `Col(n)` for a program of `n` columns. Every point a later event delivers counts it, and when the solve
+  ends the `Solver`'s program holds it ([A solve that prices](solving.md#a-solve-that-prices)).
+- **Exactness is the callback's.** The node LP is a bound only when pricing is exact: whenever some column the
+  problem does not hold yet improves it, the callback adds at least one, or calls `branch_early()`, which ends
+  pricing at the node and leaves the LP value no bound unless `report_bound(bound)` gives one (refused in Farkas
+  mode). The solver prices the columns it holds itself, so the callback never adds one the problem already holds:
+  a copy is not refused, since two identical columns may be meant, but one that branching fixed, added again,
+  escapes the branching. Lazy constraints and cuts must hold for every column the callback may price, each entering
+  them with coefficient zero.
+
+```rust
+use std::time::Duration;
+
+use culmen::prelude::*;
+use culmen::{NewCol, Phase, PriceContext, PriceMode, ProgramColumn, Script, Step};
+
+/// Adds every pattern of the pool, not added yet, that improves the node LP.
+struct Pool {
+    patterns: Vec<NewCol>,
+    added: Vec<Option<Col>>,
+}
+
+impl<B: Backend> Callback<B> for Pool {
+    fn events(&self) -> Events {
+        Events::PRICE
+    }
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        for (pattern, added) in self.patterns.iter().zip(&mut self.added) {
+            if added.is_none() && ctx.improves(pattern) {
+                *added = ctx.add_col(pattern.clone()).ok();
+            }
+        }
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Cut rolls of width 10 into 7 pieces of width 3, 2 of width 4 and 3 of width 5, one pattern per width so far.
+    let mut m = Model::new();
+    let [a, d, f] = [(); 3].map(|_| m.add_var(Var::continuous()));
+    let threes = m.add_constraint((3.0 * a).geq(7));
+    let fours = m.add_constraint((2.0 * d).geq(2));
+    let fives = m.add_constraint((2.0 * f).geq(3));
+    m.minimize(a + d + f);
+    let pattern = |entries| NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries };
+    let b = pattern(vec![(threes, 2.0), (fours, 1.0)]); // two 3s and a 4
+    let e = pattern(vec![(fours, 1.0), (fives, 1.0)]); // a 4 and a 5
+
+    // A scripted backend hands over the duals a solver would: B prices at 1 - 2/3 - 1/2 = -1/6, E at exactly 0.
+    let at = Progress::at(Duration::ZERO, Phase::Simplex);
+    let round = |objective: f64, duals: Vec<f64>| Step::Price {
+        progress: at,
+        mode: PriceMode::ReducedCost { objective },
+        duals: duals.into(),
+    };
+    let first = round(29.0 / 6.0, vec![1.0 / 3.0, 0.5, 0.5]);
+    let second = round(4.5, vec![1.0 / 3.0, 1.0 / 3.0, 0.5]);
+    let end = Outcome::Optimal(Solution { objective: 4.5, values: vec![1.0, 0.0, 1.5, 2.0].into() });
+    let mut solver = Solver::new(Script::new([first, second], end), m.build()?)?;
+
+    let mut pool = Pool { patterns: vec![b, e], added: vec![None, None] };
+    let solved = solver.solve_with(Request::new(), &mut pool)?;
+    assert_eq!(pool.added, [Some(Col::new(3)), None]);
+    assert_eq!(solver.program().num_cols(), 4);
+    let best = solved.outcome.solution().ok_or("no solution")?;
+    assert!(solver.program().max_violation(&best.values) < 1e-9);
+    Ok(())
+}
+```
 
 ## Pairing callbacks
 
 Two callbacks run together as a pair `(a, b)`: each runs only for the events it asked for, `a` first, and the pair
-asks for the union. `&mut C` is a callback wherever `C` is, so a pair can borrow both and leave them readable
-afterwards. `()` is the callback that asks for nothing.
+asks for the union. At a price step both share one context, so the columns `b` adds follow those `a` added.
+`&mut C` is a callback wherever `C` is, so a pair can borrow both and leave them readable afterwards. `()` is the
+callback that asks for nothing.
 
 ```rust
 use std::time::Duration;
@@ -312,8 +413,9 @@ assert!(!Highs::EVENTS.contains(Events::CUT));
 assert!(culmen::Script::EVENTS.contains(Events::ALL));
 ```
 
-HiGHS 1.16 offers neither lazy constraints nor user cuts; see [Limitations](highs.md#limitations). SCIP
-(`culmen_scip`) delivers both, and every other generic event, through plugins it includes in each instance.
+HiGHS 1.16 offers neither lazy constraints nor user cuts, nor pricing; see [Limitations](highs.md#limitations). SCIP
+(`culmen_scip`) delivers lazy constraints and cuts, and every other generic event but `PRICE`, through plugins it
+includes in each instance; its pricer is the next step.
 
 ## Panics and threads
 

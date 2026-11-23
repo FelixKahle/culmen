@@ -17,9 +17,9 @@ solve as often as needed, each time with its own request.
 |---|---|
 | `solve(request)` | Solves under the request's settings, polling its stop and reporting to its observer. |
 | `solve_with(request, &mut callback)` | The same, and also runs a [`Callback`](callbacks.md#callback) with the backend's full context types. |
-| `program()` | The loaded program. |
+| `program()` | The loaded program, grown by every column a solve priced. |
 | `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
-| `into_parts()` | The backend and the program, taken apart. |
+| `into_parts()` | The backend and the program, taken apart; the backend may be behind the program after a failed edit or a solve that priced. |
 | `set_col_bounds(..)`, `set_col_costs(..)`, `set_col_integrality(..)`, `set_row_bounds(..)`, `add_row(..)`, `add_rows(..)`, `add_col(..)`, `add_cols(..)` | Edit the loaded program, to solve it again warm ([Editing a loaded program](#editing-a-loaded-program)). |
 | `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome ([Analysis](analysis.md)). |
 
@@ -415,6 +415,64 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The examples `cutting_planes` and `column_generation` of the `culmen` crate edit a program round after round.
+
+## A solve that prices
+
+A callback that asks for [`Events::PRICE`](callbacks.md#pricing) adds columns during the solve, column generation at
+every node of the search. Those columns are the program's from then on:
+
+- **The program grows.** Each priced column continues the program's numbering: the first is `Col(n)` for a program
+  of `n` columns, and `add_col` returns that id. When the solve ends, however it ends (returning `Ok`, failing, or
+  unwinding from a panic), `solver.program()` holds every column priced, in the order of their ids, with its cost,
+  bounds, integrality and entries as checked, and the solution reads them with their ids: `best.values.len()` is
+  `solver.program().num_cols()`.
+- **The backend reloads.** The backend held the program before the solve, so the next call that runs it loads the
+  grown program first; a failure there is that call's `Backend` error.
+- **The analyses find no solve to read.** After a solve that priced at least one column, `duals()` and the other
+  analyses that read a solve are `NotSolved` until the next solve that prices nothing.
+- **The next solve starts with the columns.** It may start from a `Start` naming them, and edits work on the grown
+  program as on any other.
+
+```rust
+use std::time::Duration;
+
+use culmen::prelude::*;
+use culmen::{NewCol, Phase, PriceContext, PriceMode, ProgramColumn, Script, Step};
+
+/// Prices one column in at every price step.
+struct OneMore;
+
+impl<B: Backend> Callback<B> for OneMore {
+    fn events(&self) -> Events {
+        Events::PRICE
+    }
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        let row = Row::new(0);
+        let column = NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries: vec![(row, 1.0)] };
+        assert_eq!(ctx.add_col(column), Ok(Col::new(1)));
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous());
+    m.add_constraint(x.geq(1));
+    m.minimize(2.0 * x);
+
+    let step = Step::Price {
+        progress: Progress::at(Duration::ZERO, Phase::Simplex),
+        mode: PriceMode::ReducedCost { objective: 2.0 },
+        duals: vec![2.0].into(),
+    };
+    let end = Outcome::Optimal(Solution { objective: 1.0, values: vec![0.0, 1.0].into() });
+    let mut solver = Solver::new(Script::new([step], end), m.build()?)?;
+    let solved = solver.solve_with(Request::new(), &mut OneMore)?;
+
+    assert_eq!(solver.program().num_cols(), 2);
+    assert_eq!(solved.outcome.solution().map(|s| s.values.len()), Some(2));
+    Ok(())
+}
+```
 
 ## Errors
 
