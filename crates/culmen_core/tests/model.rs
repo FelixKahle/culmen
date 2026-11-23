@@ -250,6 +250,16 @@ fn test_operators_build_the_expected_terms() {
         }
     );
     assert_eq!([x, y].into_iter().map(|c| 2 * c).sum::<LinExpr>(), 2 * x + 2 * y);
+    assert_eq!([x, y].into_iter().map(|c| 2 * c).collect::<LinExpr>(), 2 * x + 2 * y);
+    let mut extended = LinExpr::from(3);
+    extended.extend([x, y]);
+    assert_eq!(extended, x + y + 3);
+    assert_eq!(x / 4, x * 0.25);
+    assert_eq!((2 * x) / 4, x * 0.5);
+    let mut halved = 2 * x + 4;
+    halved /= 2.0;
+    assert_eq!(halved, x + 2);
+    assert_eq!((2 * x + 4) / 2, x + 2);
 }
 
 #[test]

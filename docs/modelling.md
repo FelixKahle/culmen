@@ -115,14 +115,14 @@ The operators combine them:
 
 | Expression | Gives |
 |---|---|
-| `2.0 * x`, `x * 2.0`, `3 * x`, `x * 3`, `x / 2.0`, `-x` (also on a `Term`) | `Term` |
+| `2.0 * x`, `x * 2.0`, `3 * x`, `x * 3`, `x / 2.0`, `x / 2`, `-x` (also on a `Term`) | `Term` |
 | `a + b`, `a - b` with `a` a `Col`, `Term` or `LinExpr` and `b` any of those or a number | `LinExpr` |
 | `5.0 + x`, `5.0 - x`, `1 - x` (a number on the left) | `LinExpr` |
-| `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `-e` with `e` a `LinExpr` | `LinExpr` |
-| `e += b`, `e -= b` with `b` any linear item; `e *= 2.0` | in place |
+| `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `e / 2`, `-e` with `e` a `LinExpr` | `LinExpr` |
+| `e += b`, `e -= b` with `b` any linear item; `e *= 2.0`, `e /= 2.0` | in place |
 
-Numbers are `f64` or `i32`. To sum many items, use `LinExpr::sum` or `Iterator::sum`; both take any iterator of
-linear items and build a single expression:
+Numbers are `f64` or `i32`. To sum many items, use `LinExpr::sum`, `Iterator::sum` or `collect`; each takes any
+iterator of linear items and builds a single expression, and `extend` adds them to an expression:
 
 ```rust
 use culmen::prelude::*;
@@ -145,7 +145,7 @@ let point: culmen::TiVec<Col, f64> = vec![1.0, 2.0, 4.0].into();
 assert_eq!(load.value(&point), 4.0 + 10.0 + 24.0);
 ```
 
-`LinExpr::new()` is the expression zero. `From` converts a `Col`, a `Term` or an `f64` into a `LinExpr`, and a `Col`
+`LinExpr::new()` is the expression zero. `From` converts a `Col`, a `Term`, an `f64` or an `i32` into a `LinExpr`, and a `Col`
 into a `Term`. `LinExpr::value(&values)` evaluates the expression at a point, such as a solution's values; it panics
 when a term's column has no value there.
 
@@ -164,15 +164,15 @@ A product of two linear items is quadratic, for an objective:
 | Expression | Gives |
 |---|---|
 | `x * y`, `x * (2.0 * y)`, `(2.0 * x) * y`, `2.0 * x * y` with `x`, `y` a `Col` or `Term` | `QuadTerm` |
-| `q * 2.0`, `2.0 * q`, `q * 2`, `2 * q`, `q / 2.0`, `-q` with `q` a `QuadTerm` | `QuadTerm` |
+| `q * 2.0`, `2.0 * q`, `q * 2`, `2 * q`, `q / 2.0`, `q / 2`, `-q` with `q` a `QuadTerm` | `QuadTerm` |
 | `a * b` with one side a `LinExpr` and the other a `Col`, `Term` or `LinExpr`, as in `(x - 1) * (x - 1)` | `QuadExpr`, expanded |
 | `a + b`, `a - b` with either side a `QuadTerm` or `QuadExpr` and the other any linear or quadratic item | `QuadExpr` |
-| `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `-e` with `e` a `QuadExpr` | `QuadExpr` |
-| `e += b`, `e -= b` with `b` any linear or quadratic item; `e *= 2.0` | in place |
+| `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `e / 2`, `-e` with `e` a `QuadExpr` | `QuadExpr` |
+| `e += b`, `e -= b` with `b` any linear or quadratic item; `e *= 2.0`, `e /= 2.0` | in place |
 
 `QuadExpr::sum`, `Iterator::sum` and `collect` add up quadratic items and `extend` adds them to an expression,
 `QuadExpr::add_term(first, second, coefficient)` adds one product, `QuadExpr::value(&values)` evaluates the expression at a point, and `From` converts a `QuadTerm`, a
-`LinExpr`, a `Col`, a `Term` or an `f64` into a `QuadExpr`. The trait behind them is `Quadratic`, which every
+`LinExpr`, a `Col`, a `Term`, an `f64` or an `i32` into a `QuadExpr`. The trait behind them is `Quadratic`, which every
 `Linear` item, `QuadTerm`, `QuadExpr` and `&QuadExpr` implement; the objective setters take `impl Quadratic`.
 
 ```rust

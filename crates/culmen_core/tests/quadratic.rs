@@ -122,6 +122,11 @@ fn cases(x: Col, y: Col, a: f64, b: f64, k: i32, u: f64, v: f64, d: f64) -> Vec<
     let mut grown = e.clone();
     grown += y * y;
     grown -= a * x;
+    let mut divided = e.clone();
+    divided /= d;
+    // A whole divisor that is never zero.
+    let n = if k == 0 { 2 } else { k };
+    let nf = f64::from(n);
     vec![
         ("col * col", (x * y).into(), u * v),
         ("col * term", (x * (a * y)).into(), a * u * v),
@@ -137,12 +142,16 @@ fn cases(x: Col, y: Col, a: f64, b: f64, k: i32, u: f64, v: f64, d: f64) -> Vec<
         ("quad term * i32", (q * k).into(), kf * u * v),
         ("i32 * quad term", (k * q).into(), kf * u * v),
         ("quad term / f64", (q / d).into(), u * v / d),
+        ("quad term / i32", (q / n).into(), u * v / nf),
         ("-quad term", (-q).into(), -u * v),
         ("quad expr * f64", e.clone() * a, a * ev),
         ("f64 * quad expr", a * e.clone(), a * ev),
         ("quad expr * i32", e.clone() * k, kf * ev),
         ("i32 * quad expr", k * e.clone(), kf * ev),
         ("quad expr / f64", e.clone() / d, ev / d),
+        ("quad expr / i32", e.clone() / n, ev / nf),
+        ("quad expr /= f64", divided, ev / d),
+        ("i32 as quad expr", QuadExpr::from(k), kf),
         ("-quad expr", -e.clone(), -ev),
         ("quad expr *= f64", assigned, a * ev),
         ("quad expr += and -=", grown, ev + v * v - a * u),
