@@ -44,7 +44,8 @@ pub enum AnalysisError<E> {
         feature: ProgramFeature,
     },
     /// The analysis reads a solve, and there is none to read: no solve since the program was loaded, the last solve
-    /// failed, or a later basis, IIS or relaxation replaced its result.
+    /// failed or panicked once its request reached the backend, or a later edit, basis, IIS or relaxation replaced
+    /// its result.
     NotSolved {
         /// The analysis asked for.
         analysis: Analysis,

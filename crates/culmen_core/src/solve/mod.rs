@@ -55,7 +55,8 @@ use analysis::Ending;
 pub struct Solver<B> {
     backend: B,
     program: Program,
-    /// How the last solve ended; `None` before one, after one failed, or once a later call replaced its result.
+    /// How the last solve ended; `None` before one, once a later solve reached the backend, until it returns `Ok`, or
+    /// once another later call replaced its result. A request refused before the backend sees it keeps it.
     ended: Option<Ending>,
     /// Whether the backend holds `program`. An edit clears it while the backend changes; it stays clear when that
     /// change and the reload after it both fail, or a panic interrupts them, until the next call that runs the
@@ -203,6 +204,9 @@ impl<B: Backend> Solver<B> {
         if let Some(start) = &start {
             self.hand_start(start)?;
         }
+        // The backend's result is replaced from here on, so the last solve is read no longer even when the backend
+        // fails or a panic unwinds out of it.
+        self.ended = None;
         let mut both = (watch, callback);
         let solved = self.backend.solve(&settings, &mut both);
         both.0.finish();
@@ -236,6 +240,7 @@ impl<B: Backend> Solver<B> {
             });
         }
         start.check(self.program.num_cols()).map_err(SolveError::Start)?;
+        self.ended = None;
         self.backend.set_start(start).map_err(SolveError::Backend)
     }
 }
