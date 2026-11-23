@@ -291,6 +291,22 @@ fn test_lp_file_writes_every_section() {
     assert_eq!(text, expected);
 }
 
+#[test]
+fn test_lp_file_escapes_names_the_format_reserves() {
+    // HiGHS 1.16 refuses to read a file whose column is named `sos`, `min`, `max`, `minimize`, `maximum` or
+    // `minimise`: they are keywords of the format.
+    let mut m = Model::new();
+    let x = m.add_var(Var::integer().upper(3).name("max"));
+    let y = m.add_var(Var::continuous().upper(3).name("SOS"));
+    let z = m.add_var(Var::continuous().upper(3).name("Minimize"));
+    m.add_named_constraint("min", (x + y + z).geq(1));
+    m.minimize(2.0 * x + y + z);
+    let text = m.build().unwrap().to_lp_string().unwrap();
+    let expected = "Minimize\n obj: 2 _max + 1 _SOS + 1 _Minimize\nSubject To\n _min: 1 _max + 1 _SOS + 1 _Minimize >= 1\n\
+                    Bounds\n 0 <= _max <= 3\n 0 <= _SOS <= 3\n 0 <= _Minimize <= 3\nGeneral\n _max\nEnd\n";
+    assert_eq!(text, expected);
+}
+
 /// A small expression over `n` columns: terms with repeats, and a constant.
 fn expression(n: usize) -> impl Strategy<Value = LinExpr> {
     (prop::collection::vec((0..n, -5i32..=5), 0..8), -10i32..=10).prop_map(|(terms, constant)| LinExpr {

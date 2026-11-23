@@ -10,9 +10,11 @@ use super::{Col, Integrality, Program, ProgramFeature, Row, Sense};
 impl Program {
     /// The program in the CPLEX LP file format.
     ///
-    /// The output is meant for debugging: names are reduced to the characters the format allows, an unnamed column
-    /// is written `x<index>` and an unnamed row `r<index>`, and a ranged row becomes two rows suffixed `_lo` and
-    /// `_hi`. Distinct names that reduce to the same text are not told apart. A quadratic part is written in the
+    /// The output is meant for debugging: names are reduced to the characters the format allows, a name that is one
+    /// of its keywords (`max`, `sos`, `end`, …, in any case) is prefixed `_`, an unnamed column is written
+    /// `x<index>` and an unnamed row `r<index>`, a ranged row becomes two rows suffixed `_lo` and `_hi`, and a free
+    /// row, which the format cannot state and which constrains nothing, is left out. Distinct names that reduce to the
+    /// same text are not told apart. A quadratic part is written in the
     /// format's brackets halved, `[ 2 x ^ 2 + 4 x * y ] / 2` for `x² + 2xy`. Integer and semi-integer columns are
     /// listed under `General`, semi-continuous and semi-integer ones under `Semi-Continuous`: a column in both is
     /// semi-integer, as CPLEX and HiGHS read it.
@@ -231,13 +233,23 @@ fn write_signed(out: &mut impl fmt::Write, first: bool, value: f64, what: &str) 
     }
 }
 
-/// A name reduced to the characters the LP format allows, never starting with a digit, a period or an `e`.
+/// The words of the LP format a name may not be, in any case: its section headers, `inf`, `free`, and their
+/// variants as CPLEX and HiGHS read them.
+const KEYWORDS: [&str; 33] = [
+    "bin", "binaries", "binary", "bound", "bounds", "end", "free", "gen", "general", "generals", "inf", "infinity",
+    "int", "integer", "integers", "max", "maximise", "maximize", "maximum", "min", "minimise", "minimize", "minimum",
+    "s.t.", "semi", "semis", "sos", "sos1", "sos2", "st", "st.", "subject", "such",
+];
+
+/// A name reduced to the characters the LP format allows, never starting with a digit, a period or an `e`, and
+/// never one of its keywords.
 fn label(name: Option<&str>, prefix: char, index: usize) -> String {
     let Some(name) = name.filter(|n| !n.is_empty()) else {
         return format!("{prefix}{index}");
     };
     let mut out = String::with_capacity(name.len() + 1);
-    if name.starts_with(|c: char| c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E') {
+    let reserved = KEYWORDS.iter().any(|keyword| keyword.eq_ignore_ascii_case(name));
+    if reserved || name.starts_with(|c: char| c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E') {
         out.push('_');
     }
     out.extend(name.chars().map(|c| {
