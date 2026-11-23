@@ -19,15 +19,17 @@ use crate::ScipError;
 use crate::error::{Number, check};
 
 impl Instance {
-    /// A new instance holding `program`, which has no quadratic part, no semi column and one objective.
+    /// A new instance holding `program`, which has no semi column and one objective; a quadratic part becomes an
+    /// epigraph.
     ///
     /// On an error the instance built so far is dropped, which frees every variable and constraint it created.
     ///
     /// # Errors
     ///
     /// [`ScipError::BeyondInfinity`] for a finite number SCIP would read as infinite, [`ScipError::ColName`] or
-    /// [`ScipError::RowName`] for a name holding a NUL byte, [`ScipError::RowTooLong`] for a row beyond SCIP's
-    /// counts, [`ScipError::Call`] when SCIP refuses a call.
+    /// [`ScipError::RowName`] for a name holding a NUL byte, [`ScipError::RowTooLong`] or
+    /// [`ScipError::QuadraticTooLong`] for a row or a quadratic part beyond SCIP's counts, [`ScipError::Call`] when
+    /// SCIP refuses a call.
     ///
     /// # Panics
     ///
@@ -41,6 +43,7 @@ impl Instance {
         for row in program.rows() {
             instance.add_cons(program, row)?;
         }
+        instance.add_epigraph(program)?;
         debug_assert!(
             instance.vars.len() == program.num_cols() && instance.conss.len() == program.num_rows(),
             "Instance: the problem does not hold one variable per column and one constraint per row"
@@ -184,7 +187,7 @@ impl Instance {
     /// # Errors
     ///
     /// [`ScipError::BeyondInfinity`] naming `number` when SCIP would read `value` as infinite.
-    fn number(&self, number: Number, value: f64) -> Result<f64, ScipError> {
+    pub(super) fn number(&self, number: Number, value: f64) -> Result<f64, ScipError> {
         self.finite(value).ok_or(ScipError::BeyondInfinity {
             number,
             value,

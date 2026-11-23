@@ -83,6 +83,11 @@ pub enum ScipError {
         /// Its number of entries.
         len: usize,
     },
+    /// The quadratic part of the objective has more entries than SCIP's `int` counts.
+    QuadraticTooLong {
+        /// Its number of entries.
+        len: usize,
+    },
     /// The program is of a class this backend does not solve; a [`Solver`](culmen_core::Solver) never hands it one.
     Unsupported {
         /// The program's class.
@@ -139,6 +144,12 @@ impl fmt::Display for ScipError {
                     row.index()
                 )
             }
+            Self::QuadraticTooLong { len } => {
+                write!(
+                    f,
+                    "SCIP: the quadratic objective has {len} entries, more than SCIP's `int` counts"
+                )
+            }
             Self::Unsupported { class } => write!(f, "SCIP: the backend does not solve a {class}"),
             Self::UnsupportedFeature { feature } => write!(f, "SCIP: the backend does not take {feature}"),
             Self::Start => write!(f, "SCIP: the start does not fit the loaded program"),
@@ -160,6 +171,7 @@ impl core::error::Error for ScipError {
             | Self::RowName { .. }
             | Self::BeyondInfinity { .. }
             | Self::RowTooLong { .. }
+            | Self::QuadraticTooLong { .. }
             | Self::Unsupported { .. }
             | Self::UnsupportedFeature { .. }
             | Self::Start
@@ -184,6 +196,13 @@ pub enum Number {
         /// The column.
         col: Col,
     },
+    /// The coefficient of a product of two columns, or of a square, in the objective's quadratic part.
+    QuadCoefficient {
+        /// The first column, never after the second.
+        first: Col,
+        /// The second column.
+        second: Col,
+    },
     /// The objective's offset.
     Offset,
 }
@@ -197,6 +216,12 @@ impl fmt::Display for Number {
             Self::Coefficient { row, col } => {
                 write!(f, "coefficient of column {} in row {}", col.index(), row.index())
             }
+            Self::QuadCoefficient { first, second } => write!(
+                f,
+                "quadratic coefficient of columns {} and {}",
+                first.index(),
+                second.index()
+            ),
             Self::Offset => write!(f, "objective offset"),
         }
     }

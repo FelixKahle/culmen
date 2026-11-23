@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One SCIP instance and the problem it holds behind safe methods: the only place that calls SCIP. Building the
-//! problem from a [`Program`](culmen_core::Program) is in the `load` submodule, parameters in `params`.
+//! problem from a [`Program`](culmen_core::Program) is in the `load` submodule, a quadratic objective's epigraph in
+//! `epigraph`, parameters in `params`.
 //!
 //! Every call's `SCIP_RETCODE` goes through [`check`], which turns any code but `SCIP_OKAY` into
 //! [`ScipError::Call`] naming the call; parameter calls report [`ScipError::Param`] instead.
 
+mod epigraph;
 mod load;
 mod params;
 
@@ -15,7 +17,7 @@ pub(crate) use params::Group;
 use core::ffi::c_uint;
 use core::ptr::{self, NonNull};
 
-use culmen_core::{Col, Row, Solution, Start, TiVec};
+use culmen_core::{Col, QuadObjective, Row, Solution, Start, TiVec};
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_VAR, SCIPaddSolFree,
     SCIPcreate, SCIPcreatePartialSol, SCIPcreateProbBasic, SCIPcreateSol, SCIPfree, SCIPfreeSol, SCIPfreeTransform,
@@ -32,9 +34,10 @@ const TRUE: c_uint = 1;
 
 /// A SCIP instance holding one problem, from creation to drop.
 ///
-/// It owns one reference to every variable and constraint it created, indexed by the column or row they stand for;
-/// dropping it releases those references and then frees the instance, whatever stage it is in, and so frees
-/// everything it created on every path, an early return from a half-built load included.
+/// It owns one reference to every variable and constraint it created, indexed by the column or row they stand for,
+/// and to those of a quadratic objective's epigraph; dropping it releases those references and then frees the
+/// instance, whatever stage it is in, and so frees everything it created on every path, an early return from a
+/// half-built load included.
 ///
 /// Every method that changes SCIP's state borrows the instance exclusively, so no two calls ever overlap on it.
 #[derive(Debug)]
@@ -42,6 +45,20 @@ pub(crate) struct Instance {
     scip: NonNull<SCIP>,
     vars: TiVec<Col, NonNull<SCIP_VAR>>,
     conss: TiVec<Row, NonNull<SCIP_CONS>>,
+    /// The epigraph of a quadratic objective; `None` for a linear one.
+    epigraph: Option<Epigraph>,
+}
+
+/// What stands for a quadratic part `q(x)` of the objective: a variable `t` in its place, with cost one, bounded by a
+/// quadratic constraint, `q(x) - t <= 0` when minimizing and `q(x) - t >= 0` when maximizing.
+#[derive(Debug)]
+struct Epigraph {
+    /// The variable `t`.
+    var: NonNull<SCIP_VAR>,
+    /// The constraint bounding `t`; `None` until it is created.
+    cons: Option<NonNull<SCIP_CONS>>,
+    /// The quadratic part, which values a solution's `q(x)` in place of `t`.
+    quadratic: QuadObjective,
 }
 
 // SAFETY: SCIP is built with `SCIP_THREADSAFE` (its `config.h` defines it), which keeps every piece of an instance's
@@ -69,6 +86,7 @@ impl Instance {
             scip,
             vars: TiVec::new(),
             conss: TiVec::new(),
+            epigraph: None,
         };
         // SAFETY: the instance is live. Its default message handler would print to standard output.
         unsafe { SCIPsetMessagehdlrQuiet(instance.raw(), TRUE) };
@@ -220,7 +238,7 @@ impl Instance {
     pub(crate) fn best(&self) -> Option<Solution> {
         // SAFETY: the instance is live; the result is null or a solution of this instance.
         let sol = NonNull::new(unsafe { SCIPgetBestSol(self.raw()) })?.as_ptr();
-        let values = self
+        let values: TiVec<Col, f64> = self
             .vars
             .iter()
             // SAFETY: the instance is live, `sol` one of its solutions and each variable one of its variables.
@@ -228,6 +246,16 @@ impl Instance {
             .collect();
         // SAFETY: as above.
         let objective = unsafe { SCIPgetSolOrigObj(self.raw(), sol) };
+        let objective = match &self.epigraph {
+            None => objective,
+            // The epigraph variable meets the quadratic part only to SCIP's feasibility tolerance, so the objective
+            // takes the quadratic part's own value at the point in its place.
+            Some(epigraph) => {
+                // SAFETY: as above.
+                let t = unsafe { SCIPgetSolVal(self.raw(), sol, epigraph.var.as_ptr()) };
+                objective - t + epigraph.quadratic.value(&values)
+            }
+        };
         Some(Solution { objective, values })
     }
 }
@@ -236,6 +264,26 @@ impl Drop for Instance {
     fn drop(&mut self) {
         let raw = self.raw();
         let released = |code| code == SCIP_Retcode_SCIP_OKAY || std::thread::panicking();
+        let (epigraph_var, epigraph_cons) = match self.epigraph.take() {
+            Some(Epigraph { var, cons, .. }) => (Some(var), cons),
+            None => (None, None),
+        };
+        if let Some(mut cons) = epigraph_cons.map(NonNull::as_ptr) {
+            // SAFETY: the instance is live and `cons` the one reference to the constraint this instance owns.
+            let code = unsafe { SCIPreleaseCons(raw, &raw mut cons) };
+            debug_assert!(
+                released(code),
+                "Instance: SCIP failed to release the epigraph's constraint: {code}"
+            );
+        }
+        if let Some(mut var) = epigraph_var.map(NonNull::as_ptr) {
+            // SAFETY: the instance is live and `var` the one reference to the variable this instance owns.
+            let code = unsafe { SCIPreleaseVar(raw, &raw mut var) };
+            debug_assert!(
+                released(code),
+                "Instance: SCIP failed to release the epigraph's variable: {code}"
+            );
+        }
         for mut cons in self.conss.drain(..).map(NonNull::as_ptr) {
             // SAFETY: the instance is live and `cons` the one reference to the constraint this instance owns.
             let code = unsafe { SCIPreleaseCons(raw, &raw mut cons) };

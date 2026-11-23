@@ -4,9 +4,9 @@
 //! The SCIP backend of culmen: SCIP 10, built from source through `scip-sys`, with typed statuses and options.
 //!
 //! [`Scip`] implements [`Backend`]: load a [`Program`], solve it under [`Settings`], and read the generic
-//! [`Outcome`] with SCIP's own [`ScipStatus`] beside it. It solves LPs and MILPs and takes a start; SCIP's
-//! callbacks, which are plugins registered on the instance, are not delivered yet, so [`Scip::EVENTS`] is empty and
-//! a callback passed to a solve is never called.
+//! [`Outcome`] with SCIP's own [`ScipStatus`] beside it. It solves LPs, MILPs, convex QPs and MIQPs, and takes a
+//! start. SCIP's callbacks, which are plugins registered on the instance, are not delivered yet, so
+//! [`Scip::EVENTS`] is empty and a callback passed to a solve is never called.
 //!
 //! ```
 //! use culmen_core::{Linear, LinExpr, Model, Outcome, Request, Solver, Var};
@@ -67,8 +67,8 @@ use core::fmt;
 use std::time::Instant;
 
 use culmen_core::{
-    Backend, Callback, Events, ModelClass, ModelClasses, Outcome, Program, ProgramFeature, ProgramFeatures, Settings,
-    Solved, Start, Unsupported,
+    Backend, Callback, Events, ModelClasses, Outcome, Program, ProgramFeature, ProgramFeatures, Settings, Solved,
+    Start, Unsupported,
 };
 pub use error::{Number, RetCode, ScipError};
 pub use options::{Emphasis, ParamValue, ScipOptions, ScipParam};
@@ -84,7 +84,7 @@ use instance::{Group, Instance};
 ///
 /// let scip = Scip::with_options(ScipOptions { heuristics: Some(Emphasis::Off), ..ScipOptions::default() });
 /// assert_eq!(scip.options().heuristics, Some(Emphasis::Off));
-/// assert!(Scip::CLASSES.contains(ModelClass::Milp));
+/// assert!(Scip::CLASSES.contains(ModelClass::Miqp));
 /// assert_eq!(Scip::EVENTS, Events::NONE);
 /// ```
 #[derive(Debug, Default)]
@@ -257,15 +257,20 @@ impl Backend for Scip {
     /// constraint handler, a separator, a heuristic), which this version does not register.
     const EVENTS: Events = Events::NONE;
 
-    /// LPs and MILPs. SCIP solves convex QPs and MIQPs too, over an epigraph variable bounded by a quadratic
-    /// constraint, which this version does not build.
-    const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]);
+    /// Every class: a quadratic objective `q(x)` becomes an epigraph variable `t` with cost one, bounded by the
+    /// quadratic constraint `q(x) - t <= 0` and `t >= 0` when minimizing, `q(x) - t >= 0` and `t <= 0` when
+    /// maximizing, where a convex `q` is never negative and a concave one never positive. SCIP solves the constraint
+    /// as a convex nonlinear constraint by cutting planes. A solution's objective takes `q(x)` itself in the place of
+    /// `t`, which meets it only to SCIP's feasibility tolerance; so an optimum's objective is close to the optimal
+    /// value, and its point, where the objective is flat, less close to the optimal point.
+    const CLASSES: ModelClasses = ModelClasses::ALL;
 
     /// Starts: a full start as a SCIP solution, a sparse one as a partial solution SCIP completes.
     const FEATURES: ProgramFeatures = ProgramFeatures::of(&[ProgramFeature::StartSolution]);
 
     /// Builds the program into a new SCIP instance, one variable per column and one linear constraint per row (a
-    /// ranged row has both sides, a free row neither), replacing the instance before.
+    /// ranged row has both sides, a free row neither), and a quadratic objective's epigraph, replacing the instance
+    /// before.
     ///
     /// # Errors
     ///

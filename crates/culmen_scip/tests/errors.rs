@@ -11,8 +11,8 @@
 use core::num::NonZeroU64;
 
 use culmen_core::{
-    Backend, Bounds, Col, Linear, LoadError, Model, ModelClass, ModelClasses, Program, ProgramColumn, ProgramFeature,
-    ProgramPlan, Request, Row, Settings, SolveError, Solver, Start, Var, bounds,
+    Backend, Bounds, Col, Linear, LoadError, Model, Program, ProgramColumn, ProgramFeature, ProgramPlan, Request, Row,
+    Settings, SolveError, Solver, Start, Var, bounds,
 };
 use culmen_scip::{Number, ParamValue, RetCode, Scip, ScipError, ScipOptions};
 
@@ -228,6 +228,15 @@ fn test_numbers_scip_would_read_as_infinite_are_refused_where_they_stand() {
     let mut plan = ProgramPlan::new();
     plan.offset = 1e20;
     assert_eq!(load(plan), refused(Number::Offset, 1e20));
+
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    plan.quadratic = vec![(x, x, 1e21), (y, y, 1e21)];
+    assert_eq!(
+        load(plan),
+        refused(Number::QuadCoefficient { first: x, second: x }, 1e21)
+    );
     assert_eq!(
         ScipError::BeyondInfinity {
             number: Number::Coefficient {
@@ -282,23 +291,7 @@ fn test_a_failed_load_leaves_no_program_and_a_later_load_works() {
 }
 
 #[test]
-fn test_programs_of_classes_and_features_it_does_not_declare_are_refused() {
-    let mut m = Model::new();
-    let x = m.add_var(Var::continuous());
-    m.minimize(x * x);
-    let qp = m.build().unwrap();
-    assert_eq!(
-        Solver::new(Scip::new(), qp.clone()).unwrap_err(),
-        LoadError::Unsupported {
-            class: ModelClass::Qp,
-            supported: ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp])
-        }
-    );
-    assert_eq!(
-        Scip::new().load(&qp),
-        Err(ScipError::Unsupported { class: ModelClass::Qp })
-    );
-
+fn test_programs_with_features_it_does_not_declare_are_refused() {
     let mut m = Model::new();
     m.add_var(Var::semi_continuous().bounds(1, 2));
     let semi = m.build().unwrap();
