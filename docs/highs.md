@@ -62,7 +62,8 @@ default: `presolve`, `presolve_mode`, `solver`, `parallel`, `run_crossover`, `ti
 `simplex_scale_strategy`, the edge weights, the iteration and update limits), the logging options (`output_flag`,
 `log_to_console`, `log_file`), the MIP options (`mip_rel_gap`, `mip_abs_gap`, the node, leaf, stall and solution
 limits, the cut-pool limits, `mip_heuristic_effort` and each heuristic's switch, `mip_feasibility_tolerance`,
-`mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and tolerances, `solve_relaxation`,
+`mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and tolerances, the active-set QP solver's
+`qp_iteration_limit` and `qp_nullspace_limit`, `solve_relaxation`,
 `allow_unbounded_or_infeasible` and `presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field.
 
 A field whose HiGHS option takes one of a few values is an enum:
@@ -72,7 +73,7 @@ A field whose HiGHS option takes one of a few values is an enum:
 | `Switch` | `Off`, `Choose`, `On` | `presolve`, `parallel`, `run_crossover` |
 | `PresolveMode` | `Choose`, `InitialSweep`, `Light`, `Full` | `presolve_mode` |
 | `OnOff` | `Off`, `On` | `ranging` |
-| `LpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo`, `Pdlp`, `Hipdlp` | `solver` |
+| `LpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo`, `Pdlp`, `Hipdlp`, `QpAsm` | `solver` |
 | `MipLpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo` | `mip_lp_solver` |
 | `MipIpmSolver` | `Choose`, `Ipm`, `Ipx`, `Hipo` | `mip_ipm_solver` |
 | `SimplexStrategy` | `Choose`, `Dual`, `DualSip`, `DualPami`, `Primal` | `simplex_strategy` |

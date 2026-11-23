@@ -180,7 +180,7 @@ impl ToOption for OnOff {
     }
 }
 
-/// The LP solver: `solver`.
+/// The LP or QP solver: `solver`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum LpSolver {
@@ -199,6 +199,8 @@ pub enum LpSolver {
     Pdlp,
     /// The HiPDLP first-order solver.
     Hipdlp,
+    /// The active-set QP solver, HiGHS's solver for a QP.
+    QpAsm,
 }
 
 impl ToOption for LpSolver {
@@ -211,6 +213,7 @@ impl ToOption for LpSolver {
             Self::Hipo => "hipo",
             Self::Pdlp => "pdlp",
             Self::Hipdlp => "hipdlp",
+            Self::QpAsm => "qpasm",
         };
         Ok(OptionValue::from(value))
     }
@@ -440,7 +443,7 @@ options! {
     presolve: Switch = "presolve",
     /// Which presolve rules HiGHS allows when it presolves.
     presolve_mode: PresolveMode = "presolve_mode",
-    /// The LP solver.
+    /// The LP or QP solver.
     solver: LpSolver = "solver",
     /// Whether to use parallelism.
     parallel: Switch = "parallel",
@@ -565,6 +568,10 @@ options! {
     pdlp_iteration_limit: u64 = "pdlp_iteration_limit",
     /// The PDLP optimality tolerance.
     pdlp_optimality_tolerance: f64 = "pdlp_optimality_tolerance",
+    /// The iteration limit of the active-set QP solver.
+    qp_iteration_limit: u64 = "qp_iteration_limit",
+    /// The largest null space the active-set QP solver works with.
+    qp_nullspace_limit: u64 = "qp_nullspace_limit",
     /// Whether to solve the continuous relaxation of a MIP.
     solve_relaxation: bool = "solve_relaxation",
     /// Whether HiGHS may end as infeasible-or-unbounded without trying to tell which; it ends so either way when it
@@ -677,6 +684,7 @@ mod tests {
             LpSolver::Hipo,
             LpSolver::Pdlp,
             LpSolver::Hipdlp,
+            LpSolver::QpAsm,
         ] {
             every.push(HighsOptions {
                 solver: Some(s),
@@ -742,6 +750,11 @@ mod tests {
                 ..HighsOptions::default()
             });
         }
+        every.push(HighsOptions {
+            qp_iteration_limit: Some(1000),
+            qp_nullspace_limit: Some(u64::MAX),
+            ..HighsOptions::default()
+        });
         // HiGHS takes HiPO only when it finds HiPO's extension library on the machine it runs on.
         let hipo = OptionValue::from("hipo");
         let mut instance = Instance::new();
