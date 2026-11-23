@@ -3,6 +3,7 @@
 
 //! Model files through HiGHS's readers and writers: round trips keep the program up to names and order and keep its
 //! optimum, semi columns included; what a format loses is refused; what HiGHS cannot read is a typed error.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

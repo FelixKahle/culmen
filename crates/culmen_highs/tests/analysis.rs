@@ -3,6 +3,7 @@
 
 //! The analyses on HiGHS: duals, basis, ranging, rays, IIS and feasibility relaxation on hand-worked programs whose
 //! answers were written from the mathematics first, the typed refusals, and strong duality on random LPs.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

@@ -3,6 +3,7 @@
 
 //! Every serializable type survives a round trip through JSON, and checked types are checked again as they are
 //! read.
+
 #![cfg(feature = "serde")]
 #![cfg_attr(
     test,

@@ -3,6 +3,7 @@
 
 //! The solver-neutral analysis layer: the checks every request passes before a backend is asked, the set of
 //! analyses, the checked penalty, basis fitting, violations against a simple reference, and serde round trips.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

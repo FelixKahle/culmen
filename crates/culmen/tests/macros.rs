@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The modelling macros build exactly the program the plain methods build.
+
 #![cfg(feature = "macros")]
 #![cfg_attr(
     test,
