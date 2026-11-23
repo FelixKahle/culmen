@@ -17,17 +17,20 @@ pub(crate) use params::Group;
 use core::ffi::c_uint;
 use core::ptr::{self, NonNull};
 
-use culmen_core::{Col, QuadObjective, Row, Solution, Start, TiVec};
+use std::time::Instant;
+
+use culmen_core::{Callback, Col, Events, QuadObjective, Row, Solution, Start, TiVec};
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_VAR, SCIPaddSolFree,
     SCIPcreate, SCIPcreatePartialSol, SCIPcreateProbBasic, SCIPcreateSol, SCIPfree, SCIPfreeSol, SCIPfreeTransform,
-    SCIPgetBestSol, SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNSolsFound, SCIPgetNTotalNodes, SCIPgetSolOrigObj,
-    SCIPgetSolVal, SCIPgetStage, SCIPgetStatus, SCIPincludeDefaultPlugins, SCIPinfinity, SCIPreleaseCons,
-    SCIPreleaseVar, SCIPsetMessagehdlrQuiet, SCIPsetSolVal, SCIPsolve,
+    SCIPgetBestSol, SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNSolsFound, SCIPgetNTotalNodes, SCIPgetStage,
+    SCIPgetStatus, SCIPincludeDefaultPlugins, SCIPinfinity, SCIPreleaseCons, SCIPreleaseVar, SCIPsetSolVal, SCIPsolve,
 };
 
+use crate::callback::{self, Payload, Run, Slot};
+use crate::columns::Columns;
 use crate::error::check;
-use crate::{ScipError, ScipStatus, Status};
+use crate::{Scip, ScipError, ScipStatus, Status};
 
 /// SCIP's `TRUE`.
 const TRUE: c_uint = 1;
@@ -40,9 +43,13 @@ const TRUE: c_uint = 1;
 /// half-built load included.
 ///
 /// Every method that changes SCIP's state borrows the instance exclusively, so no two calls ever overlap on it.
+///
+/// It owns the slot its callback plugins share, which it frees after SCIP.
 #[derive(Debug)]
 pub(crate) struct Instance {
     scip: NonNull<SCIP>,
+    /// The slot of the callback plugins, from `Box::into_raw`, freed in `Drop` after SCIP.
+    slot: NonNull<Slot>,
     vars: TiVec<Col, NonNull<SCIP_VAR>>,
     conss: TiVec<Row, NonNull<SCIP_CONS>>,
     /// The epigraph of a quadratic objective; `None` for a linear one.
@@ -68,7 +75,7 @@ struct Epigraph {
 unsafe impl Send for Instance {}
 
 impl Instance {
-    /// A new instance with SCIP's default plugins, quiet, holding an empty problem.
+    /// A new instance with SCIP's default plugins and culmen's callback plugins, quiet, holding an empty problem.
     ///
     /// # Errors
     ///
@@ -81,19 +88,23 @@ impl Instance {
             call: "SCIPcreate",
             code: crate::RetCode::NoMemory,
         })?;
-        // From here on, dropping the instance frees it.
+        // From here on, dropping the instance frees it and then the slot.
         let instance = Self {
             scip,
+            slot: NonNull::from(Box::leak(Box::new(Slot::new(raw)))),
             vars: TiVec::new(),
             conss: TiVec::new(),
             epigraph: None,
         };
-        // SAFETY: the instance is live. Its default message handler would print to standard output.
-        unsafe { SCIPsetMessagehdlrQuiet(instance.raw(), TRUE) };
+        // SAFETY: the instance is live and in its init stage, and the slot lives until after SCIP is freed. The
+        // handler replaces SCIP's default one, which would print to standard output.
+        unsafe { callback::install_messages(instance.raw(), instance.slot) }?;
         // SAFETY: the instance is live and in its init stage, where plugins are included.
         check("SCIPincludeDefaultPlugins", unsafe {
             SCIPincludeDefaultPlugins(instance.raw())
         })?;
+        // SAFETY: as above.
+        unsafe { callback::include(instance.raw(), instance.slot) }?;
         // SAFETY: the instance is live with its plugins, and the name a NUL-terminated string SCIP copies.
         check("SCIPcreateProbBasic", unsafe {
             SCIPcreateProbBasic(instance.raw(), c"culmen".as_ptr())
@@ -103,6 +114,26 @@ impl Instance {
 
     fn raw(&self) -> *mut SCIP {
         self.scip.as_ptr()
+    }
+
+    /// The slot of the callback plugins.
+    fn slot(&self) -> &Slot {
+        // SAFETY: the slot lives from the instance's creation until after SCIP is freed in `Drop`, and is only ever
+        // reached through shared references.
+        unsafe { self.slot.as_ref() }
+    }
+
+    /// Whether SCIP's messages reach standard output and standard error.
+    pub(crate) fn set_console(&mut self, console: bool) {
+        self.slot().set_console(console);
+    }
+
+    /// The columns' variables and the epigraph.
+    fn columns(&self) -> Columns<'_> {
+        Columns {
+            vars: &self.vars,
+            epigraph: self.epigraph.as_ref().map(|e| (e.var, &e.quadratic)),
+        }
     }
 
     /// The number of columns, one variable each.
@@ -201,14 +232,26 @@ impl Instance {
         Ok(())
     }
 
-    /// Solves the problem.
+    /// Solves the problem, delivering the events `wanted` to `callback`; a panic of the callback is returned, not
+    /// resumed.
     ///
-    /// # Errors
-    ///
-    /// [`ScipError::Call`] when SCIP fails.
-    pub(crate) fn solve(&mut self) -> Result<(), ScipError> {
-        // SAFETY: the instance is live and borrowed exclusively, and holds its problem.
-        check("SCIPsolve", unsafe { SCIPsolve(self.raw()) })
+    /// The callback's run is installed in the slot for the call of `SCIPsolve` alone, and SCIP reads the columns
+    /// through shared references during it.
+    pub(crate) fn solve(&mut self, callback: &mut dyn Callback<Scip>, wanted: Events, start: Instant) -> Ran {
+        let this: &Self = self;
+        // SAFETY: the instance is live, holds the columns, and is in its problem stage, as configuring left it.
+        let run = unsafe { Run::new(this.raw(), callback, wanted, start, this.columns()) };
+        let solved = {
+            let _installed = this.slot().install(&run);
+            // SAFETY: the instance is live and borrowed exclusively by the caller, and holds its problem; the run its
+            // plugins reach lives until after the guard uninstalls it.
+            check("SCIPsolve", unsafe { SCIPsolve(this.raw()) })
+        };
+        let (panic, error) = run.finish();
+        Ran {
+            result: error.map_or(solved, Err),
+            panic,
+        }
     }
 
     /// SCIP's account of the last solve.
@@ -238,26 +281,17 @@ impl Instance {
     pub(crate) fn best(&self) -> Option<Solution> {
         // SAFETY: the instance is live; the result is null or a solution of this instance.
         let sol = NonNull::new(unsafe { SCIPgetBestSol(self.raw()) })?.as_ptr();
-        let values: TiVec<Col, f64> = self
-            .vars
-            .iter()
-            // SAFETY: the instance is live, `sol` one of its solutions and each variable one of its variables.
-            .map(|var| unsafe { SCIPgetSolVal(self.raw(), sol, var.as_ptr()) })
-            .collect();
-        // SAFETY: as above.
-        let objective = unsafe { SCIPgetSolOrigObj(self.raw(), sol) };
-        let objective = match &self.epigraph {
-            None => objective,
-            // The epigraph variable meets the quadratic part only to SCIP's feasibility tolerance, so the objective
-            // takes the quadratic part's own value at the point in its place.
-            Some(epigraph) => {
-                // SAFETY: as above.
-                let t = unsafe { SCIPgetSolVal(self.raw(), sol, epigraph.var.as_ptr()) };
-                objective - t + epigraph.quadratic.value(&values)
-            }
-        };
+        // SAFETY: the instance is live after a solve, in a stage where it reads its own solution `sol`.
+        let (objective, values) = unsafe { self.columns().read(self.raw(), sol) };
         Some(Solution { objective, values })
     }
+}
+
+/// What came of a solve: SCIP's result, or the first error a plugin met, and a panic of the callback to resume.
+#[derive(Debug)]
+pub(crate) struct Ran {
+    pub(crate) result: Result<(), ScipError>,
+    pub(crate) panic: Option<Payload>,
 }
 
 impl Drop for Instance {
@@ -298,5 +332,8 @@ impl Drop for Instance {
         // SAFETY: the instance is live, this instance holds no further reference into it, and it is freed once.
         let code = unsafe { SCIPfree(&raw mut raw) };
         debug_assert!(released(code), "Instance: SCIP failed to free the instance: {code}");
+        // SAFETY: the slot came from `Box::into_raw` and SCIP, whose plugins were the only other holders of it, is
+        // freed; it is freed once, here.
+        drop(unsafe { Box::from_raw(self.slot.as_ptr()) });
     }
 }

@@ -4,9 +4,9 @@
 //! The SCIP backend of culmen: SCIP 10, built from source through `scip-sys`, with typed statuses and options.
 //!
 //! [`Scip`] implements [`Backend`]: load a [`Program`], solve it under [`Settings`], and read the generic
-//! [`Outcome`] with SCIP's own [`ScipStatus`] beside it. It solves LPs, MILPs, convex QPs and MIQPs, and takes a
-//! start. SCIP's callbacks, which are plugins registered on the instance, are not delivered yet, so
-//! [`Scip::EVENTS`] is empty and a callback passed to a solve is never called.
+//! [`Outcome`] with SCIP's own [`ScipStatus`] beside it. It solves LPs, MILPs, convex QPs and MIQPs, takes a start,
+//! and delivers every generic callback event, lazy constraints and user cuts included, through plugins it includes
+//! in each instance.
 //!
 //! ```
 //! use culmen_core::{Linear, LinExpr, Model, Outcome, Request, Solver, Var};
@@ -50,6 +50,60 @@
 //! SCIP prints the error messages of a call it refuses, such as a parameter it does not know, to standard error
 //! through its process-wide error printer, which the backend leaves as it is.
 //!
+//! # Callbacks
+//!
+//! [`Scip::EVENTS`] is every generic event; each comes from a SCIP plugin, with a context of this crate's:
+//!
+//! | Event | SCIP plugin | Context |
+//! |---|---|---|
+//! | `LOG` | the instance's message handler: each info message and warning, a whole line | [`ScipLog`] |
+//! | `POLL`, `PROGRESS` | an event handler: each presolve round, focused node, solved node LP and solved node | [`ScipPoll`], [`ScipProgress`] |
+//! | `FEASIBLE`, `INCUMBENT` | an event handler: each solution SCIP stores, a new best one as the incumbent too | [`ScipSolution`] |
+//! | `LAZY` | a constraint handler without constraints, checked and enforced after every other | [`ScipLazy`] |
+//! | `CUT` | a separator on each node's LP solution | [`ScipCut`] |
+//! | `HEURISTIC` | a primal heuristic before and after each node | [`ScipHeuristic`] |
+//!
+//! Every value a context reports is the program's: a candidate, a relaxation and a solution hold one value per
+//! column, read through SCIP's original variables whatever presolve did to them, and every objective value and
+//! bound is in the program's sense with its offset and quadratic part. A lazy constraint holds for the rest of the
+//! solve, so every later candidate satisfies it; a solve asking for [`Events::LAZY`] therefore locks every variable
+//! against dual reductions and turns off `misc/usesymmetry`, `misc/allowstrongdualreds` and
+//! `misc/allowweakdualreds`, which reason about the constraints SCIP holds rather than those a callback adds later.
+//! A solve asking for [`Events::CUT`] or [`Events::HEURISTIC`] calls its separator or heuristic at every node, also
+//! when an emphasis turned SCIP's own off.
+//!
+//! ```
+//! use culmen_core::{Backend, Callback, Col, Events, LazyContext, Linear, Model, Request, Solver, Var};
+//! use culmen_scip::Scip;
+//!
+//! /// Forbids taking both items, a conflict only the callback knows.
+//! struct NotBoth(Col, Col);
+//!
+//! impl<B: Backend> Callback<B> for NotBoth {
+//!     fn events(&self) -> Events {
+//!         Events::LAZY
+//!     }
+//!     fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
+//!         let candidate = ctx.candidate();
+//!         if candidate[self.0] + candidate[self.1] > 1.5 {
+//!             ctx.add_lazy((self.0 + self.1).leq(1)).expect("a valid constraint");
+//!         }
+//!     }
+//! }
+//!
+//! let mut m = Model::new();
+//! let x = m.add_var(Var::binary());
+//! let y = m.add_var(Var::binary());
+//! m.maximize(3.0 * x + 2.0 * y);
+//! let mut solver = Solver::new(Scip::new(), m.build()?)?;
+//! let solved = solver.solve_with(Request::new(), &mut NotBoth(x, y))?;
+//! assert_eq!(solved.outcome.objective(), Some(3.0));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! A panic in a callback never unwinds into SCIP: the plugin catches it and asks SCIP to stop, and the panic resumes
+//! once SCIP has returned. The backend stays usable.
+//!
 //! # Threads
 //!
 //! [`Scip`] is `Send`, so it can be moved to a worker thread to solve there. It is not `Sync`: SCIP is built
@@ -61,14 +115,20 @@
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
 
+mod callback;
+mod columns;
 mod error;
 mod instance;
 mod options;
 mod status;
 
 use core::fmt;
+use std::panic::resume_unwind;
 use std::time::Instant;
 
+pub use callback::{
+    LazySource, ScipCut, ScipEvent, ScipHeuristic, ScipLazy, ScipLog, ScipPoll, ScipProgress, ScipSolution,
+};
 use culmen_core::{
     Backend, Callback, Events, ModelClasses, Outcome, Program, ProgramFeature, ProgramFeatures, Settings, Solved,
     Start, Unsupported,
@@ -88,7 +148,7 @@ use instance::{Group, Instance};
 /// let scip = Scip::with_options(ScipOptions { heuristics: Some(Emphasis::Off), ..ScipOptions::default() });
 /// assert_eq!(scip.options().heuristics, Some(Emphasis::Off));
 /// assert!(Scip::CLASSES.contains(ModelClass::Miqp));
-/// assert_eq!(Scip::EVENTS, Events::NONE);
+/// assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE);
 /// ```
 #[derive(Debug, Default)]
 pub struct Scip {
@@ -176,6 +236,29 @@ fn configure(instance: &mut Instance, options: &ScipOptions, settings: &Settings
     Ok(())
 }
 
+/// Sets what the events `wanted` need, after the options and settings: for lazy constraints, no symmetry handling and
+/// no dual reductions, which reason about the constraints SCIP holds and not those a callback adds later; for cuts and
+/// heuristic solutions, the culmen separator and heuristic called at every node, even when an emphasis turned the
+/// separators or heuristics off.
+///
+/// # Errors
+///
+/// [`ScipError::Param`] when SCIP refuses a parameter.
+fn configure_events(instance: &mut Instance, wanted: Events) -> Result<(), ScipError> {
+    if wanted.contains(Events::LAZY) {
+        instance.set_param("misc/usesymmetry", &ParamValue::Int(0))?;
+        instance.set_param("misc/allowstrongdualreds", &ParamValue::Bool(false))?;
+        instance.set_param("misc/allowweakdualreds", &ParamValue::Bool(false))?;
+    }
+    if wanted.contains(Events::CUT) {
+        instance.set_param("separating/culmen/freq", &ParamValue::Int(1))?;
+    }
+    if wanted.contains(Events::HEURISTIC) {
+        instance.set_param("heuristics/culmen/freq", &ParamValue::Int(1))?;
+    }
+    Ok(())
+}
+
 /// The presolving emphasis of a solve whose settings ask to presolve or not: off, or the options' emphasis when it
 /// presolves, else SCIP's default.
 fn presolving(options: Option<Emphasis>, presolve: bool) -> Emphasis {
@@ -247,18 +330,18 @@ fn longint(name: &'static str, value: u64) -> Result<i64, ScipError> {
 impl Backend for Scip {
     type Error = ScipError;
     type Status = ScipStatus;
-    type Log<'a> = Unsupported;
-    type Progress<'a> = Unsupported;
-    type Poll<'a> = Unsupported;
-    type Solution<'a> = Unsupported;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = Unsupported;
+    type Log<'a> = ScipLog<'a>;
+    type Progress<'a> = ScipProgress;
+    type Poll<'a> = ScipPoll<'a>;
+    type Solution<'a> = ScipSolution<'a>;
+    type Lazy<'a> = ScipLazy<'a>;
+    type Cut<'a> = ScipCut<'a>;
+    type Heuristic<'a> = ScipHeuristic<'a>;
     type Native<'a> = Unsupported;
 
-    /// None yet: each event needs a SCIP plugin registered on the instance (a message handler, event handlers, a
-    /// constraint handler, a separator, a heuristic), which this version does not register.
-    const EVENTS: Events = Events::NONE;
+    /// Every generic event, each from a plugin the instance includes (the module documentation lists them); no native
+    /// event.
+    const EVENTS: Events = Events::ALL.difference(Events::NATIVE);
 
     /// Every class: a quadratic objective `q(x)` becomes an epigraph variable `t` with cost one, bounded by the
     /// quadratic constraint `q(x) - t <= 0` and `t >= 0` when minimizing, `q(x) - t >= 0` and `t <= 0` when
@@ -301,26 +384,34 @@ impl Backend for Scip {
         instance.add_start(start)
     }
 
-    /// Solves the loaded program from scratch under the backend's options and `settings`.
-    ///
-    /// `callback` is never called, as [`Scip::EVENTS`] is empty.
+    /// Solves the loaded program from scratch under the backend's options and `settings`, delivering to `callback`
+    /// the events it asks for.
     ///
     /// # Errors
     ///
     /// [`ScipError::NotLoaded`] before a load; the errors of the options and settings the module documentation lists;
-    /// [`ScipError::Call`] when SCIP fails; [`ScipError::Failed`] when SCIP ends with a status that proves nothing.
+    /// [`ScipError::Call`] when SCIP fails, or a call a plugin makes for the callback does;
+    /// [`ScipError::Failed`] when SCIP ends with a status that proves nothing.
+    ///
+    /// # Panics
+    ///
+    /// When `callback` panics, once SCIP has stopped.
     fn solve(
         &mut self,
         settings: &Settings,
         callback: &mut dyn Callback<Self>,
     ) -> Result<Solved<ScipStatus>, ScipError> {
-        // No event is delivered, so the callback is never called; the plugins of a later version reach it here.
-        let _ = callback;
         let instance = self.instance.as_mut().ok_or(ScipError::NotLoaded)?;
         configure(instance, &self.options, settings)?;
+        let wanted = callback.events().intersection(Self::EVENTS);
+        configure_events(instance, wanted)?;
         let start = Instant::now();
-        instance.solve()?;
+        let ran = instance.solve(callback, wanted, start);
         let elapsed = start.elapsed();
+        if let Some(payload) = ran.panic {
+            resume_unwind(payload);
+        }
+        ran.result?;
         let status = instance.status();
         let outcome: Outcome = status::outcome(&status, instance.best())?;
         Ok(Solved {

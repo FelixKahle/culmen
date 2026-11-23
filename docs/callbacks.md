@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 A stop is polled only at the backend's poll events, so it acts within one poll interval, not at once. A backend that
 delivers no poll events cannot be stopped this way; HiGHS delivers them from the simplex, interior-point and MIP
-solvers.
+solvers, SCIP (`culmen_scip`) at each presolve round, focused node, solved node LP and solved node.
 
 ## `Observer`
 
@@ -312,7 +312,8 @@ assert!(!Highs::EVENTS.contains(Events::CUT));
 assert!(culmen::Script::EVENTS.contains(Events::ALL));
 ```
 
-HiGHS 1.16 offers neither lazy constraints nor user cuts; see [Limitations](highs.md#limitations).
+HiGHS 1.16 offers neither lazy constraints nor user cuts; see [Limitations](highs.md#limitations). SCIP
+(`culmen_scip`) delivers both, and every other generic event, through plugins it includes in each instance.
 
 ## Panics and threads
 

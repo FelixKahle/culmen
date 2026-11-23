@@ -8,8 +8,7 @@ use std::ffi::CString;
 
 use scip_sys::{
     SCIP, SCIP_PARAMSETTING, SCIP_RETCODE, SCIPresetParams, SCIPsetBoolParam, SCIPsetCharParam, SCIPsetHeuristics,
-    SCIPsetIntParam, SCIPsetLongintParam, SCIPsetMessagehdlrQuiet, SCIPsetPresolving, SCIPsetRealParam,
-    SCIPsetSeparating, SCIPsetStringParam,
+    SCIPsetIntParam, SCIPsetLongintParam, SCIPsetPresolving, SCIPsetRealParam, SCIPsetSeparating, SCIPsetStringParam,
 };
 
 use super::{Instance, TRUE};
@@ -38,12 +37,6 @@ impl Instance {
         self.free_transform()?;
         // SAFETY: the instance is live, borrowed exclusively, and in its problem stage.
         check("SCIPresetParams", unsafe { SCIPresetParams(self.raw()) })
-    }
-
-    /// Whether SCIP's log reaches standard output.
-    pub(crate) fn set_console(&mut self, console: bool) {
-        // SAFETY: the instance is live and borrowed exclusively.
-        unsafe { SCIPsetMessagehdlrQuiet(self.raw(), c_uint::from(!console)) };
     }
 
     /// Sets the parameters of a group of plugins to an emphasis.
