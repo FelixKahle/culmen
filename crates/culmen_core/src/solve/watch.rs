@@ -225,8 +225,8 @@ impl<'a> Request<'a> {
         self
     }
 
-    /// The start handed to the solver before the solve: a full [`TiVec<Col, f64>`](crate::TiVec) or sparse
-    /// `Vec<(Col, f64)>`, checked by [`Solver::solve`](crate::Solver::solve) against the program.
+    /// The start handed to the solver before the solve: a full [`TiVec<Col, f64>`](crate::TiVec) or `Vec<f64>`, or a
+    /// sparse `Vec<(Col, f64)>`, checked by [`Solver::solve`](crate::Solver::solve) against the program.
     ///
     /// ```
     /// use culmen_core::{Col, Request, Start};

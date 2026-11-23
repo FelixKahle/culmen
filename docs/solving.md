@@ -106,7 +106,7 @@ A `Request` is built by chaining. Each method replaces what it sets:
 | `.stop(&stop)` | The [`Stop`](callbacks.md#stop) polled while the solve runs. |
 | `.observer(&mut observer)` | The [`Observer`](callbacks.md#observer) of progress, improving solutions and log lines. |
 | `.progress_interval(duration)` | The least time between two progress reports; `Request::DEFAULT_PROGRESS_INTERVAL`, one second, unless set. |
-| `.start(start)` | A [start](#starts) handed to the solver before the solve: a full `TiVec<Col, f64>` or a sparse `Vec<(Col, f64)>`. |
+| `.start(start)` | A [start](#starts) handed to the solver before the solve: a full `TiVec<Col, f64>` or `Vec<f64>`, or a sparse `Vec<(Col, f64)>`. |
 
 `request.settings()` and `request.start_solution()` read the settings and the start back. The request borrows its stop and observer, so both outlive the solve
 and can be read afterwards.

@@ -27,6 +27,7 @@ use crate::{Col, ProgramFeature, ProgramFeatures};
 /// let full = Start::from(TiVec::<Col, f64>::from(vec![1.0, 0.0, 2.5]));
 /// assert_eq!(full.check(3), Ok(()));
 /// assert_eq!(full.check(2), Err(StartError::Length { expected: 2, found: 3 }));
+/// assert_eq!(Start::from(vec![1.0, 0.0, 2.5]), full);
 ///
 /// let sparse = Start::from(vec![(Col::new(2), 2.5), (Col::new(0), 1.0)]);
 /// assert_eq!(sparse.entries().collect::<Vec<_>>(), [(Col::new(2), 2.5), (Col::new(0), 1.0)]);
@@ -88,6 +89,13 @@ impl Start {
 impl From<TiVec<Col, f64>> for Start {
     fn from(values: TiVec<Col, f64>) -> Self {
         Self::Full(values)
+    }
+}
+
+/// A full start, the value of column `i` at position `i`.
+impl From<Vec<f64>> for Start {
+    fn from(values: Vec<f64>) -> Self {
+        Self::Full(values.into())
     }
 }
 
