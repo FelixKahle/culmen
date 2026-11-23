@@ -36,7 +36,7 @@
 //!
 //! | `Settings` field | SCIP |
 //! |---|---|
-//! | `time_limit` | `limits/time`, in seconds, measured from the start of the solve |
+//! | `time_limit` | `limits/time`, in seconds, from the start of the solve while `misc/resetstat` keeps its default |
 //! | `relative_gap` | `limits/gap` |
 //! | `absolute_gap` | `limits/absgap` |
 //! | `threads` | nothing to set: the solve is sequential, so it uses one thread, within any limit |
@@ -47,6 +47,8 @@
 //! | `console` | SCIP's message handler quiet or not |
 //!
 //! A value beyond what SCIP's parameter takes is refused with [`ScipError::OutOfRange`] before any parameter is set.
+//! SCIP prints the error messages of a call it refuses, such as a parameter it does not know, to standard error
+//! through its process-wide error printer, which the backend leaves as it is.
 //!
 //! # Threads
 //!
