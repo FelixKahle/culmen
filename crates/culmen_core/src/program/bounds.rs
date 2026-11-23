@@ -114,6 +114,9 @@ impl Bounds {
     }
 
     /// How far `value` lies outside the interval, zero inside it and infinite for NaN, which lies in no interval.
+    ///
+    /// An infinite `value` lies inside an interval open on its side, as [`Bounds::contains`] says, so `+∞` violates
+    /// `[0, +∞)` by nothing; it lies infinitely far outside an interval with a finite end on its side.
     #[must_use]
     pub const fn violation(self, value: f64) -> f64 {
         if value.is_nan() {
@@ -387,6 +390,9 @@ impl Integrality {
 
     /// How far `value` lies from the values a column of this integrality in `bounds` takes, zero for one of them and
     /// infinite for NaN.
+    ///
+    /// An infinite `value` counts as integral, so it violates an interval open on its side by nothing, as
+    /// [`Bounds::violation`] states.
     ///
     /// ```
     /// use culmen_core::{Integrality, bounds};

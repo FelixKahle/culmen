@@ -566,3 +566,17 @@ fn test_a_point_with_a_nan_is_infinitely_far_from_feasible() {
     );
     assert_eq!(program.max_violation(TiSlice::from_ref(&[0.5, 0.25])), 0.0);
 }
+
+#[test]
+fn test_an_infinite_value_lies_inside_a_bound_open_on_its_side() {
+    // The closed intervals of the extended reals, as `Bounds::contains` reads them.
+    let open = bounds!(0.0, f64::INFINITY);
+    assert!(open.contains(f64::INFINITY));
+    assert_eq!(open.violation(f64::INFINITY), 0.0);
+    assert_eq!(open.violation(f64::NEG_INFINITY), f64::INFINITY);
+    assert_eq!(Integrality::Integer.violation(open, f64::INFINITY), 0.0);
+    assert_eq!(
+        Integrality::Integer.violation(bounds!(0.0, 1.0), f64::INFINITY),
+        f64::INFINITY
+    );
+}

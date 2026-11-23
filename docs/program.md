@@ -349,7 +349,9 @@ fn main() -> Result<(), culmen::ProgramError> {
 `program.objective_value(values)` is the objective at a point, quadratic part and offset included.
 `program.objective_values(values)` is every objective's value, the own one first, indexed by `ObjectiveId`.
 `program.max_violation(values)` is the largest amount by which the point violates a column bound, a row, integrality
-or a semi column's choice between zero and its bounds, and zero for a feasible point. Both panic when `values` holds fewer values than the program has columns. They are the
+or a semi column's choice between zero and its bounds, zero for a feasible point and infinite for one holding NaN. An
+infinite value or activity lies inside a bound open on its side, as `Bounds::contains` reads it, so check that a
+point is finite where that matters. Both panic when `values` holds fewer values than the program has columns. They are the
 way to check a solution against the program independently of any solver:
 
 ```rust

@@ -309,6 +309,9 @@ impl Program {
     /// The largest amount by which a point violates a bound, a row, integrality or a semi column's choice between zero
     /// and its bounds ([`Integrality::violation`]), zero for a feasible point and infinite for one holding NaN.
     ///
+    /// An infinite value or activity violates nothing against a bound open on its side ([`Bounds::violation`]); check
+    /// that the values are finite where that matters.
+    ///
     /// # Panics
     ///
     /// When `values` holds fewer values than the program has columns.
