@@ -10,10 +10,10 @@
 )]
 
 use culmen_core::{
-    Col, Integrality, Linear, Model, ModelClass, Outcome, Program, ProgramPlan, Request, Sense, Solution, Solver,
-    TiVec, Var,
+    Col, Integrality, Linear, Model, ModelClass, Outcome, Program, ProgramPlan, Request, Sense, Solution, SolveError,
+    Solver, TiVec, Var,
 };
-use culmen_scip::{Scip, Status};
+use culmen_scip::{Scip, ScipError, ScipOptions, Status};
 use culmen_testing::reference::close;
 use culmen_testing::strategy::small_qp;
 use proptest::prelude::*;
@@ -147,6 +147,28 @@ fn test_a_miqp_whose_columns_presolve_makes_binary_keeps_its_optimum() {
 #[test]
 fn test_the_concave_mirror_of_that_miqp_keeps_its_optimum() {
     assert_point(&optimum(&binary_products_miqp(Sense::Maximize)), 0.0, &[0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn test_a_best_solution_scip_finds_infeasible_in_the_original_problem_is_an_error_not_an_optimum() {
+    // With the rewrite of binary products back on, SCIP's presolve rewrites the epigraph through a clique only better
+    // solutions obey, and its best solution lies below the epigraph; SCIP's own check in the original problem says
+    // so, and the backend reports that instead of the solution.
+    for sense in [Sense::Minimize, Sense::Maximize] {
+        let options = ScipOptions::default().param("constraints/nonlinear/reformbinprods", true);
+        let mut solver = Solver::new(Scip::with_options(options), binary_products_miqp(sense)).unwrap();
+        let solved = solver.solve(Request::new());
+        assert!(
+            matches!(
+                solved,
+                Err(SolveError::Backend(ScipError::InfeasibleBest {
+                    status: Status::Optimal,
+                    ..
+                }))
+            ),
+            "{sense:?}: {solved:?}"
+        );
+    }
 }
 
 #[test]

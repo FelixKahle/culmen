@@ -22,9 +22,10 @@ use std::time::Instant;
 use culmen_core::{Callback, Col, Events, QuadObjective, Row, Solution, Start, TiVec};
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_VAR, SCIPaddSolFree,
-    SCIPcreate, SCIPcreatePartialSol, SCIPcreateProbBasic, SCIPcreateSol, SCIPfree, SCIPfreeSol, SCIPfreeTransform,
-    SCIPgetBestSol, SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNSolsFound, SCIPgetNTotalNodes, SCIPgetStage,
-    SCIPgetStatus, SCIPincludeDefaultPlugins, SCIPinfinity, SCIPreleaseCons, SCIPreleaseVar, SCIPsetSolVal, SCIPsolve,
+    SCIPcheckSolOrig, SCIPcreate, SCIPcreatePartialSol, SCIPcreateProbBasic, SCIPcreateSol, SCIPfree, SCIPfreeSol,
+    SCIPfreeTransform, SCIPgetBestSol, SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNSolsFound, SCIPgetNTotalNodes,
+    SCIPgetStage, SCIPgetStatus, SCIPincludeDefaultPlugins, SCIPinfinity, SCIPreleaseCons, SCIPreleaseVar,
+    SCIPsetSolVal, SCIPsolve,
 };
 
 use crate::callback::{self, Payload, Run, Slot};
@@ -284,6 +285,27 @@ impl Instance {
         // SAFETY: the instance is live after a solve, in a stage where it reads its own solution `sol`.
         let (objective, values) = unsafe { self.columns().read(self.raw(), sol) };
         Some(Solution { objective, values })
+    }
+
+    /// Whether SCIP's own check finds the best solution of the last solve feasible in the original problem, its
+    /// bounds, integrality and constraints, to SCIP's feasibility tolerance (`SCIPcheckSolOrig`); `true` when SCIP
+    /// holds no solution.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP refuses the check.
+    pub(crate) fn best_feasible(&self) -> Result<bool, ScipError> {
+        // SAFETY: the instance is live; the result is null or a solution of this instance.
+        let Some(sol) = NonNull::new(unsafe { SCIPgetBestSol(self.raw()) }) else {
+            return Ok(true);
+        };
+        let mut feasible: c_uint = 0;
+        // SAFETY: the instance is live after a solve, in a stage from its transformed stage to its solved stage, where
+        // SCIP checks a complete solution of its own; `feasible` is a local to write to. No reason is printed.
+        check("SCIPcheckSolOrig", unsafe {
+            SCIPcheckSolOrig(self.raw(), sol.as_ptr(), &raw mut feasible, 0, 0)
+        })?;
+        Ok(feasible != 0)
     }
 }
 

@@ -106,6 +106,14 @@ pub enum ScipError {
         /// SCIP's status at the end of the solve.
         status: Status,
     },
+    /// SCIP ended a solve with a best solution that its own check finds infeasible in the original problem
+    /// (`SCIPcheckSolOrig`), as when presolve rewrote a constraint unsoundly; the solution is not reported.
+    InfeasibleBest {
+        /// SCIP's status at the end of the solve.
+        status: Status,
+        /// The objective SCIP claimed for the solution, offset included, in the program's sense.
+        objective: f64,
+    },
 }
 
 impl fmt::Display for ScipError {
@@ -154,6 +162,11 @@ impl fmt::Display for ScipError {
             Self::UnsupportedFeature { feature } => write!(f, "SCIP: the backend does not take {feature}"),
             Self::Start => write!(f, "SCIP: the start does not fit the loaded program"),
             Self::Failed { status } => write!(f, "SCIP: the solve ended without a result ({status})"),
+            Self::InfeasibleBest { status, objective } => write!(
+                f,
+                "SCIP: the best solution, of objective {objective}, is infeasible in the original problem by SCIP's \
+                 own check, though the solve ended with \"{status}\""
+            ),
         }
     }
 }
@@ -175,7 +188,8 @@ impl core::error::Error for ScipError {
             | Self::Unsupported { .. }
             | Self::UnsupportedFeature { .. }
             | Self::Start
-            | Self::Failed { .. } => None,
+            | Self::Failed { .. }
+            | Self::InfeasibleBest { .. } => None,
         }
     }
 }

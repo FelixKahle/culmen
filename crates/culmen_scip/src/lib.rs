@@ -48,6 +48,11 @@
 //! | `solution_limit` | `limits/solutions`, at most `i32::MAX` |
 //! | `console` | SCIP's message handler quiet or not |
 //!
+//! A solve reports a best solution, an optimum or a reached gap only after SCIP's own check
+//! (`SCIPcheckSolOrig`) finds that solution feasible in the original problem, to SCIP's feasibility tolerance; when
+//! it does not, as when presolve rewrote a constraint unsoundly, the solve fails with [`ScipError::InfeasibleBest`]
+//! instead.
+//!
 //! A value beyond what SCIP's parameter takes is refused with [`ScipError::OutOfRange`] before any parameter is set.
 //! SCIP prints the error messages of a call it refuses, such as a parameter it does not know, to standard error
 //! through its process-wide error printer, which the backend leaves as it is.
@@ -407,7 +412,8 @@ impl Backend for Scip {
     ///
     /// [`ScipError::NotLoaded`] before a load; the errors of the options and settings the module documentation lists;
     /// [`ScipError::Call`] when SCIP fails, or a call a plugin makes for the callback does;
-    /// [`ScipError::Failed`] when SCIP ends with a status that proves nothing.
+    /// [`ScipError::Failed`] when SCIP ends with a status that proves nothing; [`ScipError::InfeasibleBest`] when
+    /// SCIP's own check finds its best solution infeasible in the original problem, which is then not reported.
     ///
     /// # Panics
     ///
@@ -430,7 +436,16 @@ impl Backend for Scip {
         }
         ran.result?;
         let status = instance.status();
-        let outcome: Outcome = status::outcome(&status, instance.best())?;
+        let best = instance.best();
+        if let Some(best) = &best
+            && !instance.best_feasible()?
+        {
+            return Err(ScipError::InfeasibleBest {
+                status: status.status,
+                objective: best.objective,
+            });
+        }
+        let outcome: Outcome = status::outcome(&status, best)?;
         Ok(Solved {
             outcome,
             status,
