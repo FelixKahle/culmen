@@ -247,6 +247,9 @@ const fn term_product(a: Term, b: Term) -> QuadTerm {
 }
 
 /// The product of two linear expressions, expanded: `(Σ a + c)(Σ b + d) = Σ a·b + d·Σ a + c·Σ b + c·d`.
+///
+/// A linear term that scales to zero is left out; one that scales to NaN, as `∞ · 0` does, is kept for the build to
+/// refuse.
 fn product(a: LinExpr, b: LinExpr) -> QuadExpr {
     let terms = a
         .terms
@@ -256,9 +259,8 @@ fn product(a: LinExpr, b: LinExpr) -> QuadExpr {
         .collect();
     let mut linear = LinExpr::from(a.constant * b.constant);
     for (expr, scale) in [(&a, b.constant), (&b, a.constant)] {
-        if scale != 0.0 {
-            linear.terms.extend(expr.terms.iter().map(|&t| t * scale));
-        }
+        let scaled = expr.terms.iter().map(|&t| t * scale);
+        linear.terms.extend(scaled.filter(|t| t.coefficient != 0.0));
     }
     QuadExpr { terms, linear }
 }

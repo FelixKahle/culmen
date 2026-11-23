@@ -611,6 +611,20 @@ fn test_the_lp_file_writes_the_quadratic_part_halved_in_brackets() {
 }
 
 #[test]
+fn test_a_product_with_a_zero_factor_keeps_a_non_finite_coefficient() {
+    let (mut m, x, _) = xy();
+    // `(NaN · x) · 0` is NaN · x, as `(NaN · x) * 0.0` is: the build refuses it rather than lose it.
+    m.minimize(LinExpr::from(f64::NAN * x) * LinExpr::from(0.0));
+    let error = m.build().unwrap_err();
+    assert!(
+        matches!(&error, ModelError::ObjectiveCoefficient { var, value } if var.col == x && value.is_nan()),
+        "{error:?}"
+    );
+    m.minimize(LinExpr::from(0.0) * (f64::INFINITY * x + 1.0));
+    assert!(matches!(m.build(), Err(ModelError::ObjectiveCoefficient { .. })));
+}
+
+#[test]
 fn test_linear_items_stay_linear_in_sums_and_constraints() {
     let (_, x, y) = xy();
     // A linear sum stays a `LinExpr`, which constraints take.
