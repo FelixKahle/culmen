@@ -13,9 +13,10 @@ use std::sync::atomic::AtomicBool;
 use proptest::prelude::*;
 
 use culmen_core::{
-    ActionError, AddedRow, Backend, Callback, Col, CutContext, Events, Found, HeuristicContext, Improvement, InvalidBounds,
-    LazyContext, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, Progress, Request, Script,
-    ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, Var, bounds, stop_fn,
+    ActionError, AddedRow, Backend, Callback, Col, CutContext, Events, Found, HeuristicContext, Improvement,
+    InvalidBounds, LazyContext, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, Progress,
+    Request, Script, ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, Var, bounds,
+    stop_fn,
 };
 
 fn secs(s: u64) -> Duration {
