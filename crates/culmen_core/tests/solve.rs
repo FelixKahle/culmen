@@ -13,7 +13,7 @@ use std::sync::atomic::AtomicBool;
 use proptest::prelude::*;
 
 use culmen_core::{
-    ActionError, AddedRow, Backend, Callback, Col, CutContext, Events, Found, HeuristicContext, Improvement,
+    ActionError, AddedRow, Backend, Callback, Col, CutContext, Events, Found, HeuristicContext, Improvement, InvalidBounds,
     LazyContext, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, Progress, Request, Script,
     ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, Var, bounds, stop_fn,
 };
@@ -327,6 +327,18 @@ fn test_settings_reach_the_backend_and_events_print_by_name() {
     );
     assert_eq!(format!("{:?}", Events::LOG | Events::CUT), "Events(LOG | CUT)");
     assert_eq!(Script::EVENTS, Events::ALL);
+}
+
+#[test]
+fn test_an_action_error_on_invalid_bounds_names_them_as_its_source() {
+    use core::error::Error;
+    let error = ActionError::Bounds(InvalidBounds::NotANumber);
+    assert_eq!(
+        error.source().map(ToString::to_string),
+        Some(InvalidBounds::NotANumber.to_string())
+    );
+    assert!(ActionError::Refused("no".to_owned()).source().is_none());
+    assert!(ActionError::NotFinite { col: Col::new(0) }.source().is_none());
 }
 
 #[test]
