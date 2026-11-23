@@ -1,0 +1,30 @@
+# Copyright (c) 2026 Felix Kahle
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "culmen_scip"
+description = "The SCIP backend of culmen: SCIP built from source through scip-sys, with typed settings and statuses."
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+# Serialize and deserialize the SCIP version.
+serde = ["dep:serde"]
+
+[dependencies]
+scip-sys.workspace = true
+serde = { workspace = true, optional = true }
+
+# docs.rs documents the serde impls too.
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
