@@ -229,7 +229,7 @@ first build takes a few minutes.
 
 ## Documentation
 
-The user guide is in [`docs/`](https://github.com/FelixKahle/culmen/blob/main/docs/README.md), and every Rust snippet in it runs as a doctest but the outline of the `Backend` trait:
+The user guide is in [`docs/`](https://github.com/FelixKahle/culmen/blob/main/docs/README.md), and every Rust snippet in it runs as a doctest, but for the two marked `ignore`:
 
 - [Getting started](https://github.com/FelixKahle/culmen/blob/main/docs/getting-started.md): requirements, features, and a first model.
 - [Modelling](https://github.com/FelixKahle/culmen/blob/main/docs/modelling.md) and [Macros](https://github.com/FelixKahle/culmen/blob/main/docs/macros.md): variables, linear and quadratic expressions,
