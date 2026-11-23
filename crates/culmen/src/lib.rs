@@ -189,6 +189,9 @@ mod docs {
 
     #[doc = include_str!("../../../docs/design.md")]
     struct Design;
+
+    #[doc = include_str!("../../../docs/backends.md")]
+    struct Backends;
 }
 
 /// What a model and a solve need, in one import.

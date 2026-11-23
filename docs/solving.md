@@ -8,8 +8,9 @@ backend's own status. This page covers all three. Watching and stopping a solve 
 ## `Solver`
 
 `Solver::new(backend, program)` loads `program` into `backend`. It fails with a
-[`LoadError`](#model-classes-and-refusal): `Unsupported` when the backend does not solve the program's class, before the
-backend sees it, or `Backend` with the backend's own error when the backend refuses the program. A `Solver` can then
+[`LoadError`](#model-classes-and-refusal): `Unsupported` when the backend does not solve the program's class and
+`UnsupportedFeature` when it does not take a feature the program uses, both before the backend sees it, or `Backend`
+with the backend's own error when the backend refuses the program. A `Solver` can then
 solve as often as needed, each time with its own request.
 
 | Method | Does |

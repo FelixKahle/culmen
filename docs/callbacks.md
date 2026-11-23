@@ -135,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-On HiGHS the same observer receives HiGHS's log, and its console output stays quiet unless `Request::console(true)`
+On HiGHS the same observer receives HiGHS's log, and its console output stays quiet unless `Settings::console`
 asks for it.
 
 ## `Callback`
@@ -240,7 +240,7 @@ An action returns `Err(ActionError)` when it is refused:
 | `Length { expected, found }` | A full solution holds the wrong number of values. |
 | `UnknownColumn { col }` | An entry names a column the problem does not have. |
 | `NotFinite { col }` | A value or coefficient is NaN or infinite. |
-| `Bounds(InvalidBounds)` | A constraint's bounds are invalid after its constant moved into them. |
+| `Bounds(InvalidBounds)` | A constraint's bounds are invalid after its constant moved into them; `Error::source` is the `InvalidBounds`. |
 | `Refused(reason)` | The solver refused the action, for the reason given. |
 
 ## Pairing callbacks

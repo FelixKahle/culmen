@@ -10,7 +10,7 @@ written later.
 
 ## The seam
 
-```rust
+```rust,ignore
 pub trait Backend: Sized {
     type Error: core::error::Error + Send + Sync + 'static;
     type Status: Debug + Clone + PartialEq + Send + 'static; // the solver's own status, kept for diagnostics

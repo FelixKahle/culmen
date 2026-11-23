@@ -47,8 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The options belong to the backend; change them between solves.
     solver.backend_mut().options_mut().solver = Some(LpSolver::Simplex);
     let second = solver.solve(Request::new())?;
-    assert_eq!(first.outcome.solution().map(|s| s.objective.round()), Some(13.0));
-    assert_eq!(second.outcome.solution().map(|s| s.objective.round()), Some(13.0));
+    assert_eq!(first.outcome.objective().map(f64::round), Some(13.0));
+    assert_eq!(second.outcome.objective().map(f64::round), Some(13.0));
     Ok(())
 }
 ```
