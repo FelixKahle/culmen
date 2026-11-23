@@ -448,7 +448,7 @@ first variable or constraint at fault. The model is left as it was, so it can be
 | `Coefficient { constraint, var, value }` | A constraint's coefficient is NaN or infinite, as given or added up. |
 | `ConstraintBounds { constraint, source }` | A constraint's bounds are invalid after its constant moved into them. |
 | `UnknownVar { place, col }` | An expression names a column this model did not hand out, in the objective or a constraint. |
-| `ObjectiveQuadCoefficient { first, second, value }` | A quadratic objective coefficient is NaN or infinite, as given or added up over its pair. |
+| `ObjectiveQuadCoefficient { first, second, value }` | A quadratic objective coefficient is NaN or infinite, as given or added up over its pair, or a square's is so large that its Hessian value, twice it, is infinite. |
 | `NonConvexObjective { sense, var }` | The quadratic objective is not convex to minimize, or not concave to maximize. |
 | `SemiBounds { var, bounds }` | A semi variable's bounds are not `lower ..= upper` with `0 < lower` and `upper` finite. |
 | `FurtherCoefficient { objective, var, value }` | A further objective's coefficient is NaN or infinite, as given or added up. |
