@@ -624,7 +624,7 @@ fn settings_assignments(settings: &Settings) -> Result<Vec<(&'static str, Option
         set.push(("mip_max_nodes", options::limit(nodes)));
     }
     if let Some(solutions) = settings.solution_limit {
-        set.push(("mip_max_improving_sols", options::limit(solutions)));
+        set.push(("mip_max_improving_sols", options::limit(solutions.get())));
     }
     if settings.console {
         set.push(("log_to_console", OptionValue::Bool(true)));

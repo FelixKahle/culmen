@@ -202,6 +202,6 @@ pub mod prelude {
         Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Improvement, IndexSet, LinExpr, Linear,
         LogLine, Model, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Request, Row, Sense,
         Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap, absolute_gap,
-        bounds, product, relative_gap, set, stop_fn, threads, weight,
+        bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
     };
 }

@@ -4,6 +4,7 @@
 //! HiGHS's options: the commonly used ones typed, any other by name.
 
 use core::fmt;
+use core::num::NonZeroU64;
 use core::time::Duration;
 
 #[cfg(feature = "serde")]
@@ -100,6 +101,13 @@ impl ToOption for u64 {
     /// A limit: one beyond HiGHS's integers is HiGHS's own "no limit", its largest integer.
     fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
         Ok(limit(*self))
+    }
+}
+
+impl ToOption for NonZeroU64 {
+    /// A limit that cannot be zero, as [`u64`]'s.
+    fn to_option(&self, name: &'static str) -> Result<OptionValue, HighsError> {
+        self.get().to_option(name)
     }
 }
 
@@ -518,8 +526,8 @@ options! {
     mip_max_start_nodes: u64 = "mip_max_start_nodes",
     /// The MIP leaf-node limit.
     mip_max_leaves: u64 = "mip_max_leaves",
-    /// The number of improving solutions after which a MIP stops.
-    mip_max_improving_sols: u64 = "mip_max_improving_sols",
+    /// The number of improving solutions after which a MIP stops; HiGHS takes no fewer than one.
+    mip_max_improving_sols: NonZeroU64 = "mip_max_improving_sols",
     /// Whether MIP presolve runs only at the root.
     mip_root_presolve_only: bool = "mip_root_presolve_only",
     /// The age at which dynamic LP rows leave the MIP relaxation.

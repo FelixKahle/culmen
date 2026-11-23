@@ -102,6 +102,13 @@ fn test_checked_types_are_checked_as_they_are_read() {
     assert!(error.to_string().starts_with("RelativeGap: below zero"), "{error}");
     let error = serde_json::from_str::<AbsoluteGap>("-1").unwrap_err();
     assert!(error.to_string().starts_with("AbsoluteGap: below zero"), "{error}");
+    let unlimited = serde_json::to_string(&Settings::new()).unwrap();
+    let none = unlimited.replace(r#""solution_limit":null"#, r#""solution_limit":0"#);
+    assert_ne!(none, unlimited);
+    assert!(
+        serde_json::from_str::<Settings>(&none).is_err(),
+        "a limit of no solutions is refused"
+    );
     let mut plan = ProgramPlan::from(sample_lp());
     plan.rows[Row::new(0)].terms.push((Col::new(9), 1.0));
     let json = serde_json::to_string(&plan).unwrap();
