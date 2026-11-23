@@ -287,7 +287,8 @@ impl fmt::Debug for Request<'_> {
 /// A [`Request`]'s stop and observer as a [`Callback`] for every backend.
 ///
 /// It polls the stop at every [`Events::POLL`], reports progress from polls and progress events at most once per
-/// interval, reports each incumbent, and joins log chunks into lines. Pair it with a callback of your own,
+/// interval, reports each incumbent, and joins log chunks into lines, each without its `\n` or `\r\n`, even when the
+/// two halves of a `\r\n` arrive in different chunks. Pair it with a callback of your own,
 /// `(watch, mine)`, to keep this convenience while reaching every event.
 pub struct Watch<'a> {
     stop: Option<&'a dyn Stop>,
@@ -300,11 +301,13 @@ pub struct Watch<'a> {
 }
 
 impl Watch<'_> {
-    /// Reports the part of a log line still waiting for its line break, if any.
+    /// Reports the part of a log line still waiting for its line break, if any but carriage returns; a second call
+    /// reports nothing.
     pub fn finish(&mut self) {
-        if !self.line.is_empty() {
-            let text = core::mem::take(&mut self.line);
-            self.emit_line(&text);
+        if self.line.trim_end_matches('\r').is_empty() {
+            self.line.clear();
+        } else {
+            self.emit_line();
         }
     }
 
@@ -323,12 +326,15 @@ impl Watch<'_> {
         }
     }
 
-    fn emit_line(&mut self, text: &str) {
+    /// Reports the line gathered so far without the carriage returns that end it, which may have arrived in an
+    /// earlier chunk than its line break, and empties it.
+    fn emit_line(&mut self) {
+        let line = core::mem::take(&mut self.line);
         if let Some(observer) = self.observer.as_deref_mut() {
             observer.log(&LogLine {
                 elapsed: self.line_elapsed,
                 level: self.line_level,
-                text,
+                text: line.trim_end_matches('\r'),
             });
         }
     }
@@ -341,9 +347,8 @@ impl Watch<'_> {
         }
         let mut rest = text;
         while let Some(end) = rest.find('\n') {
-            self.line.push_str(rest[..end].trim_end_matches('\r'));
-            let line = core::mem::take(&mut self.line);
-            self.emit_line(&line);
+            self.line.push_str(&rest[..end]);
+            self.emit_line();
             self.line_level = level;
             self.line_elapsed = elapsed;
             rest = &rest[end + 1..];

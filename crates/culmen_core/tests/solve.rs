@@ -115,6 +115,21 @@ fn test_watch_joins_log_chunks_throttles_progress_and_reports_incumbents() {
 }
 
 #[test]
+fn test_watch_drops_the_carriage_return_of_a_line_break_split_across_chunks() {
+    let (m, ..) = two_binaries();
+    let log = |text: &str| Step::Log {
+        elapsed: secs(0),
+        level: LogLevel::Info,
+        text: text.to_owned(),
+    };
+    let steps = vec![log("first\r"), log("\nsecond\r"), log("\r\nthird\r")];
+    let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build().unwrap()).unwrap();
+    let mut seen = Seen::default();
+    solver.solve(Request::new().observer(&mut seen)).unwrap();
+    assert_eq!(seen.0, ["log Info first", "log Info second", "log Info third"]);
+}
+
+#[test]
 fn test_stop_interrupts_at_the_next_poll_with_the_incumbent_and_bound() {
     let (m, x, _) = two_binaries();
     let steps = vec![
