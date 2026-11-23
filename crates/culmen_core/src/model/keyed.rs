@@ -480,7 +480,11 @@ where
             {
                 return Some((a.clone(), b));
             }
-            let a = self.outer.next()?;
+            // Dropping the spent inner members at the end keeps the end for good, whether or not they are fused.
+            let Some(a) = self.outer.next() else {
+                self.current = None;
+                return None;
+            };
             self.current = Some((a, self.inner.members()));
         }
     }

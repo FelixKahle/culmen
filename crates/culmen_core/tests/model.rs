@@ -307,6 +307,32 @@ fn test_lp_file_escapes_names_the_format_reserves() {
     assert_eq!(text, expected);
 }
 
+#[test]
+fn test_product_ends_for_good_over_an_inner_set_that_is_not_fused() {
+    /// Every other call yields the next number: `Some(1)`, `None`, `Some(3)`, `None`, …
+    #[derive(Clone)]
+    struct Flicker(u8);
+
+    impl Iterator for Flicker {
+        type Item = u8;
+
+        fn next(&mut self) -> Option<u8> {
+            self.0 = self.0.wrapping_add(1);
+            (self.0 % 2 == 1).then_some(self.0)
+        }
+    }
+
+    fn fused<I: core::iter::FusedIterator>(iter: I) -> I {
+        iter
+    }
+
+    let inner = set(Flicker(0));
+    let mut pairs = fused(product(&(0..1), &inner));
+    assert_eq!(pairs.next(), Some((0, 1)));
+    assert_eq!(pairs.next(), None);
+    assert_eq!(pairs.next(), None, "a fused iterator stays at its end");
+}
+
 /// A small expression over `n` columns: terms with repeats, and a constant.
 fn expression(n: usize) -> impl Strategy<Value = LinExpr> {
     (prop::collection::vec((0..n, -5i32..=5), 0..8), -10i32..=10).prop_map(|(terms, constant)| LinExpr {
