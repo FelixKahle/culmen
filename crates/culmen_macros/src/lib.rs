@@ -126,11 +126,15 @@ fn spec(tokens: TokenStream2) -> syn::Result<(TokenStream2, Bounds)> {
     let (parts, relations) = split_relations(tokens);
     let rel: Vec<Relation> = relations.iter().map(|&(r, _)| r).collect();
     let span = relations.first().map_or_else(Span::call_site, |&(_, span)| span);
+    // The left side is the declaration whenever it reads as one, so in `x <= ub` with `ub` a local the variable
+    // is `x`; the bound comes first only where the left side cannot be declared, as in `1 <= x`.
     let (declared, bounds) = match (rel.as_slice(), parts.as_slice()) {
         ([], [x]) => (x, Bounds::default()),
-        ([Relation::Geq], [x, b]) | ([Relation::Leq], [b, x]) if is_head(x) => (x, Bounds::lower(b)),
-        ([Relation::Leq], [x, b]) | ([Relation::Geq], [b, x]) if is_head(x) => (x, Bounds::upper(b)),
+        ([Relation::Geq], [x, b]) if is_head(x) => (x, Bounds::lower(b)),
+        ([Relation::Leq], [x, b]) if is_head(x) => (x, Bounds::upper(b)),
         ([Relation::Eq], [x, b]) if is_head(x) => (x, Bounds::fixed(b)),
+        ([Relation::Leq], [b, x]) if is_head(x) => (x, Bounds::lower(b)),
+        ([Relation::Geq], [b, x]) if is_head(x) => (x, Bounds::upper(b)),
         ([Relation::Leq, Relation::Leq], [l, x, u]) | ([Relation::Geq, Relation::Geq], [u, x, l]) => {
             (x, Bounds::range(l, u))
         }

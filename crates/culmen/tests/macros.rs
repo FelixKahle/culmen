@@ -209,3 +209,16 @@ fn test_model_errors_name_macro_declared_entries() {
     assert!(error.to_string().contains("`z[0]`"), "{error}");
     let _ = (z, ProgramError::NonFiniteOffset { value: 0.0 });
 }
+
+#[test]
+fn test_a_bound_held_in_a_local_bounds_the_variable_on_the_left() {
+    let (lb, ub) = (-2.0, 5.0);
+    let mut m = Model::new();
+    variable!(m, x <= ub);
+    variable!(m, y >= lb, Free);
+    let program = m.build().unwrap();
+    assert_eq!(program.columns()[x].bounds, bounds!(0.0, 5.0));
+    assert_eq!(program.columns()[y].bounds, bounds!(-2.0, f64::INFINITY));
+    assert_eq!((m.var_name(x), m.var_name(y)), (Some("x"), Some("y")));
+}
+
