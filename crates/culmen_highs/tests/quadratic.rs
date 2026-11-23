@@ -336,7 +336,10 @@ fn test_highs_itself_cannot_solve_a_miqp() {
     // The declaration matches HiGHS 1.16: loaded around the class check, a MIQP fails at the run.
     let mut highs = Highs::new();
     highs.load(&miqp()).unwrap();
-    let error = highs.solve(&culmen_core::Settings::new(), &mut ()).unwrap_err();
+    let mut priced = culmen_core::Priced::new(&miqp(), Highs::CLASSES);
+    let error = highs
+        .solve(&culmen_core::Settings::new(), &mut (), &mut priced)
+        .unwrap_err();
     assert!(matches!(error, HighsError::Run { .. }), "{error:?}");
 }
 

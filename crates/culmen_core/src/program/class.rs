@@ -54,6 +54,14 @@ impl ModelClass {
         matches!(self, Self::Qp | Self::Miqp)
     }
 
+    /// The class with integer columns and the same objective.
+    pub(crate) const fn with_integer(self) -> Self {
+        match self {
+            Self::Lp | Self::Milp => Self::Milp,
+            Self::Qp | Self::Miqp => Self::Miqp,
+        }
+    }
+
     /// The class's bit in a [`ModelClasses`].
     const fn bit(self) -> u8 {
         1 << self as u8

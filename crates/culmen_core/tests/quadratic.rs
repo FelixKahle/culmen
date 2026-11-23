@@ -531,6 +531,7 @@ impl Backend for LinearOnly {
     type Lazy<'a> = Unsupported;
     type Cut<'a> = Unsupported;
     type Heuristic<'a> = Unsupported;
+    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: Events = Events::NONE;
@@ -545,7 +546,12 @@ impl Backend for LinearOnly {
         }
     }
 
-    fn solve(&mut self, _: &Settings, _: &mut dyn Callback<Self>) -> Result<Solved<()>, NoColumns> {
+    fn solve(
+        &mut self,
+        _: &Settings,
+        _: &mut dyn Callback<Self>,
+        _: &mut culmen_core::Priced,
+    ) -> Result<Solved<()>, NoColumns> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),

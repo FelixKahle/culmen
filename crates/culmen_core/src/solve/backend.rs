@@ -6,11 +6,11 @@
 use core::fmt;
 
 use super::context::{
-    CutContext, HeuristicContext, LazyContext, LogContext, PollContext, ProgressContext, SolutionContext,
+    CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext, SolutionContext,
 };
 use crate::{
-    Analyses, Analysis, AnalysisError, Basis, Col, Duals, Edit, Events, Iis, ModelClasses, Program, ProgramFeatures,
-    Ranging, Relaxed, Row, Settings, Solved, Start, TiVec, Weights,
+    Analyses, Analysis, AnalysisError, Basis, Col, Duals, Edit, Events, Iis, ModelClasses, Priced, Program,
+    ProgramFeatures, Ranging, Relaxed, Row, Settings, Solved, Start, TiVec, Weights,
 };
 
 /// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls a [`Callback`] as the
@@ -30,8 +30,17 @@ use crate::{
 ///   edit, and only with an edited program whose class is in [`Backend::CLASSES`] and whose features are in
 ///   [`Backend::FEATURES`]. When `edit` fails, the `Solver` calls [`Backend::load`] with the program before the edit.
 /// - [`Backend::solve`] solves the last program [`Backend::load`] or [`Backend::edit`] accepted, and its [`Solved`]
-///   reads with that program's handles: a [`Solution`](crate::Solution) holds one value per column, every objective value and
-///   bound includes the program's quadratic part and offset.
+///   reads with that program's handles: a [`Solution`](crate::Solution) holds one value per column, the columns
+///   priced in the solve included, and every objective value and bound includes the program's quadratic part and
+///   offset.
+/// - A backend that declares [`Events::PRICE`] delivers it only after a node LP is solved, optimal in
+///   [`PriceMode::ReducedCost`](crate::PriceMode::ReducedCost) and infeasible in
+///   [`PriceMode::Farkas`](crate::PriceMode::Farkas), with every program row's multiplier in the convention of
+///   [`PriceContext::duals`]. It ends pricing at a node only after a round that added no column and did not branch
+///   early, and counts the node LP as a bound only then. Every column a callback adds goes through
+///   [`Priced::push`] of the solve's `priced`, enters the search with its cost, bounds, integrality and entries, stays
+///   for the rest of the solve, and is part of every point the backend reports afterwards. A solve whose callback does
+///   not ask for [`Events::PRICE`] behaves as if the backend did not declare it.
 /// - It calls a callback method only for an event in both [`Backend::EVENTS`] and the callback's
 ///   [`Callback::events`], and only while `solve` runs; it never calls two callback methods at once.
 /// - A panic in a callback stops the solve as soon as the solver allows and then continues unwinding out of
@@ -61,6 +70,8 @@ pub trait Backend: Sized {
     type Cut<'a>: CutContext;
     /// The context of a [`Events::HEURISTIC`] event.
     type Heuristic<'a>: HeuristicContext;
+    /// The context of a [`Events::PRICE`] event.
+    type Price<'a>: PriceContext;
     /// The context of a [`Events::NATIVE`] event: whatever only this solver reports.
     type Native<'a>: fmt::Debug;
 
@@ -118,7 +129,11 @@ pub trait Backend: Sized {
         self.load(program)
     }
 
-    /// Solves the loaded program, calling `callback` as the search goes.
+    /// Solves the loaded program, calling `callback` as the search goes and handing every column a callback prices in
+    /// to `priced`, which was made for the loaded program.
+    ///
+    /// The columns in `priced` when `solve` returns or unwinds belong to the caller: a [`Solver`](crate::Solver)
+    /// appends them to its program and loads it again before the next call that runs the backend.
     ///
     /// # Errors
     ///
@@ -131,6 +146,7 @@ pub trait Backend: Sized {
         &mut self,
         settings: &Settings,
         callback: &mut dyn Callback<Self>,
+        priced: &mut Priced,
     ) -> Result<Solved<Self::Status>, Self::Error>;
 
     /// The row duals and reduced costs of the last solve, in the sign convention of [`Duals`].
@@ -226,7 +242,8 @@ const fn unsupported<B: Backend>(analysis: Analysis) -> AnalysisError<B::Error> 
 
 /// What runs during a solve: one method per event kind, each with the backend's context for it.
 ///
-/// Every method does nothing by default. Implement it generically (`impl<B: Backend> Callback<B> for …`) to run
+/// Every method does nothing by default, and [`Callback::events`] asks for every event but [`Events::PRICE`]: pricing
+/// is asked for explicitly. Implement it generically (`impl<B: Backend> Callback<B> for …`) to run
 /// on every backend through the neutral context traits, or for one backend to reach its own context types. Two
 /// callbacks run together as a pair `(a, b)`, `a` first.
 ///
@@ -249,9 +266,10 @@ const fn unsupported<B: Backend>(analysis: Analysis) -> AnalysisError<B::Error> 
 /// }
 /// ```
 pub trait Callback<B: Backend>: Send {
-    /// The events this callback wants; every event by default.
+    /// The events this callback wants; every event but [`Events::PRICE`] by default, since a solver that prices gives
+    /// up reductions that need every column known up front.
     fn events(&self) -> Events {
-        Events::ALL
+        Events::ALL.difference(Events::PRICE)
     }
     /// A chunk of the solver's log.
     fn log(&mut self, ctx: &mut B::Log<'_>) {
@@ -283,6 +301,10 @@ pub trait Callback<B: Backend>: Send {
     }
     /// A chance to hand the solver a heuristic solution.
     fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
+        let _ = ctx;
+    }
+    /// A node LP's duals, to be answered with columns that improve it.
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
         let _ = ctx;
     }
     /// An event only this backend knows.
@@ -324,6 +346,9 @@ impl<B: Backend, C: Callback<B> + ?Sized> Callback<B> for &mut C {
     }
     fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
         (**self).heuristic(ctx);
+    }
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        (**self).price(ctx);
     }
     fn native(&mut self, ctx: &mut B::Native<'_>) {
         (**self).native(ctx);
@@ -397,6 +422,15 @@ impl<B: Backend, X: Callback<B>, Y: Callback<B>> Callback<B> for (X, Y) {
         }
         if self.1.events().contains(Events::HEURISTIC) {
             self.1.heuristic(ctx);
+        }
+    }
+    /// Both callbacks share one context, so the columns of the second follow those of the first.
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        if self.0.events().contains(Events::PRICE) {
+            self.0.price(ctx);
+        }
+        if self.1.events().contains(Events::PRICE) {
+            self.1.price(ctx);
         }
     }
     fn native(&mut self, ctx: &mut B::Native<'_>) {

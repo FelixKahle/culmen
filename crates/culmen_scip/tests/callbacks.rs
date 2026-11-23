@@ -1005,7 +1005,7 @@ impl Callback<Scip> for Seen {
 
 #[test]
 fn test_scips_events_are_exactly_the_events_it_delivers() {
-    assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE);
+    assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE - Events::PRICE);
     let (program, _) = knapsack();
     let mut seen = Seen::default();
     Solver::new(Scip::new(), program)

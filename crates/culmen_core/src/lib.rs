@@ -90,15 +90,15 @@ pub use program::{
     QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
 };
 pub use script::{
-    Found, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote, ScriptPoll,
-    ScriptProgress, ScriptSolution, ScriptStatus, Step,
+    Found, PriceRound, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote,
+    ScriptPoll, ScriptPrice, ScriptProgress, ScriptSolution, ScriptStatus, Step,
 };
 pub use solve::context;
 pub use solve::{
     ActionError, AddedRow, Backend, Callback, CutContext, Edit, EditError, Events, EventsIter, HeuristicContext,
     Improvement, LazyContext, LoadError, LogContext, LogLevel, LogLine, NewRow, Observer, Outcome, Phase, PollContext,
-    Progress, ProgressContext, Request, Settings, Solution, SolutionContext, SolveError, Solved, Solver, Start,
-    StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
+    PriceContext, PriceMode, Priced, Progress, ProgressContext, Request, Settings, Solution, SolutionContext,
+    SolveError, Solved, Solver, Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
 };
 pub use solve::{
     Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,

@@ -7,7 +7,7 @@
 use core::fmt;
 
 use culmen_core::{
-    Analyses, AnalysisError, Backend, Basis, Callback, Col, Duals, Edit, Events, Iis, ModelClasses, Program,
+    Analyses, AnalysisError, Backend, Basis, Callback, Col, Duals, Edit, Events, Iis, ModelClasses, Priced, Program,
     ProgramFeatures, ProgramPlan, Ranging, Relaxed, Row, Settings, Solved, Start, TiVec, Weights,
 };
 
@@ -237,6 +237,9 @@ impl<B: Backend> Callback<B> for Forward<'_, B> {
     fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
         self.0.heuristic(ctx);
     }
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        self.0.price(ctx);
+    }
     fn native(&mut self, ctx: &mut B::Native<'_>) {
         self.0.native(ctx);
     }
@@ -253,6 +256,7 @@ impl<B: Backend> Backend for Mirror<B> {
     type Lazy<'a> = B::Lazy<'a>;
     type Cut<'a> = B::Cut<'a>;
     type Heuristic<'a> = B::Heuristic<'a>;
+    type Price<'a> = B::Price<'a>;
     type Native<'a> = B::Native<'a>;
 
     const EVENTS: Events = B::EVENTS;
@@ -313,9 +317,10 @@ impl<B: Backend> Backend for Mirror<B> {
         &mut self,
         settings: &Settings,
         callback: &mut dyn Callback<Self>,
+        priced: &mut Priced,
     ) -> Result<Solved<Self::Status>, Self::Error> {
         self.inner
-            .solve(settings, &mut Forward(callback))
+            .solve(settings, &mut Forward(callback), priced)
             .map_err(MirrorError::Inner)
     }
 

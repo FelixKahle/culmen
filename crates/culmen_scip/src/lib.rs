@@ -52,7 +52,8 @@
 //!
 //! # Callbacks
 //!
-//! [`Scip::EVENTS`] is every generic event; each comes from a SCIP plugin, with a context of this crate's:
+//! [`Scip::EVENTS`] is every generic event but [`Events::PRICE`], which this version does not deliver yet; each comes
+//! from a SCIP plugin, with a context of this crate's:
 //!
 //! | Event | SCIP plugin | Context |
 //! |---|---|---|
@@ -130,8 +131,8 @@ pub use callback::{
     LazySource, ScipCut, ScipEvent, ScipHeuristic, ScipLazy, ScipLog, ScipPoll, ScipProgress, ScipSolution,
 };
 use culmen_core::{
-    Backend, Callback, Events, ModelClasses, Outcome, Program, ProgramFeature, ProgramFeatures, Settings, Solved,
-    Start, Unsupported,
+    Backend, Callback, Events, ModelClasses, Outcome, Priced, Program, ProgramFeature, ProgramFeatures, Settings,
+    Solved, Start, Unsupported,
 };
 pub use error::{Number, RetCode, ScipError};
 pub use options::{Emphasis, ParamValue, ScipOptions, ScipParam};
@@ -148,7 +149,7 @@ use instance::{Group, Instance};
 /// let scip = Scip::with_options(ScipOptions { heuristics: Some(Emphasis::Off), ..ScipOptions::default() });
 /// assert_eq!(scip.options().heuristics, Some(Emphasis::Off));
 /// assert!(Scip::CLASSES.contains(ModelClass::Miqp));
-/// assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE);
+/// assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE - Events::PRICE);
 /// ```
 #[derive(Debug, Default)]
 pub struct Scip {
@@ -337,11 +338,12 @@ impl Backend for Scip {
     type Lazy<'a> = ScipLazy<'a>;
     type Cut<'a> = ScipCut<'a>;
     type Heuristic<'a> = ScipHeuristic<'a>;
+    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
-    /// Every generic event, each from a plugin the instance includes (the module documentation lists them); no native
-    /// event.
-    const EVENTS: Events = Events::ALL.difference(Events::NATIVE);
+    /// Every generic event but pricing, each from a plugin the instance includes (the module documentation lists
+    /// them); no native event.
+    const EVENTS: Events = Events::ALL.difference(Events::NATIVE).difference(Events::PRICE);
 
     /// Every class: a quadratic objective `q(x)` becomes an epigraph variable `t` with cost one, bounded by the
     /// quadratic constraint `q(x) - t <= 0` and `t >= 0` when minimizing, `q(x) - t >= 0` and `t <= 0` when
@@ -385,7 +387,7 @@ impl Backend for Scip {
     }
 
     /// Solves the loaded program from scratch under the backend's options and `settings`, delivering to `callback`
-    /// the events it asks for.
+    /// the events it asks for. This version prices nothing, so `priced` stays as it was handed over.
     ///
     /// # Errors
     ///
@@ -400,6 +402,7 @@ impl Backend for Scip {
         &mut self,
         settings: &Settings,
         callback: &mut dyn Callback<Self>,
+        _: &mut Priced,
     ) -> Result<Solved<ScipStatus>, ScipError> {
         let instance = self.instance.as_mut().ok_or(ScipError::NotLoaded)?;
         configure(instance, &self.options, settings)?;

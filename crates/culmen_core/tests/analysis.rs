@@ -54,6 +54,7 @@ impl Backend for Canned {
     type Lazy<'a> = Unsupported;
     type Cut<'a> = Unsupported;
     type Heuristic<'a> = Unsupported;
+    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: culmen_core::Events = culmen_core::Events::NONE;
@@ -64,7 +65,12 @@ impl Backend for Canned {
         Ok(())
     }
 
-    fn solve(&mut self, _: &Settings, _: &mut dyn Callback<Self>) -> Result<Solved<()>, ScriptError> {
+    fn solve(
+        &mut self,
+        _: &Settings,
+        _: &mut dyn Callback<Self>,
+        _: &mut culmen_core::Priced,
+    ) -> Result<Solved<()>, ScriptError> {
         assert!(!self.panics, "Canned: a callback panicked");
         Ok(Solved {
             outcome: self.outcome.clone(),

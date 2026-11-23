@@ -10,9 +10,10 @@ use typed_index_collections::{TiSlice, TiVec};
 
 use crate::solve::context::{check_constraint, check_entries, check_solution};
 use crate::{
-    ActionError, AddedRow, Analyses, Backend, Callback, Col, Constraint, CutContext, Events, HeuristicContext,
-    LazyContext, LogContext, LogLevel, ModelClasses, Outcome, Phase, PollContext, Program, ProgramFeatures, Progress,
-    ProgressContext, Settings, Solution, SolutionContext, Solved, Start, StopReason,
+    ActionError, AddedRow, Analyses, Backend, Callback, Col, Cols, Constraint, CutContext, Events, HeuristicContext,
+    LazyContext, LogContext, LogLevel, ModelClasses, NewCol, Outcome, Phase, PollContext, PriceContext, PriceMode,
+    Priced, Program, ProgramFeatures, Progress, ProgressContext, Row, Sense, Settings, Solution, SolutionContext,
+    Solved, Start, StopReason,
 };
 
 /// A solution a script step reports.
@@ -57,6 +58,15 @@ pub enum Step {
     },
     /// A chance to supply a heuristic solution.
     Heuristic(Progress),
+    /// A node LP offered for pricing.
+    Price {
+        /// Where the solve stands.
+        progress: Progress,
+        /// Whether the node LP is optimal, with its objective, or infeasible.
+        mode: PriceMode,
+        /// The multiplier of every program row, as [`PriceContext::duals`] states it.
+        duals: TiVec<Row, f64>,
+    },
     /// A note only this backend knows: its native event.
     Note(String),
 }
@@ -79,6 +89,7 @@ impl Step {
             Self::Lazy(_) => Events::LAZY,
             Self::Cut { .. } => Events::CUT,
             Self::Heuristic(_) => Events::HEURISTIC,
+            Self::Price { .. } => Events::PRICE,
             Self::Note(_) => Events::NATIVE,
         }
     }
@@ -97,6 +108,19 @@ pub struct Record {
     pub supplied: Vec<Vec<(Col, f64)>>,
     /// The starts handed over, as checked, one per solve that had one.
     pub starts: Vec<Start>,
+    /// One round per price step whose callback ran and returned, in order; the columns themselves are the program's.
+    pub priced: Vec<PriceRound>,
+}
+
+/// What a callback did at one [`Step::Price`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct PriceRound {
+    /// The columns it added, in order; the program holds them after the solve.
+    pub added: Cols,
+    /// The last bound it reported; `None` when it reported none.
+    pub bound: Option<f64>,
+    /// Whether it ended pricing early.
+    pub early: bool,
 }
 
 /// A backend that delivers a fixed list of [`Step`]s to the callback and then ends with a fixed [`Outcome`].
@@ -106,7 +130,9 @@ pub struct Record {
 /// than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
 /// interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent and the last bound
 /// reported before. The outcome and the elapsed time count every step, whichever events the
-/// callback asks for.
+/// callback asks for. A price step's columns are checked and numbered by the solve's [`Priced`], and every later step
+/// counts them; the scripted points and outcome are taken as given, so they hold one value per column the solve
+/// would have.
 ///
 /// ```
 /// use core::time::Duration;
@@ -128,7 +154,8 @@ pub struct Record {
 pub struct Script {
     steps: Vec<Step>,
     end: Outcome,
-    num_cols: Option<usize>,
+    /// The loaded program's sense; `None` before a load.
+    sense: Option<Sense>,
     /// What callbacks did, across every solve.
     pub record: Record,
 }
@@ -140,7 +167,7 @@ impl Script {
         Self {
             steps: steps.into(),
             end,
-            num_cols: None,
+            sense: None,
             record: Record::default(),
         }
     }
@@ -163,12 +190,12 @@ impl Script {
     /// # Panics
     ///
     /// When the callback panics.
-    fn deliver(&mut self, index: usize, callback: &mut dyn Callback<Self>, run: &mut Run) {
+    fn deliver(&mut self, index: usize, callback: &mut dyn Callback<Self>, run: &mut Run, priced: &mut Priced) {
         let step = &self.steps[index];
         run.observe(step);
         if callback.events().contains(step.event()) {
-            let num_cols = self.num_cols.unwrap_or(0);
-            dispatch(step, callback, run, &mut self.record, num_cols);
+            let sense = self.sense.unwrap_or_default();
+            dispatch(step, callback, run, &mut self.record, priced, sense);
         }
     }
 }
@@ -178,7 +205,15 @@ impl Script {
 /// # Panics
 ///
 /// When the callback panics.
-fn dispatch(step: &Step, callback: &mut dyn Callback<Script>, run: &mut Run, record: &mut Record, num_cols: usize) {
+fn dispatch(
+    step: &Step,
+    callback: &mut dyn Callback<Script>,
+    run: &mut Run,
+    record: &mut Record,
+    priced: &mut Priced,
+    sense: Sense,
+) {
+    let num_cols = priced.num_cols();
     match step {
         Step::Log { elapsed, level, text } => callback.log(&mut ScriptLog {
             text,
@@ -208,6 +243,11 @@ fn dispatch(step: &Step, callback: &mut dyn Callback<Script>, run: &mut Run, rec
             num_cols,
             supplied: &mut record.supplied,
         }),
+        Step::Price { progress, mode, duals } => {
+            let mut ctx = ScriptPrice::new(*progress, *mode, duals, sense, priced);
+            callback.price(&mut ctx);
+            record.priced.push(ctx.round);
+        }
         Step::Note(text) => callback.native(&mut ScriptNote { text }),
     }
 }
@@ -229,7 +269,8 @@ impl Run {
             Step::Progress(progress)
             | Step::Poll(progress)
             | Step::Cut { progress, .. }
-            | Step::Heuristic(progress) => self.advance(progress),
+            | Step::Heuristic(progress)
+            | Step::Price { progress, .. } => self.advance(progress),
             Step::Feasible(found) | Step::Lazy(found) => self.advance(&found.progress),
             Step::Incumbent(found) => {
                 self.advance(&found.progress);
@@ -287,6 +328,7 @@ impl Backend for Script {
     type Lazy<'a> = ScriptLazy<'a>;
     type Cut<'a> = ScriptCut<'a>;
     type Heuristic<'a> = ScriptHeuristic<'a>;
+    type Price<'a> = ScriptPrice<'a>;
     type Native<'a> = ScriptNote<'a>;
 
     const EVENTS: Events = Events::ALL;
@@ -296,30 +338,33 @@ impl Backend for Script {
     const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
 
     fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
-        self.num_cols = Some(program.num_cols());
+        self.sense = Some(program.sense());
         Ok(())
     }
 
     fn set_start(&mut self, start: &Start) -> Result<(), ScriptError> {
-        if self.num_cols.is_none() {
+        if self.sense.is_none() {
             return Err(ScriptError::NotLoaded);
         }
         self.record.starts.push(start.clone());
         Ok(())
     }
 
+    /// Replays the steps; the lengths a lazy constraint, a cut or a heuristic solution is checked against are
+    /// `priced`'s, so they count the columns priced before.
     fn solve(
         &mut self,
         settings: &Settings,
         callback: &mut dyn Callback<Self>,
+        priced: &mut Priced,
     ) -> Result<Solved<ScriptStatus>, ScriptError> {
-        if self.num_cols.is_none() {
+        if self.sense.is_none() {
             return Err(ScriptError::NotLoaded);
         }
         self.record.settings.push(settings.clone());
         let mut run = Run::default();
         for index in 0..self.steps.len() {
-            self.deliver(index, callback, &mut run);
+            self.deliver(index, callback, &mut run, priced);
             if run.interrupted {
                 let outcome = Outcome::Stopped {
                     reason: StopReason::Interrupted,
@@ -474,6 +519,85 @@ impl HeuristicContext for ScriptHeuristic<'_> {
     fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
         check_entries(entries, self.num_cols)?;
         self.supplied.push(entries.to_vec());
+        Ok(())
+    }
+}
+
+/// The price context of a [`Script`]: columns are checked and numbered by the solve's [`Priced`], and the round is
+/// recorded in [`Record::priced`]. A bound reported in [`PriceMode::Farkas`] is refused with [`ActionError::Refused`].
+#[derive(Debug)]
+pub struct ScriptPrice<'a> {
+    progress: Progress,
+    mode: PriceMode,
+    duals: &'a TiSlice<Row, f64>,
+    sense: Sense,
+    priced: &'a mut Priced,
+    /// The index of the first column this round may add.
+    start: usize,
+    round: PriceRound,
+}
+
+impl<'a> ScriptPrice<'a> {
+    /// The tolerance the script's context reports.
+    pub const TOLERANCE: f64 = 1e-9;
+
+    /// The context of a price step, whose round adds nothing yet.
+    fn new(
+        progress: Progress,
+        mode: PriceMode,
+        duals: &'a TiSlice<Row, f64>,
+        sense: Sense,
+        priced: &'a mut Priced,
+    ) -> Self {
+        let start = priced.num_cols();
+        Self {
+            progress,
+            mode,
+            duals,
+            sense,
+            priced,
+            start,
+            round: PriceRound {
+                added: Cols::range(start, start),
+                bound: None,
+                early: false,
+            },
+        }
+    }
+}
+
+impl PriceContext for ScriptPrice<'_> {
+    fn progress(&self) -> Progress {
+        self.progress
+    }
+    fn mode(&self) -> PriceMode {
+        self.mode
+    }
+    fn sense(&self) -> Sense {
+        self.sense
+    }
+    fn duals(&self) -> &TiSlice<Row, f64> {
+        self.duals
+    }
+    fn tolerance(&self) -> f64 {
+        Self::TOLERANCE
+    }
+    fn add_col(&mut self, column: NewCol) -> Result<Col, ActionError> {
+        let col = self.priced.push(column)?;
+        self.round.added = Cols::range(self.start, self.priced.num_cols());
+        Ok(col)
+    }
+    fn branch_early(&mut self) {
+        self.round.early = true;
+    }
+    fn report_bound(&mut self, bound: f64) -> Result<(), ActionError> {
+        if matches!(self.mode, PriceMode::Farkas) {
+            return Err(ActionError::Refused("Script: a Farkas round takes no bound".to_owned()));
+        }
+        if !bound.is_finite() {
+            return Err(ActionError::NotFiniteBound { bound });
+        }
+        self.round.bound = Some(bound);
         Ok(())
     }
 }

@@ -15,9 +15,9 @@ use proptest::prelude::*;
 
 use culmen_core::{
     ActionError, AddedRow, Backend, Callback, Col, CutContext, Events, Found, HeuristicContext, Improvement,
-    InvalidBounds, LazyContext, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, Progress,
-    Request, Script, ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, Var, bounds,
-    stop_fn,
+    InvalidBounds, LazyContext, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, PriceMode,
+    Priced, ProgramPlan, Progress, Request, Script, ScriptStatus, Settings, Solution, SolutionContext, Solver, Step,
+    StopReason, TiVec, Var, bounds, stop_fn,
 };
 
 fn secs(s: u64) -> Duration {
@@ -222,8 +222,12 @@ fn test_every_generic_event_reaches_a_backend_specific_callback() {
     ];
     let mut script = Script::new(steps, Outcome::Unbounded);
     let mut everything = Everything::default();
-    script.load(&m.build().unwrap()).unwrap();
-    let solved = script.solve(&culmen_core::Settings::new(), &mut everything).unwrap();
+    let program = m.build().unwrap();
+    script.load(&program).unwrap();
+    let mut priced = Priced::new(&program, Script::CLASSES);
+    let solved = script
+        .solve(&culmen_core::Settings::new(), &mut everything, &mut priced)
+        .unwrap();
     assert_eq!(solved.outcome, Outcome::Unbounded);
     assert_eq!(
         everything.seen,
@@ -346,7 +350,12 @@ fn test_an_action_error_on_invalid_bounds_names_them_as_its_source() {
 #[test]
 fn test_solving_unloaded_script_is_refused() {
     let mut script = Script::optimal(0.0, Vec::new());
-    assert!(script.solve(&culmen_core::Settings::new(), &mut ()).is_err());
+    let mut priced = Priced::new(&ProgramPlan::new().build().unwrap(), Script::CLASSES);
+    assert!(
+        script
+            .solve(&culmen_core::Settings::new(), &mut (), &mut priced)
+            .is_err()
+    );
 }
 
 /// An observer that counts progress reports.
@@ -401,7 +410,7 @@ fn test_events_combine_and_iterate_one_by_one() {
     assert_eq!(set.iter().rev().collect::<Vec<_>>(), [Events::POLL, Events::LOG]);
     set.extend([Events::NATIVE, Events::FEASIBLE]);
     assert_eq!(format!("{set:?}"), "Events(LOG | POLL | FEASIBLE | NATIVE)");
-    assert_eq!(Events::ALL.iter().len(), 9);
+    assert_eq!(Events::ALL.iter().len(), 10);
     assert_eq!(Events::ALL.into_iter().collect::<Events>(), Events::ALL);
     assert_eq!(format!("{:?}", Events::NONE), "Events()");
     let mut iter = Events::LOG.iter();
@@ -411,7 +420,7 @@ fn test_events_combine_and_iterate_one_by_one() {
     );
 }
 
-const SINGLE: [Events; 9] = [
+const SINGLE: [Events; 10] = [
     Events::LOG,
     Events::PROGRESS,
     Events::POLL,
@@ -420,13 +429,14 @@ const SINGLE: [Events; 9] = [
     Events::LAZY,
     Events::CUT,
     Events::HEURISTIC,
+    Events::PRICE,
     Events::NATIVE,
 ];
 
 proptest! {
     /// A set built from chosen single events iterates exactly those, in the order of the constants, both ways.
     #[test]
-    fn test_events_iterate_the_chosen_singles(chosen in prop::collection::vec(any::<bool>(), 9)) {
+    fn test_events_iterate_the_chosen_singles(chosen in prop::collection::vec(any::<bool>(), 10)) {
         let singles: Vec<Events> = SINGLE.iter().zip(&chosen).filter(|&(_, &c)| c).map(|(&e, _)| e).collect();
         let set: Events = singles.iter().copied().collect();
         prop_assert_eq!(set.iter().collect::<Vec<_>>(), singles.clone());
@@ -443,8 +453,8 @@ proptest! {
     /// The set operations hold each single event exactly as the boolean operation on its membership does.
     #[test]
     fn test_events_set_operations_agree_with_membership(
-        a in prop::collection::vec(any::<bool>(), 9),
-        b in prop::collection::vec(any::<bool>(), 9),
+        a in prop::collection::vec(any::<bool>(), 10),
+        b in prop::collection::vec(any::<bool>(), 10),
     ) {
         let set = |chosen: &[bool]| -> Events {
             SINGLE.iter().zip(chosen).filter(|&(_, &c)| c).map(|(&e, _)| e).collect()
@@ -470,7 +480,7 @@ fn test_events_display_as_a_set_of_names() {
     assert_eq!(Events::ALL.complement(), Events::NONE);
     assert_eq!(
         (Events::ALL - Events::NATIVE).to_string(),
-        "{LOG, PROGRESS, POLL, FEASIBLE, INCUMBENT, LAZY, CUT, HEURISTIC}"
+        "{LOG, PROGRESS, POLL, FEASIBLE, INCUMBENT, LAZY, CUT, HEURISTIC, PRICE}"
     );
 }
 
@@ -493,6 +503,11 @@ fn test_script_steps_name_their_event_kind() {
             relaxation: TiVec::new(),
         },
         Step::Heuristic(p),
+        Step::Price {
+            progress: p,
+            mode: PriceMode::Farkas,
+            duals: TiVec::new(),
+        },
         Step::Note(String::new()),
     ]
     .iter()

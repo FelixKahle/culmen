@@ -67,7 +67,7 @@ pub use callback::{
 };
 use culmen_core::{Analyses, AnalysisError, Basis, Col, Duals, Iis, Ranging, Relaxed, Row, TiVec, Weights};
 use culmen_core::{
-    Backend, Callback, Edit, Events, ModelClass, ModelClasses, Objectives, Outcome, Program, ProgramFeatures,
+    Backend, Callback, Edit, Events, ModelClass, ModelClasses, Objectives, Outcome, Priced, Program, ProgramFeatures,
     QuadObjective, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice, Unsupported,
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
@@ -643,6 +643,7 @@ impl Backend for Highs {
     type Lazy<'a> = Unsupported;
     type Cut<'a> = Unsupported;
     type Heuristic<'a> = HighsHeuristic<'a>;
+    type Price<'a> = Unsupported;
     type Native<'a> = HighsNative;
 
     const EVENTS: Events = Events::LOG
@@ -697,10 +698,12 @@ impl Backend for Highs {
         self.instance.set_solution(start.entries())
     }
 
+    /// Runs HiGHS on the loaded model; HiGHS prices nothing, so `priced` stays as it was handed over.
     fn solve(
         &mut self,
         settings: &Settings,
         callback: &mut dyn Callback<Self>,
+        _: &mut Priced,
     ) -> Result<Solved<HighsStatus>, HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         configure(&mut self.instance, &self.options, settings)?;

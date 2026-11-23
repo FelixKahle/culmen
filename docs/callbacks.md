@@ -208,7 +208,7 @@ assert!(wanted.contains(Events::POLL));
 assert!(!wanted.contains(Events::CUT));
 assert_eq!(wanted.len(), 2);
 assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
-assert_eq!((Events::ALL - Events::LOG).len(), 8);
+assert_eq!((Events::ALL - Events::LOG).len(), 9);
 assert!(Highs::EVENTS.contains(Events::HEURISTIC));
 ```
 

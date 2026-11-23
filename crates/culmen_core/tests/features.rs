@@ -345,6 +345,7 @@ impl Backend for Plain {
     type Lazy<'a> = Unsupported;
     type Cut<'a> = Unsupported;
     type Heuristic<'a> = Unsupported;
+    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: Events = Events::NONE;
@@ -355,7 +356,12 @@ impl Backend for Plain {
         Ok(())
     }
 
-    fn solve(&mut self, _: &Settings, _: &mut dyn Callback<Self>) -> Result<Solved<()>, Never> {
+    fn solve(
+        &mut self,
+        _: &Settings,
+        _: &mut dyn Callback<Self>,
+        _: &mut culmen_core::Priced,
+    ) -> Result<Solved<()>, Never> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),

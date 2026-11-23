@@ -697,10 +697,18 @@ impl NewCol {
             Some(BadTerm::NonFinite(row, value)) => return Err(EditError::NonFiniteCoefficient { row, col, value }),
             None => {}
         }
-        let entries = merge_terms(entries)
+        Ok(Self { column, entries }.merged())
+    }
+
+    /// This column with its entries sorted by row, each row once with its coefficients added up, and none zero.
+    pub(crate) fn merged(self) -> Self {
+        let entries = merge_terms(self.entries)
             .into_iter()
             .filter(|&(_, value)| value != 0.0)
             .collect();
-        Ok(Self { column, entries })
+        Self {
+            column: self.column,
+            entries,
+        }
     }
 }
