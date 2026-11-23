@@ -15,15 +15,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("lamp", 4.0, 3.0),
         ("book", 2.0, 1.0),
     ];
-    let names: Vec<&str> = items.iter().map(|&(name, ..)| name).collect();
-    let value = |i: &str| items.iter().find(|item| item.0 == i).map_or(0.0, |item| item.1);
-    let weight = |i: &str| items.iter().find(|item| item.0 == i).map_or(0.0, |item| item.2);
+    let names = items.map(|(name, ..)| name);
     let capacity = 12.0;
 
     let mut m = Model::new();
-    variable!(m, take[i in names], Bin);
-    constraint!(m, capacity_limit, sum!(weight(i) * take[i] for i in names) <= capacity);
-    objective!(m, Max, sum!(value(i) * take[i] for i in names));
+    variable!(m, take[name in names], Bin);
+    constraint!(m, fits, sum!(weight * take[name] for (name, _, weight) in items) <= capacity);
+    objective!(m, Max, sum!(value * take[name] for (name, value, _) in items));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
     let solved = solver.solve(Request::new())?;

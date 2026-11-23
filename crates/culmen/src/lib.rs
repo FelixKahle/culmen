@@ -58,7 +58,7 @@
 //! constraint!(m, once[p in products], sum!(x[p, l] for l in locations) == 1);
 //! constraint!(m, cap[l in locations], sum!(volume[p] * x[p, l] for p in products) <= cap[l]);
 //! objective!(m, Min, sum!(walk[p][l] * x[p, l] for p in products, l in locations));
-//! assert_eq!(m.constraint_name(cap[(1)]), Some("cap[1]"));
+//! assert_eq!(m.constraint_name(cap[1]), Some("cap[1]"));
 //! # }
 //! ```
 //!
