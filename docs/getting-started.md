@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(m.constraint_name(capacity), Some("capacity"));
 
     let solved = Solver::new(Highs::new(), m.build()?)?.solve(Request::new())?;
-    assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(15.0));
+    assert_eq!(solved.outcome.objective(), Some(15.0));
     Ok(())
 }
 ```

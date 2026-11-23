@@ -60,7 +60,7 @@ fn best_within<B: Backend>(
     stop: &AtomicBool,
 ) -> Result<Option<f64>, SolveError<B::Error>> {
     let solved = solver.solve(Request::new().time_limit(limit).stop(stop))?;
-    Ok(solved.outcome.solution().map(|s| s.objective))
+    Ok(solved.outcome.objective())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(exact.objective(), Some(7.0));
 
     let solved = Solver::new(Highs::new(), program)?.solve(Request::new())?;
-    let found = solved.outcome.solution().ok_or("no solution")?.objective;
+    let found = solved.outcome.objective().ok_or("no solution")?;
     assert!(reference::close(found, 7.0, 1e-9));
     Ok(())
 }

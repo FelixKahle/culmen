@@ -123,7 +123,7 @@
 //!     .observer(&mut print)
 //!     .progress_interval(Duration::from_secs(1));
 //! let solved = solver.solve(request)?;
-//! assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(7.0));
+//! assert_eq!(solved.outcome.objective(), Some(7.0));
 //! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

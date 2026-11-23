@@ -138,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let worker = std::thread::spawn(move || solver.solve(Request::new().settings_from(Settings { threads: Some(threads!(2)), ..Settings::new() })));
     let solved = worker.join().map_err(|_| "the solve thread panicked")??;
-    assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(2.0));
+    assert_eq!(solved.outcome.objective(), Some(2.0));
     Ok(())
 }
 ```
@@ -178,7 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(status.primal, SolutionStatus::Feasible);
     assert_eq!(status.mip_gap, None);
     assert_eq!(status.model.to_string(), "optimal");
-    assert!((solved.outcome.solution().ok_or("no solution")?.objective - 22.0).abs() < 1e-9);
+    assert!((solved.outcome.objective().ok_or("no solution")? - 22.0).abs() < 1e-9);
     Ok(())
 }
 ```
@@ -484,7 +484,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut inspect = Inspect::default();
     let solved = Solver::new(Highs::new(), m.build()?)?.solve_with(Request::new(), &mut inspect)?;
-    assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(25.0));
+    assert_eq!(solved.outcome.objective(), Some(25.0));
     assert!(inspect.warnings.is_empty());
     Ok(())
 }
@@ -552,7 +552,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut callback = Start { values: Some(start), supplied: Vec::new() };
     let solved = solver.solve_with(Request::new(), &mut callback)?;
     assert_eq!(callback.supplied, [Ok(())]);
-    assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(25.0));
+    assert_eq!(solved.outcome.objective(), Some(25.0));
     Ok(())
 }
 ```

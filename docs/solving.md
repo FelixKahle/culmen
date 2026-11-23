@@ -271,7 +271,8 @@ column. Every objective value and bound includes the program's quadratic part an
 sense. For a program with [several objectives](program.md#several-objectives), `objective` is the program's own
 objective, the first; `program.objective_values(&solution.values)` gives every objective's value, and a backend
 reports no bound, since its bound is that of the last stage or of the blend. `outcome.solution()` returns the
-best solution of any variant, `None` when there is none, and `outcome.into_solution()` takes it by value.
+best solution of any variant, `None` when there is none, `outcome.objective()` its objective value, and
+`outcome.into_solution()` takes it by value.
 
 ```rust
 use culmen::prelude::*;
@@ -378,7 +379,7 @@ use culmen::{EditError, NewCol, ProgramColumn};
 /// The optimal objective of the next solve.
 fn best(solver: &mut Solver<Highs>) -> Result<f64, Box<dyn std::error::Error>> {
     let solved = solver.solve(Request::new())?;
-    Ok(solved.outcome.solution().ok_or("no solution")?.objective)
+    Ok(solved.outcome.objective().ok_or("no solution")?)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
