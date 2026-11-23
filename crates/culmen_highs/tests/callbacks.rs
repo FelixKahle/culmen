@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every HiGHS callback kind HiGHS can be made to fire, through the generic layer and the HiGHS contexts.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

@@ -3,6 +3,7 @@
 
 //! Convex quadratic objectives on HiGHS: hand-worked optima, the ½ factor of HiGHS's Hessian, the refusal of a
 //! MIQP, the QP solver's polls and first feasible point, the LP file read back by HiGHS, and random convex QPs.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

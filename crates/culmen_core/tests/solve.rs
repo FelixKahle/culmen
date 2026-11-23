@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The generic callback layer, the observer convenience and the solver, driven by the scripted backend.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

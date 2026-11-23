@@ -6,6 +6,7 @@
 //!
 //! The expected programs are written out by hand; the property tests judge every edit by the reference model of the
 //! edit rules in `culmen_testing::reference::edit_plan`.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

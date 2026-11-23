@@ -3,6 +3,7 @@
 
 //! Quadratic objectives: the operators, the model and plan checks, the convexity check, model classes, and the
 //! typed refusal of a class a backend does not solve.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

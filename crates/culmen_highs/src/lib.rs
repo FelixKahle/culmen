@@ -41,6 +41,7 @@
 //! thread, started by the first run on that thread at that run's `threads`; a later run on the same thread asking
 //! for another number of threads fails with [`HighsError::Run`]. Dropping a [`Highs`] shuts down the scheduler of
 //! the dropping thread. Leaving [`Settings::threads`](culmen_core::Settings::threads) unset never conflicts.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
