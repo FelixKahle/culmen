@@ -3,6 +3,7 @@
 
 //! What the SCIP backend refuses, and why: settings beyond SCIP's parameters, parameters SCIP refuses, numbers SCIP
 //! would read as infinite, names C cannot carry, programs it does not solve, and calls out of order.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

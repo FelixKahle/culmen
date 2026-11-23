@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every serializable type of the SCIP backend survives a round trip through JSON.
+
 #![cfg(feature = "serde")]
 #![cfg_attr(
     test,

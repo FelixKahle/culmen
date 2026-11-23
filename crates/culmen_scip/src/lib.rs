@@ -53,6 +53,7 @@
 //! [`Scip`] is `Send`, so it can be moved to a worker thread to solve there. It is not `Sync`: SCIP is built
 //! thread-safe in the sense that each instance keeps its state to itself, but one instance promises nothing to two
 //! threads calling it at once, not even to read it.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

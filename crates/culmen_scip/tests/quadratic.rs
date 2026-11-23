@@ -3,6 +3,7 @@
 
 //! Convex quadratic objectives on SCIP, through the epigraph: hand-worked QP and MIQP optima, random convex QPs
 //! against feasible points, and random pure-integer MIQPs against exhaustive enumeration.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

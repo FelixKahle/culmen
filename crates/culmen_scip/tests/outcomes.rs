@@ -3,6 +3,7 @@
 
 //! Hand-worked outcomes of the SCIP backend: every ending a solve can have, and programs at the edges of what a
 //! program holds.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
