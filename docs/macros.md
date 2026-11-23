@@ -54,6 +54,10 @@ The spec is the declaration with its bounds:
 | `x == v` | fixed at `v` |
 | `lb <= x <= ub` or `ub >= x >= lb` | both |
 
+A bare name on the left of a single relation is the variable: `variable!(m, x <= ub)` bounds `x` by the local `ub`,
+so a bound written first, `lb <= x`, is a literal or an expression, not a bare name. Each bound is evaluated once, in
+the order written.
+
 The declaration is a name, `x`, or a family, `x[i in I, j in J if cond]`. The kind is `Cont` (the default), `Int`,
 `Bin`, `Free`, `SemiCont` or `SemiInt`, also spelled `Continuous`, `Integer`, `Binary`, `SemiContinuous` and
 `SemiInteger`. An unwritten bound keeps the kind's default: zero below for `Cont` and `Int`, nothing for `Free`. A
@@ -88,7 +92,8 @@ the value alone for one loop.
 ## `constraint!`
 
 `constraint!` writes a relation, `lhs <= rhs`, `lhs >= rhs`, `lhs == rhs`, or a range `lo <= e <= hi` (also
-`hi >= e >= lo`). Both sides may hold variables. It takes four forms:
+`hi >= e >= lo`). Both sides may hold variables, and each side is evaluated once, in the order written. It takes four
+forms:
 
 | Form | Does |
 |---|---|
@@ -238,18 +243,23 @@ A malformed macro call is a compile error at the token at fault, with a message 
 | Message | Cause |
 |---|---|
 | ``variable!(model, spec[, kind])`` | `variable!` with too few or too many arguments. |
-| ``a kind: `Cont`, `Int`, `Bin` or `Free` `` | An unknown kind. |
+| ``a kind: `Cont`, `Int`, `Bin`, `Free`, `SemiCont` or `SemiInt` `` | An unknown kind. |
 | ``bounds read `x >= lb`, `x <= ub`, `x == v` or `lb <= x <= ub` `` | A spec whose relations do not read as one of the forms. |
 | ``a binary's bounds are [0, 1]: for others, `Int` with the bounds`` | A `Bin` with bounds. |
 | ``a name, such as `x` or `x[i in I]` `` | A declaration that does not start with a name. |
+| ``after the name, only an index `[i in I, …]` `` | A declaration whose name is followed by anything but brackets. |
 | ``an index reads `name in domain` `` | A loop without `in`, or with an empty side. |
 | ``the filter `if cond` comes last, after every `name in domain` `` | A filter before the last loop. |
+| `` `if` needs a condition `` | A filter without its condition. |
 | ``an index is a name or a tuple of names, such as `i` or `(i, j)` `` | A family pattern with a path, a literal or a constructor. |
 | ``a family's index names its key: with `_`, its entries' names would collide`` | `_` in a family's index. |
 | ``an index binds its key by value: no `ref` or `mut` `` | `ref` or `mut` in a family's index. |
 | ``a constraint reads `lhs <= rhs`, `lhs >= rhs`, `lhs == rhs` or `lo <= e <= hi` `` | No relation, or relations that do not read as one. |
+| ``constraint!([model, [name,]] relation)`` | `constraint!` with more than three arguments. |
+| ``objective!(model, Min \| Max, expr)`` | `objective!` without exactly three arguments. |
 | ``a sense: `Min` or `Max` `` | An unknown objective sense. |
 | ``sum!(body for i in I, …)`` | `sum!` without `for`. |
+| ``sum! needs a body before `for` `` | `sum!` with nothing before `for`. |
 
 ```compile_fail
 use culmen::prelude::*;
