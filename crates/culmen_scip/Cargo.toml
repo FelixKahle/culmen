@@ -15,14 +15,20 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-# Serialize and deserialize the SCIP version.
-serde = ["dep:serde"]
+# Serialize and deserialize the SCIP options, statuses and version.
+serde = ["dep:serde", "culmen_core/serde"]
 
 [dependencies]
+culmen_core.workspace = true
 scip-sys.workspace = true
 serde = { workspace = true, optional = true }
 
-# docs.rs documents the serde impls too.
+[dev-dependencies]
+culmen_testing.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+
+# docs.rs documents the serde impls of the statuses too.
 [package.metadata.docs.rs]
 all-features = true
 
