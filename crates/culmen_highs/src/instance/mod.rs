@@ -357,7 +357,8 @@ impl Instance {
             indices.push(index(col.index(), Dimension::Columns)?);
             values.push(value);
         }
-        // HiGHS sets nothing for no entries and logs a warning, so the call is skipped.
+        // For no entries HiGHS warns and then replaces its solution with one whose every value is undefined, so the
+        // call is skipped to leave its solution as it is.
         if indices.is_empty() {
             return Ok(());
         }

@@ -503,7 +503,9 @@ HiGHS 1.16 does not define.
   or `ActionError::Length` or `ActionError::NotFinite`. HiGHS then checks the solution against the model and keeps
   it as its incumbent if it is feasible and better.
 - `ctx.supply_partial(&entries)` offers values for some columns, and HiGHS completes them into a feasible solution
-  if it can. It returns `ActionError::Refused` when HiGHS refuses the entries or finds no feasible completion.
+  if it can. It returns `ActionError::Refused` for no entries, for a column named twice, for a value outside its
+  column's bounds or integrality, and when HiGHS finds no feasible completion. A refused call leaves what an earlier
+  call at the same query supplied.
 
 HiGHS calls neither solution callback for a solution it takes this way, so the backend reports it itself: once a
 MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as `INCUMBENT`, and so reaches the
