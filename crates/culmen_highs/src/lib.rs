@@ -36,7 +36,8 @@
 //!
 //! # Threads
 //!
-//! [`Highs`] is `Send`, so it can be moved to a worker thread to solve there. HiGHS keeps one task scheduler per
+//! [`Highs`] is `Send`, so it can be moved to a worker thread to solve there. It is not `Sync`: HiGHS does not promise
+//! that two threads may call one instance at once, not even to read it. HiGHS keeps one task scheduler per
 //! thread, started by the first run on that thread at that run's `threads`; a later run on the same thread asking
 //! for another number of threads fails with [`HighsError::Run`]. Dropping a [`Highs`] shuts down the scheduler of
 //! the dropping thread. Leaving [`Settings::threads`](culmen_core::Settings::threads) unset never conflicts.
