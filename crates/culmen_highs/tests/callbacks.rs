@@ -503,6 +503,37 @@ fn test_partial_solutions_highs_ignores_are_refused_even_after_one_it_repaired()
 }
 
 #[test]
+fn test_a_partial_solution_without_a_completion_keeps_the_solution_supplied_before() {
+    // The optimum, items 1, 3 and 5 worth 25, supplied at the first query becomes the first incumbent, as long as a
+    // partial solution without a completion after it leaves it in place: items 0, 1 and 4 weigh 16, over 12.
+    let (program, take) = knapsack();
+    let options = HighsOptions {
+        presolve: Some(Switch::Off),
+        ..HighsOptions::default()
+    };
+    let solve = |mut kinds: Kinds| {
+        let mut solver = Solver::new(Highs::with_options(options.clone()), program.clone()).unwrap();
+        solver.solve_with(Request::new(), &mut kinds).unwrap();
+        (kinds.supplied, kinds.incumbents.first().copied())
+    };
+    let optimum = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
+    let overweight = vec![(take[0], 1.0), (take[1], 1.0), (take[4], 1.0)];
+    let no_completion = Err(ActionError::Refused("HiGHS found no feasible completion".into()));
+    let full = Kinds {
+        supply: Some(optimum.to_vec()),
+        supply_partial: vec![overweight.clone()],
+        ..Kinds::default()
+    };
+    assert_eq!(solve(full), (vec![Ok(()), no_completion.clone()], Some(25.0)));
+    let fixed = optimum.iter().zip(&take).map(|(&v, &col)| (col, v)).collect();
+    let partial = Kinds {
+        supply_partial: vec![fixed, overweight],
+        ..Kinds::default()
+    };
+    assert_eq!(solve(partial), (vec![Ok(()), no_completion], Some(25.0)));
+}
+
+#[test]
 fn test_a_wrong_solution_is_refused_before_highs_sees_it() {
     let (program, _) = knapsack();
     let options = HighsOptions {

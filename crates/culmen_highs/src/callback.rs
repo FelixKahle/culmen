@@ -948,13 +948,20 @@ impl HeuristicContext for HighsHeuristic<'_> {
 
     /// HiGHS completes the entries by solving the MIP with them fixed. It takes them only when they name at least one
     /// column, each column once, with a value its column's bounds and integrality admit; otherwise the action is
-    /// refused, also after a partial solution supplied before at the same query was taken.
+    /// refused, also after a partial solution supplied before at the same query was taken. A refused action leaves
+    /// the solution supplied before at the same query, full or completed, as HiGHS's to check.
     fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
         let num_cols = self.program.num_cols();
         check_entries(entries, num_cols)?;
         check_once(entries, num_cols)?;
+        // Taking the entries writes them over the buffer, which may hold a solution supplied before at this query; a
+        // failed repair leaves them there, so the buffer is put back.
+        let before = self.record.buffer().to_vec();
         self.record.set_sparse(entries)?;
-        self.record.repair()?;
+        if let Err(error) = self.record.repair() {
+            self.record.buffer().copy_from_slice(&before);
+            return Err(error);
+        }
         // HiGHS copies the C record's flag back over its own after the callback, so the flag is set here too; the
         // repair wrote a value for every column into the record's buffer.
         self.record.mark_written();
