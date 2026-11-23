@@ -20,7 +20,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut m = Model::new();
     variable!(m, take[name in names], Bin);
-    constraint!(m, fits, sum!(weight * take[name] for (name, _, weight) in items) <= capacity);
+    constraint!(
+        m,
+        fits,
+        sum!(weight * take[name] for (name, _, weight) in items) <= capacity
+    );
     objective!(m, Max, sum!(value * take[name] for (name, value, _) in items));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;

@@ -8,7 +8,8 @@
 )]
 
 use culmen_core::{
-    Backend, LinExpr, Linear, Model, Outcome, Request, Settings, SolveError, Solver, StopReason, Var, solutions, threads,
+    Backend, LinExpr, Linear, Model, Outcome, Request, Settings, SolveError, Solver, StopReason, Var, solutions,
+    threads,
 };
 use culmen_highs::{
     CallStatus, Dimension, Highs, HighsError, HighsOptions, ModelStatus, OptionValue, RawOption, SimplexStrategy,
@@ -342,7 +343,9 @@ fn test_a_solution_limit_ends_a_mip_with_a_solution() {
     let take = m.add_vars(6, |_| Var::binary());
     let weights = [5.0, 4.0, 6.0, 3.0, 7.0, 2.0];
     m.add_constraint(LinExpr::sum(take.iter().zip(weights).map(|(&x, w)| w * x)).leq(12.0));
-    m.maximize(LinExpr::sum(take.iter().zip([7.0, 5.0, 8.0, 4.0, 9.0, 2.0]).map(|(&x, v)| v * x)));
+    m.maximize(LinExpr::sum(
+        take.iter().zip([7.0, 5.0, 8.0, 4.0, 9.0, 2.0]).map(|(&x, v)| v * x),
+    ));
     let program = m.build().unwrap();
     let limit = Settings {
         solution_limit: Some(solutions!(1)),

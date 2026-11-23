@@ -205,7 +205,10 @@ fn var_expr(root: &TokenStream2, kind: Kind, bounds: &Bounds) -> TokenStream2 {
     match (&bounds.lower, &bounds.upper) {
         (Some(l), Some(u)) => {
             // Each bound is evaluated once, in the order written.
-            let (lower, upper) = (Ident::new("lower", Span::mixed_site()), Ident::new("upper", Span::mixed_site()));
+            let (lower, upper) = (
+                Ident::new("lower", Span::mixed_site()),
+                Ident::new("upper", Span::mixed_site()),
+            );
             let lets = if bounds.upper_first {
                 quote!(let #upper = #u; let #lower = #l;)
             } else {
