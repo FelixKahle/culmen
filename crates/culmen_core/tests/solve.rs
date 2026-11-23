@@ -425,6 +425,39 @@ proptest! {
             prop_assert_eq!(set.contains(*event), c);
         }
     }
+
+    /// The set operations hold each single event exactly as the boolean operation on its membership does.
+    #[test]
+    fn test_events_set_operations_agree_with_membership(
+        a in prop::collection::vec(any::<bool>(), 9),
+        b in prop::collection::vec(any::<bool>(), 9),
+    ) {
+        let set = |chosen: &[bool]| -> Events {
+            SINGLE.iter().zip(chosen).filter(|&(_, &c)| c).map(|(&e, _)| e).collect()
+        };
+        let (x, y) = (set(&a), set(&b));
+        let mut assigned = x;
+        assigned -= y;
+        prop_assert_eq!(assigned, x - y);
+        for (i, event) in SINGLE.iter().enumerate() {
+            prop_assert_eq!((x | y).contains(*event), a[i] || b[i]);
+            prop_assert_eq!((x & y).contains(*event), a[i] && b[i]);
+            prop_assert_eq!((x - y).contains(*event), a[i] && !b[i]);
+            prop_assert_eq!((!x).contains(*event), !a[i]);
+        }
+        prop_assert_eq!(!!x, x);
+    }
+}
+
+#[test]
+fn test_events_display_as_a_set_of_names() {
+    assert_eq!(Events::NONE.to_string(), "{}");
+    assert_eq!((Events::CUT | Events::LOG).to_string(), "{LOG, CUT}");
+    assert_eq!(Events::ALL.complement(), Events::NONE);
+    assert_eq!(
+        (Events::ALL - Events::NATIVE).to_string(),
+        "{LOG, PROGRESS, POLL, FEASIBLE, INCUMBENT, LAZY, CUT, HEURISTIC}"
+    );
 }
 
 #[test]

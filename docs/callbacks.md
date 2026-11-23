@@ -196,8 +196,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## `Events`
 
 `Events` is a set of event kinds: `NONE`, `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `LAZY`, `CUT`,
-`HEURISTIC`, `NATIVE`, and `ALL`. Combine sets with `|` and `&` (or `union` and `intersection`), test them with
-`contains`, and iterate the single events with `iter()`.
+`HEURISTIC`, `NATIVE`, and `ALL`. Combine sets with `|`, `&` and `-` (or `union`, `intersection` and
+`difference`), take every other event with `!` (`complement`), test them with `contains`, and iterate the single
+events with `iter()`; `Display` prints `{LOG, POLL}`.
 
 ```rust
 use culmen::prelude::*;
@@ -207,6 +208,7 @@ assert!(wanted.contains(Events::POLL));
 assert!(!wanted.contains(Events::CUT));
 assert_eq!(wanted.len(), 2);
 assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
+assert_eq!((Events::ALL - Events::LOG).len(), 8);
 assert!(Highs::EVENTS.contains(Events::HEURISTIC));
 ```
 

@@ -5,9 +5,10 @@
 
 use core::fmt;
 use core::iter::FusedIterator;
-use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
+use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not, Sub, SubAssign};
 use core::time::Duration;
 
+use itertools::Itertools;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -25,8 +26,11 @@ use serde::{Deserialize, Serialize};
 /// assert!(wanted.contains(Events::POLL));
 /// assert!(!wanted.contains(Events::CUT));
 /// assert_eq!(wanted & Events::POLL, Events::POLL);
+/// assert_eq!(wanted - Events::LOG, Events::POLL);
+/// assert_eq!(!wanted, Events::ALL - wanted);
 /// assert_eq!(wanted.iter().collect::<Events>(), wanted);
 /// assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
+/// assert_eq!(wanted.to_string(), "{LOG, POLL}");
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Events(u16);
@@ -77,6 +81,18 @@ impl Events {
     #[must_use]
     pub const fn intersection(self, other: Self) -> Self {
         Self(self.0 & other.0)
+    }
+
+    /// The events in this set and not in `other`.
+    #[must_use]
+    pub const fn difference(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
+    /// The events not in this set: [`Events::ALL`] without them.
+    #[must_use]
+    pub const fn complement(self) -> Self {
+        Self::ALL.difference(self)
     }
 
     /// Whether every event of `other` is in this set.
@@ -141,6 +157,26 @@ impl BitAndAssign for Events {
     }
 }
 
+impl Sub for Events {
+    type Output = Self;
+    fn sub(self, other: Self) -> Self {
+        self.difference(other)
+    }
+}
+
+impl SubAssign for Events {
+    fn sub_assign(&mut self, other: Self) {
+        *self = self.difference(other);
+    }
+}
+
+impl Not for Events {
+    type Output = Self;
+    fn not(self) -> Self {
+        self.complement()
+    }
+}
+
 impl FromIterator<Self> for Events {
     fn from_iter<I: IntoIterator<Item = Self>>(iter: I) -> Self {
         iter.into_iter().fold(Self::NONE, Self::union)
@@ -172,6 +208,14 @@ impl fmt::Debug for Events {
             f.write_str(event.name().unwrap_or("?"))?;
         }
         f.write_str(")")
+    }
+}
+
+/// `{LOG, POLL}`, each event by the name of its constant; `{}` for none.
+impl fmt::Display for Events {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names = self.iter().map(|event| event.name().unwrap_or("?"));
+        write!(f, "{{{}}}", names.format(", "))
     }
 }
 
