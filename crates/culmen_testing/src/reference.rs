@@ -89,6 +89,10 @@ fn better(sense: Sense, a: Reference, b: Reference) -> Reference {
 
 /// The program without semi columns in which the `k`-th semi column is zero when bit `k` of `on` is clear, and
 /// continuous or integer in its bounds when it is set.
+///
+/// # Panics
+///
+/// When the program so changed does not build, which a choice of a valid program's semi columns never makes.
 fn chosen(program: &Program, semi: &[Col], on: u32) -> Program {
     let mut plan = ProgramPlan::from(program.clone());
     for (k, &col) in semi.iter().enumerate() {
@@ -106,15 +110,25 @@ fn chosen(program: &Program, semi: &[Col], on: u32) -> Program {
 }
 
 /// Solves a tiny LP or MILP without semi columns exactly.
+///
+/// # Panics
+///
+/// When a column has an infinite bound, or the integer box holds more than a million points.
 fn solve_box(program: &Program) -> Reference {
     let ints: Vec<usize> = (0..program.num_cols()).filter(|&j| is_integer(program, j)).collect();
     let conts: Vec<usize> = (0..program.num_cols()).filter(|&j| !is_integer(program, j)).collect();
     let ranges = integer_ranges(program, &ints);
-    let points: i64 = ranges.iter().map(|&(l, u)| (u - l + 1).max(0)).product();
-    assert!(points <= 1_000_000, "the integer box is too large to enumerate");
     if ranges.iter().any(|&(l, u)| l > u) {
         return Reference::Infeasible;
     }
+    // Counted with checked arithmetic, so a box beyond `i64` is refused as too large rather than overflowing.
+    let points = ranges
+        .iter()
+        .try_fold(1_i64, |n, &(l, u)| n.checked_mul(u.checked_sub(l)?.checked_add(1)?));
+    assert!(
+        points.is_some_and(|points| points <= 1_000_000),
+        "the integer box is too large to enumerate"
+    );
     let mut best: Option<BigRational> = None;
     let mut point: Vec<i64> = ranges.iter().map(|&(l, _)| l).collect();
     loop {
