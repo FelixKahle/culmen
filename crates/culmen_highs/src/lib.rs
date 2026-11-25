@@ -822,6 +822,44 @@ mod tests {
     }
 
     #[test]
+    fn test_every_setting_maps_to_its_highs_option() {
+        let settings = Settings {
+            time_limit: Some(core::time::Duration::from_millis(1500)),
+            relative_gap: Some(culmen_core::relative_gap!(0.01)),
+            absolute_gap: Some(culmen_core::absolute_gap!(0.5)),
+            threads: NonZeroUsize::new(2),
+            seed: Some(7),
+            presolve: Some(false),
+            node_limit: Some(100),
+            solution_limit: core::num::NonZeroU64::new(3),
+            console: true,
+        };
+        assert_eq!(
+            settings_assignments(&settings),
+            Ok(vec![
+                ("time_limit", OptionValue::Double(1.5)),
+                ("mip_rel_gap", OptionValue::Double(0.01)),
+                ("mip_abs_gap", OptionValue::Double(0.5)),
+                ("threads", OptionValue::Int(2)),
+                ("random_seed", OptionValue::Int(7)),
+                ("presolve", OptionValue::String("off".to_owned())),
+                ("mip_max_nodes", OptionValue::Int(100)),
+                ("mip_max_improving_sols", OptionValue::Int(3)),
+                ("log_to_console", OptionValue::Bool(true)),
+            ])
+        );
+        let on = Settings {
+            presolve: Some(true),
+            ..Settings::new()
+        };
+        assert_eq!(
+            settings_assignments(&on),
+            Ok(vec![("presolve", OptionValue::String("on".to_owned()))])
+        );
+        assert_eq!(settings_assignments(&Settings::new()), Ok(vec![]));
+    }
+
+    #[test]
     fn test_seeds_and_thread_counts_beyond_highs_integers_are_refused() {
         let with = |seed, threads| {
             settings_assignments(&Settings {

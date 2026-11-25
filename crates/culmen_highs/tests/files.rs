@@ -272,6 +272,75 @@ fn test_unreadable_files_are_typed_errors() {
     );
 }
 
+#[test]
+fn test_what_highs_cannot_take_or_write_is_a_typed_error() {
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1).name("x"));
+    m.maximize(x);
+    let program = m.build().unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let not_utf8 = std::env::temp_dir().join(std::ffi::OsStr::from_bytes(b"culmen-\xff.lp"));
+        assert_eq!(
+            files::write(&program, &not_utf8),
+            Err(FileError::Path { path: not_utf8.clone() })
+        );
+    }
+    let nowhere = std::env::temp_dir().join("culmen-no-such-directory").join("model.lp");
+    assert_eq!(
+        files::write(&program, &nowhere),
+        Err(FileError::Write {
+            path: nowhere.clone(),
+            format: ModelFormat::Lp
+        })
+    );
+    let path = TempPath::new("lp");
+    let mut m = Model::new();
+    m.add_var(Var::continuous().name("x\0y"));
+    assert_eq!(
+        files::write(&m.build().unwrap(), &path.0),
+        Err(FileError::Name {
+            name: "x\0y".to_owned()
+        })
+    );
+    // HiGHS refuses a matrix value at or above its `large_matrix_value`, 1e15.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1));
+    m.add_constraint((1e16 * x).leq(1));
+    assert_eq!(
+        files::write(&m.build().unwrap(), &path.0),
+        Err(FileError::Highs(culmen_highs::HighsError::Load))
+    );
+}
+
+#[test]
+fn test_bounds_in_a_file_that_are_no_interval_are_refused() {
+    let columns = TempPath::new("lp");
+    std::fs::write(
+        &columns.0,
+        "Minimize\n obj: x + y\nSubject To\n c: x + y >= 1\nBounds\n 3 <= x <= 1\nEnd\n",
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            files::read(&columns.0),
+            Err(FileError::ColumnBounds {
+                source: culmen_core::InvalidBounds::Empty { .. },
+                ..
+            })
+        ),
+        "{:?}",
+        files::read(&columns.0)
+    );
+    // A row's bounds HiGHS reads are always an interval: it refuses an infinite right-hand side as it reads, so
+    // `FileError::RowBounds` guards a reader that would not.
+    let rows = TempPath::new("lp");
+    std::fs::write(&rows.0, "Minimize\n obj: x\nSubject To\n c: x >= inf\nEnd\n").unwrap();
+    assert!(matches!(files::read(&rows.0), Err(FileError::Read { .. })));
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 

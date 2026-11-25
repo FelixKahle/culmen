@@ -337,6 +337,18 @@ fn test_options_and_statuses_round_trip() {
     .option("infinite_bound", f64::INFINITY);
     round_trip(&infinite);
     round_trip(&culmen_highs::OptionValue::Double(f64::NEG_INFINITY));
+    use culmen_highs::{EdgeWeight, LpSolver, MipIpmSolver, MipLpSolver, OnOff, ScaleStrategy, files::ModelFormat};
+    for format in [ModelFormat::Mps, ModelFormat::Lp] {
+        round_trip(&format);
+    }
+    round_trip(&OnOff::On);
+    round_trip(&LpSolver::QpAsm);
+    round_trip(&MipLpSolver::Hipo);
+    round_trip(&MipIpmSolver::Ipx);
+    round_trip(&SimplexStrategy::DualPami);
+    round_trip(&ScaleStrategy::ForcedEquilibration);
+    round_trip(&EdgeWeight::SteepestEdge);
+    round_trip(&culmen_core::LogLevel::Warning);
 }
 
 #[test]
