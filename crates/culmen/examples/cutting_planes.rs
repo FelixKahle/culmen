@@ -36,7 +36,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
+    // A cover is a set of items and each round adds a new one, which the relaxation then meets, so there are at most
+    // as many rounds as sets of items; one more would repeat a cover, which only a numerical defect would do.
+    let covers = 1_usize << ITEMS.len();
+    let mut rounds = 0;
     loop {
+        rounds += 1;
+        if rounds > covers {
+            return Err(format!("{covers} rounds added more covers than {} items have", ITEMS.len()).into());
+        }
         let (relaxed, iterations) = solve(&mut solver)?;
         println!(
             "relaxation {:.3} after {iterations} simplex iterations",

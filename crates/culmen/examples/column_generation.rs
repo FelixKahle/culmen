@@ -40,7 +40,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(LinExpr::sum(yields.iter().copied()));
     let mut pricing = Solver::new(Highs::new(), m.build()?)?;
 
+    // A pattern is a count of each width a roll holds, so there are only so many; a round that appends one more than
+    // that has priced a pattern twice, which only a numerical defect would do.
+    let patterns: usize = PIECES
+        .iter()
+        .map(|&(width, _)| (ROLL / width).floor() as usize + 1)
+        .product();
+    let mut rounds = 0;
     loop {
+        rounds += 1;
+        if rounds > patterns {
+            return Err(format!("{patterns} rounds priced more patterns than one roll has").into());
+        }
         let (relaxed, iterations) = solve(&mut master)?;
         println!(
             "master {:.3} rolls after {iterations} simplex iterations",
