@@ -223,4 +223,10 @@ pub mod prelude {
         Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap, absolute_gap,
         bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
     };
+    // A generic callback calls its contexts through these traits, and a backend names `Unsupported` for an event it
+    // cannot deliver.
+    pub use culmen_core::{
+        CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext,
+        SolutionContext, Unsupported,
+    };
 }

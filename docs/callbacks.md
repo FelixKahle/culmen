@@ -239,7 +239,8 @@ Each event's context reads where the solve stands and offers only the actions th
 Values are `TiSlice<Col, f64>` read with the model's handles, one per column the problem holds when the event is
 delivered, the columns priced earlier in the solve included, and constraints are the same
 [`Constraint`](modelling.md#comparisons) values a model adds, so `ctx.add_lazy(x.leq(y))` reads as the model does.
-The traits are at the crate root, `culmen::PollContext` and so on; bring the one you call into scope.
+The traits are at the crate root, `culmen::PollContext` and so on, and in `culmen::prelude`, so a callback written
+with `use culmen::prelude::*;` calls their methods without importing them one by one.
 
 An action returns `Err(ActionError)` when it is refused:
 
