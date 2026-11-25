@@ -191,9 +191,13 @@ impl Roots {
     ///
     /// # Panics
     ///
-    /// When `col` is not a column of the forest.
+    /// When `col` is not a column of the forest, or its path is longer than the forest has columns, which a cycle
+    /// would make and [`Roots::join`] never does: every parent is at most its child.
     fn find(&mut self, mut col: Col) -> Col {
+        let mut steps = 0;
         while self.parent[col] != col {
+            steps += 1;
+            assert!(steps <= self.parent.len(), "Roots: a cycle in the forest");
             self.parent[col] = self.parent[self.parent[col]];
             col = self.parent[col];
         }
