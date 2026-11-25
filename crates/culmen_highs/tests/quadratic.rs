@@ -3,6 +3,7 @@
 
 //! Convex quadratic objectives on HiGHS: hand-worked optima, the ½ factor of HiGHS's Hessian, the refusal of a
 //! MIQP, the QP solver's polls and first feasible point, the LP file read back by HiGHS, and random convex QPs.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
@@ -13,11 +14,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use culmen_core::{
-    Backend, Bounds, Col, Events, Linear, LoadError, Model, ModelClass, Outcome, Phase, PollContext, Program,
-    ProgramColumn, ProgramPlan, Progress, Request, Sense, Solution, SolutionContext, SolveError, Solved, Solver,
-    StopReason, TiSlice, TiVec, Var, stop_fn,
+    Backend, Bounds, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, Outcome, Phase, PollContext, Program,
+    ProgramColumn, ProgramPlan, Progress, QuadExpr, Request, Sense, Solution, SolutionContext, SolveError, Solved,
+    Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
 };
-use culmen_highs::{Highs, HighsError, PollSource, UnsoundQp};
+use culmen_highs::{Highs, HighsError, HighsOptions, LpSolver, PollSource, UnsoundQp};
 use culmen_testing::reference::close;
 use culmen_testing::strategy::small_qp;
 use proptest::prelude::*;
@@ -108,6 +109,43 @@ fn test_a_linear_program_solves_as_before() {
     assert_eq!(program.class(), ModelClass::Lp);
     assert!(program.quadratic().is_empty());
     assert_point(&optimum(&program), 12.0, &[4.0, 0.0]);
+}
+
+#[test]
+fn test_the_qp_iteration_limit_stops_the_active_set_solver() {
+    // The projection of (1, 2, 3, 4, 5) onto `Σ x <= 1` moves every coordinate, so the active-set solver iterates.
+    let mut m = Model::new();
+    let xs = m.add_vars(5, |_| Var::free());
+    m.add_constraint(LinExpr::sum(xs.iter().copied()).leq(1));
+    m.minimize(QuadExpr::sum(
+        xs.iter()
+            .enumerate()
+            .map(|(i, &x)| (x - (i + 1) as f64) * (x - (i + 1) as f64)),
+    ));
+    let options = HighsOptions {
+        solver: Some(LpSolver::QpAsm),
+        qp_iteration_limit: Some(0),
+        ..HighsOptions::default()
+    };
+    let mut solver = Solver::new(Highs::with_options(options), m.build().unwrap()).unwrap();
+    let solved = solver.solve(Request::new()).unwrap();
+    assert!(
+        matches!(
+            solved.outcome,
+            Outcome::Stopped {
+                reason: StopReason::IterationLimit,
+                ..
+            }
+        ),
+        "{solved:?}"
+    );
+    solver.backend_mut().options_mut().qp_iteration_limit = None;
+    let solved = solver.solve(Request::new()).unwrap();
+    // Each coordinate drops by (15 - 1) / 5 = 2.8 to (-1.8, -0.8, 0.2, 1.2, 2.2), at 5 · 2.8² = 39.2.
+    let Outcome::Optimal(solution) = solved.outcome else {
+        panic!("{solved:?}")
+    };
+    assert_point(&solution, 39.2, &[-1.8, -0.8, 0.2, 1.2, 2.2]);
 }
 
 #[test]

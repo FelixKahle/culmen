@@ -4,6 +4,7 @@
 //! Editing a program HiGHS holds: hand-worked optima after each kind of edit, the cases HiGHS 1.15 makes hard, the
 //! warm start an edit keeps, the analyses an edit clears, and a property test whose reference is a fresh solver on
 //! the edited program.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

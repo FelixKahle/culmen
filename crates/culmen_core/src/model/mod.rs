@@ -22,7 +22,7 @@ pub use keyed::{
 pub use objective::{Combination, Objective};
 pub use quad::{QuadExpr, QuadTerm, Quadratic, Summand};
 
-use crate::program::{check_convex, merge_pairs, merge_terms, semi_bounds};
+use crate::program::{check_convex, hessian_value, merge_pairs, merge_terms, semi_bounds};
 use crate::{
     Bounds, Col, Integrality, LinearObjective, ObjectiveId, Objectives, Program, ProgramColumn, ProgramPlan,
     ProgramRow, QuadObjective, Row, Sense, Stage, Tolerance, Weight, Weighted,
@@ -586,7 +586,8 @@ impl Model {
         Ok(())
     }
 
-    /// The objective's quadratic terms as plan terms, each known and finite as given and as merged.
+    /// The objective's quadratic terms as plan terms, each known and finite as given and as merged, and a square's
+    /// Hessian value finite.
     ///
     /// # Errors
     ///
@@ -607,10 +608,11 @@ impl Model {
                 None => self.check_quad_coefficient(first, second, value),
             }
         })?;
-        // The program adds repeated pairs up the same way, so a sum that passes here passes there.
+        // The program adds repeated pairs up the same way, so a sum that passes here passes there; a square's Hessian
+        // value, twice its sum, must be finite there too.
         merge_pairs(terms.iter().copied())
             .into_iter()
-            .try_for_each(|(first, second, value)| self.check_quad_coefficient(first, second, value))?;
+            .try_for_each(|entry| self.check_quad_coefficient(entry.0, entry.1, hessian_value(entry)))?;
         Ok(terms)
     }
 

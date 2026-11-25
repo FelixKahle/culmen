@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Outcomes, statuses, options and errors of the HiGHS backend.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
 
-use culmen_core::{Backend, Linear, Model, Outcome, Request, Settings, SolveError, Solver, Var, threads};
+use culmen_core::{
+    Backend, LinExpr, Linear, Model, Outcome, Request, Settings, SolveError, Solver, StopReason, Var, solutions,
+    threads,
+};
 use culmen_highs::{
     CallStatus, Dimension, Highs, HighsError, HighsOptions, ModelStatus, OptionValue, RawOption, SimplexStrategy,
     SolutionStatus, Version,
@@ -331,4 +335,47 @@ fn test_versions_order_and_display_as_versions_do() {
     assert!(version(1, 9, 3) < version(1, 15, 0));
     assert!(version(1, 15, 0) < version(2, 0, 0));
     assert_eq!(version(1, 15, 2).to_string(), "1.15.2");
+}
+
+#[test]
+fn test_a_solution_limit_ends_a_mip_with_a_solution() {
+    // A knapsack: every limit of at least one solution ends with one, optimal or stopped at the limit.
+    let mut m = Model::new();
+    let take = m.add_vars(6, |_| Var::binary());
+    let weights = [5.0, 4.0, 6.0, 3.0, 7.0, 2.0];
+    m.add_constraint(LinExpr::sum(take.iter().zip(weights).map(|(&x, w)| w * x)).leq(12.0));
+    m.maximize(LinExpr::sum(
+        take.iter().zip([7.0, 5.0, 8.0, 4.0, 9.0, 2.0]).map(|(&x, v)| v * x),
+    ));
+    let program = m.build().unwrap();
+    let limit = Settings {
+        solution_limit: Some(solutions!(1)),
+        ..Settings::new()
+    };
+    let in_settings = Solver::new(Highs::new(), program.clone())
+        .unwrap()
+        .solve(Request::new().settings_from(limit))
+        .unwrap();
+    let options = HighsOptions {
+        mip_max_improving_sols: Some(solutions!(1)),
+        ..HighsOptions::default()
+    };
+    let in_options = Solver::new(Highs::with_options(options), program)
+        .unwrap()
+        .solve(Request::new())
+        .unwrap();
+    for solved in [in_settings, in_options] {
+        assert!(
+            matches!(
+                solved.outcome,
+                Outcome::Optimal(_)
+                    | Outcome::Stopped {
+                        reason: StopReason::SolutionLimit,
+                        best: Some(_),
+                        ..
+                    }
+            ),
+            "{solved:?}"
+        );
+    }
 }

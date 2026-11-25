@@ -115,14 +115,14 @@ The operators combine them:
 
 | Expression | Gives |
 |---|---|
-| `2.0 * x`, `x * 2.0`, `3 * x`, `x * 3`, `x / 2.0`, `-x` (also on a `Term`) | `Term` |
+| `2.0 * x`, `x * 2.0`, `3 * x`, `x * 3`, `x / 2.0`, `x / 2`, `-x` (also on a `Term`) | `Term` |
 | `a + b`, `a - b` with `a` a `Col`, `Term` or `LinExpr` and `b` any of those or a number | `LinExpr` |
 | `5.0 + x`, `5.0 - x`, `1 - x` (a number on the left) | `LinExpr` |
-| `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `-e` with `e` a `LinExpr` | `LinExpr` |
-| `e += b`, `e -= b` with `b` any linear item; `e *= 2.0` | in place |
+| `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `e / 2`, `-e` with `e` a `LinExpr` | `LinExpr` |
+| `e += b`, `e -= b` with `b` any linear item; `e *= 2.0`, `e /= 2.0` | in place |
 
-Numbers are `f64` or `i32`. To sum many items, use `LinExpr::sum` or `Iterator::sum`; both take any iterator of
-linear items and build a single expression:
+Numbers are `f64` or `i32`. To sum many items, use `LinExpr::sum`, `Iterator::sum` or `collect`; each takes any
+iterator of linear items and builds a single expression, and `extend` adds them to an expression:
 
 ```rust
 use culmen::prelude::*;
@@ -145,7 +145,7 @@ let point: culmen::TiVec<Col, f64> = vec![1.0, 2.0, 4.0].into();
 assert_eq!(load.value(&point), 4.0 + 10.0 + 24.0);
 ```
 
-`LinExpr::new()` is the expression zero. `From` converts a `Col`, a `Term` or an `f64` into a `LinExpr`, and a `Col`
+`LinExpr::new()` is the expression zero. `From` converts a `Col`, a `Term`, an `f64` or an `i32` into a `LinExpr`, and a `Col`
 into a `Term`. `LinExpr::value(&values)` evaluates the expression at a point, such as a solution's values; it panics
 when a term's column has no value there.
 
@@ -164,15 +164,15 @@ A product of two linear items is quadratic, for an objective:
 | Expression | Gives |
 |---|---|
 | `x * y`, `x * (2.0 * y)`, `(2.0 * x) * y`, `2.0 * x * y` with `x`, `y` a `Col` or `Term` | `QuadTerm` |
-| `q * 2.0`, `2.0 * q`, `q * 2`, `2 * q`, `q / 2.0`, `-q` with `q` a `QuadTerm` | `QuadTerm` |
+| `q * 2.0`, `2.0 * q`, `q * 2`, `2 * q`, `q / 2.0`, `q / 2`, `-q` with `q` a `QuadTerm` | `QuadTerm` |
 | `a * b` with one side a `LinExpr` and the other a `Col`, `Term` or `LinExpr`, as in `(x - 1) * (x - 1)` | `QuadExpr`, expanded |
 | `a + b`, `a - b` with either side a `QuadTerm` or `QuadExpr` and the other any linear or quadratic item | `QuadExpr` |
-| `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `-e` with `e` a `QuadExpr` | `QuadExpr` |
-| `e += b`, `e -= b` with `b` any linear or quadratic item; `e *= 2.0` | in place |
+| `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `e / 2`, `-e` with `e` a `QuadExpr` | `QuadExpr` |
+| `e += b`, `e -= b` with `b` any linear or quadratic item; `e *= 2.0`, `e /= 2.0` | in place |
 
 `QuadExpr::sum`, `Iterator::sum` and `collect` add up quadratic items and `extend` adds them to an expression,
 `QuadExpr::add_term(first, second, coefficient)` adds one product, `QuadExpr::value(&values)` evaluates the expression at a point, and `From` converts a `QuadTerm`, a
-`LinExpr`, a `Col`, a `Term` or an `f64` into a `QuadExpr`. The trait behind them is `Quadratic`, which every
+`LinExpr`, a `Col`, a `Term`, an `f64` or an `i32` into a `QuadExpr`. The trait behind them is `Quadratic`, which every
 `Linear` item, `QuadTerm`, `QuadExpr` and `&QuadExpr` implement; the objective setters take `impl Quadratic`.
 
 ```rust
@@ -390,14 +390,16 @@ order and reads them back:
 
 | Method | Gives |
 |---|---|
-| `family[key]` | The handle; panics when the family does not hold the key. |
+| `family[key]`, `family[&key]` | The handle; panics when the family does not hold the key. |
 | `family.get(&key)` | The handle, `None` when the family does not hold the key. |
+| `family.contains_key(&key)` | Whether the family holds the key. |
 | `family.len()`, `family.is_empty()` | The number of keys. |
 | `family.iter()`, `&family` in a `for` loop | `(&key, handle)` pairs. |
 | `family.keys()`, `family.handles()` | The keys, the handles. |
 | `vars.values(&solution.values)` | `(&key, value)` pairs at a point; `VarMap` only. |
 
-The iterators run both ways and know their exact length. `values` panics when a variable of the family has no value
+`get` and `contains_key` take any borrowed form of the key, as `HashMap`'s do, so a family keyed by `String` is
+read with a `&str`. The iterators run both ways and know their exact length. `values` panics when a variable of the family has no value
 in the point. `Keyed::new()` and `Keyed::insert(key, handle)` build a family by hand; `insert` panics on a key
 already held.
 
@@ -448,7 +450,7 @@ first variable or constraint at fault. The model is left as it was, so it can be
 | `Coefficient { constraint, var, value }` | A constraint's coefficient is NaN or infinite, as given or added up. |
 | `ConstraintBounds { constraint, source }` | A constraint's bounds are invalid after its constant moved into them. |
 | `UnknownVar { place, col }` | An expression names a column this model did not hand out, in the objective or a constraint. |
-| `ObjectiveQuadCoefficient { first, second, value }` | A quadratic objective coefficient is NaN or infinite, as given or added up over its pair. |
+| `ObjectiveQuadCoefficient { first, second, value }` | A quadratic objective coefficient is NaN or infinite, as given or added up over its pair, or a square's is so large that its Hessian value, twice it, is infinite. |
 | `NonConvexObjective { sense, var }` | The quadratic objective is not convex to minimize, or not concave to maximize. |
 | `SemiBounds { var, bounds }` | A semi variable's bounds are not `lower ..= upper` with `0 < lower` and `upper` finite. |
 | `FurtherCoefficient { objective, var, value }` | A further objective's coefficient is NaN or infinite, as given or added up. |

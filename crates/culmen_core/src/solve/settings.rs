@@ -3,7 +3,7 @@
 
 //! The settings every backend understands, applied per solve.
 
-use core::num::NonZeroUsize;
+use core::num::{NonZeroU64, NonZeroUsize};
 use core::time::Duration;
 
 #[cfg(feature = "serde")]
@@ -45,8 +45,9 @@ pub struct Settings {
     pub presolve: Option<bool>,
     /// The number of branch-and-bound nodes after which a MIP stops.
     pub node_limit: Option<u64>,
-    /// The number of feasible solutions after which a MIP stops.
-    pub solution_limit: Option<u64>,
+    /// The number of feasible solutions after which a MIP stops; at least one, since a MIP that stops before its
+    /// first solution has nothing to stop for.
+    pub solution_limit: Option<NonZeroU64>,
     /// Whether the solver also prints its log to standard output; the log reaches callbacks either way.
     pub console: bool,
 }
@@ -73,6 +74,26 @@ impl Default for Settings {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// A literal solution limit, a [`NonZeroU64`] checked when the code is compiled.
+///
+/// ```
+/// use culmen_core::{Settings, solutions};
+///
+/// let settings = Settings { solution_limit: Some(solutions!(3)), ..Settings::new() };
+/// assert_eq!(settings.solution_limit.map(|n| n.get()), Some(3));
+/// ```
+#[macro_export]
+macro_rules! solutions {
+    ($value:expr $(,)?) => {
+        const {
+            match ::core::num::NonZeroU64::new($value) {
+                ::core::option::Option::Some(n) => n,
+                ::core::option::Option::None => panic!("solutions: zero"),
+            }
+        }
+    };
 }
 
 /// A literal thread count, a [`NonZeroUsize`] checked when the code is compiled.

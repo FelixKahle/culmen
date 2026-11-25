@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The generic callback layer, the observer convenience and the solver, driven by the scripted backend.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
@@ -14,8 +15,9 @@ use proptest::prelude::*;
 
 use culmen_core::{
     ActionError, AddedRow, Backend, Callback, Col, CutContext, Events, Found, HeuristicContext, Improvement,
-    LazyContext, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, Progress, Request, Script,
-    ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, Var, bounds, stop_fn,
+    InvalidBounds, LazyContext, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, Progress,
+    Request, Script, ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, Var, bounds,
+    stop_fn,
 };
 
 fn secs(s: u64) -> Duration {
@@ -112,6 +114,21 @@ fn test_watch_joins_log_chunks_throttles_progress_and_reports_incumbents() {
             "log Info third",
         ]
     );
+}
+
+#[test]
+fn test_watch_drops_the_carriage_return_of_a_line_break_split_across_chunks() {
+    let (m, ..) = two_binaries();
+    let log = |text: &str| Step::Log {
+        elapsed: secs(0),
+        level: LogLevel::Info,
+        text: text.to_owned(),
+    };
+    let steps = vec![log("first\r"), log("\nsecond\r"), log("\r\nthird\r")];
+    let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build().unwrap()).unwrap();
+    let mut seen = Seen::default();
+    solver.solve(Request::new().observer(&mut seen)).unwrap();
+    assert_eq!(seen.0, ["log Info first", "log Info second", "log Info third"]);
 }
 
 #[test]
@@ -315,6 +332,18 @@ fn test_settings_reach_the_backend_and_events_print_by_name() {
 }
 
 #[test]
+fn test_an_action_error_on_invalid_bounds_names_them_as_its_source() {
+    use core::error::Error;
+    let error = ActionError::Bounds(InvalidBounds::NotANumber);
+    assert_eq!(
+        error.source().map(ToString::to_string),
+        Some(InvalidBounds::NotANumber.to_string())
+    );
+    assert!(ActionError::Refused("no".to_owned()).source().is_none());
+    assert!(ActionError::NotFinite { col: Col::new(0) }.source().is_none());
+}
+
+#[test]
 fn test_solving_unloaded_script_is_refused() {
     let mut script = Script::optimal(0.0, Vec::new());
     assert!(script.solve(&culmen_core::Settings::new(), &mut ()).is_err());
@@ -410,6 +439,39 @@ proptest! {
             prop_assert_eq!(set.contains(*event), c);
         }
     }
+
+    /// The set operations hold each single event exactly as the boolean operation on its membership does.
+    #[test]
+    fn test_events_set_operations_agree_with_membership(
+        a in prop::collection::vec(any::<bool>(), 9),
+        b in prop::collection::vec(any::<bool>(), 9),
+    ) {
+        let set = |chosen: &[bool]| -> Events {
+            SINGLE.iter().zip(chosen).filter(|&(_, &c)| c).map(|(&e, _)| e).collect()
+        };
+        let (x, y) = (set(&a), set(&b));
+        let mut assigned = x;
+        assigned -= y;
+        prop_assert_eq!(assigned, x - y);
+        for (i, event) in SINGLE.iter().enumerate() {
+            prop_assert_eq!((x | y).contains(*event), a[i] || b[i]);
+            prop_assert_eq!((x & y).contains(*event), a[i] && b[i]);
+            prop_assert_eq!((x - y).contains(*event), a[i] && !b[i]);
+            prop_assert_eq!((!x).contains(*event), !a[i]);
+        }
+        prop_assert_eq!(!!x, x);
+    }
+}
+
+#[test]
+fn test_events_display_as_a_set_of_names() {
+    assert_eq!(Events::NONE.to_string(), "{}");
+    assert_eq!((Events::CUT | Events::LOG).to_string(), "{LOG, CUT}");
+    assert_eq!(Events::ALL.complement(), Events::NONE);
+    assert_eq!(
+        (Events::ALL - Events::NATIVE).to_string(),
+        "{LOG, PROGRESS, POLL, FEASIBLE, INCUMBENT, LAZY, CUT, HEURISTIC}"
+    );
 }
 
 #[test]

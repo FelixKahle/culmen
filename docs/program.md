@@ -205,7 +205,8 @@ repeat it; the coefficients of a pair are added up in the order given, and a pai
 
 Solvers take the quadratic part as `½ xᵀHx` with a symmetric Hessian `H`. In that form `Hᵢᵢ = 2q` on the diagonal and
 `Hᵢⱼ = Hⱼᵢ = q` off it; `quadratic().hessian()` gives its lower triangle column by column, `(column, row, value)` with
-`row >= column`, which is the layout HiGHS reads.
+`row >= column`, which is the layout HiGHS reads. Every value of `H` is finite: a plan whose square has a coefficient
+so large that `2q` overflows is refused with `NonFiniteQuadCoefficient`.
 
 | Method | Gives |
 |---|---|
@@ -348,7 +349,9 @@ fn main() -> Result<(), culmen::ProgramError> {
 `program.objective_value(values)` is the objective at a point, quadratic part and offset included.
 `program.objective_values(values)` is every objective's value, the own one first, indexed by `ObjectiveId`.
 `program.max_violation(values)` is the largest amount by which the point violates a column bound, a row, integrality
-or a semi column's choice between zero and its bounds, and zero for a feasible point. Both panic when `values` holds fewer values than the program has columns. They are the
+or a semi column's choice between zero and its bounds, zero for a feasible point and infinite for one holding NaN. An
+infinite value or activity lies inside a bound open on its side, as `Bounds::contains` reads it, so check that a
+point is finite where that matters. Both panic when `values` holds fewer values than the program has columns. They are the
 way to check a solution against the program independently of any solver:
 
 ```rust
@@ -375,7 +378,8 @@ fn main() -> Result<(), culmen::ModelError> {
 `program.to_lp_string()` writes the program in the CPLEX LP file format, a `Result<String, LpFileError>`, and `program.write_lp(&mut out)` writes it into
 any `fmt::Write`. The output is for reading by eye or by another solver while debugging:
 
-- Names are reduced to the characters the format allows. An unnamed column is written `x<index>` and an unnamed row
+- Names are reduced to the characters the format allows, and a name that is one of the format's keywords (`max`,
+  `sos`, `end`, …, in any case) is prefixed `_`. An unnamed column is written `x<index>` and an unnamed row
   `r<index>`; distinct names that reduce to the same text are not told apart.
 - A ranged row becomes two rows suffixed `_lo` and `_hi`; a row with no finite bound is left out.
 - Integer and semi-integer columns are listed under `General`, semi-continuous and semi-integer ones under

@@ -65,6 +65,22 @@ impl Outcome {
         }
     }
 
+    /// The objective value of the best solution found, offset included; `None` when there is none.
+    ///
+    /// ```
+    /// use culmen_core::{Outcome, Solution, StopReason};
+    ///
+    /// let best = Solution { objective: 4.5, values: vec![1.0].into() };
+    /// assert_eq!(Outcome::Optimal(best.clone()).objective(), Some(4.5));
+    /// let stopped = Outcome::Stopped { reason: StopReason::TimeLimit, best: Some(best), bound: Some(4.0) };
+    /// assert_eq!(stopped.objective(), Some(4.5));
+    /// assert_eq!(Outcome::Infeasible.objective(), None);
+    /// ```
+    #[must_use]
+    pub fn objective(&self) -> Option<f64> {
+        self.solution().map(|solution| solution.objective)
+    }
+
     /// The best solution found, by value.
     #[must_use]
     pub fn into_solution(self) -> Option<Solution> {

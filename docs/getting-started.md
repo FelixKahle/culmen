@@ -35,11 +35,12 @@ Depend on `culmen` only. It re-exports everything a model and a solve need; the 
 With `default-features = false` you get the modelling layer, the program and the solve API without a solver: enough to
 build and inspect models, write LP files, or drive a backend of your own.
 
-`culmen::prelude` holds what a model and a solve need: `Model`, `Var`, `LinExpr`, `Linear`, `Constraint`, `Bounds`,
-`Col`, `Row`, `Program`, `Sense`, `Solver`, `Request`, `Settings`, `Outcome`, `Solution`, `Solved`, `StopReason`,
-`Observer`, `Progress`, `Improvement`, `LogLine`, `Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`,
-`ConstraintMap`, the functions `product`, `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`,
-`absolute_gap!` and `threads!`, and, with their features, `Highs` and the modelling macros. Everything else is at the
+`culmen::prelude` holds what a model and a solve need: `Model`, `Var`, `LinExpr`, `QuadExpr`, `Linear`, `Quadratic`,
+`Constraint`, `Objective`, `Tolerance`, `Bounds`, `Col`, `Row`, `Program`, `Sense`, `Solver`, `Request`, `Settings`,
+`Start`, `Outcome`, `Solution`, `Solved`, `SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`,
+`LogLine`, `Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the functions `product`,
+`set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`, `absolute_gap!`, `weight!`, `threads!` and
+`solutions!`, and, with their features, `Highs` and the modelling macros. Everything else is at the
 crate root, `culmen::…`.
 
 ## A first model
@@ -115,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(m.constraint_name(capacity), Some("capacity"));
 
     let solved = Solver::new(Highs::new(), m.build()?)?.solve(Request::new())?;
-    assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(15.0));
+    assert_eq!(solved.outcome.objective(), Some(15.0));
     Ok(())
 }
 ```
@@ -133,7 +134,7 @@ as above. The ones you meet first:
 | `ModelError` | `Model::build` | [Modelling](modelling.md#building-and-modelerror) |
 | `ProgramError` | `ProgramPlan::build` | [The program as data](program.md#checks-and-programerror) |
 | `InvalidBounds` | `Bounds::new` and its conversions | [The program as data](program.md#bounds) |
-| `LoadError` | `Solver::new`: a model class the backend does not solve, or the backend's own error | [Solving](solving.md#model-classes-and-refusal) |
+| `LoadError` | `Solver::new`: a model class the backend does not solve, a feature it does not take, or the backend's own error | [Solving](solving.md#model-classes-and-refusal) |
 | `HighsError` | `Solver::solve` with HiGHS, and inside `LoadError` from `Solver::new` | [HiGHS](highs.md#errors) |
 | `ActionError` | actions inside a callback | [Callbacks](callbacks.md#contexts) |
 

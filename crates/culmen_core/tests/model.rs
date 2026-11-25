@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The program plan, the model, expressions and the LP-file writer.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
@@ -250,6 +251,16 @@ fn test_operators_build_the_expected_terms() {
         }
     );
     assert_eq!([x, y].into_iter().map(|c| 2 * c).sum::<LinExpr>(), 2 * x + 2 * y);
+    assert_eq!([x, y].into_iter().map(|c| 2 * c).collect::<LinExpr>(), 2 * x + 2 * y);
+    let mut extended = LinExpr::from(3);
+    extended.extend([x, y]);
+    assert_eq!(extended, x + y + 3);
+    assert_eq!(x / 4, x * 0.25);
+    assert_eq!((2 * x) / 4, x * 0.5);
+    let mut halved = 2 * x + 4;
+    halved /= 2.0;
+    assert_eq!(halved, x + 2);
+    assert_eq!((2 * x + 4) / 2, x + 2);
 }
 
 #[test]
@@ -267,6 +278,19 @@ fn test_keyed_families_over_filtered_products() {
         x.values(&values).collect::<Vec<_>>(),
         [(&(0, 'a'), 1.0), (&(0, 'b'), 0.0), (&(1, 'a'), 1.0)]
     );
+}
+
+#[test]
+fn test_keyed_families_are_read_by_a_borrowed_key() {
+    let products = vec!["cork".to_owned(), "glass".to_owned()];
+    let mut m = Model::new();
+    let take = m.add_var_map(products.clone(), |p| Var::binary().name(format!("take[{p}]")));
+    for p in &products {
+        assert_eq!(Some(take[p]), take.get(p.as_str()));
+        assert_eq!(take[p], take[p.clone()]);
+    }
+    assert!(take.contains_key("glass") && !take.contains_key("tin"));
+    assert_eq!(m.var_name(take[&products[1]]), Some("take[glass]"));
 }
 
 #[test]
@@ -289,6 +313,48 @@ fn test_lp_file_writes_every_section() {
                     range_hi: 1 x_1_ + 1 _1y <= 4\n fix: 1 x_1_ - 1 _1y = 0\nBounds\n -2 <= x_1_ <= 5\n _1y free\n\
                     General\n x_1_\nEnd\n";
     assert_eq!(text, expected);
+}
+
+#[test]
+fn test_lp_file_escapes_names_the_format_reserves() {
+    // HiGHS 1.16 refuses to read a file whose column is named `sos`, `min`, `max`, `minimize`, `maximum` or
+    // `minimise`: they are keywords of the format.
+    let mut m = Model::new();
+    let x = m.add_var(Var::integer().upper(3).name("max"));
+    let y = m.add_var(Var::continuous().upper(3).name("SOS"));
+    let z = m.add_var(Var::continuous().upper(3).name("Minimize"));
+    m.add_named_constraint("min", (x + y + z).geq(1));
+    m.minimize(2.0 * x + y + z);
+    let text = m.build().unwrap().to_lp_string().unwrap();
+    let expected = "Minimize\n obj: 2 _max + 1 _SOS + 1 _Minimize\nSubject To\n _min: 1 _max + 1 _SOS + 1 _Minimize >= 1\n\
+                    Bounds\n 0 <= _max <= 3\n 0 <= _SOS <= 3\n 0 <= _Minimize <= 3\nGeneral\n _max\nEnd\n";
+    assert_eq!(text, expected);
+}
+
+#[test]
+fn test_product_ends_for_good_over_an_inner_set_that_is_not_fused() {
+    /// Every other call yields the next number: `Some(1)`, `None`, `Some(3)`, `None`, …
+    #[derive(Clone)]
+    struct Flicker(u8);
+
+    impl Iterator for Flicker {
+        type Item = u8;
+
+        fn next(&mut self) -> Option<u8> {
+            self.0 = self.0.wrapping_add(1);
+            (self.0 % 2 == 1).then_some(self.0)
+        }
+    }
+
+    fn fused<I: core::iter::FusedIterator>(iter: I) -> I {
+        iter
+    }
+
+    let inner = set(Flicker(0));
+    let mut pairs = fused(product(&(0..1), &inner));
+    assert_eq!(pairs.next(), Some((0, 1)));
+    assert_eq!(pairs.next(), None);
+    assert_eq!(pairs.next(), None, "a fused iterator stays at its end");
 }
 
 /// A small expression over `n` columns: terms with repeats, and a constant.
@@ -513,4 +579,18 @@ fn test_a_point_with_a_nan_is_infinitely_far_from_feasible() {
         f64::INFINITY
     );
     assert_eq!(program.max_violation(TiSlice::from_ref(&[0.5, 0.25])), 0.0);
+}
+
+#[test]
+fn test_an_infinite_value_lies_inside_a_bound_open_on_its_side() {
+    // The closed intervals of the extended reals, as `Bounds::contains` reads them.
+    let open = bounds!(0.0, f64::INFINITY);
+    assert!(open.contains(f64::INFINITY));
+    assert_eq!(open.violation(f64::INFINITY), 0.0);
+    assert_eq!(open.violation(f64::NEG_INFINITY), f64::INFINITY);
+    assert_eq!(Integrality::Integer.violation(open, f64::INFINITY), 0.0);
+    assert_eq!(
+        Integrality::Integer.violation(bounds!(0.0, 1.0), f64::INFINITY),
+        f64::INFINITY
+    );
 }

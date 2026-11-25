@@ -83,7 +83,7 @@ use highs_sys::{
 };
 
 use crate::instance::{CallbackGuard, text};
-use crate::{Highs, Loaded};
+use crate::{CallStatus, Highs, Loaded};
 
 /// A caught panic's payload, resumed once the run has returned.
 pub(crate) type Payload = Box<dyn Any + Send>;
@@ -946,11 +946,22 @@ impl HeuristicContext for HighsHeuristic<'_> {
         Ok(())
     }
 
+    /// HiGHS completes the entries by solving the MIP with them fixed. It takes them only when they name at least one
+    /// column, each column once, with a value its column's bounds and integrality admit; otherwise the action is
+    /// refused, also after a partial solution supplied before at the same query was taken. A refused action leaves
+    /// the solution supplied before at the same query, full or completed, as HiGHS's to check.
     fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
         let num_cols = self.program.num_cols();
         check_entries(entries, num_cols)?;
+        check_once(entries, num_cols)?;
+        // Taking the entries writes them over the buffer, which may hold a solution supplied before at this query; a
+        // failed repair leaves them there, so the buffer is put back.
+        let before = self.record.buffer().to_vec();
         self.record.set_sparse(entries)?;
-        self.record.repair()?;
+        if let Err(error) = self.record.repair() {
+            self.record.buffer().copy_from_slice(&before);
+            return Err(error);
+        }
         // HiGHS copies the C record's flag back over its own after the callback, so the flag is set here too; the
         // repair wrote a value for every column into the record's buffer.
         self.record.mark_written();
@@ -960,6 +971,28 @@ impl HeuristicContext for HighsHeuristic<'_> {
         }
         Ok(())
     }
+}
+
+/// Refuses partial-solution entries that name no column or a column twice, which HiGHS ignores with a warning.
+///
+/// # Errors
+///
+/// [`ActionError::Refused`] for no entries, or naming the first column given twice.
+///
+/// # Panics
+///
+/// When an entry names a column at or beyond `num_cols`, which [`check_entries`] refuses first.
+fn check_once(entries: &[(Col, f64)], num_cols: usize) -> Result<(), ActionError> {
+    if entries.is_empty() {
+        return Err(ActionError::Refused("no entries are given".into()));
+    }
+    let mut seen = vec![false; num_cols];
+    for &(col, _) in entries {
+        if core::mem::replace(&mut seen[col.index()], true) {
+            return Err(ActionError::Refused(format!("{col:?} is given twice")));
+        }
+    }
+    Ok(())
 }
 
 /// HiGHS's input record at the user-solution kind: the buffer HiGHS sized for one value per column of its model,
@@ -996,10 +1029,10 @@ impl UserSolution<'_> {
     ///
     /// # Errors
     ///
-    /// [`ActionError::Refused`] when a column is not one of HiGHS's model, or HiGHS refuses the entries.
+    /// [`ActionError::Refused`] when a column is not one of HiGHS's model, or HiGHS does not take the entries.
     fn set_sparse(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
         let refused = || ActionError::Refused("HiGHS refused the entries".into());
-        // HiGHS checks a column only against `> num_col`, so a column at the count itself is refused here.
+        // A column HiGHS's model lacks is refused before HiGHS reads the arrays.
         let num_cols = self.num_cols();
         let known = |col: Col| HighsInt::try_from(col.index()).ok().filter(|_| col.index() < num_cols);
         let index = entries.iter().map(|&(col, _)| known(col)).collect::<Option<Vec<_>>>();
@@ -1019,10 +1052,15 @@ impl UserSolution<'_> {
         // trampoline on this thread and is not delivered.
         let status =
             unsafe { Highs_setCallbackSparseSolution(&raw mut *self.0, count, index.as_ptr(), value.as_ptr()) };
-        if status == kHighsStatusError {
-            Err(refused())
-        } else {
-            Ok(())
+        // HiGHS stores the entries only when its check of them passes without a warning. A warning (no entries, a
+        // column named twice, or a value outside its column's bounds or integrality) leaves the solution HiGHS held
+        // before, which a repair would complete again as if these entries were taken.
+        match CallStatus::from_raw(status) {
+            CallStatus::Ok => Ok(()),
+            CallStatus::Warning => Err(ActionError::Refused(
+                "HiGHS refused the entries: a value lies outside its column's bounds or integrality".into(),
+            )),
+            CallStatus::Error => Err(refused()),
         }
     }
 

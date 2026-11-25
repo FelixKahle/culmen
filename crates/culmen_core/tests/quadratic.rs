@@ -3,6 +3,7 @@
 
 //! Quadratic objectives: the operators, the model and plan checks, the convexity check, model classes, and the
 //! typed refusal of a class a backend does not solve.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
@@ -122,6 +123,11 @@ fn cases(x: Col, y: Col, a: f64, b: f64, k: i32, u: f64, v: f64, d: f64) -> Vec<
     let mut grown = e.clone();
     grown += y * y;
     grown -= a * x;
+    let mut divided = e.clone();
+    divided /= d;
+    // A whole divisor that is never zero.
+    let n = if k == 0 { 2 } else { k };
+    let nf = f64::from(n);
     vec![
         ("col * col", (x * y).into(), u * v),
         ("col * term", (x * (a * y)).into(), a * u * v),
@@ -137,12 +143,16 @@ fn cases(x: Col, y: Col, a: f64, b: f64, k: i32, u: f64, v: f64, d: f64) -> Vec<
         ("quad term * i32", (q * k).into(), kf * u * v),
         ("i32 * quad term", (k * q).into(), kf * u * v),
         ("quad term / f64", (q / d).into(), u * v / d),
+        ("quad term / i32", (q / n).into(), u * v / nf),
         ("-quad term", (-q).into(), -u * v),
         ("quad expr * f64", e.clone() * a, a * ev),
         ("f64 * quad expr", a * e.clone(), a * ev),
         ("quad expr * i32", e.clone() * k, kf * ev),
         ("i32 * quad expr", k * e.clone(), kf * ev),
         ("quad expr / f64", e.clone() / d, ev / d),
+        ("quad expr / i32", e.clone() / n, ev / nf),
+        ("quad expr /= f64", divided, ev / d),
+        ("i32 as quad expr", QuadExpr::from(k), kf),
         ("-quad expr", -e.clone(), -ev),
         ("quad expr *= f64", assigned, a * ev),
         ("quad expr += and -=", grown, ev + v * v - a * u),
@@ -607,6 +617,52 @@ fn test_the_lp_file_writes_the_quadratic_part_halved_in_brackets() {
             .to_lp_string()
             .unwrap()
             .starts_with("Minimize\n obj: 0 + 4\n")
+    );
+}
+
+#[test]
+fn test_a_product_with_a_zero_factor_keeps_a_non_finite_coefficient() {
+    let (mut m, x, _) = xy();
+    // `(NaN · x) · 0` is NaN · x, as `(NaN · x) * 0.0` is: the build refuses it rather than lose it.
+    m.minimize(LinExpr::from(f64::NAN * x) * LinExpr::from(0.0));
+    let error = m.build().unwrap_err();
+    assert!(
+        matches!(&error, ModelError::ObjectiveCoefficient { var, value } if var.col == x && value.is_nan()),
+        "{error:?}"
+    );
+    m.minimize(LinExpr::from(0.0) * (f64::INFINITY * x + 1.0));
+    assert!(matches!(m.build(), Err(ModelError::ObjectiveCoefficient { .. })));
+}
+
+#[test]
+fn test_a_square_whose_hessian_value_overflows_is_refused() {
+    // The coefficient 1e308 is finite, but the Hessian HiGHS reads holds it twice on the diagonal.
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    plan.quadratic = vec![(x, x, 1e308)];
+    assert_eq!(
+        plan.clone().build(),
+        Err(ProgramError::NonFiniteQuadCoefficient {
+            first: x,
+            second: x,
+            value: f64::INFINITY
+        })
+    );
+    plan.quadratic = vec![(x, x, 5e307)];
+    let program = plan.build().unwrap();
+    assert_eq!(program.quadratic().hessian().collect::<Vec<_>>(), [(x, x, 1e308)]);
+
+    let (mut m, x, y) = xy();
+    m.maximize(-1e308 * x * x);
+    assert!(
+        matches!(m.build(), Err(ModelError::ObjectiveQuadCoefficient { first, value, .. })
+            if first.col == x && value == f64::NEG_INFINITY),
+    );
+    m.minimize(1e308 * x * y + 1e308 * y * y);
+    assert!(
+        matches!(m.build(), Err(ModelError::ObjectiveQuadCoefficient { first, value, .. })
+            if first.col == y && value == f64::INFINITY),
+        "an off-diagonal coefficient is its own Hessian value; the square overflows"
     );
 }
 

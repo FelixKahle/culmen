@@ -34,8 +34,10 @@ use tokens::{Relation, first_span, rewrite_indices, split_commas, split_keyword,
 /// `variable!(model, spec[, kind])`. The spec is the name, `x` or `x[i in I, j in J if cond]`, with the bounds it
 /// is given: `x`, `x >= lb`, `x <= ub`, `x == value`, `lb <= x <= ub` or `ub >= x >= lb`. The kind is `Cont` (the
 /// default), `Int`, `Bin`, `Free`, `SemiCont` or `SemiInt`, also spelled `Continuous`, `Integer`, `Binary`,
-/// `SemiContinuous` and `SemiInteger`; a semi kind takes both bounds, `0 < lb <= ub < +inf`. Expands to
-/// `Model::add_var(Var::…)` or `Model::add_var_map(keys, |key| Var::…)`.
+/// `SemiContinuous` and `SemiInteger`; a semi kind takes both bounds, `0 < lb <= ub < +inf`. A single bound may come
+/// first, `lb <= x`, where the left side is not a bare name: a bare name on the left is the variable. Each bound is
+/// evaluated once, in the order written. Expands to `Model::add_var(Var::…)` or
+/// `Model::add_var_map(keys, |key| Var::…)`.
 #[proc_macro]
 pub fn variable(input: TokenStream) -> TokenStream {
     expand(input, variable_tokens)
@@ -43,7 +45,8 @@ pub fn variable(input: TokenStream) -> TokenStream {
 
 /// A constraint as a value, `constraint!(lhs <= rhs)`; added, `constraint!(model, lhs <= rhs)`; added by name and
 /// bound to a local, `constraint!(model, name, lhs <= rhs)`; or a family, `constraint!(model, name[i in I], body)`.
-/// The relation is `<=`, `>=`, `==`, or a range `lo <= expr <= hi`. Expands to `Linear::leq`, `Linear::geq`,
+/// The relation is `<=`, `>=`, `==`, or a range `lo <= expr <= hi` or `hi >= expr >= lo`, each side evaluated once
+/// in the order written. Expands to `Linear::leq`, `Linear::geq`,
 /// `Linear::equals` or `Linear::between`, and `Model::add_constraint`, `Model::add_named_constraint` or
 /// `Model::add_constraint_map`.
 #[proc_macro]
@@ -115,6 +118,8 @@ struct Bounds {
     lower: Option<TokenStream2>,
     upper: Option<TokenStream2>,
     fixed: Option<TokenStream2>,
+    /// Whether the upper bound is written before the lower, as in `ub >= x >= lb`.
+    upper_first: bool,
 }
 
 /// A variable spec split into the declaration and its bounds.
@@ -126,14 +131,17 @@ fn spec(tokens: TokenStream2) -> syn::Result<(TokenStream2, Bounds)> {
     let (parts, relations) = split_relations(tokens);
     let rel: Vec<Relation> = relations.iter().map(|&(r, _)| r).collect();
     let span = relations.first().map_or_else(Span::call_site, |&(_, span)| span);
+    // The left side is the declaration whenever it reads as one, so in `x <= ub` with `ub` a local the variable
+    // is `x`; the bound comes first only where the left side cannot be declared, as in `1 <= x`.
     let (declared, bounds) = match (rel.as_slice(), parts.as_slice()) {
         ([], [x]) => (x, Bounds::default()),
-        ([Relation::Geq], [x, b]) | ([Relation::Leq], [b, x]) if is_head(x) => (x, Bounds::lower(b)),
-        ([Relation::Leq], [x, b]) | ([Relation::Geq], [b, x]) if is_head(x) => (x, Bounds::upper(b)),
+        ([Relation::Geq], [x, b]) if is_head(x) => (x, Bounds::lower(b)),
+        ([Relation::Leq], [x, b]) if is_head(x) => (x, Bounds::upper(b)),
         ([Relation::Eq], [x, b]) if is_head(x) => (x, Bounds::fixed(b)),
-        ([Relation::Leq, Relation::Leq], [l, x, u]) | ([Relation::Geq, Relation::Geq], [u, x, l]) => {
-            (x, Bounds::range(l, u))
-        }
+        ([Relation::Leq], [b, x]) if is_head(x) => (x, Bounds::lower(b)),
+        ([Relation::Geq], [b, x]) if is_head(x) => (x, Bounds::upper(b)),
+        ([Relation::Leq, Relation::Leq], [l, x, u]) => (x, Bounds::range(l, u, false)),
+        ([Relation::Geq, Relation::Geq], [u, x, l]) => (x, Bounds::range(l, u, true)),
         _ => {
             return Err(syn::Error::new(
                 span,
@@ -169,12 +177,13 @@ impl Bounds {
         }
     }
 
-    /// Both bounds.
-    fn range(l: &TokenStream2, u: &TokenStream2) -> Self {
+    /// Both bounds, the upper written first if `upper_first`.
+    fn range(l: &TokenStream2, u: &TokenStream2, upper_first: bool) -> Self {
         Self {
             lower: Some(rewrite_indices(l.clone())),
             upper: Some(rewrite_indices(u.clone())),
             fixed: None,
+            upper_first,
         }
     }
 }
@@ -193,9 +202,24 @@ fn var_expr(root: &TokenStream2, kind: Kind, bounds: &Bounds) -> TokenStream2 {
         let v = Ident::new("value", Span::mixed_site());
         return quote!({ let #v = #value; #base.bounds(#v, #v) });
     }
-    let lower = bounds.lower.as_ref().map(|l| quote!(.lower(#l)));
-    let upper = bounds.upper.as_ref().map(|u| quote!(.upper(#u)));
-    quote!(#base #lower #upper)
+    match (&bounds.lower, &bounds.upper) {
+        (Some(l), Some(u)) => {
+            // Each bound is evaluated once, in the order written.
+            let (lower, upper) = (
+                Ident::new("lower", Span::mixed_site()),
+                Ident::new("upper", Span::mixed_site()),
+            );
+            let lets = if bounds.upper_first {
+                quote!(let #upper = #u; let #lower = #l;)
+            } else {
+                quote!(let #lower = #l; let #upper = #u;)
+            };
+            quote!({ #lets #base.lower(#lower).upper(#upper) })
+        }
+        (Some(l), None) => quote!(#base.lower(#l)),
+        (None, Some(u)) => quote!(#base.upper(#u)),
+        (None, None) => base,
+    }
 }
 
 /// `variable!`.
@@ -250,13 +274,25 @@ fn relation(root: &TokenStream2, tokens: TokenStream2) -> syn::Result<TokenStrea
         ([Relation::Leq], [l, r]) => Ok(quote!(#linear::leq(#l, #r))),
         ([Relation::Geq], [l, r]) => Ok(quote!(#linear::geq(#l, #r))),
         ([Relation::Eq], [l, r]) => Ok(quote!(#linear::equals(#l, #r))),
-        ([Relation::Leq, Relation::Leq], [lo, e, hi]) => Ok(quote!(#linear::between(#e, #lo, #hi))),
-        ([Relation::Geq, Relation::Geq], [hi, e, lo]) => Ok(quote!(#linear::between(#e, #lo, #hi))),
+        ([Relation::Leq, Relation::Leq], [lo, e, hi]) => Ok(between(&linear, [("lo", lo), ("e", e), ("hi", hi)])),
+        ([Relation::Geq, Relation::Geq], [hi, e, lo]) => Ok(between(&linear, [("hi", hi), ("e", e), ("lo", lo)])),
         _ => Err(syn::Error::new(
             span,
             "a constraint reads `lhs <= rhs`, `lhs >= rhs`, `lhs == rhs` or `lo <= e <= hi`",
         )),
     }
+}
+
+/// `Linear::between(e, lo, hi)` over the three parts of a range, each named `lo`, `e` or `hi`, evaluated once and
+/// in the order given, which is the order written.
+fn between(linear: &TokenStream2, parts: [(&str, &TokenStream2); 3]) -> TokenStream2 {
+    let bind = |name: &str| Ident::new(name, Span::mixed_site());
+    let lets = parts.iter().map(|&(name, part)| {
+        let name = bind(name);
+        quote!(let #name = #part;)
+    });
+    let (e, lo, hi) = (bind("e"), bind("lo"), bind("hi"));
+    quote!({ #(#lets)* #linear::between(#e, #lo, #hi) })
 }
 
 /// `constraint!`.

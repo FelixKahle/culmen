@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The modelling macros build exactly the program the plain methods build.
+
 #![cfg(feature = "macros")]
 #![cfg_attr(
     test,
@@ -208,4 +209,44 @@ fn test_model_errors_name_macro_declared_entries() {
     let error = m.build().unwrap_err();
     assert!(error.to_string().contains("`z[0]`"), "{error}");
     let _ = (z, ProgramError::NonFiniteOffset { value: 0.0 });
+}
+
+#[test]
+fn test_a_bound_held_in_a_local_bounds_the_variable_on_the_left() {
+    let (lb, ub) = (-2.0, 5.0);
+    let mut m = Model::new();
+    variable!(m, x <= ub);
+    variable!(m, y >= lb, Free);
+    let program = m.build().unwrap();
+    assert_eq!(program.columns()[x].bounds, bounds!(0.0, 5.0));
+    assert_eq!(program.columns()[y].bounds, bounds!(-2.0, f64::INFINITY));
+    assert_eq!((m.var_name(x), m.var_name(y)), (Some("x"), Some("y")));
+}
+
+/// `value`, noting `label` in `order` as it is evaluated.
+fn noted<T>(order: &std::cell::RefCell<Vec<&'static str>>, label: &'static str, value: T) -> T {
+    order.borrow_mut().push(label);
+    value
+}
+
+#[test]
+fn test_a_range_evaluates_each_part_once_in_the_order_written() {
+    let order = std::cell::RefCell::new(Vec::new());
+    let mut m = Model::new();
+    variable!(m, x);
+    let rising = constraint!(noted(&order, "lo", -1) <= noted(&order, "e", x) <= noted(&order, "hi", 1));
+    assert_eq!(order.take(), ["lo", "e", "hi"]);
+    let falling = constraint!(noted(&order, "hi", 1) >= noted(&order, "e", x) >= noted(&order, "lo", -1));
+    assert_eq!(order.take(), ["hi", "e", "lo"]);
+    assert_eq!((rising, falling), (x.between(-1, 1), x.between(-1, 1)));
+
+    variable!(m, noted(&order, "lb", 1) <= y <= noted(&order, "ub", 2));
+    assert_eq!(order.take(), ["lb", "ub"]);
+    variable!(m, noted(&order, "ub", 4) >= z >= noted(&order, "lb", 3));
+    assert_eq!(order.take(), ["ub", "lb"]);
+    let program = m.build().unwrap();
+    assert_eq!(
+        (program.columns()[y].bounds, program.columns()[z].bounds),
+        (bounds!(1.0, 2.0), bounds!(3.0, 4.0))
+    );
 }

@@ -3,6 +3,7 @@
 
 //! The solver-neutral analysis layer: the checks every request passes before a backend is asked, the set of
 //! analyses, the checked penalty, basis fitting, violations against a simple reference, and serde round trips.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
@@ -10,6 +11,7 @@
 
 use core::cell::RefCell;
 use core::time::Duration;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use culmen_core::{
     Analyses, Analysis, AnalysisError, Backend, Basis, BasisStatus, Bound, Callback, Col, Duals, Iis, InvalidPenalty,
@@ -19,11 +21,12 @@ use culmen_core::{
 };
 use proptest::prelude::*;
 
-/// A backend that ends every solve with a fixed outcome and answers every analysis with zeros, recording which it
-/// was asked for.
+/// A backend that ends every solve with a fixed outcome, or panics out of it when `panics`, and answers every
+/// analysis with zeros, recording which it was asked for.
 #[derive(Debug)]
 struct Canned {
     outcome: Outcome,
+    panics: bool,
     asked: RefCell<Vec<Analysis>>,
 }
 
@@ -31,6 +34,7 @@ impl Canned {
     fn new(outcome: Outcome) -> Self {
         Self {
             outcome,
+            panics: false,
             asked: RefCell::new(Vec::new()),
         }
     }
@@ -61,6 +65,7 @@ impl Backend for Canned {
     }
 
     fn solve(&mut self, _: &Settings, _: &mut dyn Callback<Self>) -> Result<Solved<()>, ScriptError> {
+        assert!(!self.panics, "Canned: a callback panicked");
         Ok(Solved {
             outcome: self.outcome.clone(),
             status: (),
@@ -312,6 +317,24 @@ fn test_a_basis_iis_or_relaxation_ends_the_reading_of_the_last_solve() {
             Analysis::Duals
         ]
     );
+}
+
+#[test]
+fn test_a_solve_that_panics_leaves_no_solve_to_read() {
+    let mut solver = canned(optimal(), false);
+    solver.solve(culmen_core::Request::new()).unwrap();
+    assert!(solver.duals().is_ok());
+    solver.backend_mut().panics = true;
+    let solved = catch_unwind(AssertUnwindSafe(|| solver.solve(culmen_core::Request::new())));
+    assert!(solved.is_err());
+    assert_eq!(
+        solver.duals(),
+        Err(AnalysisError::NotSolved {
+            analysis: Analysis::Duals
+        }),
+        "the backend no longer holds the optimum the solve before ended with"
+    );
+    assert_eq!(asked(&solver), vec![Analysis::Duals]);
 }
 
 #[test]

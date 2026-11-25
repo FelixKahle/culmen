@@ -39,9 +39,9 @@ look up and read a solution through.
 ## Literals are checked when compiled
 
 A value with an invariant has a type that holds it: `Bounds` is a valid interval, `RelativeGap` and `AbsoluteGap`
-are finite and not negative, a thread count is a `NonZeroUsize`. A literal of such a type is written with a macro,
-`bounds!(0.0, 40.0)`, `relative_gap!(0.01)`, `threads!(4)`, which checks it when the code is compiled, so a typo in
-a literal is a compile error, not a run-time `unwrap` panic:
+are finite and not negative, a thread count is a `NonZeroUsize` and a solution limit a `NonZeroU64`. A literal of such
+a type is written with a macro, `bounds!(0.0, 40.0)`, `relative_gap!(0.01)`, `threads!(4)`, `solutions!(5)`, which
+checks it when the code is compiled, so a typo in a literal is a compile error, not a run-time `unwrap` panic:
 
 ```compile_fail
 use culmen::prelude::*;

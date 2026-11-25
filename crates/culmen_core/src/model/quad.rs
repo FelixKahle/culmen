@@ -4,7 +4,7 @@
 //! Quadratic expressions for objectives, their operators, and the sums `sum!` builds.
 
 use core::iter::Sum;
-use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use itertools::Itertools;
 use typed_index_collections::TiSlice;
@@ -247,6 +247,9 @@ const fn term_product(a: Term, b: Term) -> QuadTerm {
 }
 
 /// The product of two linear expressions, expanded: `(Σ a + c)(Σ b + d) = Σ a·b + d·Σ a + c·Σ b + c·d`.
+///
+/// A linear term that scales to zero is left out; one that scales to NaN, as `∞ · 0` does, is kept for the build to
+/// refuse.
 fn product(a: LinExpr, b: LinExpr) -> QuadExpr {
     let terms = a
         .terms
@@ -256,9 +259,8 @@ fn product(a: LinExpr, b: LinExpr) -> QuadExpr {
         .collect();
     let mut linear = LinExpr::from(a.constant * b.constant);
     for (expr, scale) in [(&a, b.constant), (&b, a.constant)] {
-        if scale != 0.0 {
-            linear.terms.extend(expr.terms.iter().map(|&t| t * scale));
-        }
+        let scaled = expr.terms.iter().map(|&t| t * scale);
+        linear.terms.extend(scaled.filter(|t| t.coefficient != 0.0));
     }
     QuadExpr { terms, linear }
 }
@@ -374,6 +376,13 @@ impl Div<f64> for QuadTerm {
     }
 }
 
+impl Div<i32> for QuadTerm {
+    type Output = Self;
+    fn div(self, rhs: i32) -> Self {
+        self / f64::from(rhs)
+    }
+}
+
 impl Neg for QuadTerm {
     type Output = Self;
     fn neg(self) -> Self {
@@ -385,6 +394,13 @@ impl MulAssign<f64> for QuadExpr {
     fn mul_assign(&mut self, rhs: f64) {
         self.terms.iter_mut().for_each(|t| t.coefficient *= rhs);
         self.linear *= rhs;
+    }
+}
+
+impl DivAssign<f64> for QuadExpr {
+    fn div_assign(&mut self, rhs: f64) {
+        self.terms.iter_mut().for_each(|t| t.coefficient /= rhs);
+        self.linear /= rhs;
     }
 }
 
@@ -419,11 +435,16 @@ impl Mul<QuadExpr> for i32 {
 
 impl Div<f64> for QuadExpr {
     type Output = Self;
-    fn div(self, rhs: f64) -> Self {
-        Self {
-            terms: self.terms.into_iter().map(|t| t / rhs).collect(),
-            linear: self.linear / rhs,
-        }
+    fn div(mut self, rhs: f64) -> Self {
+        self /= rhs;
+        self
+    }
+}
+
+impl Div<i32> for QuadExpr {
+    type Output = Self;
+    fn div(self, rhs: i32) -> Self {
+        self / f64::from(rhs)
     }
 }
 
@@ -660,6 +681,12 @@ impl From<Term> for QuadExpr {
 
 impl From<f64> for QuadExpr {
     fn from(constant: f64) -> Self {
+        constant.into_quad_expr()
+    }
+}
+
+impl From<i32> for QuadExpr {
+    fn from(constant: i32) -> Self {
         constant.into_quad_expr()
     }
 }

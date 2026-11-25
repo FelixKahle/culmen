@@ -4,6 +4,7 @@
 //! HiGHS's options: the commonly used ones typed, any other by name.
 
 use core::fmt;
+use core::num::NonZeroU64;
 use core::time::Duration;
 
 #[cfg(feature = "serde")]
@@ -103,6 +104,13 @@ impl ToOption for u64 {
     }
 }
 
+impl ToOption for NonZeroU64 {
+    /// A limit that cannot be zero, as [`u64`]'s.
+    fn to_option(&self, name: &'static str) -> Result<OptionValue, HighsError> {
+        self.get().to_option(name)
+    }
+}
+
 impl ToOption for f64 {
     fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
         Ok(OptionValue::Double(*self))
@@ -180,7 +188,7 @@ impl ToOption for OnOff {
     }
 }
 
-/// The LP solver: `solver`.
+/// The LP or QP solver: `solver`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum LpSolver {
@@ -199,6 +207,8 @@ pub enum LpSolver {
     Pdlp,
     /// The HiPDLP first-order solver.
     Hipdlp,
+    /// The active-set QP solver, HiGHS's solver for a QP.
+    QpAsm,
 }
 
 impl ToOption for LpSolver {
@@ -211,6 +221,7 @@ impl ToOption for LpSolver {
             Self::Hipo => "hipo",
             Self::Pdlp => "pdlp",
             Self::Hipdlp => "hipdlp",
+            Self::QpAsm => "qpasm",
         };
         Ok(OptionValue::from(value))
     }
@@ -440,7 +451,7 @@ options! {
     presolve: Switch = "presolve",
     /// Which presolve rules HiGHS allows when it presolves.
     presolve_mode: PresolveMode = "presolve_mode",
-    /// The LP solver.
+    /// The LP or QP solver.
     solver: LpSolver = "solver",
     /// Whether to use parallelism.
     parallel: Switch = "parallel",
@@ -515,8 +526,8 @@ options! {
     mip_max_start_nodes: u64 = "mip_max_start_nodes",
     /// The MIP leaf-node limit.
     mip_max_leaves: u64 = "mip_max_leaves",
-    /// The number of improving solutions after which a MIP stops.
-    mip_max_improving_sols: u64 = "mip_max_improving_sols",
+    /// The number of improving solutions after which a MIP stops; HiGHS takes no fewer than one.
+    mip_max_improving_sols: NonZeroU64 = "mip_max_improving_sols",
     /// Whether MIP presolve runs only at the root.
     mip_root_presolve_only: bool = "mip_root_presolve_only",
     /// The age at which dynamic LP rows leave the MIP relaxation.
@@ -565,6 +576,10 @@ options! {
     pdlp_iteration_limit: u64 = "pdlp_iteration_limit",
     /// The PDLP optimality tolerance.
     pdlp_optimality_tolerance: f64 = "pdlp_optimality_tolerance",
+    /// The iteration limit of the active-set QP solver.
+    qp_iteration_limit: u64 = "qp_iteration_limit",
+    /// The largest null space the active-set QP solver works with.
+    qp_nullspace_limit: u64 = "qp_nullspace_limit",
     /// Whether to solve the continuous relaxation of a MIP.
     solve_relaxation: bool = "solve_relaxation",
     /// Whether HiGHS may end as infeasible-or-unbounded without trying to tell which; it ends so either way when it
@@ -677,6 +692,7 @@ mod tests {
             LpSolver::Hipo,
             LpSolver::Pdlp,
             LpSolver::Hipdlp,
+            LpSolver::QpAsm,
         ] {
             every.push(HighsOptions {
                 solver: Some(s),
@@ -742,6 +758,11 @@ mod tests {
                 ..HighsOptions::default()
             });
         }
+        every.push(HighsOptions {
+            qp_iteration_limit: Some(1000),
+            qp_nullspace_limit: Some(u64::MAX),
+            ..HighsOptions::default()
+        });
         // HiGHS takes HiPO only when it finds HiPO's extension library on the machine it runs on.
         let hipo = OptionValue::from("hipo");
         let mut instance = Instance::new();

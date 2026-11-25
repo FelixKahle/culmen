@@ -47,8 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The options belong to the backend; change them between solves.
     solver.backend_mut().options_mut().solver = Some(LpSolver::Simplex);
     let second = solver.solve(Request::new())?;
-    assert_eq!(first.outcome.solution().map(|s| s.objective.round()), Some(13.0));
-    assert_eq!(second.outcome.solution().map(|s| s.objective.round()), Some(13.0));
+    assert_eq!(first.outcome.objective().map(f64::round), Some(13.0));
+    assert_eq!(second.outcome.objective().map(f64::round), Some(13.0));
     Ok(())
 }
 ```
@@ -62,7 +62,8 @@ default: `presolve`, `presolve_mode`, `solver`, `parallel`, `run_crossover`, `ti
 `simplex_scale_strategy`, the edge weights, the iteration and update limits), the logging options (`output_flag`,
 `log_to_console`, `log_file`), the MIP options (`mip_rel_gap`, `mip_abs_gap`, the node, leaf, stall and solution
 limits, the cut-pool limits, `mip_heuristic_effort` and each heuristic's switch, `mip_feasibility_tolerance`,
-`mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and tolerances, `solve_relaxation`,
+`mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and tolerances, the active-set QP solver's
+`qp_iteration_limit` and `qp_nullspace_limit`, `solve_relaxation`,
 `allow_unbounded_or_infeasible` and `presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field.
 
 A field whose HiGHS option takes one of a few values is an enum:
@@ -72,7 +73,7 @@ A field whose HiGHS option takes one of a few values is an enum:
 | `Switch` | `Off`, `Choose`, `On` | `presolve`, `parallel`, `run_crossover` |
 | `PresolveMode` | `Choose`, `InitialSweep`, `Light`, `Full` | `presolve_mode` |
 | `OnOff` | `Off`, `On` | `ranging` |
-| `LpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo`, `Pdlp`, `Hipdlp` | `solver` |
+| `LpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo`, `Pdlp`, `Hipdlp`, `QpAsm` | `solver` |
 | `MipLpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo` | `mip_lp_solver` |
 | `MipIpmSolver` | `Choose`, `Ipm`, `Ipx`, `Hipo` | `mip_ipm_solver` |
 | `SimplexStrategy` | `Choose`, `Dual`, `DualSip`, `DualPami`, `Primal` | `simplex_strategy` |
@@ -137,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let worker = std::thread::spawn(move || solver.solve(Request::new().settings_from(Settings { threads: Some(threads!(2)), ..Settings::new() })));
     let solved = worker.join().map_err(|_| "the solve thread panicked")??;
-    assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(2.0));
+    assert_eq!(solved.outcome.objective(), Some(2.0));
     Ok(())
 }
 ```
@@ -177,7 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(status.primal, SolutionStatus::Feasible);
     assert_eq!(status.mip_gap, None);
     assert_eq!(status.model.to_string(), "optimal");
-    assert!((solved.outcome.solution().ok_or("no solution")?.objective - 22.0).abs() < 1e-9);
+    assert!((solved.outcome.objective().ok_or("no solution")? - 22.0).abs() < 1e-9);
     Ok(())
 }
 ```
@@ -483,7 +484,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut inspect = Inspect::default();
     let solved = Solver::new(Highs::new(), m.build()?)?.solve_with(Request::new(), &mut inspect)?;
-    assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(25.0));
+    assert_eq!(solved.outcome.objective(), Some(25.0));
     assert!(inspect.warnings.is_empty());
     Ok(())
 }
@@ -503,7 +504,9 @@ HiGHS 1.16 does not define.
   or `ActionError::Length` or `ActionError::NotFinite`. HiGHS then checks the solution against the model and keeps
   it as its incumbent if it is feasible and better.
 - `ctx.supply_partial(&entries)` offers values for some columns, and HiGHS completes them into a feasible solution
-  if it can. It returns `ActionError::Refused` when HiGHS refuses the entries or finds no feasible completion.
+  if it can. It returns `ActionError::Refused` for no entries, for a column named twice, for a value outside its
+  column's bounds or integrality, and when HiGHS finds no feasible completion. A refused call leaves what an earlier
+  call at the same query supplied.
 
 HiGHS calls neither solution callback for a solution it takes this way, so the backend reports it itself: once a
 MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as `INCUMBENT`, and so reaches the
@@ -549,7 +552,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut callback = Start { values: Some(start), supplied: Vec::new() };
     let solved = solver.solve_with(Request::new(), &mut callback)?;
     assert_eq!(callback.supplied, [Ok(())]);
-    assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(25.0));
+    assert_eq!(solved.outcome.objective(), Some(25.0));
     Ok(())
 }
 ```

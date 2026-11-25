@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every HiGHS callback kind HiGHS can be made to fire, through the generic layer and the HiGHS contexts.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
@@ -15,9 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use culmen_core::{
-    Backend, Callback, Col, Events, HeuristicContext, Improvement, LinExpr, Linear, LogLine, Model, Observer, Outcome,
-    Phase, PollContext, Program, Progress, Request, Settings, Solution, SolutionContext, Solver, StopReason, TiVec,
-    Var, relative_gap,
+    ActionError, Backend, Callback, Col, Events, HeuristicContext, Improvement, LinExpr, Linear, LogLine, Model,
+    Observer, Outcome, Phase, PollContext, Program, Progress, Request, Settings, Solution, SolutionContext, Solver,
+    StopReason, TiVec, Var, relative_gap,
 };
 use culmen_highs::{Highs, HighsNative, HighsOptions, LpSolver, PollSource, QueryOrigin, Switch};
 use culmen_testing::instances::assignment;
@@ -259,7 +260,8 @@ struct Kinds {
     incumbents: Vec<f64>,
     queries: Vec<QueryOrigin>,
     supply: Option<Vec<f64>>,
-    supply_partial: Option<Vec<(Col, f64)>>,
+    /// Partial solutions to supply, in order, at the first query.
+    supply_partial: Vec<Vec<(Col, f64)>>,
     supplied: Vec<Result<(), culmen_core::ActionError>>,
     /// Each cut pool's column count and entry count.
     cut_pools: Vec<(usize, usize)>,
@@ -290,7 +292,7 @@ impl Callback<Highs> for Kinds {
         if let Some(values) = self.supply.take() {
             self.supplied.push(ctx.supply(&TiVec::from(values)));
         }
-        if let Some(entries) = self.supply_partial.take() {
+        for entries in core::mem::take(&mut self.supply_partial) {
             self.supplied.push(ctx.supply_partial(&entries));
         }
     }
@@ -450,7 +452,7 @@ fn test_a_partial_solution_is_repaired_into_an_incumbent() {
     let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
     let partial = vec![(take[0], 1.0), (take[1], 1.0)];
     let mut kinds = Kinds {
-        supply_partial: Some(partial),
+        supply_partial: vec![partial],
         ..Kinds::default()
     };
     solver.solve_with(Request::new(), &mut kinds).unwrap();
@@ -460,6 +462,76 @@ fn test_a_partial_solution_is_repaired_into_an_incumbent() {
         first >= 23.0,
         "the completion takes items 0 and 1 (23) and maybe more: {first}"
     );
+}
+
+#[test]
+fn test_partial_solutions_highs_ignores_are_refused_even_after_one_it_repaired() {
+    // HiGHS takes a partial solution only when it names each column once with a value its column admits; otherwise it
+    // keeps the one it holds, which a repair then completes again.
+    let (program, take) = knapsack();
+    let options = HighsOptions {
+        presolve: Some(Switch::Off),
+        ..HighsOptions::default()
+    };
+    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
+    let mut kinds = Kinds {
+        supply_partial: vec![
+            vec![(take[0], 1.0), (take[0], 1.0)],
+            vec![(take[0], 1.0), (take[1], 1.0)],
+            vec![(take[2], 1.0), (take[2], 1.0)],
+            vec![(take[2], 5.0)],
+            vec![(take[3], 0.5)],
+            vec![],
+        ],
+        ..Kinds::default()
+    };
+    solver.solve_with(Request::new(), &mut kinds).unwrap();
+    let refused = |reason: &str| Err(ActionError::Refused(reason.to_owned()));
+    let infeasible = "HiGHS refused the entries: a value lies outside its column's bounds or integrality";
+    assert_eq!(
+        kinds.supplied,
+        [
+            refused("Col(0) is given twice"),
+            Ok(()),
+            refused("Col(2) is given twice"),
+            refused(infeasible),
+            refused(infeasible),
+            refused("no entries are given"),
+        ]
+    );
+    let first = *kinds.incumbents.first().unwrap();
+    assert!(first >= 23.0, "the repaired solution takes items 0 and 1 (23): {first}");
+}
+
+#[test]
+fn test_a_partial_solution_without_a_completion_keeps_the_solution_supplied_before() {
+    // The optimum, items 1, 3 and 5 worth 25, supplied at the first query becomes the first incumbent, as long as a
+    // partial solution without a completion after it leaves it in place: items 0, 1 and 4 weigh 16, over 12.
+    let (program, take) = knapsack();
+    let options = HighsOptions {
+        presolve: Some(Switch::Off),
+        ..HighsOptions::default()
+    };
+    let solve = |mut kinds: Kinds| {
+        let mut solver = Solver::new(Highs::with_options(options.clone()), program.clone()).unwrap();
+        solver.solve_with(Request::new(), &mut kinds).unwrap();
+        (kinds.supplied, kinds.incumbents.first().copied())
+    };
+    let optimum = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
+    let overweight = vec![(take[0], 1.0), (take[1], 1.0), (take[4], 1.0)];
+    let no_completion = Err(ActionError::Refused("HiGHS found no feasible completion".into()));
+    let full = Kinds {
+        supply: Some(optimum.to_vec()),
+        supply_partial: vec![overweight.clone()],
+        ..Kinds::default()
+    };
+    assert_eq!(solve(full), (vec![Ok(()), no_completion.clone()], Some(25.0)));
+    let fixed = optimum.iter().zip(&take).map(|(&v, &col)| (col, v)).collect();
+    let partial = Kinds {
+        supply_partial: vec![fixed, overweight],
+        ..Kinds::default()
+    };
+    assert_eq!(solve(partial), (vec![Ok(()), no_completion], Some(25.0)));
 }
 
 #[test]

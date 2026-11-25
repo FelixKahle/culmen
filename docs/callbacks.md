@@ -135,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-On HiGHS the same observer receives HiGHS's log, and its console output stays quiet unless `Request::console(true)`
+On HiGHS the same observer receives HiGHS's log, and its console output stays quiet unless `Settings::console`
 asks for it.
 
 ## `Callback`
@@ -196,8 +196,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## `Events`
 
 `Events` is a set of event kinds: `NONE`, `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `LAZY`, `CUT`,
-`HEURISTIC`, `NATIVE`, and `ALL`. Combine sets with `|` and `&` (or `union` and `intersection`), test them with
-`contains`, and iterate the single events with `iter()`.
+`HEURISTIC`, `NATIVE`, and `ALL`. Combine sets with `|`, `&` and `-` (or `union`, `intersection` and
+`difference`), take every other event with `!` (`complement`), test them with `contains`, and iterate the single
+events with `iter()`; `Display` prints `{LOG, POLL}`.
 
 ```rust
 use culmen::prelude::*;
@@ -207,6 +208,7 @@ assert!(wanted.contains(Events::POLL));
 assert!(!wanted.contains(Events::CUT));
 assert_eq!(wanted.len(), 2);
 assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
+assert_eq!((Events::ALL - Events::LOG).len(), 8);
 assert!(Highs::EVENTS.contains(Events::HEURISTIC));
 ```
 
@@ -238,7 +240,7 @@ An action returns `Err(ActionError)` when it is refused:
 | `Length { expected, found }` | A full solution holds the wrong number of values. |
 | `UnknownColumn { col }` | An entry names a column the problem does not have. |
 | `NotFinite { col }` | A value or coefficient is NaN or infinite. |
-| `Bounds(InvalidBounds)` | A constraint's bounds are invalid after its constant moved into them. |
+| `Bounds(InvalidBounds)` | A constraint's bounds are invalid after its constant moved into them; `Error::source` is the `InvalidBounds`. |
 | `Refused(reason)` | The solver refused the action, for the reason given. |
 
 ## Pairing callbacks

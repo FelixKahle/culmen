@@ -233,7 +233,8 @@ impl ProgramPlan {
     ///
     /// # Errors
     ///
-    /// [`ProgramError`] naming the first non-finite offset, cost or coefficient, a semi column whose bounds are not
+    /// [`ProgramError`] naming the first non-finite offset, cost or coefficient (a square's coefficient whose doubled
+    /// Hessian value overflows included), a semi column whose bounds are not
     /// `lower ..= upper` with `0 < lower` and `upper` finite, a term whose column the plan does not have, a quadratic
     /// part that is not convex for minimizing or concave for maximizing, or a quadratic part beside further
     /// objectives.

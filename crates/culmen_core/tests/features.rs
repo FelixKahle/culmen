@@ -3,6 +3,7 @@
 
 //! What a program and a solve take beyond their class: semi columns, further objectives and starts, their checks, the
 //! features a program uses, and their refusal by a backend that lacks them.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

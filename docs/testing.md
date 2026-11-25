@@ -39,8 +39,8 @@ The script behaves as a solver would:
 - A poll that interrupts ends the solve at once as `Outcome::Stopped` with `StopReason::Interrupted`, the last
   incumbent delivered before as `best` and the last bound reported as `bound`.
 - Actions are checked as a solver's would be ([`ActionError`](callbacks.md#contexts)) and recorded in
-  `script.record`: the `settings` of each solve, the `lazy` constraints and `cuts` added, and the solutions
-  `supplied`, across every solve.
+  `script.record`: the `settings` of each solve, the `lazy` constraints and `cuts` added, the solutions
+  `supplied`, and the `starts` handed over, across every solve.
 - `Solved::status` is a `ScriptStatus`: `Finished`, or `Interrupted { step }` with the position of the interrupting
   step. Solving before loading is `ScriptError::NotLoaded`.
 
@@ -60,7 +60,7 @@ fn best_within<B: Backend>(
     stop: &AtomicBool,
 ) -> Result<Option<f64>, SolveError<B::Error>> {
     let solved = solver.solve(Request::new().time_limit(limit).stop(stop))?;
-    Ok(solved.outcome.solution().map(|s| s.objective))
+    Ok(solved.outcome.objective())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(exact.objective(), Some(7.0));
 
     let solved = Solver::new(Highs::new(), program)?.solve(Request::new())?;
-    let found = solved.outcome.solution().ok_or("no solution")?.objective;
+    let found = solved.outcome.objective().ok_or("no solution")?;
     assert!(reference::close(found, 7.0, 1e-9));
     Ok(())
 }
@@ -192,10 +192,14 @@ With `small_lp()`, a property test states that a backend agrees with the referen
 
 With the `serde` feature, the plain data derives `Serialize` and `Deserialize`:
 
-- The program: `Program`, `ProgramPlan` (its `quadratic` terms included), `ProgramColumn`, `ProgramRow`, `Bounds`,
-  `Integrality`, `Sense`, `Col`, `Row`, `ModelClass`, `ModelClasses` (as a list of classes).
-- The solve: `Settings`, `RelativeGap`, `AbsoluteGap`, `Solved`, `Outcome`, `Solution`, `StopReason`, `Progress`,
-  `Phase`, `LogLevel`.
+- The program: `Program`, `ProgramPlan` (its `quadratic` terms included), `ProgramColumn`, `ProgramRow`, `NewCol`,
+  `Bounds`, `Integrality`, `Sense`, `Col`, `Row`, `ModelClass`, `ModelClasses` (as a list of classes),
+  `ProgramFeature`, `ProgramFeatures`, and the further objectives: `Objectives`, `LinearObjective`, `ObjectiveId`,
+  `Stage`, `Weighted`, `Tolerance`, `Weight`.
+- The solve: `Settings`, `RelativeGap`, `AbsoluteGap`, `Start`, `Solved`, `Outcome`, `Solution`, `StopReason`,
+  `Progress`, `Phase`, `LogLevel`.
+- The analyses: `Analysis`, `Analyses`, `Duals`, `Basis`, `BasisStatus`, `Ranging`, `Ranged`, `Limit`, `Line`, `Iis`,
+  `Side`, `Weights`, `Penalty`, `Relaxed`, `Violation`, `Bound`.
 - With `highs`: `HighsOptions` and its option types, `OptionValue`, `HighsStatus`, `ModelStatus`, `SolutionStatus`,
   `CallStatus`.
 
@@ -210,7 +214,8 @@ A checked value is checked again as it is read, so a document cannot smuggle in 
 - `Bounds` is written as `{"lower": …, "upper": …}`, an infinite end as `null`, since JSON has no infinity; it is
   read back through `Bounds::new`, an end that is `null` or left out read as infinite.
 - `RelativeGap` and `AbsoluteGap` are written as plain numbers and read back through their checked constructors;
-  `Col` and `Row` are plain numbers.
+  `Col` and `Row` are plain numbers. A `Settings` refuses a thread count or a solution limit of zero, as their
+  `NonZero` types do.
 
 ```rust,ignore
 // Needs `serde_json`, which the culmen crate does not depend on.

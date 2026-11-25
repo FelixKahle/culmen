@@ -8,8 +8,9 @@ backend's own status. This page covers all three. Watching and stopping a solve 
 ## `Solver`
 
 `Solver::new(backend, program)` loads `program` into `backend`. It fails with a
-[`LoadError`](#model-classes-and-refusal): `Unsupported` when the backend does not solve the program's class, before the
-backend sees it, or `Backend` with the backend's own error when the backend refuses the program. A `Solver` can then
+[`LoadError`](#model-classes-and-refusal): `Unsupported` when the backend does not solve the program's class and
+`UnsupportedFeature` when it does not take a feature the program uses, both before the backend sees it, or `Backend`
+with the backend's own error when the backend refuses the program. A `Solver` can then
 solve as often as needed, each time with its own request.
 
 | Method | Does |
@@ -106,7 +107,7 @@ A `Request` is built by chaining. Each method replaces what it sets:
 | `.stop(&stop)` | The [`Stop`](callbacks.md#stop) polled while the solve runs. |
 | `.observer(&mut observer)` | The [`Observer`](callbacks.md#observer) of progress, improving solutions and log lines. |
 | `.progress_interval(duration)` | The least time between two progress reports; `Request::DEFAULT_PROGRESS_INTERVAL`, one second, unless set. |
-| `.start(start)` | A [start](#starts) handed to the solver before the solve: a full `TiVec<Col, f64>` or a sparse `Vec<(Col, f64)>`. |
+| `.start(start)` | A [start](#starts) handed to the solver before the solve: a full `TiVec<Col, f64>` or `Vec<f64>`, or a sparse `Vec<(Col, f64)>`. |
 
 `request.settings()` and `request.start_solution()` read the settings and the start back. The request borrows its stop and observer, so both outlive the solve
 and can be read afterwards.
@@ -176,7 +177,7 @@ the backend's options for the one solve they are passed to.
 | `seed` | `Option<u32>` | The seed of the solver's random choices, for reproducible runs. |
 | `presolve` | `Option<bool>` | Whether the solver presolves first. |
 | `node_limit` | `Option<u64>` | The number of branch-and-bound nodes after which a MIP stops. |
-| `solution_limit` | `Option<u64>` | The number of feasible solutions after which a MIP stops. |
+| `solution_limit` | `Option<NonZeroU64>` | The number of feasible solutions after which a MIP stops; `solutions!(n)` writes a literal one. |
 | `console` | `bool` | Whether the solver also prints its log to standard output; the log reaches callbacks either way. |
 
 The request sets the time limit itself; every other setting goes through `settings_from`:
@@ -192,6 +193,7 @@ let settings = Settings {
     threads: Some(threads!(4)),
     seed: Some(7),
     node_limit: Some(10_000),
+    solution_limit: Some(solutions!(5)),
     ..Settings::default()
 };
 let request = Request::new().settings_from(settings.clone());
@@ -203,8 +205,8 @@ How each setting maps onto HiGHS is on [HiGHS](highs.md#how-options-and-settings
 
 ## Checked literals
 
-A gap is a finite number, zero or above, and a thread count is not zero. The types say so: `RelativeGap`,
-`AbsoluteGap` and `NonZeroUsize` cannot hold anything else. Their literals are written with macros that check them
+A gap is a finite number, zero or above, and a thread count or a solution limit is not zero. The types say so:
+`RelativeGap`, `AbsoluteGap`, `NonZeroUsize` and `NonZeroU64` cannot hold anything else. Their literals are written with macros that check them
 when the code is compiled, so a bad literal never reaches a running program:
 
 ```rust
@@ -213,7 +215,8 @@ use culmen::prelude::*;
 let gap = relative_gap!(0.01);
 let units = absolute_gap!(2.5);
 let four = threads!(4);
-assert_eq!((gap.get(), units.get(), four.get()), (0.01, 2.5, 4));
+let first = solutions!(1);
+assert_eq!((gap.get(), units.get(), four.get(), first.get()), (0.01, 2.5, 4, 1));
 assert_eq!(gap.to_string(), "RelativeGap(0.01)");
 ```
 
@@ -230,7 +233,7 @@ let none = threads!(0); // threads: zero
 ```
 
 A number read at run time is checked with `RelativeGap::new`, `AbsoluteGap::new`, their `TryFrom<f64>`, or
-`NonZeroUsize::new`, which refuse it with an error you can report:
+`NonZeroUsize::new` and `NonZeroU64::new`, which refuse it with an error you can report:
 
 ```rust
 use culmen::{InvalidRelativeGap, RelativeGap};
@@ -269,7 +272,8 @@ column. Every objective value and bound includes the program's quadratic part an
 sense. For a program with [several objectives](program.md#several-objectives), `objective` is the program's own
 objective, the first; `program.objective_values(&solution.values)` gives every objective's value, and a backend
 reports no bound, since its bound is that of the last stage or of the blend. `outcome.solution()` returns the
-best solution of any variant, `None` when there is none, and `outcome.into_solution()` takes it by value.
+best solution of any variant, `None` when there is none, `outcome.objective()` its objective value, and
+`outcome.into_solution()` takes it by value.
 
 ```rust
 use culmen::prelude::*;
@@ -376,7 +380,7 @@ use culmen::{EditError, NewCol, ProgramColumn};
 /// The optimal objective of the next solve.
 fn best(solver: &mut Solver<Highs>) -> Result<f64, Box<dyn std::error::Error>> {
     let solved = solver.solve(Request::new())?;
-    Ok(solved.outcome.solution().ok_or("no solution")?.objective)
+    Ok(solved.outcome.objective().ok_or("no solution")?)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

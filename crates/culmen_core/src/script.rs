@@ -141,13 +141,7 @@ impl Script {
             steps: steps.into(),
             end,
             num_cols: None,
-            record: Record {
-                settings: Vec::new(),
-                lazy: Vec::new(),
-                cuts: Vec::new(),
-                supplied: Vec::new(),
-                starts: Vec::new(),
-            },
+            record: Record::default(),
         }
     }
 

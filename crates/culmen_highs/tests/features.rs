@@ -3,6 +3,7 @@
 
 //! Semi columns, further objectives and starts solved by HiGHS: hand-worked optima, HiGHS's quirks around them, and
 //! semi programs against the exact reference solver.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")

@@ -41,7 +41,7 @@ typed `AnalysisError<B::Error>`, in this order:
 | `Class { analysis, class }` | The analysis is not defined for the program's class. |
 | `Feature { analysis, feature }` | The analysis is not defined for a feature the program uses, as duals for several objectives. |
 | `Misfit(Misfit)` | A basis or weights do not fit the program: `Length { table, expected, found }`, `BasicCount { expected, found }`, `Status { line, status }` for a line put at a bound it does not have, or `SoftSemiBound { col }` for weights pricing a semi column's bound. |
-| `NotSolved { analysis }` | It reads a solve and there is none: no solve since the program was loaded, the last one failed, or a later `set_basis`, `iis` or `feasibility_relaxation` replaced its result. |
+| `NotSolved { analysis }` | It reads a solve and there is none: no solve since the program was loaded, the last one failed or panicked once its request reached the backend, or a later edit, `set_basis`, `iis` or `feasibility_relaxation` replaced its result. A request `solve` refuses before the backend sees it keeps the last solve readable. |
 | `NotOptimal { analysis }` | It reads an optimal solve and the last one did not end `Optimal`. |
 | `Backend(E)` | The backend failed; for HiGHS, `HighsError::Analysis(analysis)`. |
 

@@ -58,7 +58,7 @@
 //! constraint!(m, once[p in products], sum!(x[p, l] for l in locations) == 1);
 //! constraint!(m, cap[l in locations], sum!(volume[p] * x[p, l] for p in products) <= cap[l]);
 //! objective!(m, Min, sum!(walk[p][l] * x[p, l] for p in products, l in locations));
-//! assert_eq!(m.constraint_name(cap[(1)]), Some("cap[1]"));
+//! assert_eq!(m.constraint_name(cap[1]), Some("cap[1]"));
 //! # }
 //! ```
 //!
@@ -123,7 +123,7 @@
 //!     .observer(&mut print)
 //!     .progress_interval(Duration::from_secs(1));
 //! let solved = solver.solve(request)?;
-//! assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(7.0));
+//! assert_eq!(solved.outcome.objective(), Some(7.0));
 //! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -189,6 +189,9 @@ mod docs {
 
     #[doc = include_str!("../../../docs/design.md")]
     struct Design;
+
+    #[doc = include_str!("../../../docs/backends.md")]
+    struct Backends;
 }
 
 /// What a model and a solve need, in one import.
@@ -202,6 +205,6 @@ pub mod prelude {
         Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Improvement, IndexSet, LinExpr, Linear,
         LogLine, Model, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Request, Row, Sense,
         Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap, absolute_gap,
-        bounds, product, relative_gap, set, stop_fn, threads, weight,
+        bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
     };
 }

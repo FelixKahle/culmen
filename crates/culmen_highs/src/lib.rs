@@ -36,10 +36,12 @@
 //!
 //! # Threads
 //!
-//! [`Highs`] is `Send`, so it can be moved to a worker thread to solve there. HiGHS keeps one task scheduler per
+//! [`Highs`] is `Send`, so it can be moved to a worker thread to solve there. It is not `Sync`: HiGHS does not promise
+//! that two threads may call one instance at once, not even to read it. HiGHS keeps one task scheduler per
 //! thread, started by the first run on that thread at that run's `threads`; a later run on the same thread asking
 //! for another number of threads fails with [`HighsError::Run`]. Dropping a [`Highs`] shuts down the scheduler of
 //! the dropping thread. Leaving [`Settings::threads`](culmen_core::Settings::threads) unset never conflicts.
+
 #![cfg_attr(
     test,
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
@@ -623,7 +625,7 @@ fn settings_assignments(settings: &Settings) -> Result<Vec<(&'static str, Option
         set.push(("mip_max_nodes", options::limit(nodes)));
     }
     if let Some(solutions) = settings.solution_limit {
-        set.push(("mip_max_improving_sols", options::limit(solutions)));
+        set.push(("mip_max_improving_sols", options::limit(solutions.get())));
     }
     if settings.console {
         set.push(("log_to_console", OptionValue::Bool(true)));

@@ -29,7 +29,7 @@ use crate::{Col, Row};
 /// assert_eq!(x.get(&"tin"), None);
 /// assert_eq!(x.keys().collect::<Vec<_>>(), [&"cork", &"glass"]);
 /// for (product, take) in &x {
-///     assert_eq!(x[*product], take);
+///     assert_eq!(x[product], take);
 /// }
 /// ```
 #[derive(Clone)]
@@ -200,6 +200,24 @@ impl<K: Hash + Eq + Clone, H: Copy> Keyed<K, H> {
     {
         self.positions.get(key).map(|&i| self.entries[i].1)
     }
+
+    /// Whether the family holds a key.
+    ///
+    /// ```
+    /// use culmen_core::{Model, Var};
+    ///
+    /// let mut m = Model::new();
+    /// let x = m.add_var_map(["cork".to_owned()], |p| Var::binary().name(format!("take[{p}]")));
+    /// assert!(x.contains_key("cork") && !x.contains_key("tin"));
+    /// ```
+    #[must_use]
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.positions.contains_key(key)
+    }
 }
 
 impl<K> Keyed<K, Col> {
@@ -271,7 +289,20 @@ impl<K: Hash + Eq + Clone, H: Copy> Index<K> for Keyed<K, H> {
     /// When the family does not hold `key`.
     #[track_caller]
     fn index(&self, key: K) -> &H {
-        match self.positions.get(&key) {
+        &self[&key]
+    }
+}
+
+/// A key by reference, as a loop over a borrowed domain yields it: `for p in &products { x[p] }`.
+impl<K: Hash + Eq + Clone, H: Copy> Index<&K> for Keyed<K, H> {
+    type Output = H;
+
+    /// # Panics
+    ///
+    /// When the family does not hold `key`.
+    #[track_caller]
+    fn index(&self, key: &K) -> &H {
+        match self.positions.get(key) {
             Some(&i) => &self.entries[i].1,
             None => panic!("Keyed: the family does not hold the key"),
         }
@@ -480,7 +511,11 @@ where
             {
                 return Some((a.clone(), b));
             }
-            let a = self.outer.next()?;
+            // Dropping the spent inner members at the end keeps the end for good, whether or not they are fused.
+            let Some(a) = self.outer.next() else {
+                self.current = None;
+                return None;
+            };
             self.current = Some((a, self.inner.members()));
         }
     }

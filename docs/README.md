@@ -6,7 +6,9 @@ and a cooperative stop. HiGHS 1.16 is the first backend.
 
 These pages are the user guide. The API reference is the rustdoc of each crate (`cargo doc --open -p culmen`).
 Every Rust snippet on these pages is compiled and run as a doctest of the `culmen` crate, so each one shows the
-library as it is.
+library as it is. The two exceptions are marked `ignore`: the outline of the `Backend` trait in
+[Backends](backends.md), which leaves out its imports and default bodies, and the JSON example in
+[Serialization](testing.md#serialization), which needs `serde_json`.
 
 ## The crates
 

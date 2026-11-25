@@ -221,7 +221,15 @@ impl fmt::Display for ActionError {
     }
 }
 
-impl core::error::Error for ActionError {}
+/// The source of [`ActionError::Bounds`] is its [`InvalidBounds`]; every other variant has none.
+impl core::error::Error for ActionError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Bounds(error) => Some(error),
+            Self::Length { .. } | Self::UnknownColumn { .. } | Self::NotFinite { .. } | Self::Refused(_) => None,
+        }
+    }
+}
 
 /// Checks a full solution against the number of columns: one finite value each.
 ///

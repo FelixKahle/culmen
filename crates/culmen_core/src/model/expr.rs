@@ -4,7 +4,7 @@
 //! Linear expressions, their operators, and the constraints they compare into.
 
 use core::iter::Sum;
-use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use typed_index_collections::TiSlice;
 
@@ -24,8 +24,8 @@ pub struct Term {
 /// A linear expression `Σ coefficient · col + constant`.
 ///
 /// Plain data: terms may repeat a column and are added up when the model is built. Expressions come from the
-/// operators on [`Col`], [`Term`], `LinExpr`, `f64` and `i32`, from [`LinExpr::sum`] or `Iterator::sum`, and from
-/// [`LinExpr::add_term`]:
+/// operators on [`Col`], [`Term`], `LinExpr`, `f64` and `i32`, from [`LinExpr::sum`], `Iterator::sum` or `collect`,
+/// from `extend`, and from [`LinExpr::add_term`]:
 ///
 /// ```
 /// use culmen_core::{LinExpr, Model, Var};
@@ -227,6 +227,35 @@ impl<T: Linear> Sum<T> for LinExpr {
     }
 }
 
+/// The sum of the items, as [`LinExpr::sum`].
+///
+/// ```
+/// use culmen_core::{Col, LinExpr};
+/// let (x, y) = (Col::new(0), Col::new(1));
+/// let e: LinExpr = [2 * x, 3 * y].into_iter().collect();
+/// assert_eq!(e, 2 * x + 3 * y);
+/// ```
+impl<T: Linear> FromIterator<T> for LinExpr {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self::sum(iter)
+    }
+}
+
+/// Adds each item, as `+=` does.
+///
+/// ```
+/// use culmen_core::{Col, LinExpr};
+/// let (x, y) = (Col::new(0), Col::new(1));
+/// let mut e = LinExpr::from(x);
+/// e.extend([y, x]);
+/// assert_eq!(e, x + y + x);
+/// ```
+impl<T: Linear> Extend<T> for LinExpr {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        iter.into_iter().for_each(|item| item.add_to(self, 1.0));
+    }
+}
+
 impl<T: Linear> AddAssign<T> for LinExpr {
     fn add_assign(&mut self, rhs: T) {
         rhs.add_to(self, 1.0);
@@ -245,6 +274,15 @@ impl MulAssign<f64> for LinExpr {
             term.coefficient *= rhs;
         }
         self.constant *= rhs;
+    }
+}
+
+impl DivAssign<f64> for LinExpr {
+    fn div_assign(&mut self, rhs: f64) {
+        for term in &mut self.terms {
+            term.coefficient /= rhs;
+        }
+        self.constant /= rhs;
     }
 }
 
@@ -338,6 +376,13 @@ macro_rules! term_scale_ops {
             }
         }
 
+        impl Div<i32> for $ty {
+            type Output = Term;
+            fn div(self, rhs: i32) -> Term {
+                self / f64::from(rhs)
+            }
+        }
+
         impl Neg for $ty {
             type Output = Term;
             fn neg(self) -> Term {
@@ -387,11 +432,15 @@ impl Mul<LinExpr> for i32 {
 impl Div<f64> for LinExpr {
     type Output = Self;
     fn div(mut self, rhs: f64) -> Self {
-        for term in &mut self.terms {
-            term.coefficient /= rhs;
-        }
-        self.constant /= rhs;
+        self /= rhs;
         self
+    }
+}
+
+impl Div<i32> for LinExpr {
+    type Output = Self;
+    fn div(self, rhs: i32) -> Self {
+        self / f64::from(rhs)
     }
 }
 
@@ -420,6 +469,12 @@ impl From<f64> for LinExpr {
             terms: Vec::new(),
             constant,
         }
+    }
+}
+
+impl From<i32> for LinExpr {
+    fn from(constant: i32) -> Self {
+        Self::from(f64::from(constant))
     }
 }
 
