@@ -53,6 +53,7 @@ use core::ffi::c_int;
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 use core::time::Duration;
+use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 
@@ -511,7 +512,8 @@ fn count(value: i64) -> u64 {
 }
 
 /// Checks a constraint a callback adds as a row SCIP can hold: known columns, finite coefficients and valid bounds,
-/// and every number below SCIP's infinity in magnitude, with no more terms than SCIP's `int` counts.
+/// and every number below SCIP's infinity in magnitude, as given and added up per column, with no more terms than
+/// SCIP's `int` counts.
 ///
 /// # Errors
 ///
@@ -519,7 +521,13 @@ fn count(value: i64) -> u64 {
 /// too long.
 fn checked(constraint: &Constraint, num_cols: usize, infinity: f64) -> Result<AddedRow, ActionError> {
     let row = check_constraint(constraint, num_cols)?;
-    if let Some(&(col, value)) = row.terms.iter().find(|(_, value)| value.abs() >= infinity) {
+    // SCIP's linear handler adds up the coefficients of a column given twice, so their sum must stay finite to it.
+    let mut sums: BTreeMap<Col, f64> = BTreeMap::new();
+    for &(col, value) in &row.terms {
+        *sums.entry(col).or_insert(0.0) += value;
+    }
+    let given = row.terms.iter().copied().find(|(_, value)| value.abs() >= infinity);
+    if let Some((col, value)) = given.or_else(|| sums.into_iter().find(|(_, value)| value.abs() >= infinity)) {
         return Err(ActionError::Refused(format!(
             "the coefficient {value} of {col:?} is one SCIP reads as infinite, from {infinity} on"
         )));

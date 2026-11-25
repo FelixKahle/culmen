@@ -394,9 +394,21 @@ fn test_an_invalid_lazy_constraint_is_refused_typed() {
         }
         fn lazy(&mut self, ctx: &mut <Scip as Backend>::Lazy<'_>) {
             if self.1.is_empty() {
-                self.1.push(ctx.add_lazy(Col::new(7).leq(1)).unwrap_err());
-                self.1.push(ctx.add_lazy((1e25 * self.0).leq(1)).unwrap_err());
-                self.1.push(ctx.add_lazy(self.0.leq(1e25)).unwrap_err());
+                let x = self.0;
+                let rows = [
+                    Col::new(7).leq(1),
+                    (1e25 * x).leq(1),
+                    x.leq(1e25),
+                    // Each below SCIP's infinity of 1e20, but 1.2e20 added up, as SCIP adds them.
+                    (6e19 * x + 6e19 * x).leq(1),
+                ];
+                for row in rows {
+                    self.1.push(
+                        ctx.add_lazy(row)
+                            .err()
+                            .unwrap_or(ActionError::Refused("taken".to_owned())),
+                    );
+                }
             }
         }
     }
@@ -417,6 +429,11 @@ fn test_an_invalid_lazy_constraint_is_refused_typed() {
     );
     assert!(
         matches!(&bad.1[2], ActionError::Refused(reason) if reason.contains("infinite")),
+        "{:?}",
+        bad.1
+    );
+    assert!(
+        matches!(&bad.1[3], ActionError::Refused(reason) if reason.contains("infinite")),
         "{:?}",
         bad.1
     );

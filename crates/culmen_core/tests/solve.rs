@@ -520,3 +520,16 @@ fn test_script_steps_name_their_event_kind() {
     };
     assert_eq!(price.event(), None);
 }
+
+#[test]
+fn test_a_callbacks_row_is_checked_with_its_coefficients_added_up() {
+    let x = Col::new(0);
+    let twice = (1e308 * x + 1e308 * x).leq(1.0);
+    assert_eq!(
+        culmen_core::context::check_constraint(&twice, 1),
+        Err(ActionError::NotFinite { col: x })
+    );
+    // Terms that cancel are fine: the row is `0 x <= 1`.
+    let cancel = (1e308 * x - 1e308 * x).leq(1.0);
+    assert!(culmen_core::context::check_constraint(&cancel, 1).is_ok());
+}

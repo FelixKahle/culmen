@@ -14,6 +14,7 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 use typed_index_collections::TiSlice;
 
+use crate::program::{BadTerm, bad_term};
 use crate::{Bounds, Col, Constraint, Integrality, InvalidBounds, LogLevel, NewCol, Progress, Row, Sense};
 
 /// A chunk of the solver's log. A line may arrive in several chunks; [`Watch`](crate::Watch) joins them.
@@ -468,15 +469,20 @@ pub struct AddedRow {
     pub bounds: Bounds,
 }
 
-/// Checks a constraint against the number of columns and returns it as a row: known columns, finite coefficients,
-/// and valid bounds once its constant moved into them.
+/// Checks a constraint against the number of columns and returns it as a row: known columns, finite coefficients as
+/// given and added up per column in the order given, as a program's row holds them, and valid bounds once its
+/// constant moved into them.
 ///
 /// # Errors
 ///
 /// [`ActionError::UnknownColumn`], [`ActionError::NotFinite`] or [`ActionError::Bounds`].
 pub fn check_constraint(constraint: &Constraint, num_cols: usize) -> Result<AddedRow, ActionError> {
     let terms = constraint.row_terms();
-    check_entries(&terms, num_cols)?;
+    match bad_term(&terms, num_cols) {
+        Some(BadTerm::Unknown(col)) => return Err(ActionError::UnknownColumn { col }),
+        Some(BadTerm::NonFinite(col, _)) => return Err(ActionError::NotFinite { col }),
+        None => {}
+    }
     let bounds = constraint.row_bounds().map_err(ActionError::Bounds)?;
     Ok(AddedRow { terms, bounds })
 }
