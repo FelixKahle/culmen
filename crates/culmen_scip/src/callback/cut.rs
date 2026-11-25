@@ -22,7 +22,6 @@ use scip_sys::{
     SCIPreleaseRow, SCIPsepaGetData,
 };
 
-use super::lazy::transformed;
 use super::{Delivered, Run, Slot, checked, sides, slot};
 use crate::columns::Columns;
 use crate::error::check;
@@ -79,7 +78,8 @@ impl Drop for OwnedRow {
     }
 }
 
-/// The global row of a cut over the columns' transformed variables, removable from the LP.
+/// The global row of a cut over the columns' transformed variables, the priced ones `priced` included, removable from
+/// the LP.
 ///
 /// # Errors
 ///
@@ -87,18 +87,19 @@ impl Drop for OwnedRow {
 ///
 /// # Safety
 ///
-/// `scip` is the live instance holding `cols`, solving, and `sepa` its separator.
+/// `scip` is the live instance holding `cols` and `priced`, solving, and `sepa` its separator.
 unsafe fn row(
     scip: *mut SCIP,
     sepa: *mut SCIP_SEPA,
     cols: Columns<'_>,
+    priced: &[NonNull<SCIP_VAR>],
     cut: &AddedRow,
     infinity: f64,
 ) -> Result<OwnedRow, ScipError> {
     let mut vars: Vec<*mut SCIP_VAR> = Vec::with_capacity(cut.terms.len());
     for &(col, _) in &cut.terms {
         // SAFETY: the caller vouches for the instance and its stage; the column's variable is one of its own.
-        vars.push(unsafe { transformed(scip, cols.vars[col].as_ptr()) }?);
+        vars.push(unsafe { cols.transformed(scip, col, priced) }?);
     }
     let mut values: Vec<f64> = cut.terms.iter().map(|&(_, value)| value).collect();
     let invalid = ScipError::Call {
@@ -136,7 +137,7 @@ impl Run<'_> {
     /// `scip` is the live instance of the run, solving with a node LP, and `sepa` its separator.
     unsafe fn separate(&self, scip: *mut SCIP, sepa: *mut SCIP_SEPA) -> Result<SCIP_RESULT, ScipError> {
         // SAFETY: the caller vouches for the instance and its stage; null is the current LP solution.
-        let relaxation = unsafe { self.cols.values(scip, ptr::null_mut()) };
+        let relaxation = unsafe { self.values(scip, ptr::null_mut()) };
         let progress = self.progress(scip);
         let mut added = Vec::new();
         let delivered = self.deliver(scip, |callback| {
@@ -153,7 +154,7 @@ impl Run<'_> {
         let mut result = SCIP_Result_SCIP_DIDNOTFIND;
         for cut in &added {
             // SAFETY: as above.
-            let row = unsafe { row(scip, sepa, self.cols, cut, self.infinity) }?;
+            let row = unsafe { row(scip, sepa, self.cols, &self.priced_vars.borrow(), cut, self.infinity) }?;
             let raw = row.row.as_ptr();
             // SAFETY: the instance is live and solving with a node LP; the row is live. Null is the LP solution.
             if unsafe { SCIPisCutEfficacious(scip, ptr::null_mut(), raw) } != 0 {

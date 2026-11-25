@@ -33,8 +33,8 @@ use scip_sys::{
     SCIP, SCIP_CONS, SCIP_CONSHDLR, SCIP_LOCKTYPE, SCIP_RESULT, SCIP_RETCODE, SCIP_Result_SCIP_CONSADDED,
     SCIP_Result_SCIP_CUTOFF, SCIP_Result_SCIP_FEASIBLE, SCIP_Result_SCIP_INFEASIBLE, SCIP_Retcode_SCIP_OKAY, SCIP_SOL,
     SCIP_VAR, SCIPaddCons, SCIPaddVarLocksType, SCIPconshdlrGetData, SCIPcreateConsBasicLinear, SCIPgetNOrigVars,
-    SCIPgetOrigVars, SCIPgetTransformedVar, SCIPincludeConshdlrBasic, SCIPisFeasGT, SCIPisFeasLT, SCIPreleaseCons,
-    SCIPsetConshdlrCopy, SCIPsetConshdlrEnforelax, SCIPsolIsOriginal,
+    SCIPgetOrigVars, SCIPincludeConshdlrBasic, SCIPisFeasGT, SCIPisFeasLT, SCIPreleaseCons, SCIPsetConshdlrCopy,
+    SCIPsetConshdlrEnforelax, SCIPsolIsOriginal,
 };
 
 use super::{Delivered, Run, Slot, checked, sides, slot};
@@ -215,7 +215,7 @@ impl Run<'_> {
         for (i, row) in waiting {
             // The store is not borrowed while SCIP runs, which may write a message the callback is handed.
             // SAFETY: the caller's contract is `add_cons`'s.
-            unsafe { add_cons(scip, self.cols, &row, self.infinity) }?;
+            unsafe { add_cons(scip, self.cols, &self.priced_vars.borrow(), &row, self.infinity) }?;
             self.lazy.borrow_mut().rows[i].in_scip = true;
             violated |= violates(scip, &row, values);
         }
@@ -232,7 +232,7 @@ impl Run<'_> {
             return SCIP_Result_SCIP_INFEASIBLE;
         }
         // SAFETY: the caller vouches for the instance, `sol` and the stage.
-        let (objective, values) = unsafe { self.cols.read(scip, sol) };
+        let (objective, values) = unsafe { self.read(scip, sol) };
         // SAFETY: as above.
         let original = !sol.is_null() && unsafe { SCIPsolIsOriginal(sol) } != 0;
         let held = if original { Held::All } else { Held::Waiting };
@@ -282,7 +282,7 @@ impl Run<'_> {
             return Ok(SCIP_Result_SCIP_CUTOFF);
         }
         // SAFETY: the caller vouches for the instance, its stage and `sol`.
-        let (objective, values) = unsafe { self.cols.read(scip, sol) };
+        let (objective, values) = unsafe { self.read(scip, sol) };
         // SAFETY: as above.
         if unsafe { self.add_waiting(scip, &values) }? {
             return Ok(SCIP_Result_SCIP_CONSADDED);
@@ -309,7 +309,8 @@ impl Run<'_> {
     }
 }
 
-/// Adds `row` to SCIP's transformed problem as a global linear constraint over the columns' transformed variables.
+/// Adds `row` to SCIP's transformed problem as a global linear constraint over the columns' transformed variables,
+/// the priced ones `priced` included.
 ///
 /// # Errors
 ///
@@ -317,13 +318,19 @@ impl Run<'_> {
 ///
 /// # Safety
 ///
-/// `scip` is the live instance holding `cols`, solving.
-unsafe fn add_cons(scip: *mut SCIP, cols: Columns<'_>, row: &AddedRow, infinity: f64) -> Result<(), ScipError> {
+/// `scip` is the live instance holding `cols` and `priced`, solving.
+unsafe fn add_cons(
+    scip: *mut SCIP,
+    cols: Columns<'_>,
+    priced: &[NonNull<SCIP_VAR>],
+    row: &AddedRow,
+    infinity: f64,
+) -> Result<(), ScipError> {
     let mut vars = Vec::with_capacity(row.terms.len());
     let mut values = Vec::with_capacity(row.terms.len());
     for &(col, value) in &row.terms {
         // SAFETY: the caller vouches for the instance and its stage; the column's variable is one of its own.
-        vars.push(unsafe { transformed(scip, cols.vars[col].as_ptr()) }?);
+        vars.push(unsafe { cols.transformed(scip, col, priced) }?);
         values.push(value);
     }
     let invalid = ScipError::Call {
@@ -356,30 +363,6 @@ unsafe fn add_cons(scip: *mut SCIP, cols: Columns<'_>, row: &AddedRow, infinity:
     added.and(released)
 }
 
-/// The transformed variable of an original one.
-///
-/// # Errors
-///
-/// [`ScipError::Call`] when SCIP refuses the call or the variable has no transformed counterpart.
-///
-/// # Safety
-///
-/// `scip` is a live instance from its transforming stage on and `var` an original variable of it.
-pub(super) unsafe fn transformed(scip: *mut SCIP, var: *mut SCIP_VAR) -> Result<*mut SCIP_VAR, ScipError> {
-    let mut transformed: *mut SCIP_VAR = ptr::null_mut();
-    // SAFETY: the caller vouches for the instance, its stage and `var`; `transformed` is a local to write to.
-    check("SCIPgetTransformedVar", unsafe {
-        SCIPgetTransformedVar(scip, var, &raw mut transformed)
-    })?;
-    if transformed.is_null() {
-        return Err(ScipError::Call {
-            call: "SCIPgetTransformedVar",
-            code: RetCode::InvalidData,
-        });
-    }
-    Ok(transformed)
-}
-
 /// Locks every variable of the transformed problem `n` times both ways, through the original variables, which SCIP
 /// keeps from the transforming stage until the transformed problem is freed; a negative `n` unlocks.
 ///
@@ -401,7 +384,7 @@ unsafe fn lock_all(scip: *mut SCIP, locktype: SCIP_LOCKTYPE, n: c_int) -> Result
     let vars = unsafe { core::slice::from_raw_parts(vars, len) };
     for &var in vars {
         // SAFETY: the instance is live and transformed, and `var` one of its original variables.
-        let var = unsafe { transformed(scip, var) }?;
+        let var = unsafe { crate::columns::transformed(scip, var) }?;
         // SAFETY: as above; `var` is a transformed variable of the instance.
         check("SCIPaddVarLocksType", unsafe {
             SCIPaddVarLocksType(scip, var, locktype, n, n)

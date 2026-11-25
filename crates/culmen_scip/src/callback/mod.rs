@@ -14,6 +14,7 @@
 //! | constraint handler | `CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX` | [`Events::LAZY`] | [`ScipLazy`] |
 //! | separator | `SEPAEXECLP` | [`Events::CUT`] | [`ScipCut`] |
 //! | primal heuristic | `HEUREXEC` | [`Events::HEURISTIC`] | [`ScipHeuristic`] |
+//! | variable pricer | `PRICERREDCOST`, `PRICERFARKAS` | [`Events::PRICE`] | [`ScipPrice`] |
 //!
 //! # The slot and the run, and why the plugins are sound
 //!
@@ -30,7 +31,8 @@
 //! callback is borrowed through a `RefCell` for each delivery, so such a nested call finds it busy: a log line or a
 //! solution is then kept and delivered as soon as the outer callback returns, a poll or a progress report is dropped,
 //! and no plugin ever calls into the callback twice at once. Everything a context changes in SCIP (a lazy constraint,
-//! a cut) is collected while the callback runs and handed to SCIP after it returns, outside any borrow.
+//! a cut, a priced column) is collected while the callback runs and handed to SCIP after it returns, outside any
+//! borrow.
 //!
 //! A panic in a callback is caught where the callback is called, never unwinds into SCIP, and asks SCIP to stop:
 //! `SCIPinterruptSolve`, at once or, in the one stage SCIP refuses it, at the next plugin call. Every later delivery of
@@ -43,6 +45,7 @@ mod events;
 mod heuristic;
 mod lazy;
 mod log;
+mod price;
 
 use core::any::Any;
 use core::cell::{Cell, RefCell};
@@ -54,19 +57,25 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 
 use culmen_core::context::check_constraint;
-use culmen_core::{ActionError, AddedRow, Callback, Constraint, Events, Found, LogLevel, Phase, Progress};
+use culmen_core::{
+    ActionError, AddedRow, Callback, Col, Constraint, Events, Found, LogLevel, Phase, Priced, Progress, Row, Sense,
+    TiSlice, TiVec,
+};
 pub use cut::ScipCut;
 pub use events::{ScipEvent, ScipPoll, ScipProgress, ScipSolution};
 pub use heuristic::ScipHeuristic;
 pub use lazy::{LazySource, ScipLazy};
 pub use log::ScipLog;
+pub(crate) use price::NAME as PRICER;
+pub use price::ScipPrice;
 use scip_sys::{
-    SCIP, SCIP_RETCODE, SCIP_Retcode_SCIP_ERROR, SCIP_STAGE, SCIP_Stage_SCIP_STAGE_EXITPRESOLVE,
-    SCIP_Stage_SCIP_STAGE_EXITSOLVE, SCIP_Stage_SCIP_STAGE_FREETRANS, SCIP_Stage_SCIP_STAGE_INITPRESOLVE,
-    SCIP_Stage_SCIP_STAGE_PRESOLVED, SCIP_Stage_SCIP_STAGE_PRESOLVING, SCIP_Stage_SCIP_STAGE_PROBLEM,
-    SCIP_Stage_SCIP_STAGE_SOLVED, SCIP_Stage_SCIP_STAGE_SOLVING, SCIP_Stage_SCIP_STAGE_TRANSFORMED, SCIPgetDualbound,
-    SCIPgetNLPIterations, SCIPgetNOrigBinVars, SCIPgetNOrigIntVars, SCIPgetNTotalNodes, SCIPgetPrimalbound,
-    SCIPgetStage, SCIPinfinity, SCIPinterruptSolve,
+    SCIP, SCIP_CONS, SCIP_Objsense_SCIP_OBJSENSE_MAXIMIZE, SCIP_RETCODE, SCIP_Retcode_SCIP_ERROR, SCIP_SOL, SCIP_STAGE,
+    SCIP_Stage_SCIP_STAGE_EXITPRESOLVE, SCIP_Stage_SCIP_STAGE_EXITSOLVE, SCIP_Stage_SCIP_STAGE_FREETRANS,
+    SCIP_Stage_SCIP_STAGE_INITPRESOLVE, SCIP_Stage_SCIP_STAGE_PRESOLVED, SCIP_Stage_SCIP_STAGE_PRESOLVING,
+    SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_Stage_SCIP_STAGE_SOLVED, SCIP_Stage_SCIP_STAGE_SOLVING,
+    SCIP_Stage_SCIP_STAGE_TRANSFORMED, SCIP_VAR, SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNOrigBinVars,
+    SCIPgetNOrigIntVars, SCIPgetNTotalNodes, SCIPgetObjsense, SCIPgetPrimalbound, SCIPgetStage, SCIPinfinity,
+    SCIPinterruptSolve,
 };
 
 use crate::columns::Columns;
@@ -189,6 +198,14 @@ pub(crate) struct Run<'a> {
     /// When the solve began.
     start: Instant,
     cols: Columns<'a>,
+    /// The original constraint of every program row.
+    rows: &'a TiSlice<Row, NonNull<SCIP_CONS>>,
+    /// Whether the program minimizes or maximizes.
+    sense: Sense,
+    /// The columns the solve priced: checked and numbered here, then created in SCIP as `priced_vars`.
+    priced: RefCell<&'a mut Priced>,
+    /// The variable of every column priced so far, in the order of their ids; the run owns one reference to each.
+    priced_vars: RefCell<Vec<NonNull<SCIP_VAR>>>,
     /// SCIP's infinity: a number of at least this magnitude is infinite to SCIP.
     infinity: f64,
     /// Whether the program has an integer column, which makes SCIP's search a branch and bound on a MIP.
@@ -202,6 +219,17 @@ pub(crate) struct Run<'a> {
     error: RefCell<Option<ScipError>>,
     /// Whether a stop was asked for that SCIP has not been told of, as it refuses one in its `INITSOLVE` stage.
     stop: Cell<bool>,
+}
+
+/// What a run leaves once `SCIPsolve` has returned.
+#[derive(Debug)]
+pub(crate) struct Finished {
+    /// A panic a callback raised, to resume.
+    pub(crate) panic: Option<Payload>,
+    /// The first error a plugin met.
+    pub(crate) error: Option<ScipError>,
+    /// The variable of every column the run priced, in the order of their ids, one reference to each.
+    pub(crate) priced: Vec<NonNull<SCIP_VAR>>,
 }
 
 /// An event kept while the callback was busy.
@@ -228,30 +256,43 @@ enum Delivered {
 }
 
 impl<'a> Run<'a> {
-    /// The run of a solve of `scip`, which holds the columns `cols`, for the events `wanted`.
+    /// The run of a solve of `scip`, which holds the columns `cols` and the rows `rows`, for the events `wanted`,
+    /// handing every column it prices to `priced`.
     ///
     /// # Safety
     ///
-    /// `scip` is the live instance holding `cols`, in its problem stage.
+    /// `scip` is the live instance holding `cols` and `rows`, in its problem stage.
     pub(crate) unsafe fn new(
         scip: *mut SCIP,
         callback: &'a mut dyn Callback<Scip>,
         wanted: Events,
         start: Instant,
         cols: Columns<'a>,
+        rows: &'a TiSlice<Row, NonNull<SCIP_CONS>>,
+        priced: &'a mut Priced,
     ) -> Self {
         // SAFETY: the instance is live and in its problem stage, where SCIP counts the original variables.
-        let (infinity, integers) = unsafe {
+        let (infinity, integers, objsense) = unsafe {
             (
                 SCIPinfinity(scip),
                 SCIPgetNOrigIntVars(scip) + SCIPgetNOrigBinVars(scip),
+                SCIPgetObjsense(scip),
             )
+        };
+        let sense = if objsense == SCIP_Objsense_SCIP_OBJSENSE_MAXIMIZE {
+            Sense::Maximize
+        } else {
+            Sense::Minimize
         };
         Self {
             callback: RefCell::new(callback),
             wanted,
             start,
             cols,
+            rows,
+            sense,
+            priced: RefCell::new(priced),
+            priced_vars: RefCell::default(),
             infinity,
             integral: integers > 0,
             lazy: RefCell::default(),
@@ -262,9 +303,34 @@ impl<'a> Run<'a> {
         }
     }
 
-    /// The panic a callback raised and the first error a plugin met, once `SCIPsolve` has returned.
-    pub(crate) fn finish(self) -> (Option<Payload>, Option<ScipError>) {
-        (self.panic.into_inner(), self.error.into_inner())
+    /// The panic a callback raised, the first error a plugin met, and the variables of the columns the run priced,
+    /// whose references the caller then owns, once `SCIPsolve` has returned.
+    pub(crate) fn finish(self) -> Finished {
+        Finished {
+            panic: self.panic.into_inner(),
+            error: self.error.into_inner(),
+            priced: self.priced_vars.into_inner(),
+        }
+    }
+
+    /// The objective of `sol` and its value of every column the problem holds now, as [`Columns::read`] reads them.
+    ///
+    /// # Safety
+    ///
+    /// As [`Columns::read`], for the instance of the run.
+    unsafe fn read(&self, scip: *mut SCIP, sol: *mut SCIP_SOL) -> (f64, TiVec<Col, f64>) {
+        // SAFETY: the caller's contract.
+        unsafe { self.cols.read(scip, sol, &self.priced_vars.borrow()) }
+    }
+
+    /// The value of every column the problem holds now in `sol`, as [`Columns::read`] reads it.
+    ///
+    /// # Safety
+    ///
+    /// As [`Columns::read`], for the instance of the run.
+    unsafe fn values(&self, scip: *mut SCIP, sol: *mut SCIP_SOL) -> TiVec<Col, f64> {
+        // SAFETY: the caller's contract.
+        unsafe { self.cols.values(scip, sol, &self.priced_vars.borrow()) }
     }
 
     /// Whether a callback of the run panicked.
@@ -495,7 +561,7 @@ pub(crate) unsafe fn install_messages(scip: *mut SCIP, slot: NonNull<Slot>) -> R
     unsafe { log::install(scip, slot) }
 }
 
-/// Includes the constraint handler, the separator, the heuristic and the event handler.
+/// Includes the constraint handler, the separator, the heuristic, the event handler and the pricer.
 ///
 /// # Errors
 ///
@@ -510,6 +576,7 @@ pub(crate) unsafe fn include(scip: *mut SCIP, slot: NonNull<Slot>) -> Result<(),
         lazy::include(scip, slot)?;
         cut::include(scip, slot)?;
         heuristic::include(scip, slot)?;
-        events::include(scip, slot)
+        events::include(scip, slot)?;
+        price::include(scip, slot)
     }
 }

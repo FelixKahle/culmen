@@ -8,6 +8,14 @@
 //! against the original problem, bounds and integrality included, and stores it if it is feasible and among the
 //! solutions SCIP keeps. Checking it in the original space keeps it independent of what presolve did to the variables.
 //!
+//! In a solve that also asks for [`Events::PRICE`], an original solution cannot hold the columns priced so far, which
+//! have no original variable, so the solution is a transformed one (`SCIPcreateSol`) instead: each program column's
+//! value is set through its original variable into whatever presolve made of it, each priced column's on its own
+//! variable, and the solution is handed over only when SCIP reads back every program column's value as given
+//! (`SCIPisEQ`). A column presolve fixed at another value or multi-aggregated over others may not read back so, and
+//! the solution is then refused; SCIP checks a transformed solution against its transformed problem, which presolve
+//! derived from the program, so a solution it stores is feasible in the program.
+//!
 //! In a solve that also asks for [`Events::LAZY`], the lazy-constraint callback must judge every solution SCIP
 //! stores, and it cannot while the heuristic callback runs; so there the supplied solutions are tried once the
 //! heuristic callback returns.
@@ -20,7 +28,9 @@ use culmen_core::{ActionError, Col, Events, HeuristicContext, Progress, TiSlice}
 use scip_sys::{
     SCIP, SCIP_HEUR, SCIP_HEURTIMING, SCIP_HEURTIMING_AFTERNODE, SCIP_HEURTIMING_BEFORENODE, SCIP_RESULT, SCIP_RETCODE,
     SCIP_Result_SCIP_DIDNOTFIND, SCIP_Result_SCIP_DIDNOTRUN, SCIP_Result_SCIP_FOUNDSOL, SCIP_Retcode_SCIP_OKAY,
-    SCIP_SOL, SCIPcreateOrigSol, SCIPfreeSol, SCIPheurGetData, SCIPincludeHeurBasic, SCIPsetSolVal, SCIPtrySolFree,
+    SCIP_SOL, SCIP_VAR, SCIP_Varstatus_SCIP_VARSTATUS_FIXED, SCIP_Varstatus_SCIP_VARSTATUS_MULTAGGR, SCIPcreateOrigSol,
+    SCIPcreateSol, SCIPfreeSol, SCIPgetSolVal, SCIPheurGetData, SCIPincludeHeurBasic, SCIPisEQ, SCIPsetSolVal,
+    SCIPtrySolFree, SCIPvarGetStatus,
 };
 
 use super::{Delivered, Run, Slot, slot};
@@ -37,6 +47,10 @@ pub struct ScipHeuristic<'a> {
     scip: *mut SCIP,
     heur: *mut SCIP_HEUR,
     cols: Columns<'a>,
+    /// The variables of the columns priced so far.
+    priced: &'a [NonNull<SCIP_VAR>],
+    /// Whether the solve prices, so a solution is a transformed one.
+    pricing: bool,
     infinity: f64,
     progress: Progress,
     /// The solutions to try once the callback returns; `None` to try each at once.
@@ -53,14 +67,16 @@ impl HeuristicContext for ScipHeuristic<'_> {
     /// SCIP checks the solution against the program, bounds and integrality included, and stores it when it is
     /// feasible and among the solutions it keeps (`limits/maxsol` of them), so a stored solution need not be the new
     /// incumbent. In a solve that also asks for [`Events::LAZY`], SCIP tries the solution once this callback
-    /// returns, after the lazy-constraint callback judged it, and `supply` returns `Ok` when it took it to try.
+    /// returns, after the lazy-constraint callback judged it, and `supply` returns `Ok` when it took it to try. In a
+    /// solve that also asks for [`Events::PRICE`], the solution is checked against SCIP's transformed problem, and a
+    /// solution presolve's fixings or aggregations cannot hold is refused.
     ///
     /// # Errors
     ///
     /// Besides the core errors, [`ActionError::Refused`] for a value SCIP would read as infinite, a solution SCIP
-    /// did not store, or a call SCIP refused.
+    /// did not store, a solution of a pricing solve SCIP's transformed problem cannot hold, or a call SCIP refused.
     fn supply(&mut self, values: &TiSlice<Col, f64>) -> Result<(), ActionError> {
-        check_solution(values, self.cols.len())?;
+        check_solution(values, self.cols.len() + self.priced.len())?;
         if let Some((col, value)) = values.iter_enumerated().find(|(_, v)| v.abs() >= self.infinity) {
             return Err(ActionError::Refused(format!(
                 "the value {value} of {col:?} is one SCIP reads as infinite, from {} on",
@@ -71,15 +87,21 @@ impl HeuristicContext for ScipHeuristic<'_> {
             later.push(values.raw.to_vec());
             return Ok(());
         }
+        let sol = Supplied {
+            cols: self.cols,
+            priced: self.priced,
+            pricing: self.pricing,
+        };
         // SAFETY: the context lives during the heuristic's call, solving, of the instance holding the columns.
-        match unsafe { try_sol(self.scip, self.heur, self.cols, values) } {
-            Ok(true) => {
+        match unsafe { sol.try_sol(self.scip, self.heur, values) } {
+            Ok(Tried::Stored) => {
                 *self.found = true;
                 Ok(())
             }
-            Ok(false) => Err(ActionError::Refused(
+            Ok(Tried::Rejected) => Err(ActionError::Refused(
                 "SCIP found the solution infeasible, or worse than every solution it keeps".into(),
             )),
+            Ok(Tried::Unfit(reason)) => Err(ActionError::Refused(reason)),
             Err(error) => Err(ActionError::Refused(error.to_string())),
         }
     }
@@ -91,7 +113,7 @@ impl HeuristicContext for ScipHeuristic<'_> {
     ///
     /// The core errors, else [`ActionError::Refused`].
     fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
-        check_entries(entries, self.cols.len())?;
+        check_entries(entries, self.cols.len() + self.priced.len())?;
         Err(ActionError::Refused(
             "SCIP completes a partial solution only as a start, before a solve begins; supply a value for every column"
                 .into(),
@@ -99,44 +121,133 @@ impl HeuristicContext for ScipHeuristic<'_> {
     }
 }
 
-/// Hands SCIP a full solution to check and store; whether it stored it.
-///
-/// # Errors
-///
-/// [`ScipError::Call`] when SCIP refuses a call.
-///
-/// # Safety
-///
-/// `scip` is the live instance holding `cols`, solving, and `heur` its heuristic; `values` holds one value per
-/// column.
-unsafe fn try_sol(
-    scip: *mut SCIP,
-    heur: *mut SCIP_HEUR,
-    cols: Columns<'_>,
-    values: &TiSlice<Col, f64>,
-) -> Result<bool, ScipError> {
-    let mut sol: *mut SCIP_SOL = ptr::null_mut();
-    // SAFETY: the instance is live and solving, where an original solution is created; `sol` a local to write to.
-    check("SCIPcreateOrigSol", unsafe {
-        SCIPcreateOrigSol(scip, &raw mut sol, heur)
-    })?;
-    // SAFETY: `sol` is a live original solution of the instance.
-    if let Err(error) = unsafe { fill(scip, sol, cols, values) } {
-        // SAFETY: `sol` is the solution created above, freed once.
-        let freed = unsafe { SCIPfreeSol(scip, &raw mut sol) };
-        debug_assert!(
-            freed == SCIP_Retcode_SCIP_OKAY,
-            "try_sol: SCIP failed to free a solution: {freed}"
-        );
-        return Err(error);
+/// What came of trying a supplied solution.
+#[derive(Debug, PartialEq)]
+enum Tried {
+    /// SCIP stored it.
+    Stored,
+    /// SCIP found it infeasible, or worse than every solution it keeps.
+    Rejected,
+    /// SCIP's transformed problem cannot hold it; the reason.
+    Unfit(String),
+}
+
+/// Where a supplied solution's values go: the program's columns, the columns priced so far, and whether the solve
+/// prices.
+#[derive(Clone, Copy, Debug)]
+struct Supplied<'a> {
+    cols: Columns<'a>,
+    priced: &'a [NonNull<SCIP_VAR>],
+    pricing: bool,
+}
+
+impl Supplied<'_> {
+    /// Hands SCIP a full solution to check and store: an original one, or a transformed one in a solve that prices.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP refuses a call.
+    ///
+    /// # Safety
+    ///
+    /// `scip` is the live instance holding the columns, solving, and `heur` its heuristic; `values` holds one value
+    /// per column, the priced ones included.
+    unsafe fn try_sol(
+        self,
+        scip: *mut SCIP,
+        heur: *mut SCIP_HEUR,
+        values: &TiSlice<Col, f64>,
+    ) -> Result<Tried, ScipError> {
+        let mut sol: *mut SCIP_SOL = ptr::null_mut();
+        if self.pricing {
+            // SAFETY: the instance is live and solving, where a transformed solution is created; `sol` a local.
+            check("SCIPcreateSol", unsafe { SCIPcreateSol(scip, &raw mut sol, heur) })?;
+        } else {
+            // SAFETY: the instance is live and solving, where an original solution is created; `sol` a local.
+            check("SCIPcreateOrigSol", unsafe {
+                SCIPcreateOrigSol(scip, &raw mut sol, heur)
+            })?;
+        }
+        // SAFETY: `sol` is a live solution of the instance, transformed exactly when the solve prices.
+        let filled = unsafe { self.fill(scip, sol, values) };
+        if !matches!(filled, Ok(None)) {
+            // SAFETY: `sol` is the solution created above, freed once.
+            let freed = unsafe { SCIPfreeSol(scip, &raw mut sol) };
+            debug_assert!(
+                freed == SCIP_Retcode_SCIP_OKAY,
+                "try_sol: SCIP failed to free a solution: {freed}"
+            );
+            return filled.map(|unfit| Tried::Unfit(unfit.unwrap_or_default()));
+        }
+        let mut stored: c_uint = 0;
+        // SAFETY: `sol` is a complete solution SCIP takes over and frees; `stored` is a local to write to. SCIP
+        // checks it with bounds, integrality and every row, as nothing about it is known.
+        check("SCIPtrySolFree", unsafe {
+            SCIPtrySolFree(scip, &raw mut sol, 0, 0, 1, 1, 1, &raw mut stored)
+        })?;
+        Ok(if stored != 0 { Tried::Stored } else { Tried::Rejected })
     }
-    let mut stored: c_uint = 0;
-    // SAFETY: `sol` is a complete original solution SCIP takes over and frees; `stored` is a local to write to. SCIP
-    // checks it with bounds, integrality and every row, as nothing about it is known.
-    check("SCIPtrySolFree", unsafe {
-        SCIPtrySolFree(scip, &raw mut sol, 0, 0, 1, 1, 1, &raw mut stored)
-    })?;
-    Ok(stored != 0)
+
+    /// Sets every column's value in `sol`: in an original solution through the original variables, with the
+    /// epigraph variable at the quadratic part's value; in a transformed one as the module documentation states.
+    /// `Some` reason when the transformed problem cannot hold the values.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP refuses a value.
+    ///
+    /// # Safety
+    ///
+    /// `sol` is a live solution of the live, solving instance `scip` holding the columns, transformed exactly when the
+    /// solve prices; `values` holds one value per column, the priced ones included.
+    unsafe fn fill(
+        self,
+        scip: *mut SCIP,
+        sol: *mut SCIP_SOL,
+        values: &TiSlice<Col, f64>,
+    ) -> Result<Option<String>, ScipError> {
+        if !self.pricing {
+            // SAFETY: the caller's contract.
+            unsafe { fill(scip, sol, self.cols, values) }?;
+            return Ok(None);
+        }
+        debug_assert!(
+            self.cols.epigraph.is_none(),
+            "Supplied::fill: a pricing solve of a quadratic objective"
+        );
+        for (var, &value) in self.cols.vars.iter().zip(values) {
+            // SAFETY: the instance is transformed and `var` one of its original variables.
+            let transformed = unsafe { crate::columns::transformed(scip, var.as_ptr()) }?;
+            // SAFETY: `transformed` is a variable of the transformed problem.
+            let status = unsafe { SCIPvarGetStatus(transformed) };
+            // A fixed variable takes no other value and a multi-aggregated one none at all; reading back finds them.
+            if status == SCIP_Varstatus_SCIP_VARSTATUS_FIXED || status == SCIP_Varstatus_SCIP_VARSTATUS_MULTAGGR {
+                continue;
+            }
+            // SAFETY: the caller vouches for `sol`; SCIP sets the value on what presolve made of the variable.
+            check("SCIPsetSolVal", unsafe {
+                SCIPsetSolVal(scip, sol, var.as_ptr(), value)
+            })?;
+        }
+        let priced = values.iter().skip(self.cols.len());
+        for (var, &value) in self.priced.iter().zip(priced) {
+            // SAFETY: the caller vouches for `sol`; `var` is a variable of the transformed problem.
+            check("SCIPsetSolVal", unsafe {
+                SCIPsetSolVal(scip, sol, var.as_ptr(), value)
+            })?;
+        }
+        for ((col, &value), var) in values.iter_enumerated().zip(self.cols.vars) {
+            // SAFETY: the caller vouches for `sol`; SCIP reads the original variable through what presolve made of it.
+            let read = unsafe { SCIPgetSolVal(scip, sol, var.as_ptr()) };
+            // SAFETY: the instance is live; the comparison reads its epsilon.
+            if unsafe { SCIPisEQ(scip, read, value) } == 0 {
+                return Ok(Some(format!(
+                    "presolve fixed or aggregated {col:?} so that SCIP's problem holds it at {read}, not at {value}"
+                )));
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// Sets every column's value in `sol`, and the epigraph variable's to the quadratic part's value.
@@ -185,11 +296,19 @@ impl Run<'_> {
         let mut later = Vec::new();
         let mut found = false;
         let defer = self.wanted.contains(Events::LAZY);
+        let priced = self.priced_vars.borrow();
+        let supplied = Supplied {
+            cols: self.cols,
+            priced: &priced,
+            pricing: self.wanted.contains(Events::PRICE),
+        };
         let delivered = self.deliver(scip, |callback| {
             callback.heuristic(&mut ScipHeuristic {
                 scip,
                 heur,
-                cols: self.cols,
+                cols: supplied.cols,
+                priced: supplied.priced,
+                pricing: supplied.pricing,
                 infinity: self.infinity,
                 progress,
                 later: defer.then_some(&mut later),
@@ -203,8 +322,10 @@ impl Run<'_> {
             if self.panicked() {
                 break;
             }
-            // SAFETY: the caller's contract; `values` holds one value per column, as `supply` checked.
-            found |= unsafe { try_sol(scip, heur, self.cols, TiSlice::from_ref(values.as_slice())) }?;
+            // SAFETY: the caller's contract; `values` holds one value per column, as `supply` checked, and no column
+            // was priced since, as SCIP prices only while it solves a node LP.
+            let tried = unsafe { supplied.try_sol(scip, heur, TiSlice::from_ref(values.as_slice())) }?;
+            found |= tried == Tried::Stored;
         }
         Ok(if found {
             SCIP_Result_SCIP_FOUNDSOL

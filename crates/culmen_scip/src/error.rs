@@ -106,6 +106,12 @@ pub enum ScipError {
         /// SCIP's status at the end of the solve.
         status: Status,
     },
+    /// A callback asked for [`Events::PRICE`](culmen_core::Events::PRICE) on a program with a quadratic objective,
+    /// which this backend does not price; refused before SCIP is called.
+    PricingQuadratic,
+    /// A pricing callback ended pricing early at a node where SCIP has no integer variable left to branch on, as in a
+    /// program without integer columns, so SCIP could not branch.
+    BranchEarly,
     /// SCIP ended a solve with a best solution that its own check finds infeasible in the original problem
     /// (`SCIPcheckSolOrig`), as when presolve rewrote a constraint unsoundly; the solution is not reported.
     InfeasibleBest {
@@ -162,6 +168,14 @@ impl fmt::Display for ScipError {
             Self::UnsupportedFeature { feature } => write!(f, "SCIP: the backend does not take {feature}"),
             Self::Start => write!(f, "SCIP: the start does not fit the loaded program"),
             Self::Failed { status } => write!(f, "SCIP: the solve ended without a result ({status})"),
+            Self::PricingQuadratic => write!(
+                f,
+                "SCIP: the backend does not price columns into a program with a quadratic objective"
+            ),
+            Self::BranchEarly => write!(
+                f,
+                "SCIP: a pricing callback ended pricing early at a node with no integer variable left to branch on"
+            ),
             Self::InfeasibleBest { status, objective } => write!(
                 f,
                 "SCIP: the best solution, of objective {objective}, is infeasible in the original problem by SCIP's \
@@ -189,6 +203,8 @@ impl core::error::Error for ScipError {
             | Self::UnsupportedFeature { .. }
             | Self::Start
             | Self::Failed { .. }
+            | Self::PricingQuadratic
+            | Self::BranchEarly
             | Self::InfeasibleBest { .. } => None,
         }
     }

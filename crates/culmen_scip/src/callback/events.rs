@@ -201,7 +201,7 @@ impl Run<'_> {
         let sols = unsafe { core::slice::from_raw_parts(sols, len) }.to_vec();
         for sol in sols.into_iter().rev() {
             // SAFETY: `sol` is a stored solution of the transformed problem, which SCIP reads in this stage.
-            let (objective, values) = unsafe { self.cols.read(scip, sol) };
+            let (objective, values) = unsafe { self.read(scip, sol) };
             let found = Found {
                 progress: self.progress(scip),
                 objective,
@@ -340,7 +340,7 @@ unsafe extern "C" fn exec(
         let sol = unsafe { SCIPeventGetSol(event) };
         if !sol.is_null() {
             // SAFETY: SCIP stores solutions of the transformed problem, which it reads from its transforming stage on.
-            let (objective, values) = unsafe { run.cols.read(scip, sol) };
+            let (objective, values) = unsafe { run.read(scip, sol) };
             let found = Found {
                 progress: run.progress(scip),
                 objective,

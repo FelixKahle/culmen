@@ -951,6 +951,9 @@ impl Callback<Scip> for PanicAt {
     fn heuristic(&mut self, _: &mut <Scip as Backend>::Heuristic<'_>) {
         self.fire();
     }
+    fn price(&mut self, _: &mut <Scip as Backend>::Price<'_>) {
+        self.fire();
+    }
 }
 
 #[test]
@@ -977,6 +980,9 @@ fn test_a_panic_in_every_plugin_panics_out_of_solve_and_leaves_scip_usable() {
 struct Seen(Events);
 
 impl Callback<Scip> for Seen {
+    fn events(&self) -> Events {
+        Events::ALL
+    }
     fn log(&mut self, _: &mut <Scip as Backend>::Log<'_>) {
         self.0 |= Events::LOG;
     }
@@ -1001,11 +1007,14 @@ impl Callback<Scip> for Seen {
     fn heuristic(&mut self, _: &mut <Scip as Backend>::Heuristic<'_>) {
         self.0 |= Events::HEURISTIC;
     }
+    fn price(&mut self, _: &mut <Scip as Backend>::Price<'_>) {
+        self.0 |= Events::PRICE;
+    }
 }
 
 #[test]
 fn test_scips_events_are_exactly_the_events_it_delivers() {
-    assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE - Events::PRICE);
+    assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE);
     let (program, _) = knapsack();
     let mut seen = Seen::default();
     Solver::new(Scip::new(), program)

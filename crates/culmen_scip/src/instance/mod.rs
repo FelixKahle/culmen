@@ -19,13 +19,14 @@ use core::ptr::{self, NonNull};
 
 use std::time::Instant;
 
-use culmen_core::{Callback, Col, Events, QuadObjective, Row, Solution, Start, TiVec};
+use culmen_core::{Callback, Col, Events, Priced, QuadObjective, Row, Solution, Start, TiVec};
 use scip_sys::{
-    SCIP, SCIP_CONS, SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_VAR, SCIPaddSolFree,
-    SCIPcheckSolOrig, SCIPcreate, SCIPcreatePartialSol, SCIPcreateProbBasic, SCIPcreateSol, SCIPfree, SCIPfreeSol,
-    SCIPfreeTransform, SCIPgetBestSol, SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNSolsFound, SCIPgetNTotalNodes,
-    SCIPgetStage, SCIPgetStatus, SCIPincludeDefaultPlugins, SCIPinfinity, SCIPreleaseCons, SCIPreleaseVar,
-    SCIPsetSolVal, SCIPsolve,
+    SCIP, SCIP_CONS, SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_VAR, SCIPactivatePricer,
+    SCIPaddSolFree, SCIPcheckSol, SCIPcheckSolOrig, SCIPcreate, SCIPcreatePartialSol, SCIPcreateProbBasic,
+    SCIPcreateSol, SCIPdeactivatePricer, SCIPfindPricer, SCIPfree, SCIPfreeSol, SCIPfreeTransform, SCIPgetBestSol,
+    SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNSolsFound, SCIPgetNTotalNodes, SCIPgetStage, SCIPgetStatus,
+    SCIPincludeDefaultPlugins, SCIPinfinity, SCIPreleaseCons, SCIPreleaseVar, SCIPsetConsModifiable, SCIPsetSolVal,
+    SCIPsolve,
 };
 
 use crate::callback::{self, Payload, Run, Slot};
@@ -55,6 +56,9 @@ pub(crate) struct Instance {
     conss: TiVec<Row, NonNull<SCIP_CONS>>,
     /// The epigraph of a quadratic objective; `None` for a linear one.
     epigraph: Option<Epigraph>,
+    /// The variable of every column the last solve priced, in the order of their ids, one reference to each, held
+    /// until the transformed problem they belong to is freed.
+    priced: Vec<NonNull<SCIP_VAR>>,
 }
 
 /// What stands for a quadratic part `q(x)` of the objective: a variable `t` in its place, with cost one, bounded by a
@@ -96,6 +100,7 @@ impl Instance {
             vars: TiVec::new(),
             conss: TiVec::new(),
             epigraph: None,
+            priced: Vec::new(),
         };
         // SAFETY: the instance is live and in its init stage, and the slot lives until after SCIP is freed. The
         // handler replaces SCIP's default one, which would print to standard output.
@@ -160,6 +165,7 @@ impl Instance {
     ///
     /// [`ScipError::Call`] when SCIP fails to free it.
     fn free_transform(&mut self) -> Result<(), ScipError> {
+        self.release_priced()?;
         // SAFETY: the instance is live and borrowed exclusively; SCIP takes the call in every stage it can be in here.
         check("SCIPfreeTransform", unsafe { SCIPfreeTransform(self.raw()) })?;
         // SAFETY: the instance is live.
@@ -169,6 +175,81 @@ impl Instance {
             "Instance: SCIP is not in its problem stage after freeing the transformed problem"
         );
         Ok(())
+    }
+
+    /// Releases the references to the variables the last solve priced, which belong to its transformed problem.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP fails to release one; the others are released still.
+    fn release_priced(&mut self) -> Result<(), ScipError> {
+        let mut released = Ok(());
+        for mut var in self.priced.drain(..).map(NonNull::as_ptr) {
+            // SAFETY: the instance is live and `var` the one reference to the priced variable this instance owns.
+            let code = unsafe { SCIPreleaseVar(self.scip.as_ptr(), &raw mut var) };
+            released = released.and(check("SCIPreleaseVar", code));
+        }
+        released
+    }
+
+    /// Marks every row's constraint modifiable and activates the pricer when `on`, so SCIP calls it and lets it add
+    /// variables to the rows; leaves every row unmodifiable and the pricer inactive otherwise.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP refuses a call.
+    ///
+    /// # Panics
+    ///
+    /// When SCIP is not in its problem stage, which configuring a solve leaves it in, or holds no culmen pricer.
+    pub(crate) fn set_pricing(&mut self, on: bool) -> Result<(), ScipError> {
+        // SAFETY: the instance is live.
+        let stage = unsafe { SCIPgetStage(self.raw()) };
+        assert_eq!(
+            stage, SCIP_Stage_SCIP_STAGE_PROBLEM,
+            "Instance::set_pricing: SCIP is not in its problem stage"
+        );
+        // SAFETY: the instance is live, and the name a NUL-terminated string SCIP reads during the call.
+        let pricer = unsafe { SCIPfindPricer(self.raw(), callback::PRICER.as_ptr()) };
+        assert!(
+            !pricer.is_null(),
+            "Instance::set_pricing: the culmen pricer is not included"
+        );
+        let modifiable = c_uint::from(on);
+        for cons in &self.conss {
+            // SAFETY: the instance is live and in its problem stage, where an original constraint's flag may change.
+            check("SCIPsetConsModifiable", unsafe {
+                SCIPsetConsModifiable(self.raw(), cons.as_ptr(), modifiable)
+            })?;
+        }
+        if on {
+            // SAFETY: the instance is live and in its problem stage, where a pricer is activated or deactivated.
+            check("SCIPactivatePricer", unsafe { SCIPactivatePricer(self.raw(), pricer) })
+        } else {
+            // SAFETY: as above.
+            check("SCIPdeactivatePricer", unsafe {
+                SCIPdeactivatePricer(self.raw(), pricer)
+            })
+        }
+    }
+
+    /// The number of pricers SCIP has active, and of program rows whose constraint is modifiable.
+    #[cfg(test)]
+    pub(crate) fn pricing_state(&self) -> (i32, usize) {
+        // SAFETY: the instance is live; the call reads a count.
+        let active = unsafe { scip_sys::SCIPgetNActivePricers(self.raw()) };
+        let modifiable = self
+            .conss
+            .iter()
+            // SAFETY: each constraint is a live original constraint of the instance, whose flag SCIP reads.
+            .filter(|cons| unsafe { scip_sys::SCIPconsIsModifiable(cons.as_ptr()) } != 0)
+            .count();
+        (active, modifiable)
+    }
+
+    /// Whether the objective has a quadratic part, which SCIP holds as an epigraph.
+    pub(crate) const fn quadratic(&self) -> bool {
+        self.epigraph.is_some()
     }
 
     /// Hands SCIP a start for the next solve: a full start as a solution, a sparse one as a partial solution SCIP
@@ -233,25 +314,38 @@ impl Instance {
         Ok(())
     }
 
-    /// Solves the problem, delivering the events `wanted` to `callback`; a panic of the callback is returned, not
-    /// resumed.
+    /// Solves the problem, delivering the events `wanted` to `callback` and handing every column it prices to
+    /// `priced`; a panic of the callback is returned, not resumed. The instance holds the priced columns' variables
+    /// afterwards, so its best solution has a value for each.
     ///
     /// The callback's run is installed in the slot for the call of `SCIPsolve` alone, and SCIP reads the columns
     /// through shared references during it.
-    pub(crate) fn solve(&mut self, callback: &mut dyn Callback<Scip>, wanted: Events, start: Instant) -> Ran {
+    pub(crate) fn solve(
+        &mut self,
+        callback: &mut dyn Callback<Scip>,
+        wanted: Events,
+        start: Instant,
+        priced: &mut Priced,
+    ) -> Ran {
         let this: &Self = self;
-        // SAFETY: the instance is live, holds the columns, and is in its problem stage, as configuring left it.
-        let run = unsafe { Run::new(this.raw(), callback, wanted, start, this.columns()) };
+        // SAFETY: the instance is live, holds the columns and rows, and is in its problem stage, as configuring left
+        // it.
+        let run = unsafe { Run::new(this.raw(), callback, wanted, start, this.columns(), &this.conss, priced) };
         let solved = {
             let _installed = this.slot().install(&run);
             // SAFETY: the instance is live and borrowed exclusively by the caller, and holds its problem; the run its
             // plugins reach lives until after the guard uninstalls it.
             check("SCIPsolve", unsafe { SCIPsolve(this.raw()) })
         };
-        let (panic, error) = run.finish();
+        let finished = run.finish();
+        debug_assert!(
+            self.priced.is_empty(),
+            "Instance: a solve's priced variables were not released"
+        );
+        self.priced = finished.priced;
         Ran {
-            result: error.map_or(solved, Err),
-            panic,
+            result: finished.error.map_or(solved, Err),
+            panic: finished.panic,
         }
     }
 
@@ -283,18 +377,22 @@ impl Instance {
         // SAFETY: the instance is live; the result is null or a solution of this instance.
         let sol = NonNull::new(unsafe { SCIPgetBestSol(self.raw()) })?.as_ptr();
         // SAFETY: the instance is live after a solve, in a stage where it reads its own solution `sol`.
-        let (objective, values) = unsafe { self.columns().read(self.raw(), sol) };
+        let (objective, values) = unsafe { self.columns().read(self.raw(), sol, &self.priced) };
         Some(Solution { objective, values })
     }
 
     /// Whether SCIP's own check finds the best solution of the last solve feasible in the original problem, its
     /// bounds, integrality and constraints, to SCIP's feasibility tolerance (`SCIPcheckSolOrig`); `true` when SCIP
-    /// holds no solution.
+    /// holds no solution. SCIP's check in the original problem skips a modifiable constraint, as the variables a
+    /// pricer added are not in it; so after a solve that priced, SCIP also checks the solution's integrality and
+    /// constraints in its transformed problem (`SCIPcheckSol`), whose constraints hold the priced variables. That check
+    /// leaves out the bounds: SCIP tightens a transformed variable's global bounds by what any better solution needs,
+    /// which the best solution itself need not meet, and the original bounds are checked already.
     ///
     /// # Errors
     ///
-    /// [`ScipError::Call`] when SCIP refuses the check.
-    pub(crate) fn best_feasible(&self) -> Result<bool, ScipError> {
+    /// [`ScipError::Call`] when SCIP refuses a check.
+    pub(crate) fn best_feasible(&self, priced: bool) -> Result<bool, ScipError> {
         // SAFETY: the instance is live; the result is null or a solution of this instance.
         let Some(sol) = NonNull::new(unsafe { SCIPgetBestSol(self.raw()) }) else {
             return Ok(true);
@@ -304,6 +402,13 @@ impl Instance {
         // SCIP checks a complete solution of its own; `feasible` is a local to write to. No reason is printed.
         check("SCIPcheckSolOrig", unsafe {
             SCIPcheckSolOrig(self.raw(), sol.as_ptr(), &raw mut feasible, 0, 0)
+        })?;
+        if feasible == 0 || !priced {
+            return Ok(feasible != 0);
+        }
+        // SAFETY: as above; the check takes integrality and every constraint, the rows in the LP included.
+        check("SCIPcheckSol", unsafe {
+            SCIPcheckSol(self.raw(), sol.as_ptr(), 0, 0, 0, 1, 1, &raw mut feasible)
         })?;
         Ok(feasible != 0)
     }
@@ -320,6 +425,11 @@ impl Drop for Instance {
     fn drop(&mut self) {
         let raw = self.raw();
         let released = |code| code == SCIP_Retcode_SCIP_OKAY || std::thread::panicking();
+        let priced = self.release_priced();
+        debug_assert!(
+            priced.is_ok() || std::thread::panicking(),
+            "Instance: SCIP failed to release a priced variable: {priced:?}"
+        );
         let (epigraph_var, epigraph_cons) = match self.epigraph.take() {
             Some(Epigraph { var, cons, .. }) => (Some(var), cons),
             None => (None, None),
