@@ -159,7 +159,8 @@ impl Instance {
     }
 
     /// Frees the last solve's transformed problem, so SCIP holds the problem as loaded and its parameters and
-    /// original solutions may change. Does nothing before the first solve.
+    /// original solutions may change; SCIP keeps the best solutions of that problem as original solutions, which the
+    /// next solve checks as it checks a start. Does nothing before the first solve.
     ///
     /// # Errors
     ///

@@ -27,8 +27,9 @@ pub(crate) enum Group {
 }
 
 impl Instance {
-    /// Frees the last solve's transformed problem and resets every parameter to SCIP's default, so the next solve
-    /// starts from the problem as loaded and SCIP's defaults.
+    /// Frees the last solve's transformed problem, whose best solutions SCIP keeps as candidates for the next solve,
+    /// and resets every parameter to SCIP's default, so the next solve starts from the problem as loaded and SCIP's
+    /// defaults.
     ///
     /// # Errors
     ///

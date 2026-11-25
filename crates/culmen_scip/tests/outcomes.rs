@@ -408,7 +408,7 @@ fn test_a_sparse_start_is_taken_and_the_solve_still_proves_the_optimum() {
 }
 
 #[test]
-fn test_a_second_solve_starts_again_from_the_program_as_loaded() {
+fn test_a_second_solve_takes_its_own_settings() {
     let (program, ..) = branching();
     let mut solver = Solver::new(plain(), program).unwrap();
     let limited = Settings {
@@ -421,6 +421,49 @@ fn test_a_second_solve_starts_again_from_the_program_as_loaded() {
     assert_close(optimum(&second).objective, 2.9);
     let third = solver.solve(Request::new()).unwrap();
     assert_close(optimum(&third).objective, 2.9);
+}
+
+#[test]
+fn test_a_second_solve_starts_from_the_last_solves_best_solution_until_an_edit() {
+    // Without heuristics, separation or presolve, one node finds no solution of `branching` on its own (see
+    // `test_a_node_limit_stops_with_the_root_bound_and_without_a_solution`); after a solve to the optimum, the same
+    // one-node solve holds that optimum as its best solution, which only the last solve can have handed it. An edit
+    // loads the program into a new instance, which holds no solution of before.
+    let (program, take) = branching();
+    let mut solver = Solver::new(plain(), program).unwrap();
+    let one_node = || {
+        plain_request(
+            Settings {
+                node_limit: Some(1),
+                ..Settings::new()
+            },
+            None,
+        )
+    };
+    let first = solver.solve(plain_request(Settings::new(), None)).unwrap();
+    assert_close(optimum(&first).objective, 2.9);
+    let again = solver.solve(one_node()).unwrap();
+    let Outcome::Stopped { reason, best, .. } = again.outcome else {
+        panic!("{again:?}")
+    };
+    assert_eq!(reason, StopReason::NodeLimit);
+    let best = best.unwrap();
+    assert_close(best.objective, 2.9);
+    assert_close(best.values[take[0]] + best.values[take[1]], 2.0);
+    // The last item is worth 1.0 still less than any other, so the optimum stays; only the instance is new.
+    solver.set_col_costs([(take[5], 0.9)]).unwrap();
+    let edited = solver.solve(one_node()).unwrap();
+    assert!(
+        matches!(
+            edited.outcome,
+            Outcome::Stopped {
+                reason: StopReason::NodeLimit,
+                best: None,
+                ..
+            }
+        ),
+        "{edited:?}"
+    );
 }
 
 #[test]

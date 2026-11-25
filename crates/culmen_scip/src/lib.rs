@@ -29,12 +29,21 @@
 //!
 //! # Options and settings
 //!
-//! Each solve starts from the program as loaded: it frees the last solve's transformed problem, resets SCIP's
-//! parameters to their defaults, keeps SCIP from catching `SIGINT` (`misc/catchctrlc`), turns off SCIP's
-//! reformulation of products of binary variables in nonlinear constraints (`constraints/nonlinear/reformbinprods`;
+//! Each solve starts from the program as loaded and from the last solve's best solutions: it frees the last solve's
+//! transformed problem, resets SCIP's parameters to their defaults, keeps SCIP from catching `SIGINT`
+//! (`misc/catchctrlc`), turns off SCIP's reformulation of products of binary variables in nonlinear constraints (`constraints/nonlinear/reformbinprods`;
 //! see [`Scip::CLASSES`] for why), then applies the backend's [`ScipOptions`] and then the solve's [`Settings`], so a
 //! per-solve setting always wins and an option naming either parameter overrides the backend's choice. SCIP's log
-//! stays off standard output unless [`Settings::console`] asks for it. Every field of [`Settings`] maps to SCIP:
+//! stays off standard output unless [`Settings::console`] asks for it.
+//!
+//! Freeing the transformed problem keeps up to `limits/maxorigsol` (10 by default) of the last solve's best solutions
+//! as candidates, which the next solve checks again, against its own lazy constraints too, and may start from, as it
+//! would a start; the last solve's parameters decide, and `misc/transsolsorig` set to false keeps none. So a second
+//! solve of the same program, under a node or time limit, can end with the first one's optimum. An edit loads the
+//! program into a new instance, which holds no solution of before, and so does the [`Solver`](culmen_core::Solver)
+//! after a solve that priced a column.
+//!
+//! Every field of [`Settings`] maps to SCIP:
 //!
 //! | `Settings` field | SCIP |
 //! |---|---|
@@ -433,8 +442,9 @@ impl Backend for Scip {
         instance.add_start(start)
     }
 
-    /// Solves the loaded program from scratch under the backend's options and `settings`, delivering to `callback`
-    /// the events it asks for and handing every column it prices to `priced`.
+    /// Solves the loaded program under the backend's options and `settings`, from its start and the last solve's best
+    /// solutions as the module documentation says, delivering to `callback` the events it asks for and handing every
+    /// column it prices to `priced`.
     ///
     /// # Errors
     ///
