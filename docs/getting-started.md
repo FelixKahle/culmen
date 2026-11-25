@@ -45,8 +45,9 @@ build and inspect models, write LP files, or drive a backend of your own.
 `Start`, `Outcome`, `Solution`, `Solved`, `SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`,
 `LogLine`, `Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the functions `product`,
 `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`, `absolute_gap!`, `weight!`, `threads!` and
-`solutions!`, and, with their features, `Highs`, `Scip` and the modelling macros. Everything else is at the
-crate root, `culmen::…`.
+`solutions!`, the [context traits](callbacks.md#contexts) a callback calls (`LogContext`, `PollContext`, `LazyContext`
+and the rest) with `Unsupported`, and, with their features, `Highs`, `Scip` and the modelling macros. Everything else
+is at the crate root, `culmen::…`.
 
 ## Choosing a backend
 
@@ -145,8 +146,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Each macro expands to the methods of the first version; [Macros](macros.md#expansions) shows each form beside the
-calls it writes.
+Each macro expands to the method calls of the first model; [Macros](macros.md#expansions) shows each form beside
+the calls it writes.
 
 ## Errors
 
@@ -163,8 +164,9 @@ as above. The ones you meet first:
 | `ScipError` | `Solver::solve` with SCIP, and inside `LoadError` from `Solver::new` | [SCIP](scip.md#errors) |
 | `ActionError` | actions inside a callback | [Callbacks](callbacks.md#contexts) |
 
-Each error's message starts with the name of the type it concerns (`Model:`, `Program:`, `Bounds:`, `Solver:`,
-`HiGHS:`, `SCIP:`), and a model error names the variable or constraint at fault by the name you gave it.
+Each error's message starts with what it concerns (`Model:`, `Program:`, `Bounds:`, `Solver:`, `HiGHS:`, `SCIP:`,
+`callback action:`, `model file:`), and a model error names the variable or constraint at fault by the name you gave
+it.
 
 ## Examples
 

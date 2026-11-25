@@ -3,9 +3,9 @@
 A `Program` is a linear, mixed-integer or convex quadratic program: minimize or maximize
 `cost · x + Σ q · xᵢ · xⱼ + offset` over `x`, with every column in its bounds, the integer columns whole, every semi
 column zero or in its bounds, and every row's activity `Σ coefficient · column` in its bounds; with further linear
-objectives, it optimizes them lexicographically or blended. Its constraints are linear. It is an
-immutable value, built once and checked then, and it is what a [backend](solving.md#solver) loads. A
-[model](modelling.md) builds one; this page builds them directly and reads them back.
+objectives, it optimizes them lexicographically or blended. Its constraints are linear. It is an immutable value,
+built once and checked then, and it is what a [backend](solving.md#solver) loads. A [model](modelling.md) builds one;
+this page builds them directly and reads them back.
 
 ## `ProgramPlan`
 
@@ -21,9 +21,10 @@ A `ProgramPlan` is a program as plain data, with `pub` fields, checked into a `P
 | `objectives` | Further linear objectives and how they combine, `Objectives::Single` for none. See [Several objectives](#several-objectives). |
 
 `plan.col(column)` pushes a column and returns its `Col`; `plan.row(bounds, terms)` pushes an unnamed row and
-returns its `Row`. `ProgramColumn::continuous(cost, bounds)`, `ProgramColumn::integer(cost, bounds)`,
-`ProgramColumn::binary(cost)`, `ProgramColumn::semi_continuous(cost, bounds)` and
-`ProgramColumn::semi_integer(cost, bounds)` make columns without a name; the fields are public, so set `name` directly.
+returns its `Row`, its bounds anything that converts into `Bounds` (`..` for a free row).
+`ProgramColumn::continuous(cost, bounds)`, `ProgramColumn::integer(cost, bounds)`, `ProgramColumn::binary(cost)`,
+`ProgramColumn::semi_continuous(cost, bounds)` and `ProgramColumn::semi_integer(cost, bounds)` make columns without a
+name; the fields are public, so set `name` directly.
 
 ```rust
 use culmen::{Bounds, ProgramColumn, ProgramPlan, Sense, bounds};
@@ -46,7 +47,8 @@ fn main() -> Result<(), culmen::ProgramError> {
 ```
 
 A row's terms may repeat a column; their coefficients are added up in the order given, and an entry that sums to
-zero is dropped. Every row of a `Program` holds each column at most once, with a non-zero coefficient, sorted by column.
+zero is dropped. Every row of a `Program` holds each column at most once, with a non-zero coefficient, sorted by
+column.
 
 `Program` and `ProgramPlan` convert both ways: `ProgramPlan::from(program)` takes a program apart into its plan, and
 `Program::try_from(plan)` is `plan.build()`.
@@ -69,7 +71,7 @@ A `Program` is read through methods; it has no public fields and no constructor 
 | `row_bounds()` | The rows' bounds, indexed by `Row`. |
 | `row(row)` | A [`RowView`](#row-views-and-iterators) of one row: its bounds, name and entries. |
 | `matrix()` | The whole matrix in compressed row form, a `RowMatrix { starts, cols, values }`. |
-| `objective_value(values)`, `objective_values(values)`, `max_violation(values)` | See [Checking a point](#checking-a-point). |
+| `objective_value(values)`, `objective_values(values)`, `activities(values)`, `max_violation(values)` | See [Checking a point](#checking-a-point). |
 | `to_lp_string()`, `write_lp(out)` | See [LP files](#lp-files). |
 
 The methods that take a handle panic when the program has no such column or row; they never read anything undefined.
@@ -198,15 +200,16 @@ are named types that run both ways and know their exact length.
 
 ## The quadratic part
 
-`program.quadratic()` is a `QuadObjective`, the objective's `Σ q · xᵢ · xⱼ` in one canonical form: entries `(i, j, q)`
-with `i <= j`, each pair at most once, every coefficient finite and non-zero, sorted by `(i, j)`. The model's `x * x`
-is the entry `(x, x, 1)` and `2.0 * x * y` the entry `(x, y, 2)`. A plan's terms may name a pair in either order and
-repeat it; the coefficients of a pair are added up in the order given, and a pair that sums to zero is dropped.
+`program.quadratic()` is a `QuadObjective`, the objective's `Σ q · xᵢ · xⱼ` in one canonical form: entries
+`(i, j, q)` with `i <= j`, each pair at most once, every coefficient finite and non-zero, sorted by `(i, j)`. The
+model's `x * x` is the entry `(x, x, 1)` and `2.0 * x * y` the entry `(x, y, 2)`. A plan's terms may name a pair in
+either order and repeat it; the coefficients of a pair are added up in the order given, and a pair that sums to zero
+is dropped.
 
 Solvers take the quadratic part as `½ xᵀHx` with a symmetric Hessian `H`. In that form `Hᵢᵢ = 2q` on the diagonal and
 `Hᵢⱼ = Hⱼᵢ = q` off it; `quadratic().hessian()` gives its lower triangle column by column, `(column, row, value)` with
-`row >= column`, which is the layout HiGHS reads. Every value of `H` is finite: a plan whose square has a coefficient
-so large that `2q` overflows is refused with `NonFiniteQuadCoefficient`.
+`row >= column`, which is the layout HiGHS reads. Every value of `H` is finite: a plan whose square has a coefficient so
+large that `2q` overflows is refused with `NonFiniteQuadCoefficient`.
 
 | Method | Gives |
 |---|---|
@@ -236,8 +239,8 @@ fn main() -> Result<(), culmen::ProgramError> {
 
 The class of program is *convex* quadratic. Convexity is a property of real numbers that floating point cannot
 decide exactly, so `build` checks it with a stated tolerance: `H` splits into blocks of columns its entries join,
-and for every block `s · H + δ · I` must have a Cholesky factor, where `s` is `1` to minimize and `-1` to maximize and
-`δ` is `Program::CONVEXITY_TOLERANCE` (`1e-9`) times the block's largest `|Hᵢⱼ|`. Every `Program` therefore has an
+and for every block `s · H + δ · I` must have a Cholesky factor, where `s` is `1` to minimize and `-1` to maximize
+and `δ` is `Program::CONVEXITY_TOLERANCE` (`1e-9`) times the block's largest `|Hᵢⱼ|`. Every `Program` therefore has an
 objective convex to minimize, or concave to maximize, up to that tolerance; a semidefinite one passes. Each block costs
 a dense factorization cubic in its number of columns, so a separable objective, a sum of squares of single columns,
 costs next to nothing.
@@ -348,11 +351,12 @@ fn main() -> Result<(), culmen::ProgramError> {
 
 `program.objective_value(values)` is the objective at a point, quadratic part and offset included.
 `program.objective_values(values)` is every objective's value, the own one first, indexed by `ObjectiveId`.
+`program.activities(values)` is every row's activity, indexed by `Row`.
 `program.max_violation(values)` is the largest amount by which the point violates a column bound, a row, integrality
 or a semi column's choice between zero and its bounds, zero for a feasible point and infinite for one holding NaN. An
 infinite value or activity lies inside a bound open on its side, as `Bounds::contains` reads it, so check that a
-point is finite where that matters. Both panic when `values` holds fewer values than the program has columns. They are the
-way to check a solution against the program independently of any solver:
+point is finite where that matters. Each panics when `values` holds fewer values than the program has columns.
+They are the way to check a solution against the program independently of any solver:
 
 ```rust
 use culmen::prelude::*;
@@ -375,13 +379,17 @@ fn main() -> Result<(), culmen::ModelError> {
 
 ## LP files
 
-`program.to_lp_string()` writes the program in the CPLEX LP file format, a `Result<String, LpFileError>`, and `program.write_lp(&mut out)` writes it into
-any `fmt::Write`. The output is for reading by eye or by another solver while debugging:
+`program.to_lp_string()` writes the program in the CPLEX LP file format, a `Result<String, LpFileError>`, and
+`program.write_lp(&mut out)` writes it into any `fmt::Write`. The output is for reading by eye or by another solver
+while debugging:
 
 - Names are reduced to the characters the format allows, and a name that is one of the format's keywords (`max`,
   `sos`, `end`, …, in any case) is prefixed `_`. An unnamed column is written `x<index>` and an unnamed row
-  `r<index>`; distinct names that reduce to the same text are not told apart.
+  `r<index>`.
 - A ranged row becomes two rows suffixed `_lo` and `_hi`; a row with no finite bound is left out.
+- Every column and row gets a label of its own, so the file states the same program whatever the names. A label
+  already taken (a name given twice, two names that reduce to the same text, a generated label equal to a name, a row
+  named `obj`) is suffixed `~1`, `~2`, … until it is free; the columns and rows that keep their own name come first.
 - Integer and semi-integer columns are listed under `General`, semi-continuous and semi-integer ones under
   `Semi-Continuous`: a column in both is semi-integer, as CPLEX and HiGHS read it. Bounds equal to the format's
   default `0 ..` are not written.
@@ -422,8 +430,7 @@ given, are finite, every further objective's offset is finite, every semi column
 (`0 < lower`, `upper` finite), every quadratic term names columns of the plan with a finite coefficient, the
 coefficients of each pair, added up in the order given, are finite, the quadratic part passes the
 [convexity check](#the-quadratic-part), and it is empty beside further objectives. Bounds and integrality need no
-other check: their types already guarantee them. Otherwise it returns a `ProgramError`
-naming the first defect:
+other check: their types already guarantee them. Otherwise it returns a `ProgramError` naming the first defect:
 
 | Variant | Message |
 |---|---|

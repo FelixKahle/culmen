@@ -12,7 +12,6 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use culmen::LazyContext;
 use culmen::prelude::*;
 
 /// Each town's name and position, in kilometres.

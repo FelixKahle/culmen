@@ -61,9 +61,9 @@ the order written.
 The declaration is a name, `x`, or a family, `x[i in I, j in J if cond]`. The kind is `Cont` (the default), `Int`,
 `Bin`, `Free`, `SemiCont` or `SemiInt`, also spelled `Continuous`, `Integer`, `Binary`, `SemiContinuous` and
 `SemiInteger`. An unwritten bound keeps the kind's default: zero below for `Cont` and `Int`, nothing for `Free`. A
-`Bin` takes no bounds; a bounded integer is `Int` with the bounds. A semi kind is
-[zero or in its bounds](modelling.md#semi-continuous-and-semi-integer-variables) and needs both, with zero outside
-them: `variable!(m, 20 <= load <= 80, SemiCont)`.
+`Bin` takes no bounds; a bounded integer is `Int` with the bounds. A semi kind is [zero or in its
+bounds](modelling.md#semi-continuous-and-semi-integer-variables) and needs both, with zero outside them:
+`variable!(m, 20 <= load <= 80, SemiCont)`.
 
 ```rust
 use culmen::prelude::*;
@@ -143,6 +143,9 @@ fn main() -> Result<(), culmen::ModelError> {
     Ok(())
 }
 ```
+
+Further objectives ([Several objectives](modelling.md#several-objectives)) have no macro form. Add them with
+`m.add_objective`, whose expression `sum!` writes as well: `m.add_objective(Objective::minimize(sum!(..)))`.
 
 ## `sum!`
 
@@ -248,6 +251,7 @@ A malformed macro call is a compile error at the token at fault, with a message 
 | ``a binary's bounds are [0, 1]: for others, `Int` with the bounds`` | A `Bin` with bounds. |
 | ``a name, such as `x` or `x[i in I]` `` | A declaration that does not start with a name. |
 | ``after the name, only an index `[i in I, …]` `` | A declaration whose name is followed by anything but brackets. |
+| `unexpected after the declaration` | A declaration with tokens after its index's closing bracket. |
 | ``an index reads `name in domain` `` | A loop without `in`, or with an empty side. |
 | ``the filter `if cond` comes last, after every `name in domain` `` | A filter before the last loop. |
 | `` `if` needs a condition `` | A filter without its condition. |
@@ -260,6 +264,7 @@ A malformed macro call is a compile error at the token at fault, with a message 
 | ``a sense: `Min` or `Max` `` | An unknown objective sense. |
 | ``sum!(body for i in I, …)`` | `sum!` without `for`. |
 | ``sum! needs a body before `for` `` | `sum!` with nothing before `for`. |
+| ``… a dependency on `culmen` or `culmen_core`; this crate's manifest names neither`` | Any macro, in a crate whose manifest depends on neither. |
 
 ```text
 variable!(m, 0 <= open <= 1, Bin);

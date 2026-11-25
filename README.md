@@ -164,7 +164,6 @@ candidate arrives, or price columns into every node of the search:
 ```rust
 use std::time::Duration;
 
-use culmen::LazyContext;
 use culmen::prelude::*;
 
 /// Forbids taking both items, a conflict only the callback knows.
@@ -276,17 +275,24 @@ access**; its first build takes a few minutes more and about 500 MB of disk.
 
 ## Documentation
 
-The user guide is in [`docs/`](https://github.com/FelixKahle/culmen/blob/main/docs/README.md), and every Rust snippet in it runs as a doctest, but for the two marked `ignore`:
+The user guide is in [`docs/`](https://github.com/FelixKahle/culmen/blob/main/docs/README.md), and every Rust snippet in
+it runs as a doctest, but for the two marked `ignore`:
 
-- [Getting started](https://github.com/FelixKahle/culmen/blob/main/docs/getting-started.md): requirements, features, and a first model.
-- [Modelling](https://github.com/FelixKahle/culmen/blob/main/docs/modelling.md) and [Macros](https://github.com/FelixKahle/culmen/blob/main/docs/macros.md): variables, linear and quadratic expressions,
+- [Getting started](https://github.com/FelixKahle/culmen/blob/main/docs/getting-started.md): requirements, features, and
+  a first model.
+- [Modelling](https://github.com/FelixKahle/culmen/blob/main/docs/modelling.md) and
+  [Macros](https://github.com/FelixKahle/culmen/blob/main/docs/macros.md): variables, linear and quadratic expressions,
   constraints, objectives and keyed families, written with methods or with macros.
-- [Solving](https://github.com/FelixKahle/culmen/blob/main/docs/solving.md) and [Callbacks](https://github.com/FelixKahle/culmen/blob/main/docs/callbacks.md): model classes, requests, settings, outcomes,
-  observers, stops and every callback event.
-- [HiGHS](https://github.com/FelixKahle/culmen/blob/main/docs/highs.md): options, threads, statuses, quadratic programs, callback contexts, and limitations.
-- [SCIP](https://github.com/FelixKahle/culmen/blob/main/docs/scip.md): building, options, statuses, quadratic programs, lazy constraints, cuts, heuristic
-  solutions, pricing, and limitations.
-- [The program as data](https://github.com/FelixKahle/culmen/blob/main/docs/program.md), [Testing](https://github.com/FelixKahle/culmen/blob/main/docs/testing.md), [Design](https://github.com/FelixKahle/culmen/blob/main/docs/design.md), and
+- [Solving](https://github.com/FelixKahle/culmen/blob/main/docs/solving.md) and
+  [Callbacks](https://github.com/FelixKahle/culmen/blob/main/docs/callbacks.md): model classes, requests, settings,
+  outcomes, observers, stops and every callback event.
+- [HiGHS](https://github.com/FelixKahle/culmen/blob/main/docs/highs.md): options, threads, statuses, quadratic programs,
+  callback contexts, and limitations.
+- [SCIP](https://github.com/FelixKahle/culmen/blob/main/docs/scip.md): building, options, statuses, quadratic programs,
+  lazy constraints, cuts, heuristic solutions, pricing, and limitations.
+- [The program as data](https://github.com/FelixKahle/culmen/blob/main/docs/program.md),
+  [Testing](https://github.com/FelixKahle/culmen/blob/main/docs/testing.md),
+  [Design](https://github.com/FelixKahle/culmen/blob/main/docs/design.md), and
   [Backends](https://github.com/FelixKahle/culmen/blob/main/docs/backends.md) for backend authors.
 
 The API reference is the rustdoc: `cargo doc --open -p culmen`.
@@ -329,8 +335,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
-The code keeps to typed handles and newtypes, checked literals, documented `unsafe`, and property tests against
-simple reference models; [Design](https://github.com/FelixKahle/culmen/blob/main/docs/design.md) explains the choices behind it.
+The code keeps to typed handles and newtypes, checked literals, documented `unsafe`, and property tests against simple
+reference models; [Design](https://github.com/FelixKahle/culmen/blob/main/docs/design.md) explains the choices behind
+it.
 
 ## Contributing
 
@@ -338,14 +345,14 @@ Contributions are welcome, from a typo fix to a new backend. Open an issue for a
 request straight away.
 
 - **Bugs:** the smallest program that shows it helps most. A fix comes with a test that fails without it.
-- **Backends:** HiGHS and SCIP so far. [Backends](https://github.com/FelixKahle/culmen/blob/main/docs/backends.md) describes the contract a new solver
-  implements.
+- **Backends:** HiGHS and SCIP so far. [Backends](https://github.com/FelixKahle/culmen/blob/main/docs/backends.md)
+  describes the contract a new solver implements.
 - **Pull requests:** CI must pass: formatting, clippy and the docs with warnings denied, and the tests.
 
 ## Licence
 
-Licensed under either of [Apache License, Version 2.0](https://github.com/FelixKahle/culmen/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/FelixKahle/culmen/blob/main/LICENSE-MIT), at your
-option.
+Licensed under either of [Apache License, Version 2.0](https://github.com/FelixKahle/culmen/blob/main/LICENSE-APACHE) or
+[MIT license](https://github.com/FelixKahle/culmen/blob/main/LICENSE-MIT), at your option.
 
 Unless you explicitly state otherwise, any contribution you intentionally submit for inclusion in this work, as
 defined in the Apache-2.0 license, is dual licensed as above, without any additional terms or conditions.

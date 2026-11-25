@@ -103,7 +103,7 @@ two items:
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{ActionError, AddedRow, Found, LazyContext, Phase, Script, Step};
+use culmen::{ActionError, AddedRow, Found, Phase, Script, Step};
 
 struct NotBoth {
     x: Col,
@@ -158,7 +158,7 @@ program the columns it added.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceContext, PriceMode, ProgramColumn, Script, Step};
+use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
 
 /// Adds the pattern when it improves, else reports a bound and stops pricing.
 struct Pattern(NewCol);
@@ -214,14 +214,17 @@ published (`publish = false`); outside this workspace, depend on it by path unde
 
 | Module | Holds |
 |---|---|
-| `reference` | `solve(&program)`, an exact solver for tiny problems, and `close(a, b, tolerance)`, a relative comparison. |
-| `strategy` | `small_lp()`, a `proptest` strategy of tiny bounded LPs and MILPs that `reference::solve` can enumerate. |
+| `reference` | `solve(&program)`, an exact solver for tiny linear problems; `close(a, b, tolerance)`, a relative comparison; `edit_plan(..)`, the rules of [editing a loaded program](solving.md#editing-a-loaded-program) judged without culmen_core's checks. |
+| `strategy` | `proptest` strategies: `small_lp()` and `small_semi()`, tiny bounded LPs and MILPs (the second with semi columns) that `reference::solve` can enumerate; `small_qp()`, small convex QPs; `priced_split()`, a program split into the columns a solve starts with and those a pricer may add; `edits(&program)` and `with_edits(programs)`, edits of a program as data. |
+| `op` | `EditOp`, one edit of a `Solver`'s program as data, which `apply` replays. |
+| `mirror` | `Mirror<B>`, a backend that wraps another, records every load and edit, checks the edit contract, and fails or panics on demand. |
 | `instances` | `assignment(products, locations, seed, offset)`, a generalized assignment hard enough that a solver searches for seconds; it returns the `program` and its variables `x`. |
 
 `reference::solve` enumerates every integer point of the integer columns' box and every vertex of the continuous
 part, solving each in exact rational arithmetic, so it shares none of a floating-point solver's reasoning. It
 returns `Reference::Infeasible` or `Reference::Optimal(value)`, the exact optimum; `objective()` reads it as the
-nearest `f64`. Every column needs finite bounds, and the integer box at most a million points; it panics otherwise.
+nearest `f64`. The objective must be linear, every column needs finite bounds, and the integer box at most a million
+points; it panics otherwise.
 
 ```rust
 use culmen::prelude::*;
@@ -263,7 +266,7 @@ With the `serde` feature, the plain data derives `Serialize` and `Deserialize`:
 - The analyses: `Analysis`, `Analyses`, `Duals`, `Basis`, `BasisStatus`, `Ranging`, `Ranged`, `Limit`, `Line`, `Iis`,
   `Side`, `Weights`, `Penalty`, `Relaxed`, `Violation`, `Bound`.
 - With `highs`: `HighsOptions` and its option types, `OptionValue`, `HighsStatus`, `ModelStatus`, `SolutionStatus`,
-  `CallStatus`.
+  `CallStatus`, `Version` and `files::ModelFormat`.
 - With `scip`: `ScipOptions`, `Emphasis`, `ScipParam`, `ParamValue`, `ScipStatus`, `Status`, `RetCode` and `Version`.
 
 The model (`Model`, `Var`, `LinExpr`, `QuadExpr`, `Constraint`, the families) is not serializable: serialize the
@@ -276,6 +279,9 @@ A checked value is checked again as it is read, so a document cannot smuggle in 
   without the `quadratic` field, as written before quadratic objectives, reads as linear.
 - `Bounds` is written as `{"lower": …, "upper": …}`, an infinite end as `null`, since JSON has no infinity; it is
   read back through `Bounds::new`, an end that is `null` or left out read as infinite.
+- A number that may be infinite or NaN (a `Limit`'s `value` and `objective`, a `Violation`'s `amount`, a real
+  option of `HighsOptions` or a real `ParamValue`) is written as a number when finite and as the string `"inf"`,
+  `"-inf"` or `"NaN"` otherwise, so it reads back as it was (`culmen::serde_real`).
 - `RelativeGap` and `AbsoluteGap` are written as plain numbers and read back through their checked constructors;
   `Col` and `Row` are plain numbers. A `Settings` refuses a thread count or a solution limit of zero, as their
   `NonZero` types do.

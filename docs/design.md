@@ -15,10 +15,10 @@ The one program that changes is the one a `Solver` holds, and only through the `
 it changes anything, and is all or none, so `solver.program()` is always a program `build` accepts; ids are only ever
 appended, so a handle never changes its meaning. Everywhere else a program, once built, stays as it is.
 
-The check happens in one place, `build`, and its error names what is at fault. A model's error names the variable
-or constraint by the name you gave it (`` Model: constraint `big` has the non-finite coefficient inf on variable `x` ``),
-because the model runs the program's checks in its own terms; every model `build` accepts gives a program those
-checks accept.
+The check happens in one place, `build`, and its error names what is at fault. A model's error names the variable or
+constraint by the name you gave it (`` Model: constraint `big` has the non-finite coefficient inf on variable `x` ``),
+because the model runs the program's checks in its own terms; every model `build` accepts gives a program those checks
+accept.
 
 Holding no solver state, a program can be cloned, compared, serialized, written as an [LP file](program.md#lp-files),
 and loaded into any backend.
@@ -105,12 +105,13 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
 
 - **Events are typed and declared.** A backend names one context type per event kind and lists what it delivers
   in `Backend::EVENTS`. An event it cannot deliver takes `Unsupported`, an enum with no values, so a callback for it
-  compiles everywhere and never runs on that backend.
+  compiles everywhere and never runs on that backend. Pricing, which changes how a solver searches, is declared
+  apart, `Backend::PRICES`, and asked for apart, `Callback::prices`, so no set of events turns it on.
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
   `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the program, the
   same way for every backend.
 - **Actions live where the solver honours them.** Only a poll context can interrupt, only a lazy context can add a
-  lazy constraint, only a heuristic context can supply a solution. Calling an action at a point where the solver
+  lazy constraint, only a heuristic context can supply a solution, only a price context can add a column. Calling an action at a point where the solver
   would ignore it does not compile.
 - **Extras stay with their backend.** Each context type is the backend's own; what one solver reports beyond the
   neutral traits is an inherent method or a native event. Generic code sees the traits; code for one backend sees
@@ -140,8 +141,10 @@ ordinary `Outcome::Stopped` with the best solution and bound.
 the two backends, `culmen_highs` and `culmen_scip`, where the solvers' C APIs make it necessary, and every `unsafe`
 block there carries a `// SAFETY:` comment saying why it is sound. The parts that matter most, for HiGHS:
 
-- **One instance, one owner.** A HiGHS instance is created and destroyed with the `Highs` value that owns it, and
-  every call that changes it borrows it mutably, so no two calls ever overlap on one instance.
+- **One instance, one owner.** A HiGHS instance is created with the `Highs` value that owns it and destroyed when
+  that value drops, and every call that changes it borrows it mutably, so no two calls ever overlap on one instance.
+  Destroying an instance also shuts down the HiGHS task scheduler of the destroying thread, so an instance dropped
+  while its thread is inside a run or a callback waits until that run ends and is destroyed then, on that thread.
 - **Callback data lives exactly as long as the run.** The data HiGHS's callback reaches lives on the stack of
   `solve`; it is installed just before HiGHS runs and uninstalled just after, before it is dropped, so no pointer
   outlives the run.

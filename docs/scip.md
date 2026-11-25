@@ -127,8 +127,9 @@ Every solve sets SCIP up from its defaults, in this order:
    `Off` presolving emphasis of the options, so it never resets a presolving parameter the options set by name.
 5. What the events the callback asks for need is set last ([Callback events](#callback-events)): for `LAZY`, symmetry
    handling and dual reductions off (`misc/usesymmetry`, `misc/allowstrongdualreds`, `misc/allowweakdualreds`); for
-   `CUT` and `HEURISTIC`, culmen's separator or heuristic called at every node; for a callback that prices, the pricer active, every
-   row modifiable, `lp/presolving` off, `separating/aggregation/freq` at `-1` and `lp/disablecutoff` at `1`.
+   `CUT` and `HEURISTIC`, culmen's separator or heuristic called at every node; for a callback that prices, the pricer
+   active, every row modifiable, `lp/presolving` off, `separating/aggregation/freq` at `-1` and `lp/disablecutoff` at
+   `1`.
 
 So a per-solve setting always wins over the backend's options, and an option naming one of the two parameters of
 step 2 overrides the backend's choice. The parameters of step 5 are what those events need to be correct, so they
@@ -347,11 +348,12 @@ primal and dual bound, the nodes and the LP iterations, each in the stages SCIP 
 
 A plugin acts only for the events a solve's callback asks for, so a solve that asks for nothing runs SCIP as it would
 without culmen: asking for `LAZY` or pricing changes how SCIP solves (see each section below), asking for `CUT` or
-`HEURISTIC` calls culmen's separator or heuristic at every node, and the other events cost a call per event. SCIP calls every plugin on the thread running the solve, one call at a time; a plugin
-called while the callback is busy with an outer event (a solution supplied from `heuristic` is checked and stored at
-once, which calls the constraint handler and the event handler) finds it busy: a log line or a solution is then
-delivered as soon as the outer call returns, and a poll or a progress report is dropped. Everything a context changes
-in SCIP (a lazy constraint, a cut, a priced column) is handed to SCIP once the callback returns.
+`HEURISTIC` calls culmen's separator or heuristic at every node, and the other events cost a call per event. SCIP calls
+every plugin on the thread running the solve, one call at a time; a plugin called while the callback is busy with an
+outer event (a solution supplied from `heuristic` is checked and stored at once, which calls the constraint handler and
+the event handler) finds it busy: a log line or a solution is then delivered as soon as the outer call returns, and a
+poll or a progress report is dropped. Everything a context changes in SCIP (a lazy constraint, a cut, a priced column)
+is handed to SCIP once the callback returns.
 
 A panic in a callback never unwinds into SCIP: the plugin catches it and asks SCIP to stop (`SCIPinterruptSolve`),
 every later delivery is skipped, and the panic resumes once SCIP has returned. The backend stays usable.
@@ -381,7 +383,6 @@ solutions are checked by the main SCIP and so meet the callback.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::LazyContext;
 use culmen::scip::{LazySource, ScipLazy};
 
 /// Forbids taking both items, a conflict only the callback knows.
@@ -446,7 +447,6 @@ A solve asking for `CUT` calls the separator at every node, also when the `separ
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::CutContext;
 use culmen::scip::{Emphasis, ScipOptions};
 
 /// A cover cut: no three of the four items fit, so at most two are taken.
@@ -512,7 +512,7 @@ own off.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{ActionError, HeuristicContext, TiVec};
+use culmen::{ActionError, TiVec};
 
 struct Offer {
     values: Option<TiVec<Col, f64>>,
@@ -557,18 +557,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Pricing
 
-[Pricing](callbacks.md#pricing), for a callback whose `prices()` is true, runs at every node: SCIP solves each node LP over the columns it holds, prices
-those itself, and then hands the callback the node LP's duals, optimal (`PriceMode::ReducedCost`) or infeasible
-(`PriceMode::Farkas`), until a round adds no column. Branching on the master's integer columns, as SCIP chooses, makes
-it branch-and-price.
+[Pricing](callbacks.md#pricing), for a callback whose `prices()` is true, runs at every node: SCIP solves each node LP
+over the columns it holds, prices those itself, and then hands the callback the node LP's duals, optimal
+(`PriceMode::ReducedCost`) or infeasible (`PriceMode::Farkas`), until a round adds no column. Branching on the master's
+integer columns, as SCIP chooses, makes it branch-and-price.
 
 How SCIP does it:
 
 - **The pricer.** Every instance includes a variable pricer, delayed (SCIP prices the variables it holds before it asks
-  the callback) and inactive. A solve whose callback prices activates it (`SCIPactivatePricer`) and marks
-  every program row's constraint modifiable (`SCIPsetConsModifiable`), as SCIP requires of a row a pricer adds
-  variables to; any other solve deactivates it and leaves every row unmodifiable, so it costs a solve without pricing
-  nothing.
+  the callback) and inactive. A solve whose callback prices activates it (`SCIPactivatePricer`) and marks every
+  program row's constraint modifiable (`SCIPsetConsModifiable`), as SCIP requires of a row a pricer adds variables to;
+  any other solve deactivates it and leaves every row unmodifiable, so it costs a solve without pricing nothing.
 - **The duals.** SCIP minimizes `s·c` for the program's cost `c`, with `s = 1` when the program minimizes and `s = -1`
   when it maximizes, so its dual of a row is `s` times the program's: the context hands out `s · SCIPgetDualsolLinear`,
   in the sign convention of [`Duals`](analysis.md). A Farkas multiplier (`SCIPgetDualfarkasLinear`) does not depend on
@@ -596,16 +595,16 @@ How SCIP does it:
   pricing solve is a transformed solution (`SCIPcreateSol`) holding the priced columns, refused when presolve fixed or
   aggregated a program column so that it cannot hold the values given. A lazy constraint may name a priced column.
 - **No quadratic objective.** A callback that prices is refused on a program with a quadratic objective with
-  `ScipError::PricingQuadratic` before SCIP runs. Asking for every event (`Events::ALL`) does not price, so such a
-  callback solves a quadratic program.
+  `ScipError::PricingQuadratic` before SCIP runs. A callback whose `prices()` is false solves a quadratic program
+  whatever events it asks for, `Events::ALL` included.
 
 **What branch-and-price is here.** It is column generation at every node with **SCIP's default branching on the
 master's integer columns**. Each node LP is the full master LP under the bounds branching set on some held columns,
 which SCIP prices itself within those bounds, so the search is **exact when the pricing is exact and never adds a
 column the problem already holds**: a column branching fixed, added again, escapes the branch, and the children then
 overlap. Branching on master columns is correct but weak: the branch `x ≤ ⌊v⌋` barely changes the LP, and the tree can
-grow large. There is no branching event, so **no Ryan–Foster or other branching on the pricing problem**; a master that
-needs it is out of reach of this first version. `ScipPrice::local_bounds(col)` gives the node's bounds of a column, for
+grow large. culmen has no branching event, so **no Ryan–Foster or other branching on the pricing problem**; a master
+that needs it is out of reach. `ScipPrice::local_bounds(col)` gives the node's bounds of a column, for
 a pricer that wants to skip what branching implies.
 
 Since a pricing solve leaves the objective's integrality unknown to SCIP, a master whose columns all cost whole
@@ -616,7 +615,7 @@ then optimal.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, PriceContext, ProgramColumn};
+use culmen::{NewCol, ProgramColumn};
 
 /// Adds every pattern of the pool, not added yet, that improves the node LP. The pool holds every pattern the
 /// master lacks, so the pricing is exact and never adds a held column.
@@ -736,8 +735,7 @@ the call or parameter and SCIP's return code, and the message is on standard err
 ## Limitations
 
 - **No semi columns and no several objectives.** `Scip::FEATURES` is `StartSolution` alone, so `Solver::new` refuses a
-  program with a semi-continuous or semi-integer column or with further objectives
-  ([Starts](#starts)).
+  program with a semi-continuous or semi-integer column or with further objectives ([Starts](#starts)).
 - **No analyses.** `Scip::ANALYSES` is empty: duals, basis, ranging, rays, IIS and feasibility relaxation are
   `AnalysisError::Unsupported` ([Analysis](analysis.md)).
 - **No partial heuristic solutions.** `supply_partial` is always refused; a partial solution is a sparse start
@@ -748,9 +746,10 @@ the call or parameter and SCIP's return code, and the message is on standard err
 - **An interrupt acts after the current LP.** SCIP's LP solver runs without events, so a stop asked for during one LP
   solve, by a `Stop` or a poll's `interrupt`, acts when that LP ends; a long root LP delays it.
 - **One thread per solve.** `Settings::threads` has no effect ([Threads](#threads)).
-- **Results are exact to SCIP's tolerances.** A solution is feasible to SCIP's feasibility tolerance (`numerics/feastol`,
-  `1e-6`), and SCIP's own check of the best solution uses the same tolerance; a quadratic objective's point is close to
-  the optimal point only to about its square root ([Quadratic programs](#quadratic-programs)).
+- **Results are exact to SCIP's tolerances.** A solution is feasible to SCIP's feasibility tolerance
+  (`numerics/feastol`, `1e-6`), and SCIP's own check of the best solution uses the same tolerance; a quadratic
+  objective's point is close to the optimal point only to about its square root ([Quadratic
+  programs](#quadratic-programs)).
 - **SCIP's error messages go to standard error** ([Errors](#errors)).
 - **A second solve may start from the first one's solutions** ([How options and settings
   layer](#how-options-and-settings-layer)); set `misc/transsolsorig` to `false` for a cold re-solve.

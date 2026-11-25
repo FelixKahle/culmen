@@ -2,16 +2,15 @@
 
 A solve takes three values: a `Solver`, which holds a backend with a program loaded; a `Request`, which carries one
 solve's settings, stop and observer; and the `Solved` it returns, which holds the generic `Outcome` beside the
-backend's own status. This page covers all three. Watching and stopping a solve are on
-[Callbacks](callbacks.md).
+backend's own status. This page covers all three. Watching and stopping a solve are on [Callbacks](callbacks.md).
 
 ## `Solver`
 
 `Solver::new(backend, program)` loads `program` into `backend`. It fails with a
 [`LoadError`](#model-classes-and-refusal): `Unsupported` when the backend does not solve the program's class and
 `UnsupportedFeature` when it does not take a feature the program uses, both before the backend sees it, or `Backend`
-with the backend's own error when the backend refuses the program. A `Solver` can then
-solve as often as needed, each time with its own request.
+with the backend's own error when the backend refuses the program. A `Solver` can then solve as often as needed,
+each time with its own request.
 
 | Method | Does |
 |---|---|
@@ -23,10 +22,9 @@ solve as often as needed, each time with its own request.
 | `set_col_bounds(..)`, `set_col_costs(..)`, `set_col_integrality(..)`, `set_row_bounds(..)`, `add_row(..)`, `add_rows(..)`, `add_col(..)`, `add_cols(..)` | Edit the loaded program, to solve it again warm ([Editing a loaded program](#editing-a-loaded-program)). |
 | `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome ([Analysis](analysis.md)). |
 
-The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Scip>` with SCIP
-([SCIP](scip.md), the `scip` feature), `Solver<Script>` replays a script
-([Testing](testing.md#the-script-backend)), and a backend of your own plugs in by implementing
-[`Backend`](backends.md).
+The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Scip>` with SCIP ([SCIP](scip.md), the
+`scip` feature), `Solver<Script>` replays a script ([Testing](testing.md#the-script-backend)), and a backend of your
+own plugs in by implementing [`Backend`](backends.md).
 
 ```rust
 use std::time::Duration;
@@ -112,8 +110,8 @@ A `Request` is built by chaining. Each method replaces what it sets:
 | `.progress_interval(duration)` | The least time between two progress reports; `Request::DEFAULT_PROGRESS_INTERVAL`, one second, unless set. |
 | `.start(start)` | A [start](#starts) handed to the solver before the solve: a full `TiVec<Col, f64>` or `Vec<f64>`, or a sparse `Vec<(Col, f64)>`. |
 
-`request.settings()` and `request.start_solution()` read the settings and the start back. The request borrows its stop and observer, so both outlive the solve
-and can be read afterwards.
+`request.settings()` and `request.start_solution()` read the settings and the start back. The request borrows its
+stop and observer, so both outlive the solve and can be read afterwards.
 
 ## Starts
 
@@ -158,7 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Items 1 and 3, worth 21, are the optimum: HiGHS takes them as its first incumbent.
     let mut first = First::default();
-    solver.solve(Request::new().observer(&mut first).start(vec![(take[0], 0.0), (take[1], 1.0), (take[2], 0.0), (take[3], 1.0)]))?;
+    let start = vec![(take[0], 0.0), (take[1], 1.0), (take[2], 0.0), (take[3], 1.0)];
+    solver.solve(Request::new().observer(&mut first).start(start))?;
     assert_eq!(first.0, Some(21.0));
 
     let error = solver.solve(Request::new().start(vec![(take[1], 1.0), (take[1], 0.0)])).unwrap_err();
@@ -181,7 +180,7 @@ the backend's options for the one solve they are passed to.
 | `threads` | `Option<NonZeroUsize>` | The number of threads the solver may use. |
 | `seed` | `Option<u32>` | The seed of the solver's random choices, for reproducible runs. |
 | `presolve` | `Option<bool>` | Whether the solver presolves first. |
-| `node_limit` | `Option<u64>` | The number of branch-and-bound nodes after which a MIP stops. |
+| `node_limit` | `Option<u64>` | The number of branch-and-bound nodes after which a MIP stops; zero is passed to the solver as zero, which stops at its first check of the limit. |
 | `solution_limit` | `Option<NonZeroU64>` | The number of improving solutions (each better than every one before, the first included) after which a MIP stops; `solutions!(n)` writes a literal one. |
 | `console` | `bool` | Whether the solver also prints its log to standard output; the log reaches callbacks either way. |
 
@@ -212,8 +211,8 @@ and SCIP side by side.
 ## Checked literals
 
 A gap is a finite number, zero or above, and a thread count or a solution limit is not zero. The types say so:
-`RelativeGap`, `AbsoluteGap`, `NonZeroUsize` and `NonZeroU64` cannot hold anything else. Their literals are written with macros that check them
-when the code is compiled, so a bad literal never reaches a running program:
+`RelativeGap`, `AbsoluteGap`, `NonZeroUsize` and `NonZeroU64` cannot hold anything else. Their literals are written
+with macros that check them when the code is compiled, so a bad literal never reaches a running program:
 
 ```rust
 use culmen::prelude::*;
@@ -314,8 +313,8 @@ A solution is read with the handles the model returned:
 - `family.values(&solution.values)` for a whole [`VarMap`](modelling.md#keyed-families), as `(&key, value)` pairs.
 - `expr.value(&solution.values)` for any [expression](modelling.md#expressions).
 - `program.row(r).activity(&solution.values)` for a constraint's activity, `program.activities(&solution.values)`
-  for every row's, and `program.max_violation(&solution.values)`
-  to check the solution against the program ([Checking a point](program.md#checking-a-point)).
+  for every row's, and `program.max_violation(&solution.values)` to check the solution against the program
+  ([Checking a point](program.md#checking-a-point)).
 
 Integer variables come back as floating-point numbers within the solver's integrality tolerance; round them
 (`value.round()`) or compare against `0.5` for binaries.
@@ -355,7 +354,7 @@ relaxation, a column priced in by column generation, a variable fixed in a dive.
 | `set_col_integrality([(col, integrality), ..])` | Columns' integrality. |
 | `set_row_bounds([(row, bounds), ..])` | Rows' bounds; `..`, `Bounds::FREE`, switches a row off. |
 | `add_row(row)`, `add_rows(rows)` | Appends rows and returns them: a `Constraint` as a model writes it, a `(name, constraint)` pair, or a `ProgramRow`. |
-| `add_col(column)`, `add_cols(columns)` | Appends columns and returns them: a `NewCol`, a `ProgramColumn` with its `entries` in existing rows, or a bare `ProgramColumn` in no row. |
+| `add_col(column)`, `add_cols(columns)` | Appends columns and returns them: a `NewCol` (a `ProgramColumn` with its `entries` in existing rows), or a bare `ProgramColumn` in no row. |
 
 Every edit keeps these rules:
 
@@ -373,12 +372,11 @@ Every edit keeps these rules:
 - **The last solve is no longer read.** An edit clears the result the [analyses](analysis.md) read, so `duals()`
   after an edit is `NotSolved` until the next solve; an edit refused by its checks keeps it.
 
-A backend changes its model in place through [`Backend::edit`](backends.md#the-seam) and keeps its
-warm start; one that does not loads the edited program whole, which is always correct and starts cold. When the
-backend refuses an edit, `EditError::Backend`, the `Solver` restores its program and loads it into the backend again;
-should that fail too, the next call that runs the backend loads it first. [HiGHS](highs.md#editing-a-loaded-program)
-changes its model in place; [SCIP](scip.md#how-options-and-settings-layer) loads the edited program into a new
-instance.
+A backend changes its model in place through [`Backend::edit`](backends.md#the-seam) and keeps its warm start; one that
+does not loads the edited program whole, which is always correct and starts cold. When the backend refuses an edit,
+`EditError::Backend`, the `Solver` restores its program and loads it into the backend again; should that fail too, the
+next call that runs the backend loads it first. [HiGHS](highs.md#editing-a-loaded-program) changes its model in place;
+[SCIP](scip.md#how-options-and-settings-layer) loads the edited program into a new instance.
 
 ```rust
 use culmen::prelude::*;
@@ -425,9 +423,9 @@ The examples `cutting_planes` and `column_generation` of the `culmen` crate edit
 
 ## A solve that prices
 
-A callback that [prices](callbacks.md#pricing) (`prices()` returns `true`) adds columns during the solve, column generation at
-every node of the search, on a backend that prices: [SCIP](scip.md#pricing). Those columns are the program's from then
-on:
+A callback that [prices](callbacks.md#pricing) (`prices()` returns `true`) adds columns during the solve, column
+generation at every node of the search, on a backend that prices: [SCIP](scip.md#pricing). Those columns are the
+program's from then on:
 
 - **The program grows.** Each priced column continues the program's numbering: the first is `Col(n)` for a program
   of `n` columns, and `add_col` returns that id. When the solve ends, however it ends (returning `Ok`, failing, or
@@ -445,7 +443,7 @@ on:
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceContext, PriceMode, ProgramColumn, Script, Step};
+use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
 
 /// Prices one column in at every price step.
 struct OneMore;
@@ -496,8 +494,8 @@ before the backend sees the request, or `SolveError::Backend` with the backend's
 apply, or a failed run. An edit fails with an [`EditError<B::Error>`](#editing-a-loaded-program): an id the program does
 not have, a number that is not finite, invalid bounds, a class or feature the backend lacks, all decided before the
 backend sees the edit, or `EditError::Backend` when the backend refuses it. For HiGHS the backend's error is
-[`HighsError`](highs.md#errors), for SCIP [`ScipError`](scip.md#errors). A solve
-that ends without a solution is not an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
+[`HighsError`](highs.md#errors), for SCIP [`ScipError`](scip.md#errors). A solve that ends without a solution is not
+an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
 
 `solve` and `solve_with` panic when an observer or callback panics: the panic continues out of the call once the
 solver has stopped ([Panics and threads](callbacks.md#panics-and-threads)).

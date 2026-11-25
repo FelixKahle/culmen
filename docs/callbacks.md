@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 A stop is polled only at the backend's poll events, so it acts within one poll interval, not at once. A backend that
-delivers no poll events cannot be stopped this way; HiGHS delivers them from the simplex, interior-point and MIP
+delivers no poll events cannot be stopped this way; HiGHS delivers them from the simplex, interior-point, QP and MIP
 solvers, [SCIP](scip.md#callback-events) at each presolve round, focused node, solved node LP and solved node, so a
 stop asked for during one of SCIP's LP solves acts when that LP ends.
 
@@ -170,7 +170,7 @@ everything the solver offers beyond the traits ([HiGHS callback contexts](highs.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Phase, PollContext, Script, ScriptStatus, Step};
+use culmen::{Phase, Script, ScriptStatus, Step};
 
 /// Stops any backend's solve once it has run for a fixed time.
 struct Deadline(Duration);
@@ -287,9 +287,9 @@ column known up front, and SCIP refuses to price a program with a quadratic obje
 
   A column whose bounds hold zero strictly inside (`lower < 0 < upper`) improves when `|d|` exceeds the tolerance in
   the direction it can move, and one with `upper = 0` when the inequality is the other way round; `improves` encodes
-  all of it. In Farkas mode the multipliers certify `fᵀAx ≥ fᵀb`, `b` the active side of each row, violated by every
-  point within the bounds of the columns held; a column with `Σ f_r·a_r > 0` that can rise from zero weakens that
-  certificate, which is the reduced-cost rule of the phase-one minimisation with every cost zero.
+  all of it. In Farkas mode the multipliers certify `fᵀAx ≥ fᵀb`, `b` the active side of each row, violated by
+  every point within the bounds of the columns held; a column with `Σ f_r·a_r > 0` that can rise from zero weakens
+  that certificate, which is the reduced-cost rule of the phase-one minimisation with every cost zero.
 - **What is refused.** A priced column's bounds hold zero, so a column left out is the same as one fixed at zero
   (`ExcludesZero`); it is continuous or integer, of a class the backend solves (`Integrality`); its cost and entries
   are finite and name the program's rows. A refused column takes no id.
@@ -317,14 +317,14 @@ column known up front, and SCIP refuses to price a program with a quadratic obje
   reported afterwards. A solve whose callback does not price runs as if the backend could not price.
 - **Branch-and-price.** On a backend whose search branches, pricing at every node with exact pricing is exact
   branch-and-price under the backend's own branching. [SCIP](scip.md#pricing) branches on the master's integer
-  columns, as it chooses; culmen has no branching event yet, so branching on the pricing problem (Ryan–Foster) is out
-  of reach.
+  columns, as it chooses; culmen has no branching event, so branching on the pricing problem (Ryan–Foster) is out of
+  reach.
 
 ```rust
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceContext, PriceMode, ProgramColumn, Script, Step};
+use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
 
 /// Adds every pattern of the pool, not added yet, that improves the node LP.
 struct Pool {
@@ -393,7 +393,7 @@ callback that asks for nothing.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Phase, PollContext, Script, Step};
+use culmen::{Phase, Script, Step};
 
 #[derive(Default)]
 struct CountPolls(usize);
@@ -452,7 +452,7 @@ assert!(!Highs::EVENTS.contains(Events::CUT));
 assert!(culmen::Script::EVENTS.contains(Events::ALL));
 ```
 
-HiGHS 1.16 offers neither lazy constraints nor user cuts, nor pricing; see [Limitations](highs.md#limitations).
+HiGHS 1.16 offers no lazy constraints, user cuts or pricing; see [Limitations](highs.md#limitations).
 [SCIP](scip.md#callback-events), with the `scip` feature, delivers every generic event, lazy constraints, cuts and
 pricing included, through plugins it includes in each instance; it refuses pricing on a program with a quadratic
 objective with a typed error before it solves.

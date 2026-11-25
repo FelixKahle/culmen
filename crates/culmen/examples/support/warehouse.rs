@@ -113,7 +113,10 @@ pub(crate) fn solve(
     x: &VarMap<(usize, usize)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let show_log = std::env::args().skip(1).any(|a| a == "--log");
-    let seconds: u64 = std::env::args().skip(1).find(|a| a != "--log").map_or(Ok(10), |s| s.parse())?;
+    let seconds: u64 = std::env::args()
+        .skip(1)
+        .find(|a| a != "--log")
+        .map_or(Ok(10), |s| s.parse())?;
     let stop = Arc::new(AtomicBool::new(false));
     let on_ctrl_c = Arc::clone(&stop);
     ctrlc::set_handler(move || on_ctrl_c.store(true, Ordering::Release))?;

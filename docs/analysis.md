@@ -26,8 +26,8 @@ continuous programs; a QP's constraints are linear, so its IIS is theirs. A feas
 violation under the program's integrality, so a MILP has one; a QP, whose quadratic part has no place in it, is
 refused. A program with semi columns is a MILP, so it has no duals, basis, ranging, rays or IIS either.
 
-Duals, a basis, ranging and rays belong to one objective, so a program with
-[several objectives](program.md#several-objectives) has none: `Analysis::refused()` names the
+Duals, a basis, ranging and rays belong to one objective, so a program with [several
+objectives](program.md#several-objectives) has none: `Analysis::refused()` names the
 [features](program.md#features) an analysis is not defined for, and the `Solver` refuses it for such a program with
 `AnalysisError::Feature { analysis, feature }`. An IIS and a feasibility relaxation concern the constraints alone and
 take any objectives.
@@ -48,6 +48,7 @@ typed `AnalysisError<B::Error>`, in this order:
 | Backend | `ANALYSES` |
 |---|---|
 | `Highs` | Every analysis. |
+| `Scip` | None: culmen reads no analysis from SCIP ([Limitations](scip.md#limitations)). |
 | `Script` | None: it replays events and has no duals to report honestly. |
 
 ```rust
@@ -260,17 +261,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `feasibility_relaxation(&weights)` finds a point of least weighted violation, `None` when no point meets the bounds
 and rows kept hard. `Weights` holds an `Option<Penalty>` per column lower bound (`lower`), per column upper bound
 (`upper`) and per row (`rows`); `None` keeps it hard, and a row's penalty prices a violation of either of its bounds.
-`Weights::uniform(&program, cols, rows)` gives every column bound one price and every row another. A semi
-column's bounds stay hard, since relaxed below its lower bound it would no longer be a semi column: `uniform` leaves
-them `None`, and weights that price one are refused with `Misfit::SoftSemiBound { col }`. A `Penalty` is a
-finite number, zero or above: a literal is `penalty!(2.0)`, checked when the code is compiled, and a number read at
+`Weights::uniform(&program, cols, rows)` gives every column bound one price and every row another. A semi column's
+bounds stay hard, since relaxed below its lower bound it would no longer be a semi column: `uniform` leaves them
+`None`, and weights that price one are refused with `Misfit::SoftSemiBound { col }`. A `Penalty` is a finite number,
+zero or above: a literal is `penalty!(2.0)`, checked when the code is compiled, and a number read at
 run time is checked by `Penalty::new`.
 
 The result is `Relaxed { values }`, one value per column. `relaxed.violations(&program)` yields each
 `Violation { line, bound, amount }` the point commits, columns first, and `weights.penalty(violations)` prices them.
-A semi column at zero violates none of its bounds; elsewhere it violates them by as much as zero, which it may also
-take, is farther off.
-A MILP keeps its integrality.
+A semi column at zero violates none of its bounds; elsewhere it violates them only by as much as zero, which it may
+also take, is farther off. A MILP keeps its integrality.
 
 ```rust
 use culmen::prelude::*;

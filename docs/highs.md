@@ -63,8 +63,10 @@ default: `presolve`, `presolve_mode`, `solver`, `parallel`, `run_crossover`, `ti
 `log_to_console`, `log_file`), the MIP options (`mip_rel_gap`, `mip_abs_gap`, the node, leaf, stall and solution
 limits, the cut-pool limits, `mip_heuristic_effort` and each heuristic's switch, `mip_feasibility_tolerance`,
 `mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and tolerances, the active-set QP solver's
-`qp_iteration_limit` and `qp_nullspace_limit`, `solve_relaxation`,
-`allow_unbounded_or_infeasible` and `presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field.
+`qp_iteration_limit` and `qp_nullspace_limit`, `solve_relaxation`, `allow_unbounded_or_infeasible` and
+`presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field. A `u64` field is a limit, and one beyond
+HiGHS's integers is HiGHS's largest integer, its "no limit"; a `u32` field is an exact integer, such as `random_seed`
+or `threads`, and one beyond HiGHS's integers is refused.
 
 A field whose HiGHS option takes one of a few values is an enum:
 
@@ -109,17 +111,16 @@ So a per-solve setting always wins over the backend's options, and an option set
 for the same option. Nothing set on HiGHS carries over from one solve to the next except through `HighsOptions`.
 The [Backends](backends.md#settings) page lists the HiGHS option each `Settings` field sets.
 
-HiGHS measures `time_limit` on a clock the backend restarts before every run, so each solve gets the full limit.
-A `Settings::seed` or `Settings::threads` beyond HiGHS's 32-bit integers is refused with
-[`HighsError::OutOfRange`](#errors).
+HiGHS measures `time_limit` on a clock the backend restarts before every run, so each solve gets the full limit. A
+`Settings::seed` or `Settings::threads` beyond HiGHS's 32-bit integers is refused with
+[`HighsError::OutOfRange`](#errors), as is a `u32` field of `HighsOptions`.
 
 ## Threads
 
 - **`Highs` is `Send`**: move it, or the whole `Solver`, to a worker thread to solve there.
-- **HiGHS keeps one task scheduler per thread**, started by the first run on that thread at that run's thread
-  count. A later run on the same thread asking for another number of threads fails with
-  [`HighsError::Run`](#errors). Leaving `Settings::threads` unset never conflicts; a solve on a fresh thread may
-  pick any count.
+- **HiGHS keeps one task scheduler per thread**, started by the first run on that thread at that run's thread count. A
+  later run on the same thread asking for another number of threads fails with [`HighsError::Run`](#errors). Leaving
+  `Settings::threads` unset never conflicts; a solve on a fresh thread may pick any count.
 - **Dropping a `Highs`** shuts down the scheduler of the dropping thread, so a later run there starts a new one at
   its own count.
 - **A MIP uses every thread it is given.** Since HiGHS 1.16 the MIP solver explores its tree in parallel by default,
@@ -136,7 +137,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(LinExpr::sum(x.iter().copied()));
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
 
-    let worker = std::thread::spawn(move || solver.solve(Request::new().settings_from(Settings { threads: Some(threads!(2)), ..Settings::new() })));
+    let two = Settings { threads: Some(threads!(2)), ..Settings::new() };
+    let worker = std::thread::spawn(move || solver.solve(Request::new().settings_from(two)));
     let solved = worker.join().map_err(|_| "the solve thread panicked")??;
     assert_eq!(solved.outcome.objective(), Some(2.0));
     Ok(())
@@ -183,8 +185,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The generic [`Outcome`](solving.md#solved-and-outcome) is read from these; the [Backends](backends.md#outcomes-and-statuses)
-page lists the outcome of every `ModelStatus`. Two of them are decided by more than the status:
+The generic [`Outcome`](solving.md#solved-and-outcome) is read from these; the
+[Backends](backends.md#outcomes-and-statuses) page lists the outcome of every `ModelStatus`. Two of them are decided by
+more than the status:
 
 - **`Optimal` or `GapReached`.** HiGHS reports a MIP as optimal once a requested gap is reached. The backend reports
   `GapReached` when the gap between the solution and the bound is wider than HiGHS's defaults (a relative gap of
@@ -200,12 +203,13 @@ An empty model, one without columns, is `Optimal` at its offset when every row a
 
 HiGHS 1.16 solves LPs, MILPs and convex QPs, so `Highs::CLASSES` is `{LP, MILP, QP}`. It refuses a QP with integer
 columns when it runs ("Cannot solve MIQP problems with HiGHS"), so a MIQP is refused by
-[`Solver::new`](solving.md#model-classes-and-refusal) with `LoadError::Unsupported` before HiGHS sees it.
+[`Solver::new`](solving.md#model-classes-and-refusal) with `LoadError::Unsupported` before HiGHS sees it; SCIP
+[solves it](scip.md#quadratic-programs).
 
 The backend passes the quadratic part as HiGHS reads it, the lower triangle of the Hessian `H` of `½ xᵀHx` column by
 column ([The quadratic part](program.md#the-quadratic-part)): the model's `x * x` reaches HiGHS as `Hₓₓ = 2`, and
-`x * y` as `Hᵧₓ = 1`. Every `Program` passed the convexity check when it was built, so HiGHS's own refusal of a Hessian
-with a diagonal of the wrong sign never arises.
+`x * y` as `Hᵧₓ = 1`. Every `Program` passed the convexity check when it was built, so HiGHS's own refusal of a
+Hessian with a diagonal of the wrong sign never arises.
 
 ```rust
 use culmen::prelude::*;
@@ -243,17 +247,16 @@ trusted:
   the bounds, and 1.15 reported that point optimal after no iteration when it was not. The backend passes such a QP
   with one free row without entries, which constrains nothing and makes HiGHS find its starting point with its LP
   solver.
-- **An unsound ending is an error.** On a small share of QPs HiGHS reports an optimum at a point holding NaN, an
-  optimum its own primal and dual objectives contradict, at a point that need not be feasible, or reports unbounded a
-  QP whose every column is bounded: 1.15 did all three after its iterates turned NaN, and 1.16 still reports the
-  second for some edited QPs, though it solves every one of 5000 random QPs of the tests. The backend fails such a solve with
-  [`HighsError::UnsoundQp`](#errors): an optimum at a point holding NaN, an optimum whose relative primal-dual
-  objective error exceeds `Highs::QP_OBJECTIVE_ERROR`, `1e-5` (correct optima stay below `1e-6`), or unboundedness
-  with every column bounded. An `Optimal` outcome of a QP is therefore one HiGHS's own measures support.
+- **An unsound ending is an error.** On a small share of QPs HiGHS reports an optimum at a point holding NaN, an optimum
+  its own primal and dual objectives contradict, at a point that need not be feasible, or reports unbounded a QP whose
+  every column is bounded: 1.15 did all three after its iterates turned NaN, and 1.16 still reports the second for some
+  edited QPs, though it solves every one of 5000 random QPs of the tests. The backend fails such a solve with
+  [`HighsError::UnsoundQp`](#errors): an optimum at a point holding NaN, an optimum whose relative primal-dual objective
+  error exceeds `Highs::QP_OBJECTIVE_ERROR`, `1e-5` (correct optima stay below `1e-6`), or unboundedness with every
+  column bounded. An `Optimal` outcome of a QP is therefore one HiGHS's own measures support.
 - **It may not terminate.** On a rare QP HiGHS 1.15's QP solver iterated without end, its memory growing; no test
-  has seen 1.16 do so. A
-  [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`, and a `Stop` as
-  `Stopped { reason: Interrupted, .. }`; set one for any QP whose solve must end.
+  has seen 1.16 do so. A [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`,
+  and a `Stop` as `Stopped { reason: Interrupted, .. }`; set one for any QP whose solve must end.
 
 ## Semi columns, several objectives and starts
 
@@ -268,9 +271,9 @@ trusted:
   `Highs_passLinearObjectives`; each solve sets `blend_multi_objectives` by the combination. Lexicographically, HiGHS
   optimizes by descending priority, each objective minimized for a positive weight and maximized otherwise, and after
   each stage adds the row keeping it within `min(abs, rel · |f*|)` of its optimum `f*`, leaving out a negative
-  tolerance: the backend gives each objective the weight `±1` by its sense, its tolerances, `-1` for an absent one,
-  and a priority by its place. Blended, HiGHS minimizes `Σ weight · objective`: each weight is the culmen weight
-  signed by its sense. HiGHS refuses a further objective beside a Hessian, as culmen does.
+  tolerance: the backend gives each objective the weight `±1` by its sense, its tolerances, `-1` for an absent one, and
+  a priority by its place. Blended, HiGHS minimizes `Σ weight · objective`: each weight is the culmen weight signed by
+  its sense. HiGHS refuses a further objective beside a Hessian, as culmen does.
 
   A multi-objective solve leaves HiGHS's own objective value at zero after a lexicographic solve and at the blend's
   otherwise (`returnFromLexicographicOptimization` in `HighsInterface.cpp`), and its MIP bound is that of the last
@@ -279,9 +282,9 @@ trusted:
   of the stage it is solving or of the blend.
 - **A start** reaches HiGHS through `Highs_setSparseSolution` before the run, a full one with every column. HiGHS
   refuses no value for lying outside its column's bounds (`Highs::setSolution` in `Highs.cpp`), so a semi column's
-  zero is kept, and leaves the other columns of a sparse start open; for a MIP it completes them by a
-  sub-MIP over the columns left open. A feasible start of a MIP is the first incumbent HiGHS reports.
-  HiGHS also starts from the last solve's solution when a request gives none, or a sparse start without entries.
+  zero is kept, and leaves the other columns of a sparse start open; for a MIP it completes them by a sub-MIP over
+  the columns left open. A feasible start of a MIP is the first incumbent HiGHS reports. HiGHS also starts from the
+  last solve's solution when a request gives none, or a sparse start without entries.
 
 ## Model files
 
@@ -387,7 +390,7 @@ from.
 | `Edit { call }` | HiGHS refused an edit of its model; `call` names the C function ([Editing a loaded program](#editing-a-loaded-program)). |
 | `OptionName { name }` | An option name holds a NUL byte, which HiGHS's C strings cannot carry. |
 | `OptionString { name }` | A string option's value holds a NUL byte. |
-| `OutOfRange { name, value }` | A seed or thread count is above `i32::MAX`, beyond HiGHS's integers. |
+| `OutOfRange { name, value }` | An exact integer setting or option (a seed, a thread count, a `u32` field of `HighsOptions`) is above `i32::MAX`, beyond HiGHS's integers. |
 | `Run { status, message }` | The run failed, as a thread-count conflict makes it; `message` is HiGHS's last error line. |
 | `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `NotANumber`, `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
 | `Analysis(Analysis)` | HiGHS refused or failed an analysis, as a basis it finds singular ([Analysis](analysis.md#highs)). |
@@ -416,8 +419,8 @@ A run that ends without a solution is not an error but an outcome; a model statu
 
 ## Callback contexts
 
-A `Callback<Highs>` receives HiGHS's own context types. Each implements the neutral
-[context trait](callbacks.md#contexts) of its event and offers what HiGHS reports beyond it:
+A `Callback<Highs>` receives HiGHS's own context types. Each implements the neutral [context
+trait](callbacks.md#contexts) of its event and offers what HiGHS reports beyond it:
 
 | Event | Context | HiGHS callback | Beyond the trait |
 |---|---|---|---|
@@ -492,8 +495,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-A method may name the concrete context type, `&mut HighsPoll<'_>`, or the associated one,
-`&mut <Highs as Backend>::Poll<'_>`; they are the same type.
+A method may name the concrete context type, `&mut HighsPoll<'_>`, or the associated one, `&mut <Highs as
+Backend>::Poll<'_>`; they are the same type.
 
 ## Heuristic solutions
 
@@ -517,7 +520,7 @@ MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as 
 ```rust
 use culmen::prelude::*;
 use culmen::highs::{HighsHeuristic, HighsOptions, QueryOrigin, Switch};
-use culmen::{ActionError, HeuristicContext, TiVec};
+use culmen::{ActionError, TiVec};
 
 struct Start {
     values: Option<TiVec<Col, f64>>,
@@ -581,9 +584,9 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
   them.
 - **No user cuts.** HiGHS has no callback for them; `Events::CUT` is `Unsupported` too. [SCIP](scip.md#cuts) takes
   them.
-- **No pricing.** HiGHS has no pricing callback, so `Highs::PRICES` is false and `price` is never called: price in an outer loop by
-  [editing](#editing-a-loaded-program) the program, as the `column_generation` example does, or at every node on
-  [SCIP](scip.md#pricing).
+- **No pricing.** HiGHS has no pricing callback, so `Highs::PRICES` is false and `price` is never called: price in an
+  outer loop by [editing](#editing-a-loaded-program) the program, as the `column_generation` example does, or at every
+  node on [SCIP](scip.md#pricing).
 - **An interrupt is honoured only at a poll.** Only `HighsPoll` has `interrupt`, and only `HighsHeuristic` accepts
   a solution.
 - **One thread count per thread.** See [Threads](#threads).
@@ -592,8 +595,8 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 - **No MIQP, and a QP solve sees no progress or improvement.** See [Quadratic programs](#quadratic-programs); SCIP
   solves MIQPs ([SCIP](scip.md#quadratic-programs)).
 - **Options do not persist inside HiGHS.** Each solve resets them; set them through `HighsOptions`.
-- **Semi columns up to `1e5`, linear objectives only.** See
-  [Semi columns, several objectives and starts](#semi-columns-several-objectives-and-starts).
+- **Semi columns up to `1e5`, and several objectives linear only.** See [Semi columns, several objectives and
+  starts](#semi-columns-several-objectives-and-starts).
 
 ## See also
 
