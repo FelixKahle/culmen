@@ -746,6 +746,56 @@ fn test_branching_early_where_scip_cannot_branch_fails_the_solve_with_a_typed_er
     );
 }
 
+#[test]
+fn test_a_degenerate_node_lp_hands_out_duals_that_price_its_bounds() {
+    // Maximize 2x0 subject to x1 - x0 - x2 = 0, x0 in [0, 2] and x1, x2 in [0, 1], starting without x1: the start
+    // forces x0 = 0, and every dual of the row that prices x0 out at its lower bound is at most -2, so x1, of
+    // reduced cost 0 - y·1 >= 2, improves. The full program's optimum is x0 = x1 = 1, worth 2. A proptest seed found
+    // SCIP's LP presolving handing out the dual 0, which prices nothing and ends at 0.
+    let mut plan = ProgramPlan::new();
+    plan.sense = Sense::Maximize;
+    let x0 = plan.col(ProgramColumn::continuous(2.0, bounds!(0.0, 2.0)));
+    let x2 = plan.col(ProgramColumn::continuous(0.0, bounds!(0.0, 1.0)));
+    plan.row(bounds!(0.0, 0.0), [(x0, -1.0), (x2, -1.0)]);
+    let program = plan.build().unwrap();
+    for presolve in [true, false] {
+        let x1 = column(0.0, bounds!(0.0, 1.0), false, &[(Row::new(0), 1.0)]);
+        let mut solver = Solver::new(Scip::new(), program.clone()).unwrap();
+        let mut pricer = Pricer::new(vec![x1], [0], Pick::Every);
+        let solved = solver.solve_with(limited(presolve), &mut pricer).unwrap();
+        assert!(pricer.rounds[0].duals[0] <= -2.0 + 1e-9, "{:?}", pricer.rounds);
+        assert!(
+            close(optimal(solved.outcome).objective, 2.0, 1e-9),
+            "{:?}",
+            pricer.rounds
+        );
+    }
+}
+
+#[test]
+fn test_no_cut_from_the_objective_over_the_columns_held_cuts_off_a_column_pricing_needs() {
+    // Maximize 3x1 - 2x2 - 3x4 subject to -2x1 + x2 + 2x4 >= 1, every column in [0, 1] and x4 integer, starting with
+    // x2 alone. Pricing adds x4, the root LP is x4 = 1/2 at -3/2, and at x4 = 1 the row is slack, its dual 0, and x1
+    // of reduced cost 3 improves: the optimum is x4 = 1, x1 = 1/2, worth -3/2. A proptest seed found SCIP's
+    // aggregation separator deriving x4 <= 0 at the root from the objective cutoff over the columns held, which no
+    // column priced later obeys, and the solve ending at -2.
+    let mut plan = ProgramPlan::new();
+    plan.sense = Sense::Maximize;
+    let x2 = plan.col(ProgramColumn::continuous(-2.0, bounds!(0.0, 1.0)));
+    plan.row(bounds!(1.0, f64::INFINITY), [(x2, 1.0)]);
+    let program = plan.build().unwrap();
+    let r = Row::new(0);
+    let x1 = column(3.0, bounds!(0.0, 1.0), false, &[(r, -2.0)]);
+    let x4 = column(-3.0, bounds!(0.0, 1.0), true, &[(r, 2.0)]);
+    for presolve in [true, false] {
+        let mut solver = Solver::new(Scip::new(), program.clone()).unwrap();
+        let mut pricer = Pricer::new(vec![x1.clone(), x4.clone()], [0, 1], Pick::Every);
+        let solved = solver.solve_with(limited(presolve), &mut pricer).unwrap();
+        let best = optimal(solved.outcome);
+        assert!(close(best.objective, -1.5, 1e-9), "{best:?}, {:?}", pricer.rounds);
+    }
+}
+
 /// Prices the withheld columns of a split, records every bound a poll reports, and counts its rounds.
 struct SplitPricer {
     withheld: Vec<NewCol>,

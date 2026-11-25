@@ -83,7 +83,10 @@
 //!
 //! Pricing is opt-in: only a solve whose callback asks for [`Events::PRICE`] activates the pricer and marks every
 //! program row modifiable, as SCIP requires of a row a pricer adds variables to; any other solve leaves the pricer
-//! inactive and no row modifiable, so SCIP gives up nothing for it. SCIP does not price a program with a quadratic
+//! inactive and no row modifiable, so SCIP gives up nothing for it. A pricing solve also turns off the LP solver's
+//! presolving (`lp/presolving`), whose duals of a degenerate node LP need not price out the columns at their bounds,
+//! and SCIP's aggregation separator (`separating/aggregation/freq`), which cuts with the objective cutoff over the
+//! columns held as if no other column could enter. SCIP does not price a program with a quadratic
 //! objective: such a solve fails with [`ScipError::PricingQuadratic`] before SCIP runs. Every column a callback prices
 //! is a variable of SCIP's transformed problem with no original counterpart, so a heuristic solution of a pricing
 //! solve is a transformed one ([`ScipHeuristic`]), and the backend keeps the priced variables until it frees that
@@ -264,8 +267,10 @@ fn configure(instance: &mut Instance, options: &ScipOptions, settings: &Settings
 /// Sets what the events `wanted` need, after the options and settings: for lazy constraints, no symmetry handling and
 /// no dual reductions, which reason about the constraints SCIP holds and not those a callback adds later; for cuts and
 /// heuristic solutions, the culmen separator and heuristic called at every node, even when an emphasis turned the
-/// separators or heuristics off; for pricing, the culmen pricer active and every row modifiable; for a solve without
-/// pricing, the pricer inactive and no row modifiable.
+/// separators or heuristics off; for pricing, the culmen pricer active, every row modifiable, the LP solver's
+/// presolving off, whose duals of a degenerate node LP need not price its columns out, and SCIP's aggregation
+/// separator off, which cuts with the objective cutoff over the columns held; for a solve without pricing, the pricer
+/// inactive and no row modifiable.
 ///
 /// # Errors
 ///
@@ -283,6 +288,18 @@ fn configure_events(instance: &mut Instance, wanted: Events) -> Result<(), ScipE
         instance.set_param("heuristics/culmen/freq", &ParamValue::Int(1))?;
     }
     let pricing = wanted.contains(Events::PRICE);
+    if pricing {
+        // SoPlex's simplifier can solve a degenerate node LP within its presolve, without a simplex iteration, and
+        // hand back a dual that does not price a column at its bound out: for a row that forces its columns to zero,
+        // a dual of 0 although a held column then has a reduced cost of the wrong sign at its bound. Every column the
+        // row would admit then looks useless to the callback, and pricing ends early with a wrong optimum.
+        instance.set_param("lp/presolving", &ParamValue::Bool(false))?;
+        // SCIP's aggregation separator aggregates from the objective cutoff `c·x <= cutoff` over the columns the
+        // problem holds, without regard to a pricer, and so derives cuts, as bounds that fix a priced column at zero,
+        // which a column priced later would refute. Its other aggregations skip modifiable rows, which every program
+        // row is in a solve that prices, so it has little else to aggregate.
+        instance.set_param("separating/aggregation/freq", &ParamValue::Int(-1))?;
+    }
     instance.set_pricing(pricing)
 }
 
