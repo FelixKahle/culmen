@@ -4,7 +4,7 @@
 //! Pricing: a variable pricer with a reduced-cost and a Farkas callback (`PRICERREDCOST`, `PRICERFARKAS`).
 //!
 //! The pricer is included in every instance, delayed, so SCIP prices the variables it holds before it asks the
-//! callback, and inactive. A solve whose callback asks for [`Events::PRICE`] activates it and marks every program
+//! callback, and inactive. A solve whose callback [`prices`](culmen_core::Callback::prices) activates it and marks every program
 //! row's constraint modifiable, as SCIP requires of a constraint a pricer adds variables to; a solve that does not
 //! deactivates it and leaves every constraint unmodifiable, so SCIP neither calls it nor gives up a reduction for
 //! it. A modifiable linear constraint is never presolved, upgraded or used to tighten bounds, so it stays a linear
@@ -39,8 +39,8 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 
 use culmen_core::{
-    ActionError, Bounds, Col, Events, Integrality, NewCol, PriceContext, PriceMode, Priced, Progress, Row, Sense,
-    TiSlice, TiVec,
+    ActionError, Bounds, Col, Integrality, NewCol, PriceContext, PriceMode, Priced, Progress, Row, Sense, TiSlice,
+    TiVec,
 };
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_LPSolStat_SCIP_LPSOLSTAT_OPTIMAL, SCIP_PRICER, SCIP_RESULT, SCIP_RETCODE,
@@ -494,7 +494,7 @@ unsafe fn exec(scip: *mut SCIP, pricer: *mut SCIP_PRICER, farkas: bool) -> (Verd
         // SAFETY: SCIP calls an active pricer during the solve the run is installed for.
         .and_then(|slot| unsafe { slot.run() })
         .inspect(|run| run.pass_stop(scip))
-        .filter(|run| run.wanted.contains(Events::PRICE));
+        .filter(|run| run.pricing);
     match run {
         // SAFETY: the caller's contract.
         Some(run) => match unsafe { run.price(scip, farkas) } {

@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 /// [`Callback`](crate::Callback) asks for ([`Callback::events`](crate::Callback::events)).
 ///
 /// A backend delivers an event only when it is in both sets, so a callback that asks for fewer events costs the
-/// solver less.
+/// solver less. Pricing is not an event of this set: a callback opts into it with
+/// [`Callback::prices`](crate::Callback::prices), so neither [`Events::ALL`] nor a complement can turn it on.
 ///
 /// [`Backend::EVENTS`]: crate::Backend::EVENTS
 ///
@@ -31,8 +32,7 @@ use serde::{Deserialize, Serialize};
 /// assert_eq!(wanted.iter().collect::<Events>(), wanted);
 /// assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
 /// assert_eq!(wanted.to_string(), "{LOG, POLL}");
-/// assert_eq!(Events::ALL.len(), 10);
-/// assert_eq!((Events::PRICE | Events::NATIVE).to_string(), "{PRICE, NATIVE}");
+/// assert_eq!(Events::ALL.len(), 9);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Events(u16);
@@ -56,18 +56,12 @@ impl Events {
     pub const CUT: Self = Self(1 << 6);
     /// A point at which a callback may hand the solver a heuristic solution.
     pub const HEURISTIC: Self = Self(1 << 7);
-    /// A node LP whose duals a callback may answer with new columns: pricing, for column generation and
-    /// branch-and-price.
-    ///
-    /// Not in a callback's [`Callback::events`](crate::Callback::events) unless it asks for it, since a solver that
-    /// prices gives up reductions that need every column known up front.
-    pub const PRICE: Self = Self(1 << 8);
     /// An event only the backend knows, delivered with the backend's own context type.
-    pub const NATIVE: Self = Self(1 << 9);
+    pub const NATIVE: Self = Self(1 << 8);
     /// Every event.
-    pub const ALL: Self = Self((1 << 10) - 1);
+    pub const ALL: Self = Self((1 << 9) - 1);
 
-    const NAMES: [(Self, &'static str); 10] = [
+    const NAMES: [(Self, &'static str); 9] = [
         (Self::LOG, "LOG"),
         (Self::PROGRESS, "PROGRESS"),
         (Self::POLL, "POLL"),
@@ -76,7 +70,6 @@ impl Events {
         (Self::LAZY, "LAZY"),
         (Self::CUT, "CUT"),
         (Self::HEURISTIC, "HEURISTIC"),
-        (Self::PRICE, "PRICE"),
         (Self::NATIVE, "NATIVE"),
     ];
 

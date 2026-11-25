@@ -106,7 +106,7 @@ pub enum ScipError {
         /// SCIP's status at the end of the solve.
         status: Status,
     },
-    /// A callback asked for [`Events::PRICE`](culmen_core::Events::PRICE) on a program with a quadratic objective,
+    /// A callback that [`prices`](culmen_core::Callback::prices) was given a program with a quadratic objective,
     /// which this backend does not price; refused before SCIP is called.
     PricingQuadratic,
     /// A pricing callback ended pricing early at a node where SCIP has no integer variable left to branch on, as in a

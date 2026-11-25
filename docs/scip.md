@@ -17,7 +17,8 @@ known only to a callback, cuts of your own, and column generation at every node 
 | `Scip::new()` | A backend with SCIP's default parameters. |
 | `Scip::with_options(options)` | A backend with the given `ScipOptions`. |
 | `scip.options()`, `scip.options_mut()` | The options, to read or to change between solves. |
-| `Scip::EVENTS` | Every event but `NATIVE`: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `LAZY`, `CUT`, `HEURISTIC` and `PRICE`. |
+| `Scip::EVENTS` | Every event but `NATIVE`: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `LAZY`, `CUT` and `HEURISTIC`. |
+| `Scip::PRICES` | `true`: SCIP prices for a callback whose `prices()` is true ([Pricing](#pricing)). |
 | `Scip::CLASSES` | `Lp`, `Milp`, `Qp` and `Miqp`; see [Quadratic programs](#quadratic-programs). |
 | `Scip::FEATURES` | `StartSolution` only; see [Starts](#starts). |
 | `Scip::ANALYSES` | None; see [Limitations](#limitations). |
@@ -125,7 +126,7 @@ Every solve sets SCIP up from its defaults, in this order:
 4. The solve's [`Settings`](solving.md#settings) apply.
 5. What the events the callback asks for need is set last ([Callback events](#callback-events)): for `LAZY`, symmetry
    handling and dual reductions off (`misc/usesymmetry`, `misc/allowstrongdualreds`, `misc/allowweakdualreds`); for
-   `CUT` and `HEURISTIC`, culmen's separator or heuristic called at every node; for `PRICE`, the pricer active, every
+   `CUT` and `HEURISTIC`, culmen's separator or heuristic called at every node; for a callback that prices, the pricer active, every
    row modifiable, `lp/presolving` off and `separating/aggregation/freq` at `-1`.
 
 So a per-solve setting always wins over the backend's options, and an option naming one of the two parameters of
@@ -335,7 +336,7 @@ of its event; each event comes from a SCIP plugin that culmen includes in every 
 | `LAZY` | a constraint handler without constraints, checked and enforced after every other (`CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`) | `ScipLazy` | `source()`: a `LazySource`, `Check`, `Lp`, `Pseudo` or `Relaxation` |
 | `CUT` | a separator on each node's LP solution (`SEPAEXECLP`) | `ScipCut` | |
 | `HEURISTIC` | a primal heuristic before and after each node (`HEUREXEC`) | `ScipHeuristic` | |
-| `PRICE` | a variable pricer, delayed, on each optimal or infeasible node LP (`PRICERREDCOST`, `PRICERFARKAS`) | `ScipPrice` | `local_bounds(col)`: the node's bounds of a column |
+| pricing (`prices()`) | a variable pricer, delayed, on each optimal or infeasible node LP (`PRICERREDCOST`, `PRICERFARKAS`) | `ScipPrice` | `local_bounds(col)`: the node's bounds of a column |
 | `NATIVE` | none | `Unsupported` | never delivered |
 
 Every value a context reports is the program's: a candidate, a relaxation and a solution hold one value per column,
@@ -344,7 +345,7 @@ program's sense with its offset and quadratic part. Progress carries the wall-cl
 primal and dual bound, the nodes and the LP iterations, each in the stages SCIP reports it.
 
 A plugin acts only for the events a solve's callback asks for, so a solve that asks for nothing runs SCIP as it would
-without culmen: asking for `LAZY` or `PRICE` changes how SCIP solves (see each section below), asking for `CUT` or
+without culmen: asking for `LAZY` or pricing changes how SCIP solves (see each section below), asking for `CUT` or
 `HEURISTIC` calls culmen's separator or heuristic at every node, and the other events cost a call per event. SCIP calls every plugin on the thread running the solve, one call at a time; a plugin
 called while the callback is busy with an outer event (a solution supplied from `heuristic` is checked and stored at
 once, which calls the constraint handler and the event handler) finds it busy: a log line or a solution is then
@@ -555,7 +556,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Pricing
 
-`PRICE` is [pricing](callbacks.md#pricing) at every node: SCIP solves each node LP over the columns it holds, prices
+[Pricing](callbacks.md#pricing), for a callback whose `prices()` is true, runs at every node: SCIP solves each node LP over the columns it holds, prices
 those itself, and then hands the callback the node LP's duals, optimal (`PriceMode::ReducedCost`) or infeasible
 (`PriceMode::Farkas`), until a round adds no column. Branching on the master's integer columns, as SCIP chooses, makes
 it branch-and-price.
@@ -563,7 +564,7 @@ it branch-and-price.
 How SCIP does it:
 
 - **The pricer.** Every instance includes a variable pricer, delayed (SCIP prices the variables it holds before it asks
-  the callback) and inactive. A solve whose callback asks for `PRICE` activates it (`SCIPactivatePricer`) and marks
+  the callback) and inactive. A solve whose callback prices activates it (`SCIPactivatePricer`) and marks
   every program row's constraint modifiable (`SCIPsetConsModifiable`), as SCIP requires of a row a pricer adds
   variables to; any other solve deactivates it and leaves every row unmodifiable, so it costs a solve without pricing
   nothing.
@@ -592,8 +593,9 @@ How SCIP does it:
   and cut with coefficient zero: those must hold for every column the callback may price. A heuristic solution of a
   pricing solve is a transformed solution (`SCIPcreateSol`) holding the priced columns, refused when presolve fixed or
   aggregated a program column so that it cannot hold the values given. A lazy constraint may name a priced column.
-- **No quadratic objective.** A callback asking for `PRICE` on a program with a quadratic objective is refused with
-  `ScipError::PricingQuadratic` before SCIP runs.
+- **No quadratic objective.** A callback that prices is refused on a program with a quadratic objective with
+  `ScipError::PricingQuadratic` before SCIP runs. Asking for every event (`Events::ALL`) does not price, so such a
+  callback solves a quadratic program.
 
 **What branch-and-price is here.** It is column generation at every node with **SCIP's default branching on the
 master's integer columns**. Each node LP is the full master LP under the bounds branching set on some held columns,
@@ -624,7 +626,10 @@ struct Pool {
 
 impl<B: Backend> Callback<B> for Pool {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         self.rounds += 1;
@@ -693,7 +698,7 @@ a second `Scip`, which excludes every pattern the master holds.
 | `Unsupported { class }`, `UnsupportedFeature { feature }` | A program the backend does not take, which a `Solver` never hands it. |
 | `Start` | A start that does not fit the program, which a `Solver` never hands over. |
 | `Failed { status }` | SCIP ended with a status that proves nothing, or claimed an optimum or a gap without a solution or a bound. |
-| `PricingQuadratic` | A callback asked for `PRICE` on a program with a quadratic objective. |
+| `PricingQuadratic` | A callback that prices was given a program with a quadratic objective. |
 | `BranchEarly` | A pricing callback ended pricing early where SCIP has no integer column left to branch on. |
 | `InfeasibleBest { status, objective }` | SCIP's own check finds its best solution infeasible in the original problem; the solution is not reported. |
 

@@ -4,7 +4,7 @@
 //! Cutting stock by branch-and-price on SCIP: cut rolls of width 100 into pieces to meet each width's demand with as
 //! few whole rolls as possible, the instance of `column_generation`. The master holds one integer column per cutting
 //! pattern, at first one pattern per width. SCIP solves it by branch and bound and, at every node, hands the node
-//! LP's duals to the callback (`Events::PRICE`), which prices patterns in with a knapsack solved by a second solver,
+//! LP's duals to the callback (whose `prices()` is true), which prices patterns in with a knapsack solved by a second solver,
 //! until no pattern improves the node LP. `column_generation` is the same model priced in an outer loop on HiGHS and
 //! made whole only at the end; here the patterns are priced inside the search, so the search is exact.
 //!
@@ -111,7 +111,10 @@ impl Patterns {
 
 impl<B: Backend> Callback<B> for Patterns {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
 
     fn price(&mut self, ctx: &mut B::Price<'_>) {

@@ -69,7 +69,8 @@
 //!
 //! # Callbacks
 //!
-//! [`Scip::EVENTS`] is every generic event, each from a SCIP plugin, with a context of this crate's:
+//! [`Scip::EVENTS`] is every generic event, each from a SCIP plugin, with a context of this crate's, and SCIP prices
+//! ([`Backend::PRICES`]) for a callback that [`prices`](Callback::prices):
 //!
 //! | Event | SCIP plugin | Context |
 //! |---|---|---|
@@ -79,7 +80,7 @@
 //! | `LAZY` | a constraint handler without constraints, checked and enforced after every other | [`ScipLazy`] |
 //! | `CUT` | a separator on each node's LP solution | [`ScipCut`] |
 //! | `HEURISTIC` | a primal heuristic before and after each node | [`ScipHeuristic`] |
-//! | `PRICE` | a variable pricer, delayed, on each optimal or infeasible node LP | [`ScipPrice`] |
+//! | pricing | a variable pricer, delayed, on each optimal or infeasible node LP | [`ScipPrice`] |
 //!
 //! Every value a context reports is the program's: a candidate, a relaxation and a solution hold one value per
 //! column, read through SCIP's original variables whatever presolve did to them, and every objective value and
@@ -90,7 +91,7 @@
 //! A solve asking for [`Events::CUT`] or [`Events::HEURISTIC`] calls its separator or heuristic at every node, also
 //! when an emphasis turned SCIP's own off.
 //!
-//! Pricing is opt-in: only a solve whose callback asks for [`Events::PRICE`] activates the pricer and marks every
+//! Pricing is opt-in: only a solve whose callback [`prices`](Callback::prices) activates the pricer and marks every
 //! program row modifiable, as SCIP requires of a row a pricer adds variables to; any other solve leaves the pricer
 //! inactive and no row modifiable, so SCIP gives up nothing for it. A pricing solve also turns off the LP solver's
 //! presolving (`lp/presolving`), whose duals of a degenerate node LP need not price out the columns at their bounds,
@@ -284,7 +285,7 @@ fn configure(instance: &mut Instance, options: &ScipOptions, settings: &Settings
 /// # Errors
 ///
 /// [`ScipError::Param`] when SCIP refuses a parameter, [`ScipError::Call`] when it refuses another call.
-fn configure_events(instance: &mut Instance, wanted: Events) -> Result<(), ScipError> {
+fn configure_events(instance: &mut Instance, wanted: Events, pricing: bool) -> Result<(), ScipError> {
     if wanted.contains(Events::LAZY) {
         instance.set_param("misc/usesymmetry", &ParamValue::Int(0))?;
         instance.set_param("misc/allowstrongdualreds", &ParamValue::Bool(false))?;
@@ -296,7 +297,6 @@ fn configure_events(instance: &mut Instance, wanted: Events) -> Result<(), ScipE
     if wanted.contains(Events::HEURISTIC) {
         instance.set_param("heuristics/culmen/freq", &ParamValue::Int(1))?;
     }
-    let pricing = wanted.contains(Events::PRICE);
     if pricing {
         // SoPlex's simplifier can solve a degenerate node LP within its presolve, without a simplex iteration, and
         // hand back a dual that does not price a column at its bound out: for a row that forces its columns to zero,
@@ -396,6 +396,7 @@ impl Backend for Scip {
     /// Every generic event, each from a plugin the instance includes (the module documentation lists them); no
     /// native event.
     const EVENTS: Events = Events::ALL.difference(Events::NATIVE);
+    const PRICES: bool = true;
 
     /// Every class: a quadratic objective `q(x)` becomes an epigraph variable `t` with cost one, bounded by the
     /// quadratic constraint `q(x) - t <= 0` and `t >= 0` when minimizing, `q(x) - t >= 0` and `t <= 0` when
@@ -448,8 +449,8 @@ impl Backend for Scip {
     ///
     /// # Errors
     ///
-    /// [`ScipError::NotLoaded`] before a load; [`ScipError::PricingQuadratic`] for a callback asking for
-    /// [`Events::PRICE`] on a program with a quadratic objective, before SCIP is called; [`ScipError::BranchEarly`] for
+    /// [`ScipError::NotLoaded`] before a load; [`ScipError::PricingQuadratic`] for a callback that
+    /// [`prices`](Callback::prices) on a program with a quadratic objective, before SCIP is called; [`ScipError::BranchEarly`] for
     /// a pricing callback ending pricing early where SCIP cannot branch; the errors of the options and settings the
     /// module documentation lists; [`ScipError::Call`] when SCIP fails, or a call a plugin makes for the callback does;
     /// [`ScipError::Failed`] when SCIP ends with a status that proves nothing; [`ScipError::InfeasibleBest`] when
@@ -466,11 +467,12 @@ impl Backend for Scip {
     ) -> Result<Solved<ScipStatus>, ScipError> {
         let instance = self.instance.as_mut().ok_or(ScipError::NotLoaded)?;
         let wanted = callback.events().intersection(Self::EVENTS);
-        if wanted.contains(Events::PRICE) && instance.quadratic() {
+        let pricing = callback.prices();
+        if pricing && instance.quadratic() {
             return Err(ScipError::PricingQuadratic);
         }
         configure(instance, &self.options, settings)?;
-        configure_events(instance, wanted)?;
+        configure_events(instance, wanted, pricing)?;
         let start = Instant::now();
         let ran = instance.solve(callback, wanted, start, priced);
         let elapsed = start.elapsed();
@@ -481,7 +483,7 @@ impl Backend for Scip {
         let status = instance.status();
         let best = instance.best();
         if let Some(best) = &best
-            && !instance.best_feasible(wanted.contains(Events::PRICE))?
+            && !instance.best_feasible(pricing)?
         {
             return Err(ScipError::InfeasibleBest {
                 status: status.status,
@@ -576,12 +578,15 @@ mod tests {
         assert_eq!(settings_params(&Settings::new()), Ok(vec![]));
     }
 
-    /// Asks for the events it holds and does nothing with them.
-    struct Asks(Events);
+    /// Asks for the events it holds, prices or not, and does nothing with them.
+    struct Asks(Events, bool);
 
     impl Callback<Scip> for Asks {
         fn events(&self) -> Events {
             self.0
+        }
+        fn prices(&self) -> bool {
+            self.1
         }
     }
 
@@ -599,20 +604,20 @@ mod tests {
             time_limit: Some(Duration::from_secs(10)),
             ..Settings::new()
         };
-        let all_but_price = Events::ALL - Events::PRICE;
-        for (wanted, state) in [
-            (all_but_price, (0, 0)),
-            (Events::PRICE, (1, 2)),
-            (Events::NONE, (0, 0)),
-            (Events::PRICE | Events::LAZY, (1, 2)),
-            (all_but_price, (0, 0)),
+        for (wanted, prices, state) in [
+            (Events::ALL, false, (0, 0)),
+            (Events::NONE, true, (1, 2)),
+            (Events::NONE, false, (0, 0)),
+            (Events::LAZY, true, (1, 2)),
+            (Events::ALL, false, (0, 0)),
         ] {
             let mut priced = Priced::new(&program, Scip::CLASSES);
-            let solved = scip.solve(&settings, &mut Asks(wanted), &mut priced).unwrap();
-            assert_eq!(solved.outcome.objective(), Some(1.0), "{wanted}");
+            let mut callback = Asks(wanted, prices);
+            let solved = scip.solve(&settings, &mut callback, &mut priced).unwrap();
+            assert_eq!(solved.outcome.objective(), Some(1.0), "{wanted} {prices}");
             assert_eq!(priced.num_cols(), 1);
             let instance = scip.instance.as_ref().unwrap();
-            assert_eq!(instance.pricing_state(), state, "{wanted}");
+            assert_eq!(instance.pricing_state(), state, "{wanted} {prices}");
         }
     }
 

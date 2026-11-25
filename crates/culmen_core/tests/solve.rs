@@ -410,7 +410,7 @@ fn test_events_combine_and_iterate_one_by_one() {
     assert_eq!(set.iter().rev().collect::<Vec<_>>(), [Events::POLL, Events::LOG]);
     set.extend([Events::NATIVE, Events::FEASIBLE]);
     assert_eq!(format!("{set:?}"), "Events(LOG | POLL | FEASIBLE | NATIVE)");
-    assert_eq!(Events::ALL.iter().len(), 10);
+    assert_eq!(Events::ALL.iter().len(), 9);
     assert_eq!(Events::ALL.into_iter().collect::<Events>(), Events::ALL);
     assert_eq!(format!("{:?}", Events::NONE), "Events()");
     let mut iter = Events::LOG.iter();
@@ -420,7 +420,7 @@ fn test_events_combine_and_iterate_one_by_one() {
     );
 }
 
-const SINGLE: [Events; 10] = [
+const SINGLE: [Events; 9] = [
     Events::LOG,
     Events::PROGRESS,
     Events::POLL,
@@ -429,14 +429,13 @@ const SINGLE: [Events; 10] = [
     Events::LAZY,
     Events::CUT,
     Events::HEURISTIC,
-    Events::PRICE,
     Events::NATIVE,
 ];
 
 proptest! {
     /// A set built from chosen single events iterates exactly those, in the order of the constants, both ways.
     #[test]
-    fn test_events_iterate_the_chosen_singles(chosen in prop::collection::vec(any::<bool>(), 10)) {
+    fn test_events_iterate_the_chosen_singles(chosen in prop::collection::vec(any::<bool>(), 9)) {
         let singles: Vec<Events> = SINGLE.iter().zip(&chosen).filter(|&(_, &c)| c).map(|(&e, _)| e).collect();
         let set: Events = singles.iter().copied().collect();
         prop_assert_eq!(set.iter().collect::<Vec<_>>(), singles.clone());
@@ -453,8 +452,8 @@ proptest! {
     /// The set operations hold each single event exactly as the boolean operation on its membership does.
     #[test]
     fn test_events_set_operations_agree_with_membership(
-        a in prop::collection::vec(any::<bool>(), 10),
-        b in prop::collection::vec(any::<bool>(), 10),
+        a in prop::collection::vec(any::<bool>(), 9),
+        b in prop::collection::vec(any::<bool>(), 9),
     ) {
         let set = |chosen: &[bool]| -> Events {
             SINGLE.iter().zip(chosen).filter(|&(_, &c)| c).map(|(&e, _)| e).collect()
@@ -480,7 +479,7 @@ fn test_events_display_as_a_set_of_names() {
     assert_eq!(Events::ALL.complement(), Events::NONE);
     assert_eq!(
         (Events::ALL - Events::NATIVE).to_string(),
-        "{LOG, PROGRESS, POLL, FEASIBLE, INCUMBENT, LAZY, CUT, HEURISTIC, PRICE}"
+        "{LOG, PROGRESS, POLL, FEASIBLE, INCUMBENT, LAZY, CUT, HEURISTIC}"
     );
 }
 
@@ -511,7 +510,13 @@ fn test_script_steps_name_their_event_kind() {
         Step::Note(String::new()),
     ]
     .iter()
-    .map(Step::event)
+    .filter_map(Step::event)
     .collect();
     assert_eq!(kinds, Events::ALL);
+    let price = Step::Price {
+        progress: p,
+        mode: PriceMode::Farkas,
+        duals: TiVec::new(),
+    };
+    assert_eq!(price.event(), None);
 }

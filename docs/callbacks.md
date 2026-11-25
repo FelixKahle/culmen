@@ -141,11 +141,12 @@ asks for it.
 
 ## `Callback`
 
-`Callback<B>` has one method per event kind, each taking the backend's context for it, and `events()`, the set of
-events it wants. Every method does nothing by default, and `events()` defaults to every event but `PRICE`, which a
-callback asks for explicitly ([Pricing](#pricing)). A backend calls a
-method only for an event in both its own `Backend::EVENTS` and the callback's `events()`, so asking for fewer events
-costs the solver less.
+`Callback<B>` has one method per event kind, each taking the backend's context for it, `events()`, the set of
+events it wants, and `prices()`, whether it prices. Every method does nothing by default, `events()` defaults to every
+event, and `prices()` to `false`: pricing is not an event of the set, so neither `Events::ALL` nor a complement
+turns it on, and a callback asks for it by name ([Pricing](#pricing)). A backend calls a method only for an event in
+both its own `Backend::EVENTS` and the callback's `events()`, so asking for fewer events costs the solver less, and
+calls `price` only when it declares `Backend::PRICES` and the callback `prices()`.
 
 | Method | Event | Context |
 |---|---|---|
@@ -157,7 +158,7 @@ costs the solver less.
 | `lazy` | `Events::LAZY` | `B::Lazy<'_>`: `LazyContext` |
 | `cut` | `Events::CUT` | `B::Cut<'_>`: `CutContext` |
 | `heuristic` | `Events::HEURISTIC` | `B::Heuristic<'_>`: `HeuristicContext` |
-| `price` | `Events::PRICE` | `B::Price<'_>`: `PriceContext` |
+| `price` | none: `prices()` returns `true` | `B::Price<'_>`: `PriceContext` |
 | `native` | `Events::NATIVE` | `B::Native<'_>`: whatever only this backend reports |
 
 Write it once for every backend, `impl<B: Backend> Callback<B>`, and it sees each context through its neutral
@@ -200,7 +201,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## `Events`
 
 `Events` is a set of event kinds: `NONE`, `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `LAZY`, `CUT`,
-`HEURISTIC`, `PRICE`, `NATIVE`, and `ALL`. Combine sets with `|`, `&` and `-` (or `union`, `intersection` and
+`HEURISTIC`, `NATIVE`, and `ALL`. Combine sets with `|`, `&` and `-` (or `union`, `intersection` and
 `difference`), take every other event with `!` (`complement`), test them with `contains`, and iterate the single
 events with `iter()`; `Display` prints `{LOG, POLL}`.
 
@@ -212,9 +213,9 @@ assert!(wanted.contains(Events::POLL));
 assert!(!wanted.contains(Events::CUT));
 assert_eq!(wanted.len(), 2);
 assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
-assert_eq!((Events::ALL - Events::LOG).len(), 9);
+assert_eq!((Events::ALL - Events::LOG).len(), 8);
 assert!(Highs::EVENTS.contains(Events::HEURISTIC));
-assert!(!Highs::EVENTS.contains(Events::PRICE));
+assert!(!Highs::PRICES);
 ```
 
 `FEASIBLE` is any solution the solver found; `INCUMBENT` is one better than every one before, so the same solution
@@ -257,11 +258,13 @@ An action returns `Err(ActionError)` when it is refused:
 
 ## Pricing
 
-`Events::PRICE` is column generation inside the solve, branch-and-price on a solver whose search branches: after the
+Pricing is column generation inside the solve, branch-and-price on a solver whose search branches: after the
 solver has solved a node LP, it hands the callback the LP's row multipliers and asks for columns that would improve
 it. The callback adds them with `add_col`, as `NewCol`s with entries in the program's rows, and the solver solves the
-node LP again and asks again, until a round adds nothing. A callback asks for pricing explicitly, since a solver that
-prices gives up reductions that need every column known up front: `events()` defaults to every event but `PRICE`.
+node LP again and asks again, until a round adds nothing. A callback asks for pricing by name, with `prices()`
+returning `true`, on a backend that declares `Backend::PRICES`. It is not an `Events` member, so a callback that asks
+for `Events::ALL` or a complement never prices by accident: a solver that prices gives up reductions that need every
+column known up front, and SCIP refuses to price a program with a quadratic objective.
 
 - **Two modes.** In `PriceMode::ReducedCost { objective }` the node LP is optimal, and `duals()` holds each row's
   dual in the sign convention of [`Duals`](analysis.md): the rate at which the LP optimum changes as the row's active
@@ -305,12 +308,12 @@ prices gives up reductions that need every column known up front: `events()` def
      cut with coefficient zero, and their duals do not change its reduced cost: every lazy constraint and cut must
      hold for every column the callback may price, each entering it with zero. A bound given to `report_bound` holds
      for the node's whole subtree over every column the program may price.
-- **What a backend that declares `PRICE` guarantees.** It delivers `PRICE` only after a node LP is solved: optimal in
+- **What a backend that declares `PRICES` guarantees.** It calls `price` only after a node LP is solved: optimal in
   `ReducedCost` mode, infeasible in `Farkas` mode, with every program row's multiplier in the convention above. It
   ends pricing at a node only after a round that added no column and did not branch early, and counts the node LP as
   a bound only then; a round that branched early counts only through `report_bound`. Every column added enters the
   search with its cost, bounds, integrality and entries, stays for the rest of the solve, and is part of every point
-  reported afterwards. A solve whose callback does not ask for `PRICE` runs as if the backend could not price.
+  reported afterwards. A solve whose callback does not price runs as if the backend could not price.
 - **Branch-and-price.** On a backend whose search branches, pricing at every node with exact pricing is exact
   branch-and-price under the backend's own branching. [SCIP](scip.md#pricing) branches on the master's integer
   columns, as it chooses; culmen has no branching event yet, so branching on the pricing problem (Ryan–Foster) is out
@@ -330,7 +333,10 @@ struct Pool {
 
 impl<B: Backend> Callback<B> for Pool {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         for (pattern, added) in self.patterns.iter().zip(&mut self.added) {

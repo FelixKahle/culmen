@@ -14,7 +14,7 @@
 //! | constraint handler | `CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX` | [`Events::LAZY`] | [`ScipLazy`] |
 //! | separator | `SEPAEXECLP` | [`Events::CUT`] | [`ScipCut`] |
 //! | primal heuristic | `HEUREXEC` | [`Events::HEURISTIC`] | [`ScipHeuristic`] |
-//! | variable pricer | `PRICERREDCOST`, `PRICERFARKAS` | [`Events::PRICE`] | [`ScipPrice`] |
+//! | variable pricer | `PRICERREDCOST`, `PRICERFARKAS` | pricing ([`Callback::prices`]) | [`ScipPrice`] |
 //!
 //! # The slot and the run, and why the plugins are sound
 //!
@@ -195,6 +195,8 @@ pub(crate) struct Run<'a> {
     callback: RefCell<&'a mut dyn Callback<Scip>>,
     /// The events the callback asked for that SCIP delivers.
     wanted: Events,
+    /// Whether the callback prices, so the pricer is active.
+    pricing: bool,
     /// When the solve began.
     start: Instant,
     cols: Columns<'a>,
@@ -285,6 +287,7 @@ impl<'a> Run<'a> {
             Sense::Minimize
         };
         Self {
+            pricing: callback.prices(),
             callback: RefCell::new(callback),
             wanted,
             start,
@@ -495,6 +498,7 @@ impl core::fmt::Debug for Run<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Run")
             .field("wanted", &self.wanted)
+            .field("pricing", &self.pricing)
             .field("start", &self.start)
             .field("panicked", &self.panicked())
             .finish_non_exhaustive()

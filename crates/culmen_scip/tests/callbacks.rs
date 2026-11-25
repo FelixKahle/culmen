@@ -1008,7 +1008,7 @@ impl Callback<Scip> for Seen {
         self.0 |= Events::HEURISTIC;
     }
     fn price(&mut self, _: &mut <Scip as Backend>::Price<'_>) {
-        self.0 |= Events::PRICE;
+        unreachable!("every event asked for, and still no pricing");
     }
 }
 
@@ -1056,6 +1056,36 @@ fn test_events_not_asked_for_are_not_delivered() {
             .outcome,
     );
     assert_eq!(best.objective, best_subset());
+}
+
+/// Counts the polls of a solve, asking for every event.
+#[derive(Default)]
+struct Everything(usize);
+
+impl Callback<Scip> for Everything {
+    fn events(&self) -> Events {
+        Events::ALL
+    }
+    fn poll(&mut self, _: &mut <Scip as Backend>::Poll<'_>) {
+        self.0 += 1;
+    }
+}
+
+#[test]
+fn test_a_callback_asking_for_every_event_solves_a_qp_without_pricing() {
+    // The point of x + y >= 1 nearest the origin is (1/2, 1/2), at squared distance 1/2.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().bounds(0, 5));
+    let y = m.add_var(Var::continuous().bounds(0, 5));
+    m.add_constraint((x + y).geq(1));
+    m.minimize(x * x + y * y);
+    let mut everything = Everything::default();
+    let solved = Solver::new(Scip::new(), m.build().unwrap())
+        .unwrap()
+        .solve_with(exact(), &mut everything);
+    let best = optimal(solved.unwrap().outcome);
+    assert!(close(best.objective, 0.5, 1e-5), "{best:?}");
+    assert!(everything.0 > 0);
 }
 
 /// Every solution reported, with its objective.

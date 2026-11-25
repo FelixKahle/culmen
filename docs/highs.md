@@ -426,7 +426,7 @@ A `Callback<Highs>` receives HiGHS's own context types. Each implements the neut
 | `INCUMBENT` | `HighsSolution` | `kHighsCallbackMipImprovingSolution` | `mip()` |
 | `HEURISTIC` | `HighsHeuristic` | `kHighsCallbackMipUserSolution` | `origin()`, a `QueryOrigin`; `mip()` |
 | `NATIVE` | `HighsNative` | `kHighsCallbackMipGetCutPool` | the [cut pool](#the-cut-pool) |
-| `LAZY`, `CUT`, `PRICE` | `Unsupported` | none | never delivered ([Limitations](#limitations)) |
+| `LAZY`, `CUT`, pricing | `Unsupported` | none | never delivered; `Highs::PRICES` is false ([Limitations](#limitations)) |
 
 `MipData` is what every MIP callback reports, in the model's objective space, offset included:
 
@@ -579,7 +579,7 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
   them.
 - **No user cuts.** HiGHS has no callback for them; `Events::CUT` is `Unsupported` too. [SCIP](scip.md#cuts) takes
   them.
-- **No pricing.** HiGHS has no pricing callback, so `Events::PRICE` is `Unsupported`: price in an outer loop by
+- **No pricing.** HiGHS has no pricing callback, so `Highs::PRICES` is false and `price` is never called: price in an outer loop by
   [editing](#editing-a-loaded-program) the program, as the `column_generation` example does, or at every node on
   [SCIP](scip.md#pricing).
 - **An interrupt is honoured only at a poll.** Only `HighsPoll` has `interrupt`, and only `HighsHeuristic` accepts

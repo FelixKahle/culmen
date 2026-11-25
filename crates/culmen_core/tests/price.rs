@@ -97,7 +97,10 @@ impl Pricer {
 
 impl<B: Backend> Callback<B> for Pricer {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         let seen = self
@@ -317,7 +320,10 @@ impl Adds {
 
 impl<B: Backend> Callback<B> for Adds {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         for column in &self.columns {
@@ -434,7 +440,10 @@ struct PriceThenLazy {
 
 impl Callback<Script> for PriceThenLazy {
     fn events(&self) -> Events {
-        Events::PRICE | Events::LAZY
+        Events::LAZY
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScriptPrice<'_>) {
         self.added
@@ -475,7 +484,10 @@ struct AddThenPanic;
 
 impl<B: Backend> Callback<B> for AddThenPanic {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         ctx.add_col(column(1.0, &[(Row::new(0), 1.0)])).unwrap();
@@ -518,7 +530,10 @@ struct AddThenInterrupt(Vec<Col>);
 
 impl<B: Backend> Callback<B> for AddThenInterrupt {
     fn events(&self) -> Events {
-        Events::PRICE | Events::POLL
+        Events::POLL
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         self.0.push(ctx.add_col(column(1.0, &[(Row::new(0), 1.0)])).unwrap());
@@ -578,7 +593,10 @@ struct Bounding(Vec<Result<(), ActionError>>);
 
 impl<B: Backend> Callback<B> for Bounding {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         match ctx.mode() {
@@ -622,7 +640,7 @@ fn test_a_bound_and_an_early_stop_are_recorded_and_farkas_takes_no_bound() {
     assert_eq!(solver.program().num_cols(), 2, "nothing priced, nothing appended");
 }
 
-/// A callback that implements `price` but leaves `events` at its default.
+/// A callback that implements `price` but leaves `events` and `prices` at their defaults, so it asks for every event.
 struct DefaultEvents(usize);
 
 impl<B: Backend> Callback<B> for DefaultEvents {
@@ -632,9 +650,10 @@ impl<B: Backend> Callback<B> for DefaultEvents {
 }
 
 #[test]
-fn test_pricing_is_asked_for_explicitly() {
+fn test_pricing_is_asked_for_by_name_and_never_by_every_event() {
     let callback = DefaultEvents(0);
-    assert_eq!(Callback::<Script>::events(&callback), Events::ALL - Events::PRICE);
+    assert_eq!(Callback::<Script>::events(&callback), Events::ALL);
+    assert!(!Callback::<Script>::prices(&callback));
     let steps = vec![price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0])];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), small()).unwrap();
     let mut callback = DefaultEvents(0);
@@ -642,6 +661,7 @@ fn test_pricing_is_asked_for_explicitly() {
     assert_eq!(callback.0, 0);
     assert!(solver.backend().record.priced.is_empty());
     assert_eq!(Script::EVENTS, Events::ALL);
+    const { assert!(Script::PRICES) };
 }
 
 /// A backend whose solve prices one column into the sink itself when `prices`, ends optimal, and answers duals with
@@ -765,7 +785,10 @@ fn test_the_script_price_context_reads_back_its_step() {
 
     impl Callback<Script> for Reads {
         fn events(&self) -> Events {
-            Events::PRICE
+            Events::NONE
+        }
+        fn prices(&self) -> bool {
+            true
         }
         fn price(&mut self, ctx: &mut ScriptPrice<'_>) {
             let duals = ctx.duals().iter().copied().collect();

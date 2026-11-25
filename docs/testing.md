@@ -28,7 +28,7 @@ Each step is one event, in the generic terms of [`Callback`](callbacks.md#callba
 | `Step::Lazy(found)` | `LAZY` | the candidate; `add_lazy` |
 | `Step::Cut { progress, relaxation }` | `CUT` | the relaxation; `add_cut` |
 | `Step::Heuristic(progress)` | `HEURISTIC` | `supply`, `supply_partial` |
-| `Step::Price { progress, mode, duals }` | `PRICE` | a `ScriptPrice`: the mode, the program's sense, the duals, `tolerance()` of `ScriptPrice::TOLERANCE`; `add_col`, `branch_early`, `report_bound` |
+| `Step::Price { progress, mode, duals }` | none: delivered when the callback's `prices()` is true | a `ScriptPrice`: the mode, the program's sense, the duals, `tolerance()` of `ScriptPrice::TOLERANCE`; `add_col`, `branch_early`, `report_bound` |
 | `Step::Note(text)` | `NATIVE` | a `ScriptNote` with `text()` |
 
 A `Found` is `{ progress, objective, values }`. `step.event()` names a step's event kind.
@@ -165,7 +165,10 @@ struct Pattern(NewCol);
 
 impl<B: Backend> Callback<B> for Pattern {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         if ctx.improves(&self.0) {

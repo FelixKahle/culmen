@@ -153,7 +153,10 @@ impl Pricer {
 
 impl Callback<Scip> for Pricer {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.price_round(ctx);
@@ -361,7 +364,10 @@ struct Panics {
 
 impl Callback<Scip> for Panics {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -396,7 +402,10 @@ struct Interrupts {
 
 impl Callback<Scip> for Interrupts {
     fn events(&self) -> Events {
-        Events::PRICE | Events::POLL
+        Events::POLL
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -441,7 +450,10 @@ struct AtMostOneB {
 
 impl Callback<Scip> for AtMostOneB {
     fn events(&self) -> Events {
-        Events::PRICE | Events::LAZY
+        Events::LAZY
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -490,7 +502,10 @@ struct CutsB {
 
 impl Callback<Scip> for CutsB {
     fn events(&self) -> Events {
-        Events::PRICE | Events::CUT
+        Events::CUT
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -530,7 +545,10 @@ struct Supplies {
 
 impl Callback<Scip> for Supplies {
     fn events(&self) -> Events {
-        Events::PRICE | Events::HEURISTIC
+        Events::HEURISTIC
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -652,7 +670,10 @@ struct Refusals {
 
 impl Callback<Scip> for Refusals {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         if self.results.is_empty() {
@@ -706,7 +727,10 @@ struct Early {
 
 impl Callback<Scip> for Early {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         if self.early.is_none() && matches!(ctx.mode(), PriceMode::ReducedCost { .. }) {
@@ -807,7 +831,10 @@ struct SplitPricer {
 
 impl Callback<Scip> for SplitPricer {
     fn events(&self) -> Events {
-        Events::PRICE | Events::POLL
+        Events::POLL
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.rounds += 1;

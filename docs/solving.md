@@ -425,7 +425,7 @@ The examples `cutting_planes` and `column_generation` of the `culmen` crate edit
 
 ## A solve that prices
 
-A callback that asks for [`Events::PRICE`](callbacks.md#pricing) adds columns during the solve, column generation at
+A callback that [prices](callbacks.md#pricing) (`prices()` returns `true`) adds columns during the solve, column generation at
 every node of the search, on a backend that prices: [SCIP](scip.md#pricing). Those columns are the program's from then
 on:
 
@@ -452,7 +452,10 @@ struct OneMore;
 
 impl<B: Backend> Callback<B> for OneMore {
     fn events(&self) -> Events {
-        Events::PRICE
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
     }
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         let row = Row::new(0);

@@ -33,14 +33,14 @@ use crate::{
 ///   reads with that program's handles: a [`Solution`](crate::Solution) holds one value per column, the columns
 ///   priced in the solve included, and every objective value and bound includes the program's quadratic part and
 ///   offset.
-/// - A backend that declares [`Events::PRICE`] delivers it only after a node LP is solved, optimal in
+/// - A backend that declares [`Backend::PRICES`] calls [`Callback::price`] only after a node LP is solved, optimal in
 ///   [`PriceMode::ReducedCost`](crate::PriceMode::ReducedCost) and infeasible in
 ///   [`PriceMode::Farkas`](crate::PriceMode::Farkas), with every program row's multiplier in the convention of
 ///   [`PriceContext::duals`]. It ends pricing at a node only after a round that added no column and did not branch
 ///   early, and counts the node LP as a bound only then. Every column a callback adds goes through
 ///   [`Priced::push`] of the solve's `priced`, enters the search with its cost, bounds, integrality and entries, stays
 ///   for the rest of the solve, and is part of every point the backend reports afterwards. A solve whose callback does
-///   not ask for [`Events::PRICE`] behaves as if the backend did not declare it.
+///   not price ([`Callback::prices`]) behaves as if the backend did not declare it.
 /// - It calls a callback method only for an event in both [`Backend::EVENTS`] and the callback's
 ///   [`Callback::events`], and only while `solve` runs; it never calls two callback methods at once.
 /// - A panic in a callback stops the solve as soon as the solver allows and then continues unwinding out of
@@ -70,13 +70,18 @@ pub trait Backend: Sized {
     type Cut<'a>: CutContext;
     /// The context of a [`Events::HEURISTIC`] event.
     type Heuristic<'a>: HeuristicContext;
-    /// The context of a [`Events::PRICE`] event.
+    /// The context of a pricing round: a node LP whose duals a callback answers with columns.
     type Price<'a>: PriceContext;
     /// The context of a [`Events::NATIVE`] event: whatever only this solver reports.
     type Native<'a>: fmt::Debug;
 
     /// The events this backend delivers.
     const EVENTS: Events;
+
+    /// Whether this backend prices: calls [`Callback::price`] for a callback that [`prices`](Callback::prices), and
+    /// takes the columns it adds into the search. A backend that does not price leaves it `false` and its
+    /// [`Backend::Price`] [`Unsupported`](crate::Unsupported).
+    const PRICES: bool = false;
 
     /// The classes of program this backend solves; [`Solver::new`](crate::Solver::new) refuses any other.
     const CLASSES: ModelClasses;
@@ -242,8 +247,8 @@ const fn unsupported<B: Backend>(analysis: Analysis) -> AnalysisError<B::Error> 
 
 /// What runs during a solve: one method per event kind, each with the backend's context for it.
 ///
-/// Every method does nothing by default, and [`Callback::events`] asks for every event but [`Events::PRICE`]: pricing
-/// is asked for explicitly. Implement it generically (`impl<B: Backend> Callback<B> for …`) to run
+/// Every method does nothing by default, [`Callback::events`] asks for every event, and [`Callback::prices`] is `false`:
+/// pricing is asked for by name, never by a set of events. Implement it generically (`impl<B: Backend> Callback<B> for …`) to run
 /// on every backend through the neutral context traits, or for one backend to reach its own context types. Two
 /// callbacks run together as a pair `(a, b)`, `a` first.
 ///
@@ -266,10 +271,17 @@ const fn unsupported<B: Backend>(analysis: Analysis) -> AnalysisError<B::Error> 
 /// }
 /// ```
 pub trait Callback<B: Backend>: Send {
-    /// The events this callback wants; every event but [`Events::PRICE`] by default, since a solver that prices gives
-    /// up reductions that need every column known up front.
+    /// The events this callback wants; every event by default.
     fn events(&self) -> Events {
-        Events::ALL.difference(Events::PRICE)
+        Events::ALL
+    }
+    /// Whether this callback prices, so that a backend declaring [`Backend::PRICES`] calls [`Callback::price`] at
+    /// every node LP; `false` by default.
+    ///
+    /// Pricing is not an [`Events`] member, so no set of events turns it on: a solver that prices gives up
+    /// reductions that need every column known up front, and some refuse programs they solve otherwise.
+    fn prices(&self) -> bool {
+        false
     }
     /// A chunk of the solver's log.
     fn log(&mut self, ctx: &mut B::Log<'_>) {
@@ -303,7 +315,7 @@ pub trait Callback<B: Backend>: Send {
     fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
         let _ = ctx;
     }
-    /// A node LP's duals, to be answered with columns that improve it.
+    /// A node LP's duals, to be answered with columns that improve it; called only when [`Callback::prices`].
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         let _ = ctx;
     }
@@ -322,6 +334,9 @@ impl<B: Backend> Callback<B> for () {
 impl<B: Backend, C: Callback<B> + ?Sized> Callback<B> for &mut C {
     fn events(&self) -> Events {
         (**self).events()
+    }
+    fn prices(&self) -> bool {
+        (**self).prices()
     }
     fn log(&mut self, ctx: &mut B::Log<'_>) {
         (**self).log(ctx);
@@ -359,6 +374,9 @@ impl<B: Backend, C: Callback<B> + ?Sized> Callback<B> for &mut C {
 impl<B: Backend, X: Callback<B>, Y: Callback<B>> Callback<B> for (X, Y) {
     fn events(&self) -> Events {
         self.0.events() | self.1.events()
+    }
+    fn prices(&self) -> bool {
+        self.0.prices() || self.1.prices()
     }
     fn log(&mut self, ctx: &mut B::Log<'_>) {
         if self.0.events().contains(Events::LOG) {
@@ -426,10 +444,10 @@ impl<B: Backend, X: Callback<B>, Y: Callback<B>> Callback<B> for (X, Y) {
     }
     /// Both callbacks share one context, so the columns of the second follow those of the first.
     fn price(&mut self, ctx: &mut B::Price<'_>) {
-        if self.0.events().contains(Events::PRICE) {
+        if self.0.prices() {
             self.0.price(ctx);
         }
-        if self.1.events().contains(Events::PRICE) {
+        if self.1.prices() {
             self.1.price(ctx);
         }
     }

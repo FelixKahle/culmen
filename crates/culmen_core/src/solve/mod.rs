@@ -191,7 +191,7 @@ impl<B: Backend> Solver<B> {
 
     /// Solves under the request's settings, from its start, polling its stop and reporting to its observer.
     ///
-    /// A solve whose callback priced columns ([`Events::PRICE`](crate::Events::PRICE)) appends them to the program,
+    /// A solve whose callback priced columns ([`Callback::prices`](crate::Callback::prices)) appends them to the program,
     /// in the order of their ids, however it ends: returning, failing or unwinding from a panic. The backend loads the
     /// grown program at the next call that runs it, and the analyses find no solve to read until the next solve that
     /// prices nothing.

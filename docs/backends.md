@@ -21,9 +21,10 @@ pub trait Backend: Sized {
     type Lazy<'a>: LazyContext;           // Events::LAZY
     type Cut<'a>: CutContext;             // Events::CUT
     type Heuristic<'a>: HeuristicContext; // Events::HEURISTIC
-    type Price<'a>: PriceContext;         // Events::PRICE
+    type Price<'a>: PriceContext;         // pricing, for a callback whose prices() is true
     type Native<'a>: Debug;               // Events::NATIVE: whatever only this solver reports
     const EVENTS: Events;                 // what this backend delivers
+    const PRICES: bool = false;           // whether it prices
     const CLASSES: ModelClasses;          // the model classes this backend solves
     const ANALYSES: Analyses = Analyses::NONE; // what it reports after a solve: duals, basis, ranging, …
     const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // semi columns, objectives, starts it takes
@@ -69,18 +70,18 @@ pub trait Backend: Sized {
   falls back to `load` for any kind of `Edit` it does not handle, since the enum is non-exhaustive. When `edit`
   fails, the backend may hold anything: the `Solver` loads the program before the edit again.
 - **Priced columns go to a sink the caller owns.** `solve` takes a `Priced`, made for the loaded program. A backend
-  that delivers `PRICE` hands every column a callback adds to `Priced::push`, which checks it (rows the program has,
+  that prices (`PRICES`) hands every column a callback adds to `Priced::push`, which checks it (rows the program has,
   finite numbers, bounds that hold zero, no semi column, a class the backend solves) and returns its id, the next
   after the program's columns and every one priced before. The core owns the checks and the numbering, so every
-  backend refuses the same columns the same way, and a backend that declared `PRICE` but forgot the sink would not
+  backend refuses the same columns the same way, and a backend that declared `PRICES` but forgot the sink would not
   compile. A `Solver` appends the columns to its program however `solve` ends, unwinding included, and loads the
   grown program at its next call; code that drives a backend directly makes its own `Priced` and takes the columns
   with `Priced::into_cols`. A backend that does not price ignores the parameter.
 - **The contract** (on `Backend`): solve the last program `load` or `edit` accepted; report every objective and
   bound with the program's quadratic part and offset in the model's sense, and every point with one value per
   column, the ones priced so far included; call only events in `EVENTS ∩ callback.events()`, only during `solve`, never two at once; a panic in a
-  callback stops the solve and unwinds out of `solve`, never aborts. A backend that declares `PRICE` delivers it
-  only for a solved node LP, optimal (`PriceMode::ReducedCost`) or infeasible (`PriceMode::Farkas`), ends pricing at
+  callback stops the solve and unwinds out of `solve`, never aborts. A backend that declares `PRICES` calls `price`,
+  for a callback whose `prices()` is true, only for a solved node LP, optimal (`PriceMode::ReducedCost`) or infeasible (`PriceMode::Farkas`), ends pricing at
   a node only after a round that added nothing and did not branch early, and keeps every added column for the rest
   of the solve.
 
@@ -130,7 +131,7 @@ Gurobi and SCIP solve and HiGHS does not, would be further classes that a backen
 | `LAZY`: cut off a candidate | none: `kHighsCallbackMipDefineLazyConstraints` exists in 1.16 but is never called, so `Unsupported` | `GRB_CB_MIPSOL` (and `MIPNODE`): `GRBcblazy`, with `LazyConstraints = 1` | a constraint handler without constraints, checked and enforced last: `CONSCHECK` rejects, `CONSENFOLP` / `CONSENFOPS` / `CONSENFORELAX` add global linear constraints (`SCIPaddCons`, `CONSADDED`) |
 | `CUT`: cut off a node relaxation | none, so `Unsupported` | `GRB_CB_MIPNODE` with `MIPNODE_STATUS == OPTIMAL`: `GRBcbget(MIPNODE_REL)`, `GRBcbcut` | a separator (`SEPAEXECLP`): `SCIPgetSolVal` of the LP, `SCIPaddRow` and `SCIPaddPoolCut` |
 | `HEURISTIC`: supply a solution | `kHighsCallbackMipUserSolution`: `user_solution` + `user_has_solution`; partial via `Highs_setCallbackSparseSolution` + `Highs_repairCallbackSolution` | `GRB_CB_MIPNODE` (and `MIP`): `GRBcbsolution` (partial values allowed), `GRBcbusesolution` | a primal heuristic (`HEUREXEC`) before and after each node: `SCIPcreateOrigSol` (`SCIPcreateSol` in a solve that prices), `SCIPtrySolFree`; no partial solution during the search, so `supply_partial` is refused |
-| `PRICE`: answer a node LP's duals with columns | none, so `Unsupported` | none: Gurobi 12 has no pricing callback | a pricer plugin, delayed and active only in a solve that asks for `PRICE`, whose rows are then modifiable (`SCIPincludePricerBasic`, `SCIPactivatePricer`, `SCIPsetConsModifiable`): `PRICERREDCOST` and `PRICERFARKAS` read `SCIPgetDualsolLinear` or `SCIPgetDualfarkasLinear`, then `SCIPcreateVar`, `SCIPaddPricedVar` and `SCIPaddCoefLinear`; refused on a program with a quadratic objective |
+| pricing (`PRICES`): answer a node LP's duals with columns | none, so `Unsupported` | none: Gurobi 12 has no pricing callback | a pricer plugin, delayed and active only in a solve whose callback prices, whose rows are then modifiable (`SCIPincludePricerBasic`, `SCIPactivatePricer`, `SCIPsetConsModifiable`): `PRICERREDCOST` and `PRICERFARKAS` read `SCIPgetDualsolLinear` or `SCIPgetDualfarkasLinear`, then `SCIPcreateVar`, `SCIPaddPricedVar` and `SCIPaddCoefLinear`; refused on a program with a quadratic objective |
 | `NATIVE`: solver-only events | `kHighsCallbackMipGetCutPool` as `HighsNative::CutPool` (presolved-space cuts) | `GRB_CB_PRESOLVE`, `GRB_CB_MULTIOBJ`, `GRB_CB_IIS`, and `MIPNODE` node data beyond the relaxation | none in `culmen_scip`; any other event type (`SCIP_EVENTTYPE_*`), branching or node-selection data would fit |
 
 HiGHS's threading is handled inside culmen_highs. The MIP kinds come from its serial search loop. Logging may come
@@ -190,10 +191,10 @@ A `culmen_gurobi` crate would hold an `Env`/`Model` pair over `grb-sys`. `load` 
 arrays. `solve` sets parameters from its own typed `GurobiOptions`, then from `Settings`, installs one
 `GRBsetcallbackfunc` trampoline for the run, and maps `where` codes to events as in the table above. Its context
 types would be `GurobiMessage`, `GurobiMip`, `GurobiMipSol` and `GurobiMipNode`. `GurobiMipNode` would implement
-`CutContext` and `HeuristicContext` and offer `cbGet` codes as inherent methods. `EVENTS` would be `Events::ALL`
-without `PRICE`, and `CLASSES` would be `ModelClasses::ALL`, the quadratic part passed with `GRBaddqpterms`.
+`CutContext` and `HeuristicContext` and offer `cbGet` codes as inherent methods. `EVENTS` would be `Events::ALL`,
+`PRICES` false, and `CLASSES` would be `ModelClasses::ALL`, the quadratic part passed with `GRBaddqpterms`.
 None of this needs a change to culmen_core. SCIP needed more plumbing, since its callbacks are plugins (an event
 handler, a message handler, a constraint handler, a separator, a heuristic and a pricer, each included in the
 `SCIP*`), but each plugin maps onto the event kinds above; `culmen_scip` includes them in every instance and delivers
-every generic event that way ([SCIP](scip.md#callback-events)). `PRICE` is the one event whose seam the pricer needed in culmen_core: the sink
+every generic event that way ([SCIP](scip.md#callback-events)). Pricing is the one event whose seam the pricer needed in culmen_core: the sink
 `Priced` beside the callback, since the columns a solve prices outlive it.

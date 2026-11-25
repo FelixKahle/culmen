@@ -72,15 +72,16 @@ pub enum Step {
 }
 
 impl Step {
-    /// The kind of event the step is delivered as.
+    /// The kind of event the step is delivered as; `None` for [`Step::Price`], which is delivered to a callback that
+    /// [`prices`](crate::Callback::prices) whatever events it asks for.
     ///
     /// ```
     /// use culmen_core::{Events, Step};
-    /// assert_eq!(Step::Note("presolve done".to_owned()).event(), Events::NATIVE);
+    /// assert_eq!(Step::Note("presolve done".to_owned()).event(), Some(Events::NATIVE));
     /// ```
     #[must_use]
-    pub const fn event(&self) -> Events {
-        match self {
+    pub const fn event(&self) -> Option<Events> {
+        Some(match self {
             Self::Log { .. } => Events::LOG,
             Self::Progress(_) => Events::PROGRESS,
             Self::Poll(_) => Events::POLL,
@@ -89,9 +90,9 @@ impl Step {
             Self::Lazy(_) => Events::LAZY,
             Self::Cut { .. } => Events::CUT,
             Self::Heuristic(_) => Events::HEURISTIC,
-            Self::Price { .. } => Events::PRICE,
+            Self::Price { .. } => return None,
             Self::Note(_) => Events::NATIVE,
-        }
+        })
     }
 }
 
@@ -125,7 +126,7 @@ pub struct PriceRound {
 
 /// A backend that delivers a fixed list of [`Step`]s to the callback and then ends with a fixed [`Outcome`].
 ///
-/// It supports every generic event, loads every [`ModelClass`](crate::ModelClass) and takes every
+/// It supports every generic event and prices, loads every [`ModelClass`](crate::ModelClass) and takes every
 /// [`ProgramFeature`](crate::ProgramFeature), recording each start in [`Record::starts`], since it replays rather
 /// than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
 /// interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent and the last bound
@@ -185,7 +186,7 @@ impl Script {
     }
 
     /// Delivers one step: the solve's state sees it whatever the callback asks for, and the callback gets it only
-    /// when it asks for its kind.
+    /// when it asks for its kind, or, for a price step, when it prices.
     ///
     /// # Panics
     ///
@@ -193,7 +194,10 @@ impl Script {
     fn deliver(&mut self, index: usize, callback: &mut dyn Callback<Self>, run: &mut Run, priced: &mut Priced) {
         let step = &self.steps[index];
         run.observe(step);
-        if callback.events().contains(step.event()) {
+        let wanted = step
+            .event()
+            .map_or_else(|| callback.prices(), |event| callback.events().contains(event));
+        if wanted {
             let sense = self.sense.unwrap_or_default();
             dispatch(step, callback, run, &mut self.record, priced, sense);
         }
@@ -332,6 +336,7 @@ impl Backend for Script {
     type Native<'a> = ScriptNote<'a>;
 
     const EVENTS: Events = Events::ALL;
+    const PRICES: bool = true;
     const CLASSES: ModelClasses = ModelClasses::ALL;
     /// A script replays events and an outcome; it has no duals, basis or other analysis to report honestly.
     const ANALYSES: Analyses = Analyses::NONE;

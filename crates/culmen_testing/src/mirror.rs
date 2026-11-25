@@ -213,6 +213,9 @@ impl<B: Backend> Callback<B> for Forward<'_, B> {
     fn events(&self) -> Events {
         self.0.events()
     }
+    fn prices(&self) -> bool {
+        self.0.prices()
+    }
     fn log(&mut self, ctx: &mut B::Log<'_>) {
         self.0.log(ctx);
     }
@@ -260,6 +263,7 @@ impl<B: Backend> Backend for Mirror<B> {
     type Native<'a> = B::Native<'a>;
 
     const EVENTS: Events = B::EVENTS;
+    const PRICES: bool = B::PRICES;
     const CLASSES: ModelClasses = B::CLASSES;
     const ANALYSES: Analyses = B::ANALYSES;
     const FEATURES: ProgramFeatures = B::FEATURES;
