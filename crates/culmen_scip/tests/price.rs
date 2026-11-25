@@ -18,11 +18,11 @@ use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use culmen_core::{
-    ActionError, Bounds, Callback, Col, CutContext, Events, HeuristicContext, LazyContext, Linear, NewCol, Outcome,
-    PollContext, PriceContext, PriceMode, Program, ProgramColumn, ProgramPlan, Request, Row, Sense, Settings, Solution,
-    SolutionContext, SolveError, Solver, StopReason, TiVec, bounds,
+    ActionError, Bounds, Callback, Col, CutContext, Events, HeuristicContext, Integrality, LazyContext, Linear, NewCol,
+    Outcome, PollContext, PriceContext, PriceMode, Program, ProgramColumn, ProgramPlan, Request, Row, Sense, Settings,
+    Solution, SolutionContext, SolveError, Solver, StopReason, TiVec, bounds,
 };
-use culmen_scip::{Scip, ScipError, ScipOptions, ScipPrice};
+use culmen_scip::{Scip, ScipError, ScipEvent, ScipOptions, ScipPrice};
 use culmen_testing::reference::{Reference, close, solve};
 use culmen_testing::strategy::{PricedSplit, priced_split};
 use proptest::prelude::*;
@@ -532,16 +532,131 @@ impl Callback<Scip> for CutsB {
 
 #[test]
 fn test_a_cut_may_name_a_priced_column() {
+    // Without presolve the cut rows stay in SCIP's LP as given, and every column priced after them enters them with
+    // a zero.
+    for presolve in [true, false] {
+        let (program, patterns) = cutting_stock(true);
+        let mut solver = Solver::new(Scip::new(), program).unwrap();
+        let mut callback = CutsB {
+            pricer: Pricer::new(patterns, 3..11, Pick::Every),
+            cuts: 0,
+            calls: 0,
+        };
+        let solved = solver.solve_with(limited(presolve), &mut callback).unwrap();
+        assert!(
+            close(optimal(solved.outcome).objective, 5.0, 1e-9),
+            "presolve {presolve}"
+        );
+        assert!(callback.cuts > 0, "presolve {presolve}");
+    }
+}
+
+/// Prices as a `Pricer` and records the SCIP event of every poll.
+struct PollsWhilePricing {
+    pricer: Pricer,
+    events: Vec<ScipEvent>,
+}
+
+impl Callback<Scip> for PollsWhilePricing {
+    fn events(&self) -> Events {
+        Events::POLL
+    }
+    fn prices(&self) -> bool {
+        true
+    }
+    fn price(&mut self, ctx: &mut ScipPrice<'_>) {
+        self.pricer.price_round(ctx);
+    }
+    fn poll(&mut self, ctx: &mut culmen_scip::ScipPoll<'_>) {
+        assert!(self.events.len() < MAX_CALLS, "more polls than a tiny program needs");
+        self.events.push(ctx.event());
+    }
+}
+
+#[test]
+fn test_a_pricing_solve_polls_at_each_solved_node_lp() {
     let (program, patterns) = cutting_stock(true);
     let mut solver = Solver::new(Scip::new(), program).unwrap();
-    let mut callback = CutsB {
+    let mut callback = PollsWhilePricing {
         pricer: Pricer::new(patterns, 3..11, Pick::Every),
-        cuts: 0,
-        calls: 0,
+        events: Vec::new(),
     };
-    let solved = solver.solve_with(limited(true), &mut callback).unwrap();
+    let solved = solver.solve_with(limited(false), &mut callback).unwrap();
     assert!(close(optimal(solved.outcome).objective, 5.0, 1e-9));
-    assert!(callback.cuts > 0);
+    for event in [ScipEvent::NodeFocused, ScipEvent::LpSolved, ScipEvent::NodeSolved] {
+        assert!(callback.events.contains(&event), "{event:?} in {:?}", callback.events);
+    }
+}
+
+/// At the first Farkas round, tries to report a bound and branches early; prices as a `Pricer` after.
+struct FarkasEarly {
+    pricer: Pricer,
+    bound: Option<Result<(), ActionError>>,
+}
+
+impl Callback<Scip> for FarkasEarly {
+    fn events(&self) -> Events {
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
+    }
+    fn price(&mut self, ctx: &mut ScipPrice<'_>) {
+        if self.bound.is_none() {
+            assert_eq!(ctx.mode(), PriceMode::Farkas, "the start is infeasible");
+            self.bound = Some(ctx.report_bound(1.0));
+            ctx.branch_early();
+            return;
+        }
+        self.pricer.price_round(ctx);
+    }
+}
+
+#[test]
+fn test_branching_early_in_a_farkas_round_is_a_round_not_run() {
+    // The second fixture with integer columns: its start, x2 alone, cannot meet x1 + x3 >= 1, so the first round is
+    // Farkas. Branching early there leaves the round not run; with x2 integer SCIP branches, prices in the children,
+    // and reaches the integer optimum x3 = 2, worth 14.
+    let (program, columns) = max_fixture();
+    let mut plan = ProgramPlan::from(program);
+    plan.columns[Col::new(0)].integrality = Integrality::Integer;
+    let columns: Vec<NewCol> = columns
+        .into_iter()
+        .map(|mut c| {
+            c.column.integrality = Integrality::Integer;
+            c
+        })
+        .collect();
+    let mut solver = Solver::new(Scip::new(), plan.build().unwrap()).unwrap();
+    let mut callback = FarkasEarly {
+        pricer: Pricer::new(columns, 1..3, Pick::Every),
+        bound: None,
+    };
+    let solved = solver.solve_with(limited(false), &mut callback);
+    assert!(
+        matches!(&callback.bound, Some(Err(ActionError::Refused(reason))) if reason.contains("Farkas")),
+        "{:?}",
+        callback.bound
+    );
+    assert!(close(optimal(solved.unwrap().outcome).objective, 14.0, 1e-9));
+}
+
+#[test]
+fn test_a_column_without_an_upper_bound_is_priced_in() {
+    // Minimize x + y over x + y >= 3, with y priced in [0, +inf) at cost 1/2: y = 3, worth 3/2.
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+    plan.row(bounds!(3.0, f64::INFINITY), [(x, 1.0)]);
+    let program = plan.build().unwrap();
+    let y = column(0.5, Bounds::NON_NEGATIVE, false, &[(Row::new(0), 1.0)]);
+    let watched = vec![column(1.0, Bounds::NON_NEGATIVE, false, &[(Row::new(0), 1.0)]), y];
+    let mut solver = Solver::new(Scip::new(), program).unwrap();
+    let mut pricer = Pricer::new(watched, [1], Pick::Every);
+    let solved = solver.solve_with(limited(true), &mut pricer).unwrap();
+    let best = optimal(solved.outcome);
+    assert!(close(best.objective, 1.5, 1e-9), "{best:?}");
+    assert_eq!(pricer.added, vec![(1, Col::new(1))]);
+    assert!((best.values[Col::new(1)] - 3.0).abs() <= 1e-9, "{best:?}");
 }
 
 /// Prices as a `Pricer`, supplies one solution at the first heuristic call once every column it names is held, and
@@ -694,6 +809,9 @@ struct Refusals {
     pricer: Pricer,
     results: Vec<Result<Col, ActionError>>,
     bound: Option<Result<(), ActionError>>,
+    beyond: Option<Result<(), ActionError>>,
+    /// The node's bounds of every priced column at the end of each round, the ones added in it included.
+    local: Vec<Option<Bounds>>,
 }
 
 impl Callback<Scip> for Refusals {
@@ -718,8 +836,12 @@ impl Callback<Scip> for Refusals {
             assert_eq!(ctx.local_bounds(Col::new(0)), Some(Bounds::NON_NEGATIVE));
             assert_eq!(ctx.local_bounds(Col::new(99)), None);
             self.bound = Some(ctx.report_bound(f64::NAN));
+            self.beyond = Some(ctx.report_bound(1e21));
         }
         self.pricer.price_round(ctx);
+        for &(_, col) in &self.pricer.added {
+            self.local.push(ctx.local_bounds(col));
+        }
     }
 }
 
@@ -731,6 +853,8 @@ fn test_scip_refuses_a_column_it_cannot_hold_before_it_takes_an_id() {
         pricer: Pricer::new(patterns, 3..11, Pick::Every),
         results: Vec::new(),
         bound: None,
+        beyond: None,
+        local: Vec::new(),
     };
     let solved = solver.solve_with(limited(true), &mut callback).unwrap();
     for result in &callback.results[..4] {
@@ -742,6 +866,18 @@ fn test_scip_refuses_a_column_it_cannot_hold_before_it_takes_an_id() {
         callback.results
     );
     assert!(matches!(callback.bound, Some(Err(ActionError::NotFiniteBound { .. }))));
+    assert!(
+        matches!(&callback.beyond, Some(Err(ActionError::Refused(reason))) if reason.contains("infinite")),
+        "{:?}",
+        callback.beyond
+    );
+    // B's bounds at the root, in the round that added it and in SCIP's variable after.
+    assert!(callback.local.len() >= 2, "{:?}", callback.local);
+    assert!(
+        callback.local.iter().all(|&b| b == Some(Bounds::NON_NEGATIVE)),
+        "{:?}",
+        callback.local
+    );
     // No refused column took an id: B is the first column priced.
     assert_eq!(callback.pricer.added, vec![(7, Col::new(3))]);
     assert!(close(optimal(solved.outcome).objective, 4.5, 1e-9));

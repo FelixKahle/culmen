@@ -822,3 +822,78 @@ fn test_the_script_price_context_reads_back_its_step() {
         )]
     );
 }
+
+#[test]
+fn test_improves_reads_the_reduced_cost_by_the_bounds_the_sense_and_the_mode() {
+    /// For one row with dual 2, a column of cost `cost` and entry 1 in it has the reduced cost `cost - 2`, or `-2` in
+    /// Farkas mode; records whether each column improves.
+    struct Judge(Vec<(f64, (f64, f64), bool)>, Vec<bool>);
+
+    impl Callback<Script> for Judge {
+        fn events(&self) -> Events {
+            Events::NONE
+        }
+        fn prices(&self) -> bool {
+            true
+        }
+        fn price(&mut self, ctx: &mut ScriptPrice<'_>) {
+            for &(cost, (lower, upper), _) in &self.0 {
+                let column = culmen_core::NewCol {
+                    column: ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap()),
+                    entries: vec![(Row::new(0), 1.0)],
+                };
+                self.1.push(ctx.improves(&column));
+            }
+        }
+    }
+
+    // (cost, bounds, improves): a column rising from zero improves a minimization when `d < -tol`; one falling below
+    // zero when `d > tol`; one free around zero either way; none at `d = 0`.
+    let rising = (0.0, 4.0);
+    let falling = (-4.0, 0.0);
+    let both = (-4.0, 4.0);
+    let minimize = [
+        (1.0, rising, true),      // d = -1
+        (3.0, rising, false),     // d = 1
+        (1.0, falling, false),    // d = -1
+        (3.0, falling, true),     // d = 1: lowering it below zero lowers the objective
+        (3.0, both, true),        // d = 1, falling
+        (1.0, both, true),        // d = -1, rising
+        (2.0, both, false),       // d = 0
+        (3.0, (0.0, 0.0), false), // fixed at zero: it cannot move
+    ];
+    // Maximizing, t = -d: the same columns improve where `-d` says so.
+    let maximize = [
+        (1.0, rising, false),
+        (3.0, rising, true),
+        (1.0, falling, true),
+        (3.0, falling, false),
+        (2.0, both, false),
+    ];
+    // Farkas, t = d = -2 whatever the cost: a rising column improves, a falling one does not.
+    let farkas = [(5.0, rising, true), (5.0, falling, false), (5.0, both, true)];
+    for (sense, mode, cases) in [
+        (
+            Sense::Minimize,
+            PriceMode::ReducedCost { objective: 2.0 },
+            &minimize[..],
+        ),
+        (
+            Sense::Maximize,
+            PriceMode::ReducedCost { objective: 2.0 },
+            &maximize[..],
+        ),
+        (Sense::Minimize, PriceMode::Farkas, &farkas[..]),
+    ] {
+        let mut plan = ProgramPlan::new();
+        plan.sense = sense;
+        let x = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1.0)));
+        plan.row(bounds!(1.0, 1.0), [(x, 1.0)]);
+        let steps = vec![price(mode, [2.0])];
+        let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), plan.build().unwrap()).unwrap();
+        let mut judge = Judge(cases.to_vec(), Vec::new());
+        solver.solve_with(Request::new(), &mut judge).unwrap();
+        let want: Vec<bool> = cases.iter().map(|&(.., improves)| improves).collect();
+        assert_eq!(judge.1, want, "{sense:?} {mode:?}");
+    }
+}

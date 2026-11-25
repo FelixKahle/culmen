@@ -210,11 +210,12 @@ pub struct PricedSplit {
 }
 
 /// A tiny bounded LP or MILP split for pricing: one to three rows of every shape (at most, at least, equal and
-/// ranged) with coefficients in `-2..=2`, two to six columns with costs in `-3..=3` and bounds `[0, u]` for `u` in
-/// `1..=3`, each continuous or integer, either sense, and a random choice of the columns the start keeps.
+/// ranged) with coefficients in `-2..=2`, two to six columns with costs in `-3..=3` and bounds `[l, u]` for `l` in
+/// `-2..=0` and `u` in `0..=3` (rising from zero, falling below it, or both), each continuous or integer, either
+/// sense, and a random choice of the columns the start keeps.
 ///
 /// Every bound holds zero, so a withheld column is the same as one fixed at zero, and the integer box holds at most
-/// `4⁶` points, within [`reference::solve`](crate::reference::solve)'s limit.
+/// `6⁶` points, within [`reference::solve`](crate::reference::solve)'s limit.
 ///
 /// # Panics
 ///
@@ -222,7 +223,7 @@ pub struct PricedSplit {
 pub fn priced_split() -> impl Strategy<Value = PricedSplit> {
     (1..=3usize, 2..=6usize)
         .prop_flat_map(|(m, n)| {
-            let column = (-3i32..=3, 1i32..=3, any::<bool>());
+            let column = (-3i32..=3, -2i32..=0, 0i32..=3, any::<bool>());
             let row = (0u8..4, -3i32..=4, 0i32..=3, prop::collection::vec(-2i32..=2, n));
             (
                 prop::collection::vec(column, n),
@@ -234,8 +235,8 @@ pub fn priced_split() -> impl Strategy<Value = PricedSplit> {
         .prop_map(|(columns, rows, keep, maximize)| {
             let columns: TiVec<Col, ProgramColumn> = columns
                 .into_iter()
-                .map(|(cost, upper, integer)| {
-                    let bounds = Bounds::new(0.0, f64::from(upper)).expect("0 <= upper");
+                .map(|(cost, lower, upper, integer)| {
+                    let bounds = Bounds::new(f64::from(lower), f64::from(upper)).expect("lower <= 0 <= upper");
                     if integer {
                         ProgramColumn::integer(f64::from(cost), bounds)
                     } else {
