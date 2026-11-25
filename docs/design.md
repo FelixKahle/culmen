@@ -73,6 +73,32 @@ Constructors take what converts into their input without loss, so a caller passe
 `Bounds` where a `Var` is wanted, and an owned or borrowed value alike. A conversion that can fail is never implicit;
 it is a `TryFrom` or a `new` returning `Result`, so the refusal is visible where the value is made.
 
+## Which types may grow: `#[non_exhaustive]`
+
+Whether a public type is `#[non_exhaustive]` follows from what a user does with it, the same in every crate:
+
+- **A struct with `pub` fields is never non-exhaustive.** Plain data is built with a struct literal and
+  `..Default::default()` and taken apart by destructuring, and Rust forbids both outside the crate for a
+  non-exhaustive struct. A new field is therefore a breaking change, made only in a breaking release. A struct with
+  private fields needs no attribute.
+- **An error enum is non-exhaustive**, and so is every enum that only an error carries as its detail
+  (`InvalidBounds`, `Misfit`, `Table`, `ExprPlace`, `UnsoundQp`, `Dimension`, `Number`, …). A check or a backend
+  learns new refusals; a caller matches the ones it handles and passes the rest on. Inside its crate the match stays
+  exhaustive, so an error's `Display` remains one exhaustive table.
+- **An enum that lists an open set of kinds is non-exhaustive**: a solver's own statuses, return codes, option values
+  and log or poll kinds (`ModelStatus`, `CallStatus`, `LpSolver`, `PollSource`, `Status`, `RetCode`, `Emphasis`,
+  `ParamValue`, …), which grow with the solver's versions, and culmen's own lists of kinds that a further feature
+  adds to (`ModelClass`, `ProgramFeature`, `Analysis`, `Phase`, `StopReason`, `Edit`, `Step`, `ScipEvent`,
+  `LazySource`, `HighsNative`, `ModelFormat`). Code that must handle every kind is told so by a declared set
+  instead (`Backend::CLASSES`, `FEATURES`, `ANALYSES`), which refuses what it does not list.
+- **An enum whose variants its meaning closes stays exhaustive**, so that code which must handle every case is
+  checked to: `Sense`, `Integrality`, `Outcome`, `Objectives`, `Combination`, `PriceMode`, `Start`, `NewRow`,
+  `Side`, `Bound`, `Line`, `BasisStatus`, `LogLevel`, `ScriptStatus`, `Switch`, `OnOff`, and `Unsupported`, which
+  has no variant. A new variant there changes what every match must do, so it is a breaking change by design.
+
+`culmen_testing` is not published and is used only inside the workspace, where a change and every match it breaks
+land in one commit; it follows the rules for structs and leaves its enums exhaustive.
+
 ## The solver-neutral seam
 
 `culmen_core` knows no solver. A solver plugs in by implementing [`Backend`](backends.md#the-seam), an open trait:

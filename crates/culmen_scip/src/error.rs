@@ -12,6 +12,7 @@ use crate::{ParamValue, Status};
 
 /// Why loading or solving with SCIP failed.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ScipError {
     /// A solve or a start was asked for before a program was loaded.
     NotLoaded,
@@ -212,6 +213,7 @@ impl core::error::Error for ScipError {
 
 /// Where a number SCIP would read as infinite stands in the program.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Number {
     /// A bound of the column.
     ColBound(Col),
@@ -260,6 +262,7 @@ impl fmt::Display for Number {
 /// An error code a call of SCIP's C API returned: every error value of `SCIP_RETCODE` in SCIP 10.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum RetCode {
     /// An unspecified error (`SCIP_ERROR`).
     Error,

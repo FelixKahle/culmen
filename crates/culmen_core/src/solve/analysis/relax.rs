@@ -92,6 +92,7 @@ impl fmt::Display for Penalty {
 
 /// Why [`Penalty::new`] refused a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum InvalidPenalty {
     /// The number is NaN or infinite.
     NotFinite,

@@ -11,6 +11,7 @@ use crate::{ModelStatus, OptionValue};
 
 /// Why loading or solving with HiGHS failed.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum HighsError {
     /// A solve was asked for before a program was loaded.
     NotLoaded,
@@ -91,6 +92,7 @@ pub enum HighsError {
 
 /// Why the backend does not trust the ending HiGHS's QP solver reported.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum UnsoundQp {
     /// HiGHS reported an optimum whose relative primal-dual objective error exceeds
     /// [`Highs::QP_OBJECTIVE_ERROR`](crate::Highs::QP_OBJECTIVE_ERROR); the point need not be feasible.
@@ -156,6 +158,7 @@ impl core::error::Error for HighsError {}
 /// assert_eq!(Dimension::Entries.to_string(), "entries");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Dimension {
     /// The columns.
     Columns,

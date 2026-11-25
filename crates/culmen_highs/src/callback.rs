@@ -628,6 +628,7 @@ fn finite(value: f64) -> Option<f64> {
 
 /// HiGHS's log type of a log line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum HighsLogType {
     /// `kInfo`: the normal log.
     Info,
@@ -749,6 +750,7 @@ impl ProgressContext for HighsMipProgress {
 
 /// Which solver polls.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum PollSource {
     /// The simplex method: `kHighsCallbackSimplexInterrupt`.
     Simplex {
@@ -847,6 +849,7 @@ impl SolutionContext for HighsSolution<'_> {
 
 /// Where in the search HiGHS asks for a user solution: HiGHS's `ExternalMipSolutionQueryOrigin`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum QueryOrigin {
     /// After the MIP solver is set up.
     AfterSetup,
@@ -861,6 +864,7 @@ pub enum QueryOrigin {
 /// Where in the root-node evaluation HiGHS asks for a user solution: HiGHS's
 /// `kExternalMipSolutionQueryOriginEvaluateRootNode0` to `4`, in the order a root-node evaluation reaches them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum RootNodePoint {
     /// Before the root LP is solved: point 0.
     BeforeLp,

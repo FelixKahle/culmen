@@ -14,6 +14,7 @@ use crate::ScipError;
 /// SCIP's solving status at the end of a solve: every value of `SCIP_STATUS` in SCIP 10.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum Status {
     /// The status is not known (`SCIP_STATUS_UNKNOWN`).
     Unknown,

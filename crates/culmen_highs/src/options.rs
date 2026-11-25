@@ -15,6 +15,7 @@ use crate::HighsError;
 /// An option value of one of HiGHS's four kinds.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum OptionValue {
     /// A `bool` option.
     Bool(bool),
@@ -191,6 +192,7 @@ impl ToOption for OnOff {
 /// The LP or QP solver: `solver`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum LpSolver {
     /// HiGHS decides.
     Choose,
@@ -230,6 +232,7 @@ impl ToOption for LpSolver {
 /// The LP solver inside the MIP solver: `mip_lp_solver`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum MipLpSolver {
     /// HiGHS decides.
     Choose,
@@ -260,6 +263,7 @@ impl ToOption for MipLpSolver {
 /// The interior-point solver inside the MIP solver: `mip_ipm_solver`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum MipIpmSolver {
     /// HiGHS decides.
     Choose,
@@ -287,6 +291,7 @@ impl ToOption for MipIpmSolver {
 /// The simplex strategy: `simplex_strategy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum SimplexStrategy {
     /// HiGHS decides.
     Choose,
@@ -316,6 +321,7 @@ impl ToOption for SimplexStrategy {
 /// The simplex scaling strategy: `simplex_scale_strategy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum ScaleStrategy {
     /// No scaling.
     Off,
@@ -345,6 +351,7 @@ impl ToOption for ScaleStrategy {
 /// A simplex edge-weight strategy: `simplex_dual_edge_weight_strategy`, `simplex_primal_edge_weight_strategy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum EdgeWeight {
     /// HiGHS decides.
     Choose,
@@ -371,6 +378,7 @@ impl ToOption for EdgeWeight {
 /// Which presolve rules HiGHS allows: `presolve_mode`, HiGHS's `PresolveMode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum PresolveMode {
     /// HiGHS decides: the light rules for a PDLP solver, every rule otherwise.
     Choose,

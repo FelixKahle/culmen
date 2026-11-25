@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 /// HiGHS's model status at the end of a run: every value of `HighsModelStatus` in HiGHS 1.16.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum ModelStatus {
     /// No status was set.
     NotSet,
@@ -124,6 +125,7 @@ impl fmt::Display for ModelStatus {
 /// Whether a primal or dual solution exists: HiGHS's `kHighsSolutionStatus*`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum SolutionStatus {
     /// There is none.
     None,
@@ -147,6 +149,7 @@ impl SolutionStatus {
 /// What a HiGHS call returned: HiGHS's `kHighsStatus*`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum CallStatus {
     /// The call succeeded.
     Ok,

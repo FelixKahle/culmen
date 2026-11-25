@@ -195,15 +195,7 @@ fn appended_columns(expected: &mut ProgramPlan, got: &ProgramPlan, cols: &[Col])
 
 /// Lifts an inner backend's analysis error to a mirror's.
 fn lift<E>(error: AnalysisError<E>) -> AnalysisError<MirrorError<E>> {
-    match error {
-        AnalysisError::Unsupported { analysis, supported } => AnalysisError::Unsupported { analysis, supported },
-        AnalysisError::Class { analysis, class } => AnalysisError::Class { analysis, class },
-        AnalysisError::Feature { analysis, feature } => AnalysisError::Feature { analysis, feature },
-        AnalysisError::NotSolved { analysis } => AnalysisError::NotSolved { analysis },
-        AnalysisError::NotOptimal { analysis } => AnalysisError::NotOptimal { analysis },
-        AnalysisError::Misfit(misfit) => AnalysisError::Misfit(misfit),
-        AnalysisError::Backend(error) => AnalysisError::Backend(MirrorError::Inner(error)),
-    }
+    error.map_backend(MirrorError::Inner)
 }
 
 /// A mirror's callback, handed to the inner backend: the context types are the same.

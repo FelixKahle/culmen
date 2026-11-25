@@ -357,6 +357,7 @@ fn label(name: Option<&str>, prefix: char, index: usize) -> String {
 
 /// Why [`Program::write_lp`] wrote no LP file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LpFileError {
     /// The program uses a feature the LP file format as written here cannot state.
     Unsupported {

@@ -122,6 +122,7 @@ impl From<ProgramRow> for NewRow {
 /// assert_eq!(error.to_string(), "Solver: the program has no Col(7)");
 /// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum EditError<E> {
     /// A column the program does not have: an edit's target or a new row's term.
     UnknownCol {

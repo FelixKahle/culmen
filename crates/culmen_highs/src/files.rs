@@ -54,6 +54,7 @@ use crate::{CallStatus, HighsError};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum ModelFormat {
     /// The MPS format, fixed or free, with HiGHS's `QUADOBJ` section for a quadratic objective.
     Mps,
@@ -447,6 +448,7 @@ impl Drop for Staged {
 
 /// Why a model file could not be read or written.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum FileError {
     /// The path's extension names no format: neither `.mps` nor `.lp`.
     Extension {
