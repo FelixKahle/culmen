@@ -261,18 +261,14 @@ A malformed macro call is a compile error at the token at fault, with a message 
 | ``sum!(body for i in I, …)`` | `sum!` without `for`. |
 | ``sum! needs a body before `for` `` | `sum!` with nothing before `for`. |
 
-```compile_fail
-use culmen::prelude::*;
-
-let mut m = Model::new();
-variable!(m, 0 <= open <= 1, Bin); // a binary's bounds are [0, 1]
+```text
+variable!(m, 0 <= open <= 1, Bin);
+// error: a binary's bounds are [0, 1]: for others, `Int` with the bounds
 ```
 
-```compile_fail
-use culmen::prelude::*;
-
-let mut m = Model::new();
-variable!(m, x[_ in 0..3]); // a family's index names its key
+```text
+variable!(m, x[_ in 0..3]);
+// error: a family's index names its key: with `_`, its entries' names would collide
 ```
 
 ## See also

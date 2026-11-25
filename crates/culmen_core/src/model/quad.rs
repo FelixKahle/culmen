@@ -58,7 +58,7 @@ pub struct QuadTerm {
 ///
 /// A quadratic constraint does not compile:
 ///
-/// ```compile_fail
+/// ```compile_fail,E0599
 /// use culmen_core::{Linear, Model, Var};
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::continuous());

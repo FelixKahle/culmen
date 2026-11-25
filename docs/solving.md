@@ -226,13 +226,13 @@ assert_eq!((gap.get(), units.get(), four.get(), first.get()), (0.01, 2.5, 4, 1))
 assert_eq!(gap.to_string(), "RelativeGap(0.01)");
 ```
 
-```compile_fail
+```compile_fail,E0080
 use culmen::prelude::*;
 
 let gap = relative_gap!(-0.01); // RelativeGap: below zero
 ```
 
-```compile_fail
+```compile_fail,E0080
 use culmen::prelude::*;
 
 let none = threads!(0); // threads: zero

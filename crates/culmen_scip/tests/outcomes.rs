@@ -512,8 +512,9 @@ fn test_a_moved_backend_solves_on_another_thread() {
     ));
 }
 
+/// The parameters these settings set are read in `settings_params`'s unit test; this solve shows SCIP accepts them.
 #[test]
-fn test_threads_a_seed_and_the_console_setting_are_taken() {
+fn test_threads_a_seed_and_the_console_setting_are_accepted() {
     let (program, ..) = branching();
     let settings = Settings {
         threads: Some(culmen_core::threads!(4)),

@@ -106,7 +106,7 @@ assert_eq!(STOCK.violation(41.5), 1.5);
 assert_eq!(STOCK.shifted(-10.0), Ok(bounds!(-10.0, 30.0)));
 ```
 
-```compile_fail
+```compile_fail,E0080
 use culmen::{Bounds, bounds};
 
 const EMPTY: Bounds = bounds!(2.0, 1.0); // the lower end exceeds the upper end

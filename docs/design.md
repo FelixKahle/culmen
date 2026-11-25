@@ -45,7 +45,7 @@ are finite and not negative, a thread count is a `NonZeroUsize` and a solution l
 a type is written with a macro, `bounds!(0.0, 40.0)`, `relative_gap!(0.01)`, `threads!(4)`, `solutions!(5)`, which
 checks it when the code is compiled, so a typo in a literal is a compile error, not a run-time `unwrap` panic:
 
-```compile_fail
+```compile_fail,E0080
 use culmen::prelude::*;
 
 let gap = relative_gap!(-0.01); // RelativeGap: below zero
@@ -63,7 +63,7 @@ literals and `..Default::default()`, read and change their fields directly, and 
 A type with an invariant keeps its fields private behind a checked constructor: `Bounds`, `Program`, the gaps. Their
 fields cannot be written from outside, not even all at once:
 
-```compile_fail
+```compile_fail,E0451
 use culmen::Bounds;
 
 let empty = Bounds { lower: 2.0, upper: 1.0 }; // the fields are private
