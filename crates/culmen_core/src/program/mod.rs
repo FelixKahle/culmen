@@ -591,6 +591,7 @@ impl TryFrom<ProgramPlan> for Program {
 
 /// Why a [`ProgramPlan`] could not be built.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ProgramError {
     /// The objective offset is NaN or infinite.
     NonFiniteOffset {

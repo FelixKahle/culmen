@@ -5,15 +5,17 @@
 #
 # The crates point down, never up:
 #
-#   culmen          the facade users depend on: re-exports, a prelude, the `highs` and `macros` features
-#   ├─ culmen_highs   the HiGHS backend over `highs-sys`; the only crate with `unsafe`
+#   culmen          the facade users depend on: re-exports, a prelude, the `highs`, `scip` and `macros` features
+#   ├─ culmen_highs   the HiGHS backend over `highs-sys`; with culmen_scip, the only crates with `unsafe`
+#   ├─ culmen_scip    the SCIP backend over `scip-sys`, SCIP built from source
 #   ├─ culmen_macros  `variable!`, `constraint!`, `objective!` and `sum!`, expanding to culmen_core's methods
 #   └─ culmen_core    the program as data, the modelling layer, the backend seam, the solve API; no `unsafe`
 #
 #   culmen_testing  dev-only: exact reference solvers and property-test strategies shared by the test suites
 [workspace]
 resolver = "3"
-members = ["crates/culmen", "crates/culmen_core", "crates/culmen_highs", "crates/culmen_macros", "crates/culmen_testing"]
+members = ["crates/culmen", "crates/culmen_core", "crates/culmen_highs", "crates/culmen_macros", "crates/culmen_scip",
+    "crates/culmen_testing"]
 
 [workspace.package]
 version = "0.4.0"
@@ -26,9 +28,11 @@ keywords = ["optimization", "linear-programming", "milp", "highs", "solver"]
 categories = ["mathematics", "science"]
 
 [workspace.dependencies]
+# The workspace's own crates, each published with the workspace's version.
 culmen_core = { path = "crates/culmen_core", version = "0.4.0" }
 culmen_highs = { path = "crates/culmen_highs", version = "0.4.0" }
 culmen_macros = { path = "crates/culmen_macros", version = "0.4.0" }
+culmen_scip = { path = "crates/culmen_scip", version = "0.4.0" }
 culmen_testing = { path = "crates/culmen_testing" }
 
 # Vectors indexed by `Col` and `Row`, so a column table cannot be read with a row id.
@@ -48,6 +52,12 @@ nalgebra = { version = "0.35", default-features = false, features = ["std"] }
 # The raw C API of HiGHS 1.16. Its default `build` feature compiles the bundled HiGHS sources with cmake, so no
 # system HiGHS is needed; `highs_release` builds HiGHS optimised and without its debug assertions.
 highs-sys = { version = "1.16.0" }
+
+# The raw C API of SCIP 10. `from-source` downloads the SCIP Optimization Suite 10.0.2 sources from GitHub when it
+# builds, compiles SCIP and SoPlex with cmake into static libraries, and generates the bindings with bindgen, so no
+# system SCIP is needed; the build needs cmake, a C and C++ compiler, libclang and network access. `bundled`, which
+# downloads a prebuilt SCIP instead, stays off; the default features only add bindgen, which `from-source` enables.
+scip-sys = { version = "0.1.28", default-features = false, features = ["from-source"] }
 
 # Token trees, quoting and spanned errors for the modelling macros: the standard proc-macro toolkit.
 proc-macro2 = { version = "1.0", default-features = false, features = ["proc-macro"] }

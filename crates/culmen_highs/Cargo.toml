@@ -19,13 +19,19 @@ categories.workspace = true
 serde = ["dep:serde", "culmen_core/serde"]
 
 [dependencies]
+# The program, the backend seam and the contexts this crate implements.
 culmen_core.workspace = true
+# HiGHS's C API and HiGHS itself, built from its bundled sources; the workspace entry says how.
 highs-sys.workspace = true
+# The serde impls of the options and statuses, behind `serde`.
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+# The exact reference solver, the strategies, the hard instances and the recording backend the tests use.
 culmen_testing.workspace = true
+# Property tests against the reference.
 proptest.workspace = true
+# The serde round trips run through JSON.
 serde_json.workspace = true
 
 # docs.rs documents the serde impls of the options and statuses too.

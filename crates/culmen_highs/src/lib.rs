@@ -67,7 +67,7 @@ pub use callback::{
 };
 use culmen_core::{Analyses, AnalysisError, Basis, Col, Duals, Iis, Ranging, Relaxed, Row, TiVec, Weights};
 use culmen_core::{
-    Backend, Callback, Edit, Events, ModelClass, ModelClasses, Objectives, Outcome, Program, ProgramFeatures,
+    Backend, Callback, Edit, Events, ModelClass, ModelClasses, Objectives, Outcome, Priced, Program, ProgramFeatures,
     QuadObjective, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice, Unsupported,
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
@@ -80,9 +80,11 @@ pub use status::{CallStatus, HighsStatus, ModelStatus, SolutionStatus};
 use callback::{Hook, NO_RUN, Payload, kinds, trampoline};
 use instance::{Instance, Padding};
 
-/// HiGHS's default relative MIP gap, below which an optimal status is a proof of optimality.
+/// HiGHS's default relative MIP gap, below which an optimal status is a proof of optimality: the default of
+/// `mip_rel_gap` in HiGHS 1.16's `lp_data/HighsOptions.h`, to be read again when the HiGHS version changes.
 const DEFAULT_RELATIVE_GAP: f64 = 1e-4;
-/// HiGHS's default absolute MIP gap.
+/// HiGHS's default absolute MIP gap: the default of `mip_abs_gap` in HiGHS 1.16's `lp_data/HighsOptions.h`, to be read
+/// again when the HiGHS version changes.
 const DEFAULT_ABSOLUTE_GAP: f64 = 1e-6;
 
 /// The HiGHS backend: one HiGHS instance and the options every solve applies.
@@ -189,6 +191,7 @@ impl Loaded {
 }
 
 /// What a run left behind.
+#[derive(Debug)]
 struct Ran {
     elapsed: Duration,
     run: CallStatus,
@@ -200,9 +203,9 @@ impl Highs {
     /// The largest relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`, at which a QP optimum HiGHS
     /// reports is taken as optimal; above it the solve fails with [`HighsError::UnsoundQp`].
     ///
-    /// HiGHS 1.15's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
-    /// percent, after its iterates turned NaN, and that point need not even be feasible; on random convex QPs its
-    /// correct optima stay below `1e-6`.
+    /// HiGHS's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
+    /// percent, and that point need not even be feasible: 1.15 did so after its iterates turned NaN, and 1.16 still
+    /// does on a small share of edited QPs. On random convex QPs its correct optima stay below `1e-6`.
     pub const QP_OBJECTIVE_ERROR: f64 = 1e-5;
 
     /// The largest upper bound of a semi-continuous or semi-integer column HiGHS 1.16 solves as given
@@ -252,7 +255,7 @@ impl Highs {
     ///
     /// Bounds, costs, integrality and row bounds change through HiGHS's `BySet` calls, rows and columns are appended
     /// with `Highs_addRows` and `Highs_addCols`, and further objectives are passed again after a change of costs or
-    /// columns, since HiGHS 1.15 neither reads the costs into them nor extends them. A QP without rows carries a free
+    /// columns, since HiGHS 1.16 neither reads the costs into them nor extends them. A QP without rows carries a free
     /// row HiGHS needs (see [`Padding`]); rows appended to it, and any edit this version does not know, load the
     /// program whole.
     ///
@@ -304,9 +307,8 @@ impl Highs {
             return Ok(());
         }
         self.instance.pass_objectives(program).map_err(|error| match error {
-            HighsError::Load { message } => HighsError::Edit {
+            HighsError::Load => HighsError::Edit {
                 call: "Highs_passLinearObjectives",
-                message,
             },
             other => other,
         })
@@ -344,7 +346,7 @@ impl Highs {
     /// [`HighsError::Run`] when HiGHS failed, or reports an optimum without a solution; [`HighsError::UnsoundQp`]
     /// when it reports a QP optimal with a primal-dual objective error above [`Highs::QP_OBJECTIVE_ERROR`], or
     /// unbounded although every column is bounded.
-    fn outcome(&self, loaded: &Loaded, settings: &Settings, status: &HighsStatus) -> Result<Outcome, HighsError> {
+    fn outcome(&self, loaded: &Loaded, status: &HighsStatus) -> Result<Outcome, HighsError> {
         if status.run == CallStatus::Error {
             return Err(run_failed(status));
         }
@@ -355,7 +357,7 @@ impl Highs {
             return Err(HighsError::UnsoundQp(why));
         }
         let bound = self.mip_bound(loaded);
-        match self.ending(settings, status) {
+        match self.ending(status) {
             Ending::Optimal => best
                 .map(|solution| optimum(solution, bound))
                 .ok_or_else(|| run_failed(status)),
@@ -385,7 +387,7 @@ impl Highs {
     }
 
     /// How a run HiGHS reports with `status` ended, in culmen's terms.
-    fn ending(&self, settings: &Settings, status: &HighsStatus) -> Ending {
+    fn ending(&self, status: &HighsStatus) -> Ending {
         match status.model {
             ModelStatus::Optimal => Ending::Optimal,
             ModelStatus::ModelEmpty => Ending::Empty,
@@ -397,7 +399,7 @@ impl Highs {
             ModelStatus::IterationLimit => Ending::Stopped(StopReason::IterationLimit),
             ModelStatus::ObjectiveBound | ModelStatus::ObjectiveTarget => Ending::Stopped(StopReason::ObjectiveLimit),
             ModelStatus::MemoryLimit => Ending::Stopped(StopReason::MemoryLimit),
-            ModelStatus::SolutionLimit => Ending::Stopped(self.search_limit(settings, status.mip_nodes)),
+            ModelStatus::SolutionLimit => Ending::Stopped(self.search_limit(status.mip_nodes)),
             ModelStatus::Unknown | ModelStatus::HighsInterrupt => Ending::Stopped(StopReason::Other),
             ModelStatus::NotSet
             | ModelStatus::LoadError
@@ -432,10 +434,13 @@ impl Highs {
         })
     }
 
-    /// Which of HiGHS's search limits a run that ended at its solution limit reached: the node limit when one is
-    /// set and the node count reached it, else a limit on solutions or leaves.
-    fn search_limit(&self, settings: &Settings, nodes: u64) -> StopReason {
-        let node_limit = settings.node_limit.or(self.options.mip_max_nodes);
+    /// Which of HiGHS's search limits a run that ended at its solution limit reached: the node limit HiGHS held for
+    /// the run, however it was set, when the node count reached it, else a limit on solutions or leaves.
+    fn search_limit(&self, nodes: u64) -> StopReason {
+        let node_limit = self
+            .instance
+            .option_int(c"mip_max_nodes")
+            .and_then(|limit| u64::try_from(limit).ok());
         if node_limit.is_some_and(|limit| nodes >= limit) {
             StopReason::NodeLimit
         } else {
@@ -643,6 +648,7 @@ impl Backend for Highs {
     type Lazy<'a> = Unsupported;
     type Cut<'a> = Unsupported;
     type Heuristic<'a> = HighsHeuristic<'a>;
+    type Price<'a> = Unsupported;
     type Native<'a> = HighsNative;
 
     const EVENTS: Events = Events::LOG
@@ -697,10 +703,12 @@ impl Backend for Highs {
         self.instance.set_solution(start.entries())
     }
 
+    /// Runs HiGHS on the loaded model; HiGHS prices nothing, so `priced` stays as it was handed over.
     fn solve(
         &mut self,
         settings: &Settings,
         callback: &mut dyn Callback<Self>,
+        _: &mut Priced,
     ) -> Result<Solved<HighsStatus>, HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         configure(&mut self.instance, &self.options, settings)?;
@@ -713,7 +721,7 @@ impl Backend for Highs {
             resume_unwind(payload);
         }
         let status = self.status(loaded, ran.run, ran.last_error);
-        let outcome = self.outcome(loaded, settings, &status)?;
+        let outcome = self.outcome(loaded, &status)?;
         Ok(Solved {
             outcome,
             status,
@@ -814,6 +822,44 @@ mod tests {
         let values = [1.0, 2.0];
         assert_eq!(Loaded::of(&program).objective(&values), 12.0);
         assert_eq!(program.objective_value(TiSlice::from_ref(&values)), 12.0);
+    }
+
+    #[test]
+    fn test_every_setting_maps_to_its_highs_option() {
+        let settings = Settings {
+            time_limit: Some(core::time::Duration::from_millis(1500)),
+            relative_gap: Some(culmen_core::relative_gap!(0.01)),
+            absolute_gap: Some(culmen_core::absolute_gap!(0.5)),
+            threads: NonZeroUsize::new(2),
+            seed: Some(7),
+            presolve: Some(false),
+            node_limit: Some(100),
+            solution_limit: core::num::NonZeroU64::new(3),
+            console: true,
+        };
+        assert_eq!(
+            settings_assignments(&settings),
+            Ok(vec![
+                ("time_limit", OptionValue::Double(1.5)),
+                ("mip_rel_gap", OptionValue::Double(0.01)),
+                ("mip_abs_gap", OptionValue::Double(0.5)),
+                ("threads", OptionValue::Int(2)),
+                ("random_seed", OptionValue::Int(7)),
+                ("presolve", OptionValue::String("off".to_owned())),
+                ("mip_max_nodes", OptionValue::Int(100)),
+                ("mip_max_improving_sols", OptionValue::Int(3)),
+                ("log_to_console", OptionValue::Bool(true)),
+            ])
+        );
+        let on = Settings {
+            presolve: Some(true),
+            ..Settings::new()
+        };
+        assert_eq!(
+            settings_assignments(&on),
+            Ok(vec![("presolve", OptionValue::String("on".to_owned()))])
+        );
+        assert_eq!(settings_assignments(&Settings::new()), Ok(vec![]));
     }
 
     #[test]

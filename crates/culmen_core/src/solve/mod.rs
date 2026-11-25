@@ -10,6 +10,7 @@ mod edit;
 mod events;
 mod load;
 mod outcome;
+mod priced;
 mod settings;
 mod start;
 mod watch;
@@ -20,13 +21,14 @@ pub use analysis::{
 };
 pub use backend::{Backend, Callback};
 pub use context::{
-    ActionError, AddedRow, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, ProgressContext,
-    SolutionContext, Unsupported,
+    ActionError, AddedRow, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, PriceMode,
+    ProgressContext, SolutionContext, Unsupported,
 };
 pub use edit::{Edit, EditError, NewRow};
 pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
 pub use load::LoadError;
 pub use outcome::{Outcome, Solution, Solved, StopReason};
+pub use priced::Priced;
 pub use settings::Settings;
 pub use start::{SolveError, Start, StartEntries, StartError};
 pub use watch::{Improvement, LogLine, Observer, Request, Stop, StopFn, Watch, stop_fn};
@@ -62,6 +64,25 @@ pub struct Solver<B> {
     /// change and the reload after it both fail, or a panic interrupts them, until the next call that runs the
     /// backend reloads `program`.
     synced: bool,
+}
+
+/// Appends the columns a solve priced to the solver's program when it is dropped, so on every path out of the solve,
+/// unwinding included, and marks the backend as behind the program.
+#[derive(Debug)]
+struct Grow<'s> {
+    priced: Priced,
+    program: &'s mut Program,
+    synced: &'s mut bool,
+}
+
+impl Drop for Grow<'_> {
+    fn drop(&mut self) {
+        let cols = self.priced.take_cols();
+        if !cols.is_empty() {
+            *self.synced = false;
+            self.program.push_cols(cols);
+        }
+    }
 }
 
 /// What a backend lacks to hold a program: the program's class, or a feature it uses.
@@ -162,13 +183,18 @@ impl<B: Backend> Solver<B> {
     }
 
     /// The backend and the program, taken apart. The backend holds the program unless an edit failed and so did the
-    /// reload after it, or a panic interrupted them.
+    /// reload after it, a panic interrupted them, or the last solve priced columns.
     #[must_use]
     pub fn into_parts(self) -> (B, Program) {
         (self.backend, self.program)
     }
 
     /// Solves under the request's settings, from its start, polling its stop and reporting to its observer.
+    ///
+    /// A solve whose callback priced columns ([`Callback::prices`](crate::Callback::prices)) appends them to the
+    /// program, in the order of their ids, however it ends: returning, failing or unwinding from a panic. The backend
+    /// loads the grown program at the next call that runs it, and the analyses find no solve to read until the next
+    /// solve that prices nothing.
     ///
     /// # Errors
     ///
@@ -208,9 +234,18 @@ impl<B: Backend> Solver<B> {
         // fails or a panic unwinds out of it.
         self.ended = None;
         let mut both = (watch, callback);
-        let solved = self.backend.solve(&settings, &mut both);
+        let mut grow = Grow {
+            priced: Priced::new(&self.program, B::CLASSES),
+            program: &mut self.program,
+            synced: &mut self.synced,
+        };
+        let solved = self.backend.solve(&settings, &mut both, &mut grow.priced);
         both.0.finish();
-        self.ended = solved.as_ref().ok().map(|s| Ending::of(&s.outcome));
+        // The analyses would read the backend's answer for the program before the priced columns.
+        if grow.priced.cols().len() == 0 {
+            self.ended = solved.as_ref().ok().map(|s| Ending::of(&s.outcome));
+        }
+        drop(grow);
         solved.map_err(SolveError::Backend)
     }
 

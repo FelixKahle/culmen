@@ -40,9 +40,11 @@ pub struct Ranged {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Limit {
     /// The cost or value at which the basis changes; infinite when it never does in this direction.
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_real"))]
     pub value: f64,
     /// The optimal objective value at [`value`](Self::value), offset included; infinite when the program becomes
     /// unbounded or infeasible first.
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_real"))]
     pub objective: f64,
     /// The line that enters the basis there; `None` when none does.
     pub entering: Option<Line>,

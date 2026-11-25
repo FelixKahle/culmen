@@ -1,16 +1,11 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-#![forbid(unsafe_code)]
-#![cfg_attr(
-    test,
-    allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
-)]
 //! The core of culmen: linear, mixed-integer and convex quadratic programs as data, a modelling layer that reads
 //! like the mathematics, and a solver-neutral seam with rich callbacks, a cooperative stop and a throttled observer.
 //!
 //! This crate holds no solver and no `unsafe`. A solver plugs in by implementing [`Backend`]; the `culmen` facade
-//! re-exports this crate with the HiGHS backend and the modelling macros.
+//! re-exports this crate with the HiGHS and SCIP backends and the modelling macros.
 //!
 //! # The line through the crate
 //!
@@ -69,12 +64,21 @@
 //!
 //! - **`serde`**: the plain data ([`Program`], [`ProgramPlan`], [`Bounds`], [`Settings`], [`Outcome`], [`Solution`],
 //!   [`Progress`], …) serializes and reads back; a [`Program`] and every checked value are checked again as they are
-//!   read.
+//!   read. A number that may be infinite or NaN, such as a [`Limit`]'s, is written in the form of [`serde_real`].
+
+#![forbid(unsafe_code)]
+#![cfg_attr(
+    test,
+    allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
+)]
 
 mod gap;
 mod model;
 mod program;
 mod script;
+#[cfg(feature = "serde")]
+pub mod serde_real;
+mod set;
 mod solve;
 
 pub use gap::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, RelativeGap};
@@ -90,15 +94,15 @@ pub use program::{
     QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
 };
 pub use script::{
-    Found, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote, ScriptPoll,
-    ScriptProgress, ScriptSolution, ScriptStatus, Step,
+    Found, PriceRound, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote,
+    ScriptPoll, ScriptPrice, ScriptProgress, ScriptSolution, ScriptStatus, Step,
 };
 pub use solve::context;
 pub use solve::{
     ActionError, AddedRow, Backend, Callback, CutContext, Edit, EditError, Events, EventsIter, HeuristicContext,
     Improvement, LazyContext, LoadError, LogContext, LogLevel, LogLine, NewRow, Observer, Outcome, Phase, PollContext,
-    Progress, ProgressContext, Request, Settings, Solution, SolutionContext, SolveError, Solved, Solver, Start,
-    StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
+    PriceContext, PriceMode, Priced, Progress, ProgressContext, Request, Settings, Solution, SolutionContext,
+    SolveError, Solved, Solver, Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
 };
 pub use solve::{
     Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,

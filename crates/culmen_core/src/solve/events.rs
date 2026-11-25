@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 /// [`Callback`](crate::Callback) asks for ([`Callback::events`](crate::Callback::events)).
 ///
 /// A backend delivers an event only when it is in both sets, so a callback that asks for fewer events costs the
-/// solver less.
+/// solver less. Pricing is not an event of this set: a callback opts into it with
+/// [`Callback::prices`](crate::Callback::prices), so neither [`Events::ALL`] nor a complement can turn it on.
 ///
 /// [`Backend::EVENTS`]: crate::Backend::EVENTS
 ///
@@ -31,6 +32,7 @@ use serde::{Deserialize, Serialize};
 /// assert_eq!(wanted.iter().collect::<Events>(), wanted);
 /// assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
 /// assert_eq!(wanted.to_string(), "{LOG, POLL}");
+/// assert_eq!(Events::ALL.len(), 9);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Events(u16);

@@ -109,6 +109,44 @@ fn test_an_lp_round_trip_keeps_the_program() {
     assert_eq!(read.features(), program.features());
 }
 
+/// The program's own LP file, as culmen writes it, read back by HiGHS's reader.
+fn read_lp_string(program: &Program) -> Program {
+    let path = TempPath::new("lp");
+    std::fs::write(&path.0, program.to_lp_string().unwrap()).unwrap();
+    files::read_as(&path.0, ModelFormat::Lp).unwrap()
+}
+
+#[test]
+fn test_culmens_lp_file_tells_every_column_and_row_apart_whatever_their_names() {
+    let mut m = Model::new();
+    // A named column `x1` beside unnamed column 1, which the writer would call `x1` too.
+    let x = m.add_var(Var::continuous().bounds(0, 10).name("x1"));
+    let y = m.add_var(Var::continuous().bounds(2, 10));
+    // Two columns of one name, and two names that reduce to the same text.
+    let a = m.add_var(Var::continuous().bounds(0, 4).name("a"));
+    let b = m.add_var(Var::continuous().bounds(0, 4).name("a"));
+    let c = m.add_var(Var::continuous().bounds(0, 4).name("c d"));
+    let d = m.add_var(Var::continuous().bounds(0, 4).name("c_d"));
+    // A named row `r1` beside unnamed row 1, and a ranged row `band` beside a row named `band_lo`.
+    m.add_named_constraint("r1", (x - y).geq(1));
+    m.add_constraint((a - b).geq(1));
+    m.add_named_constraint("band", (c - d).between(1, 3));
+    m.add_named_constraint("band_lo", (c + d).leq(5));
+    m.minimize(x + 2 * y + a + b + c + d);
+    let program = m.build().unwrap();
+    let read = read_lp_string(&program);
+    assert_eq!(
+        read.num_cols(),
+        program.num_cols(),
+        "{}",
+        program.to_lp_string().unwrap()
+    );
+    assert_eq!(read.num_rows(), program.num_rows() + 1, "the ranged row is two rows");
+    // x = 3, y = 2; a = 1, b = 0; c = 1, d = 0.
+    assert_eq!(optimum(&program), Some(9.0));
+    assert_eq!(optimum(&read), Some(9.0), "{}", program.to_lp_string().unwrap());
+}
+
 #[test]
 fn test_a_semi_column_with_equal_bounds_round_trips_in_both_formats() {
     let mut m = Model::new();
@@ -232,6 +270,75 @@ fn test_unreadable_files_are_typed_errors() {
         FileError::Extension { path: "a.json".into() }.to_string(),
         "model file: a.json names no format"
     );
+}
+
+#[test]
+fn test_what_highs_cannot_take_or_write_is_a_typed_error() {
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1).name("x"));
+    m.maximize(x);
+    let program = m.build().unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let not_utf8 = std::env::temp_dir().join(std::ffi::OsStr::from_bytes(b"culmen-\xff.lp"));
+        assert_eq!(
+            files::write(&program, &not_utf8),
+            Err(FileError::Path { path: not_utf8.clone() })
+        );
+    }
+    let nowhere = std::env::temp_dir().join("culmen-no-such-directory").join("model.lp");
+    assert_eq!(
+        files::write(&program, &nowhere),
+        Err(FileError::Write {
+            path: nowhere.clone(),
+            format: ModelFormat::Lp
+        })
+    );
+    let path = TempPath::new("lp");
+    let mut m = Model::new();
+    m.add_var(Var::continuous().name("x\0y"));
+    assert_eq!(
+        files::write(&m.build().unwrap(), &path.0),
+        Err(FileError::Name {
+            name: "x\0y".to_owned()
+        })
+    );
+    // HiGHS refuses a matrix value at or above its `large_matrix_value`, 1e15.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1));
+    m.add_constraint((1e16 * x).leq(1));
+    assert_eq!(
+        files::write(&m.build().unwrap(), &path.0),
+        Err(FileError::Highs(culmen_highs::HighsError::Load))
+    );
+}
+
+#[test]
+fn test_bounds_in_a_file_that_are_no_interval_are_refused() {
+    let columns = TempPath::new("lp");
+    std::fs::write(
+        &columns.0,
+        "Minimize\n obj: x + y\nSubject To\n c: x + y >= 1\nBounds\n 3 <= x <= 1\nEnd\n",
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            files::read(&columns.0),
+            Err(FileError::ColumnBounds {
+                source: culmen_core::InvalidBounds::Empty { .. },
+                ..
+            })
+        ),
+        "{:?}",
+        files::read(&columns.0)
+    );
+    // A row's bounds HiGHS reads are always an interval: it refuses an infinite right-hand side as it reads, so
+    // `FileError::RowBounds` guards a reader that would not.
+    let rows = TempPath::new("lp");
+    std::fs::write(&rows.0, "Minimize\n obj: x\nSubject To\n c: x >= inf\nEnd\n").unwrap();
+    assert!(matches!(files::read(&rows.0), Err(FileError::Read { .. })));
 }
 
 proptest! {

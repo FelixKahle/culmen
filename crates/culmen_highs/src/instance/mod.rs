@@ -22,8 +22,8 @@ use culmen_core::{
 };
 use highs_sys::{
     Highs_clearLinearObjectives, Highs_getColName, Highs_getDoubleInfoValue, Highs_getHessianNumNz,
-    Highs_getInt64InfoValue, Highs_getIntInfoValue, Highs_getModel, Highs_getModelStatus, Highs_getNumCol,
-    Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName, Highs_getSolution, Highs_passColName,
+    Highs_getInt64InfoValue, Highs_getIntInfoValue, Highs_getIntOptionValue, Highs_getModel, Highs_getModelStatus,
+    Highs_getNumCol, Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName, Highs_getSolution, Highs_passColName,
     Highs_passLinearObjectives, Highs_passModel, Highs_passRowName, Highs_readModel, Highs_resetOptions, Highs_run,
     Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue, Highs_setIntOptionValue,
     Highs_setSparseSolution, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_writeModel,
@@ -91,7 +91,7 @@ impl Instance {
             "Instance: the Hessian passed to HiGHS does not match the program's quadratic part"
         );
         match CallStatus::from_raw(self.pass_model(program, &arrays, &hessian, &counts)) {
-            CallStatus::Error => Err(HighsError::Load { message: None }),
+            CallStatus::Error => Err(HighsError::Load),
             CallStatus::Ok | CallStatus::Warning => Ok(()),
         }
     }
@@ -207,16 +207,24 @@ impl Instance {
             "Instance: callback data is installed without a callback"
         );
         // SAFETY: the instance is live and borrowed exclusively; the caller vouches for `user` and `callback`.
-        let _ = unsafe { Highs_setCallback(self.raw(), callback, user) };
+        let set = unsafe { Highs_setCallback(self.raw(), callback, user) };
+        debug_assert!(set != kHighsStatusError, "Instance: HiGHS refused the callback");
         for kind in 0..=highs_sys::kHighsCallbackQpInterrupt {
+            // HiGHS refuses to start a kind only when it is no kind of its own or no callback is set; a kind that
+            // did not start would leave a run without the polls through which a panic stops it.
+            let start = !user.is_null() && kinds.contains(&kind);
             // SAFETY: the instance is live and borrowed exclusively, and `kind` is a callback kind of HiGHS 1.16.
-            let _ = unsafe {
-                if !user.is_null() && kinds.contains(&kind) {
+            let status = unsafe {
+                if start {
                     Highs_startCallback(self.raw(), kind)
                 } else {
                     Highs_stopCallback(self.raw(), kind)
                 }
             };
+            debug_assert!(
+                !start || status != kHighsStatusError,
+                "Instance: HiGHS refused to start callback kind {kind}"
+            );
         }
     }
 
@@ -249,6 +257,16 @@ impl Instance {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
         let status = unsafe { Highs_getIntInfoValue(self.raw(), name.as_ptr(), &raw mut value) };
+        (status != kHighsStatusError).then_some(value)
+    }
+
+    /// The value of an integer option as HiGHS holds it, `None` when HiGHS does not know the name or it is not an
+    /// integer option.
+    pub(crate) fn option_int(&self, name: &CStr) -> Option<i32> {
+        let mut value: HighsInt = 0;
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
+        let status = unsafe { Highs_getIntOptionValue(self.raw(), name.as_ptr(), &raw mut value) };
         (status != kHighsStatusError).then_some(value)
     }
 
@@ -337,7 +355,7 @@ impl Instance {
             )
         };
         match CallStatus::from_raw(status) {
-            CallStatus::Error => Err(HighsError::Load { message: None }),
+            CallStatus::Error => Err(HighsError::Load),
             CallStatus::Ok | CallStatus::Warning => Ok(()),
         }
     }
@@ -369,8 +387,8 @@ impl Instance {
                 .all(|&c| usize::try_from(c).is_ok_and(|c| c < self.num_col())),
             "Instance: the start names a column HiGHS's model lacks"
         );
-        // SAFETY: the instance is live and borrowed exclusively. `indices` and `values` hold `count` entries each, which
-        // is what HiGHS reads; it copies them and checks each index against its model.
+        // SAFETY: the instance is live and borrowed exclusively. `indices` and `values` hold `count` entries each,
+        // which is what HiGHS reads; it copies them and checks each index against its model.
         let status = unsafe { Highs_setSparseSolution(self.raw(), count, indices.as_ptr(), values.as_ptr()) };
         match CallStatus::from_raw(status) {
             CallStatus::Error => Err(HighsError::Start),
@@ -386,6 +404,7 @@ impl Instance {
 /// leaving out a negative tolerance; its blend minimizes `Σ weight · objective`. So a lexicographic objective gets
 /// the weight `±1` by its sense and its tolerances, `-1` for an absent one; a blended one its weight signed by its
 /// sense and no tolerances. Every objective gets its own priority, the first the highest, which a blend ignores.
+#[derive(Debug)]
 struct LinearObjectives {
     weights: Vec<f64>,
     offsets: Vec<f64>,
@@ -520,7 +539,7 @@ impl Instance {
             }
         };
         match CallStatus::from_raw(status) {
-            CallStatus::Error => Err(HighsError::Load { message: None }),
+            CallStatus::Error => Err(HighsError::Load),
             CallStatus::Ok | CallStatus::Warning => Ok(()),
         }
     }
@@ -720,8 +739,8 @@ impl Drop for Instance {
 
 /// Whether a QP without rows gets one free row without entries.
 ///
-/// HiGHS 1.15 solves a QP without rows from the unconstrained minimizer clamped into the bounds, and can report that
-/// point optimal after no iteration when it is not; with a row it finds its starting point with its LP solver and
+/// HiGHS 1.16 solves a QP without rows from the unconstrained minimizer clamped into the bounds, and 1.15 reported that
+/// point optimal after no iteration when it was not; with a row it finds its starting point with its LP solver and
 /// solves correctly. A free row constrains nothing, and the backend reads no row values; a model written to a file
 /// goes without it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -733,6 +752,7 @@ pub(crate) enum Padding {
 }
 
 /// A program's arrays in the layout `Highs_passModel` reads, with a free row for a QP without rows when padded.
+#[derive(Debug)]
 struct Arrays {
     costs: Vec<f64>,
     lower: Vec<f64>,
@@ -799,6 +819,7 @@ impl Arrays {
 /// The Hessian of a program's quadratic part in the layout `Highs_passModel` reads: its lower triangle in compressed
 /// column form, `rows[starts[c]..starts[c + 1]]` with `values` alike for column `c`, the diagonal first, as
 /// [`QuadObjective::hessian`](culmen_core::QuadObjective::hessian) gives it for HiGHS's `½ xᵀQx`.
+#[derive(Debug)]
 struct Hessian {
     starts: Vec<HighsInt>,
     rows: Vec<HighsInt>,
@@ -848,7 +869,7 @@ impl Hessian {
     }
 }
 
-/// Whether `program` is a QP without rows, which HiGHS 1.15 solves only with one free, empty row added, and `padding`
+/// Whether `program` is a QP without rows, which HiGHS solves right only with one free, empty row added, and `padding`
 /// asks for that row.
 fn needs_free_row(program: &Program, padding: Padding) -> bool {
     padding == Padding::QpFreeRow && program.num_rows() == 0 && !program.quadratic().is_empty()
@@ -865,6 +886,7 @@ pub(crate) const fn var_type(integrality: Integrality) -> HighsInt {
 }
 
 /// The counts `Highs_passModel` reads, each within HiGHS's index type.
+#[derive(Debug)]
 struct Counts {
     cols: HighsInt,
     rows: HighsInt,

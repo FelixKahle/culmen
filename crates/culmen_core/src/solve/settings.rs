@@ -43,10 +43,12 @@ pub struct Settings {
     pub seed: Option<u32>,
     /// Whether the solver presolves the problem first.
     pub presolve: Option<bool>,
-    /// The number of branch-and-bound nodes after which a MIP stops.
+    /// The number of branch-and-bound nodes after which a MIP stops. Zero is passed to the solver as zero, which
+    /// stops the search at its first check of the limit.
     pub node_limit: Option<u64>,
-    /// The number of feasible solutions after which a MIP stops; at least one, since a MIP that stops before its
-    /// first solution has nothing to stop for.
+    /// The number of improving solutions after which a MIP stops: solutions each better than every one the solve
+    /// found before, the first included. At least one, since a MIP that stops before its first solution has nothing
+    /// to stop for; a backend that cannot count improving solutions refuses the setting.
     pub solution_limit: Option<NonZeroU64>,
     /// Whether the solver also prints its log to standard output; the log reaches callbacks either way.
     pub console: bool,

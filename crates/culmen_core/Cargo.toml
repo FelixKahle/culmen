@@ -11,7 +11,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-keywords.workspace = true
+# The workspace's keywords name HiGHS, which this crate does not depend on.
+keywords = ["optimization", "linear-programming", "milp", "modelling", "solver"]
 categories.workspace = true
 
 [features]
@@ -19,16 +20,25 @@ categories.workspace = true
 serde = ["dep:serde", "typed-index-collections/serde"]
 
 [dependencies]
+# Column and row tables indexed by `Col` and `Row`; the workspace entry says why.
 typed-index-collections.workspace = true
+# `Clone` and `Debug` on the families' borrowing iterators without bounds on their key types.
 derive-where.workspace = true
+# Merging sorted terms and joined `Display` of sets.
 itertools.workspace = true
+# The Cholesky factorization of the convexity check.
 nalgebra.workspace = true
+# The serde impls of the plain data, behind `serde`.
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+# The exact reference solver, the strategies and the recording backend the tests compare with.
 culmen_testing.workspace = true
+# Property tests against the reference models.
 proptest.workspace = true
+# The one compile-fail fixture: checked values cannot be forged.
 trybuild.workspace = true
+# The serde round trips run through JSON.
 serde_json.workspace = true
 
 # docs.rs documents the serde impls of the plain data too.

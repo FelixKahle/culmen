@@ -218,8 +218,9 @@ fn test_errors_name_the_dimension_and_the_model_status() {
 #[test]
 fn test_solving_before_loading_is_refused() {
     let mut highs = Highs::new();
+    let mut priced = culmen_core::Priced::new(&Model::new().build().unwrap(), Highs::CLASSES);
     assert_eq!(
-        highs.solve(&Settings::new(), &mut ()).unwrap_err(),
+        highs.solve(&Settings::new(), &mut (), &mut priced).unwrap_err(),
         HighsError::NotLoaded
     );
 }
@@ -327,6 +328,27 @@ fn test_options_and_statuses_round_trip() {
     round_trip(&solved);
     round_trip(&ModelStatus::Other(42));
     round_trip(&culmen_highs::version());
+    // HiGHS's own default objective bound is +inf, and its infinite bound a double option set by name.
+    let infinite = HighsOptions {
+        objective_bound: Some(f64::INFINITY),
+        objective_target: Some(f64::NEG_INFINITY),
+        ..HighsOptions::default()
+    }
+    .option("infinite_bound", f64::INFINITY);
+    round_trip(&infinite);
+    round_trip(&culmen_highs::OptionValue::Double(f64::NEG_INFINITY));
+    use culmen_highs::{EdgeWeight, LpSolver, MipIpmSolver, MipLpSolver, OnOff, ScaleStrategy, files::ModelFormat};
+    for format in [ModelFormat::Mps, ModelFormat::Lp] {
+        round_trip(&format);
+    }
+    round_trip(&OnOff::On);
+    round_trip(&LpSolver::QpAsm);
+    round_trip(&MipLpSolver::Hipo);
+    round_trip(&MipIpmSolver::Ipx);
+    round_trip(&SimplexStrategy::DualPami);
+    round_trip(&ScaleStrategy::ForcedEquilibration);
+    round_trip(&EdgeWeight::SteepestEdge);
+    round_trip(&culmen_core::LogLevel::Warning);
 }
 
 #[test]
@@ -378,4 +400,108 @@ fn test_a_solution_limit_ends_a_mip_with_a_solution() {
             "{solved:?}"
         );
     }
+}
+
+/// A generalized assignment HiGHS does not finish at its root.
+fn hard_mip() -> culmen_core::Program {
+    culmen_testing::instances::assignment(60, 30, 12_345, 0.0).program
+}
+
+/// The reason a solve that is expected to stop gives.
+fn stop_reason(solved: &culmen_core::Solved<culmen_highs::HighsStatus>) -> StopReason {
+    match &solved.outcome {
+        Outcome::Stopped { reason, .. } => *reason,
+        other => panic!("expected a stop, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_a_node_limit_stops_a_mip_at_the_node_limit_however_it_is_set() {
+    let limited = Request::new().settings_from(Settings {
+        node_limit: Some(1),
+        time_limit: Some(core::time::Duration::from_secs(60)),
+        ..Settings::new()
+    });
+    let in_settings = Solver::new(Highs::new(), hard_mip()).unwrap().solve(limited).unwrap();
+    assert_eq!(stop_reason(&in_settings), StopReason::NodeLimit, "{in_settings:?}");
+    let timed = || Request::new().time_limit(core::time::Duration::from_secs(60));
+    let typed = HighsOptions {
+        mip_max_nodes: Some(1),
+        ..HighsOptions::default()
+    };
+    let solved = Solver::new(Highs::with_options(typed), hard_mip())
+        .unwrap()
+        .solve(timed())
+        .unwrap();
+    assert_eq!(stop_reason(&solved), StopReason::NodeLimit, "{solved:?}");
+    let by_name = HighsOptions::default().option("mip_max_nodes", 1);
+    let solved = Solver::new(Highs::with_options(by_name), hard_mip())
+        .unwrap()
+        .solve(timed())
+        .unwrap();
+    assert_eq!(stop_reason(&solved), StopReason::NodeLimit, "{solved:?}");
+}
+
+#[test]
+fn test_an_objective_target_stops_a_mip_at_its_first_good_enough_solution() {
+    // Every assignment walks less than a billion, so the first solution meets the target.
+    let target = HighsOptions {
+        objective_target: Some(1e9),
+        ..HighsOptions::default()
+    };
+    let solved = Solver::new(Highs::with_options(target), hard_mip())
+        .unwrap()
+        .solve(Request::new().time_limit(core::time::Duration::from_secs(60)))
+        .unwrap();
+    assert_eq!(stop_reason(&solved), StopReason::ObjectiveLimit, "{solved:?}");
+    assert!(solved.outcome.objective().is_some_and(|objective| objective <= 1e9));
+}
+
+#[test]
+fn test_an_objective_bound_stops_the_dual_simplex_once_the_lp_cannot_beat_it() {
+    // The assignment's LP relaxation walks far more than 1, which the dual simplex proves on its way to the optimum.
+    let mut plan = culmen_core::ProgramPlan::from(hard_mip());
+    for column in &mut plan.columns {
+        column.integrality = culmen_core::Integrality::Continuous;
+    }
+    let bounded = HighsOptions {
+        objective_bound: Some(1.0),
+        presolve: Some(culmen_highs::Switch::Off),
+        solver: Some(culmen_highs::LpSolver::Simplex),
+        simplex_strategy: Some(SimplexStrategy::Dual),
+        ..HighsOptions::default()
+    };
+    let solved = Solver::new(Highs::with_options(bounded), plan.build().unwrap())
+        .unwrap()
+        .solve(Request::new())
+        .unwrap();
+    assert_eq!(stop_reason(&solved), StopReason::ObjectiveLimit, "{solved:?}");
+}
+
+#[test]
+fn test_a_coefficient_highs_finds_excessive_is_refused_at_load_and_at_an_edit() {
+    // HiGHS refuses a matrix value at or above its `large_matrix_value`, 1e15.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1));
+    m.add_constraint((1e16 * x).leq(1));
+    m.maximize(x);
+    let refused = Solver::new(Highs::new(), m.build().unwrap()).unwrap_err();
+    assert_eq!(refused, culmen_core::LoadError::Backend(HighsError::Load));
+    assert_eq!(HighsError::Load.to_string(), "HiGHS: the program was refused");
+
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1));
+    m.maximize(x);
+    let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
+    let edit = solver.add_row((1e16 * x).leq(1)).unwrap_err();
+    assert_eq!(
+        edit,
+        culmen_core::EditError::Backend(HighsError::Edit { call: "Highs_addRows" })
+    );
+    assert_eq!(
+        HighsError::Edit { call: "Highs_addRows" }.to_string(),
+        "HiGHS: Highs_addRows refused the edit"
+    );
+    // The solver holds the program before the edit again.
+    assert_eq!(solver.solve(Request::new()).unwrap().outcome.objective(), Some(1.0));
 }

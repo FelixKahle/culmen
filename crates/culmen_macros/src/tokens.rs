@@ -80,7 +80,7 @@ pub(crate) fn first_span(tokens: &TokenStream) -> Span {
 }
 
 /// Where a scan is among the brackets that are not groups: a turbofish's angle brackets and a closure's bars.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Nesting {
     /// How many turbofish angle brackets are open.
     angles: usize,

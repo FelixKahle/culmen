@@ -2,30 +2,29 @@
 
 A solve takes three values: a `Solver`, which holds a backend with a program loaded; a `Request`, which carries one
 solve's settings, stop and observer; and the `Solved` it returns, which holds the generic `Outcome` beside the
-backend's own status. This page covers all three. Watching and stopping a solve are on
-[Callbacks](callbacks.md).
+backend's own status. This page covers all three. Watching and stopping a solve are on [Callbacks](callbacks.md).
 
 ## `Solver`
 
 `Solver::new(backend, program)` loads `program` into `backend`. It fails with a
 [`LoadError`](#model-classes-and-refusal): `Unsupported` when the backend does not solve the program's class and
 `UnsupportedFeature` when it does not take a feature the program uses, both before the backend sees it, or `Backend`
-with the backend's own error when the backend refuses the program. A `Solver` can then
-solve as often as needed, each time with its own request.
+with the backend's own error when the backend refuses the program. A `Solver` can then solve as often as needed,
+each time with its own request.
 
 | Method | Does |
 |---|---|
 | `solve(request)` | Solves under the request's settings, polling its stop and reporting to its observer. |
 | `solve_with(request, &mut callback)` | The same, and also runs a [`Callback`](callbacks.md#callback) with the backend's full context types. |
-| `program()` | The loaded program. |
+| `program()` | The loaded program, grown by every column a solve priced. |
 | `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
-| `into_parts()` | The backend and the program, taken apart. |
+| `into_parts()` | The backend and the program, taken apart; the backend may be behind the program after a failed edit or a solve that priced. |
 | `set_col_bounds(..)`, `set_col_costs(..)`, `set_col_integrality(..)`, `set_row_bounds(..)`, `add_row(..)`, `add_rows(..)`, `add_col(..)`, `add_cols(..)` | Edit the loaded program, to solve it again warm ([Editing a loaded program](#editing-a-loaded-program)). |
 | `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome ([Analysis](analysis.md)). |
 
-The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Script>` replays a script
-([Testing](testing.md#the-script-backend)), and a backend of your own plugs in by implementing
-[`Backend`](backends.md).
+The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Scip>` with SCIP ([SCIP](scip.md), the
+`scip` feature), `Solver<Script>` replays a script ([Testing](testing.md#the-script-backend)), and a backend of your
+own plugs in by implementing [`Backend`](backends.md).
 
 ```rust
 use std::time::Duration;
@@ -57,11 +56,13 @@ sees a class it did not declare.
 | Backend | `CLASSES` |
 |---|---|
 | `Highs` | `{LP, MILP, QP}`: HiGHS 1.16 refuses to solve a QP with integer columns. |
+| `Scip` | Every class: a quadratic objective becomes an epigraph ([SCIP](scip.md#quadratic-programs)). |
 | `Script` | Every class: it replays its script rather than solving. |
 
 The same holds for [features](program.md#features): every backend declares the features it takes as
 `Backend::FEATURES`, a `ProgramFeatures` set (none unless declared), and `Solver::new` refuses a program using any
-other before `load`. `Highs` takes every feature; `Script` takes every feature and records each start.
+other before `load`. `Highs` takes every feature; `Scip` takes starts only, so it refuses semi columns and further
+objectives; `Script` takes every feature and records each start.
 
 The refusal is typed: `LoadError<E>` is `Unsupported { class, supported }`, naming the program's class and the backend's
 set, `UnsupportedFeature { feature, supported }`, naming the first feature the backend lacks and its set, or
@@ -109,8 +110,8 @@ A `Request` is built by chaining. Each method replaces what it sets:
 | `.progress_interval(duration)` | The least time between two progress reports; `Request::DEFAULT_PROGRESS_INTERVAL`, one second, unless set. |
 | `.start(start)` | A [start](#starts) handed to the solver before the solve: a full `TiVec<Col, f64>` or `Vec<f64>`, or a sparse `Vec<(Col, f64)>`. |
 
-`request.settings()` and `request.start_solution()` read the settings and the start back. The request borrows its stop and observer, so both outlive the solve
-and can be read afterwards.
+`request.settings()` and `request.start_solution()` read the settings and the start back. The request borrows its
+stop and observer, so both outlive the solve and can be read afterwards.
 
 ## Starts
 
@@ -118,7 +119,9 @@ A `Start` is a solution the solver may start from: `Start::Full(values)`, one va
 `Start::Sparse(entries)`, values for some columns, the solver choosing the rest. A MIP solver takes a feasible start
 as its first incumbent and may complete a partial or infeasible one; an LP solver may start from it. A start need not
 be feasible, but it must fit the program: `start.check(num_cols)` states it, and `solve` checks it before the backend
-sees it. A start applies to its one solve.
+sees it. A start applies to its one solve; a backend may also start a solve from the last solve's best solution, as
+HiGHS ([HiGHS](highs.md#semi-columns-several-objectives-and-starts)) and SCIP
+([SCIP](scip.md#how-options-and-settings-layer)) do until an edit.
 
 `solve` refuses a start typed, as `SolveError`:
 
@@ -153,7 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Items 1 and 3, worth 21, are the optimum: HiGHS takes them as its first incumbent.
     let mut first = First::default();
-    solver.solve(Request::new().observer(&mut first).start(vec![(take[0], 0.0), (take[1], 1.0), (take[2], 0.0), (take[3], 1.0)]))?;
+    let start = vec![(take[0], 0.0), (take[1], 1.0), (take[2], 0.0), (take[3], 1.0)];
+    solver.solve(Request::new().observer(&mut first).start(start))?;
     assert_eq!(first.0, Some(21.0));
 
     let error = solver.solve(Request::new().start(vec![(take[1], 1.0), (take[1], 0.0)])).unwrap_err();
@@ -176,8 +180,8 @@ the backend's options for the one solve they are passed to.
 | `threads` | `Option<NonZeroUsize>` | The number of threads the solver may use. |
 | `seed` | `Option<u32>` | The seed of the solver's random choices, for reproducible runs. |
 | `presolve` | `Option<bool>` | Whether the solver presolves first. |
-| `node_limit` | `Option<u64>` | The number of branch-and-bound nodes after which a MIP stops. |
-| `solution_limit` | `Option<NonZeroU64>` | The number of feasible solutions after which a MIP stops; `solutions!(n)` writes a literal one. |
+| `node_limit` | `Option<u64>` | The number of branch-and-bound nodes after which a MIP stops; zero is passed to the solver as zero, which stops at its first check of the limit. |
+| `solution_limit` | `Option<NonZeroU64>` | The number of improving solutions (each better than every one before, the first included) after which a MIP stops; `solutions!(n)` writes a literal one. |
 | `console` | `bool` | Whether the solver also prints its log to standard output; the log reaches callbacks either way. |
 
 The request sets the time limit itself; every other setting goes through `settings_from`:
@@ -200,14 +204,15 @@ let request = Request::new().settings_from(settings.clone());
 assert_eq!(request.settings(), &settings);
 ```
 
-How each setting maps onto HiGHS is on [HiGHS](highs.md#how-options-and-settings-layer); the
-[Backends](backends.md#settings) page maps them onto HiGHS, Gurobi and SCIP side by side.
+How each setting maps onto HiGHS is on [HiGHS](highs.md#how-options-and-settings-layer), onto SCIP on
+[SCIP](scip.md#how-options-and-settings-layer); the [Backends](backends.md#settings) page maps them onto HiGHS, Gurobi
+and SCIP side by side.
 
 ## Checked literals
 
 A gap is a finite number, zero or above, and a thread count or a solution limit is not zero. The types say so:
-`RelativeGap`, `AbsoluteGap`, `NonZeroUsize` and `NonZeroU64` cannot hold anything else. Their literals are written with macros that check them
-when the code is compiled, so a bad literal never reaches a running program:
+`RelativeGap`, `AbsoluteGap`, `NonZeroUsize` and `NonZeroU64` cannot hold anything else. Their literals are written
+with macros that check them when the code is compiled, so a bad literal never reaches a running program:
 
 ```rust
 use culmen::prelude::*;
@@ -220,13 +225,13 @@ assert_eq!((gap.get(), units.get(), four.get(), first.get()), (0.01, 2.5, 4, 1))
 assert_eq!(gap.to_string(), "RelativeGap(0.01)");
 ```
 
-```compile_fail
+```compile_fail,E0080
 use culmen::prelude::*;
 
 let gap = relative_gap!(-0.01); // RelativeGap: below zero
 ```
 
-```compile_fail
+```compile_fail,E0080
 use culmen::prelude::*;
 
 let none = threads!(0); // threads: zero
@@ -253,7 +258,7 @@ A solve returns `Result<Solved<B::Status>, SolveError<B::Error>>`. `Solved` is p
 | Field | Holds |
 |---|---|
 | `outcome` | How the solve ended, as an `Outcome`. |
-| `status` | The backend's own status, for diagnostics; for HiGHS a [`HighsStatus`](highs.md#statuses-and-outcomes). |
+| `status` | The backend's own status, for diagnostics; for HiGHS a [`HighsStatus`](highs.md#statuses-and-outcomes), for SCIP a [`ScipStatus`](scip.md#statuses-and-outcomes). |
 | `elapsed` | The wall-clock time of the solve. |
 
 `Outcome` holds exactly what each ending proves:
@@ -308,8 +313,8 @@ A solution is read with the handles the model returned:
 - `family.values(&solution.values)` for a whole [`VarMap`](modelling.md#keyed-families), as `(&key, value)` pairs.
 - `expr.value(&solution.values)` for any [expression](modelling.md#expressions).
 - `program.row(r).activity(&solution.values)` for a constraint's activity, `program.activities(&solution.values)`
-  for every row's, and `program.max_violation(&solution.values)`
-  to check the solution against the program ([Checking a point](program.md#checking-a-point)).
+  for every row's, and `program.max_violation(&solution.values)` to check the solution against the program
+  ([Checking a point](program.md#checking-a-point)).
 
 Integer variables come back as floating-point numbers within the solver's integrality tolerance; round them
 (`value.round()`) or compare against `0.5` for binaries.
@@ -349,7 +354,7 @@ relaxation, a column priced in by column generation, a variable fixed in a dive.
 | `set_col_integrality([(col, integrality), ..])` | Columns' integrality. |
 | `set_row_bounds([(row, bounds), ..])` | Rows' bounds; `..`, `Bounds::FREE`, switches a row off. |
 | `add_row(row)`, `add_rows(rows)` | Appends rows and returns them: a `Constraint` as a model writes it, a `(name, constraint)` pair, or a `ProgramRow`. |
-| `add_col(column)`, `add_cols(columns)` | Appends columns and returns them: a `NewCol`, a `ProgramColumn` with its `entries` in existing rows, or a bare `ProgramColumn` in no row. |
+| `add_col(column)`, `add_cols(columns)` | Appends columns and returns them: a `NewCol` (a `ProgramColumn` with its `entries` in existing rows), or a bare `ProgramColumn` in no row. |
 
 Every edit keeps these rules:
 
@@ -367,11 +372,11 @@ Every edit keeps these rules:
 - **The last solve is no longer read.** An edit clears the result the [analyses](analysis.md) read, so `duals()`
   after an edit is `NotSolved` until the next solve; an edit refused by its checks keeps it.
 
-A backend changes its model in place through [`Backend::edit`](backends.md#the-seam) and keeps its
-warm start; one that does not loads the edited program whole, which is always correct and starts cold. When the
-backend refuses an edit, `EditError::Backend`, the `Solver` restores its program and loads it into the backend again;
-should that fail too, the next call that runs the backend loads it first. [HiGHS](highs.md#editing-a-loaded-program)
-changes its model in place.
+A backend changes its model in place through [`Backend::edit`](backends.md#the-seam) and keeps its warm start; one that
+does not loads the edited program whole, which is always correct and starts cold. When the backend refuses an edit,
+`EditError::Backend`, the `Solver` restores its program and loads it into the backend again; should that fail too, the
+next call that runs the backend loads it first. [HiGHS](highs.md#editing-a-loaded-program) changes its model in place;
+[SCIP](scip.md#how-options-and-settings-layer) loads the edited program into a new instance.
 
 ```rust
 use culmen::prelude::*;
@@ -416,6 +421,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The examples `cutting_planes` and `column_generation` of the `culmen` crate edit a program round after round.
 
+## A solve that prices
+
+A callback that [prices](callbacks.md#pricing) (`prices()` returns `true`) adds columns during the solve, column
+generation at every node of the search, on a backend that prices: [SCIP](scip.md#pricing). Those columns are the
+program's from then on:
+
+- **The program grows.** Each priced column continues the program's numbering: the first is `Col(n)` for a program
+  of `n` columns, and `add_col` returns that id. When the solve ends, however it ends (returning `Ok`, failing, or
+  unwinding from a panic), `solver.program()` holds every column priced, in the order of their ids, with its cost,
+  bounds, integrality and entries as checked, and the solution reads them with their ids: `best.values.len()` is
+  `solver.program().num_cols()`.
+- **The backend reloads.** The backend held the program before the solve, so the next call that runs it loads the
+  grown program first; a failure there is that call's `Backend` error.
+- **The analyses find no solve to read.** After a solve that priced at least one column, `duals()` and the other
+  analyses that read a solve are `NotSolved` until the next solve that prices nothing.
+- **The next solve starts with the columns.** It may start from a `Start` naming them, and edits work on the grown
+  program as on any other.
+
+```rust
+use std::time::Duration;
+
+use culmen::prelude::*;
+use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
+
+/// Prices one column in at every price step.
+struct OneMore;
+
+impl<B: Backend> Callback<B> for OneMore {
+    fn events(&self) -> Events {
+        Events::NONE
+    }
+    fn prices(&self) -> bool {
+        true
+    }
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        let row = Row::new(0);
+        let column = NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries: vec![(row, 1.0)] };
+        assert_eq!(ctx.add_col(column), Ok(Col::new(1)));
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous());
+    m.add_constraint(x.geq(1));
+    m.minimize(2.0 * x);
+
+    let step = Step::Price {
+        progress: Progress::at(Duration::ZERO, Phase::Simplex),
+        mode: PriceMode::ReducedCost { objective: 2.0 },
+        duals: vec![2.0].into(),
+    };
+    let end = Outcome::Optimal(Solution { objective: 1.0, values: vec![0.0, 1.0].into() });
+    let mut solver = Solver::new(Script::new([step], end), m.build()?)?;
+    let solved = solver.solve_with(Request::new(), &mut OneMore)?;
+
+    assert_eq!(solver.program().num_cols(), 2);
+    assert_eq!(solved.outcome.solution().map(|s| s.values.len()), Some(2));
+    Ok(())
+}
+```
+
+The `branch_and_price` example of the `culmen` crate prices cutting patterns at every node on SCIP.
+
 ## Errors
 
 `Solver::new` fails with a [`LoadError<B::Error>`](#model-classes-and-refusal): a class the backend does not solve, a
@@ -425,8 +494,8 @@ before the backend sees the request, or `SolveError::Backend` with the backend's
 apply, or a failed run. An edit fails with an [`EditError<B::Error>`](#editing-a-loaded-program): an id the program does
 not have, a number that is not finite, invalid bounds, a class or feature the backend lacks, all decided before the
 backend sees the edit, or `EditError::Backend` when the backend refuses it. For HiGHS the backend's error is
-[`HighsError`](highs.md#errors). A solve
-that ends without a solution is not an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
+[`HighsError`](highs.md#errors), for SCIP [`ScipError`](scip.md#errors). A solve that ends without a solution is not
+an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
 
 `solve` and `solve_with` panic when an observer or callback panics: the panic continues out of the call once the
 solver has stopped ([Panics and threads](callbacks.md#panics-and-threads)).
@@ -436,5 +505,6 @@ solver has stopped ([Panics and threads](callbacks.md#panics-and-threads)).
 - [Callbacks](callbacks.md): stops, observers and callbacks.
 - [Analysis](analysis.md): duals, the basis, ranging, rays, IIS and feasibility relaxation after a solve.
 - [HiGHS](highs.md): the HiGHS backend's options, statuses and errors.
+- [SCIP](scip.md): the SCIP backend's options, statuses and errors, and pricing at every node.
 - [Testing](testing.md): solving with a scripted backend.
 - [Documentation index](README.md).

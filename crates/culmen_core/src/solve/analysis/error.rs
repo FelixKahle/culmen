@@ -21,6 +21,7 @@ use crate::{Col, ModelClass, Program, ProgramFeature};
 /// assert_eq!(error.to_string(), "Solver: duals are defined for {LP, QP}, not a MILP");
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AnalysisError<E> {
     /// The backend does not provide the analysis.
     Unsupported {
@@ -44,8 +45,8 @@ pub enum AnalysisError<E> {
         feature: ProgramFeature,
     },
     /// The analysis reads a solve, and there is none to read: no solve since the program was loaded, the last solve
-    /// failed or panicked once its request reached the backend, or a later edit, basis, IIS or relaxation replaced
-    /// its result.
+    /// failed or panicked once its request reached the backend, it priced columns into the program, or a later edit,
+    /// basis, IIS or relaxation replaced its result.
     NotSolved {
         /// The analysis asked for.
         analysis: Analysis,
@@ -59,6 +60,30 @@ pub enum AnalysisError<E> {
     Misfit(Misfit),
     /// The backend failed.
     Backend(E),
+}
+
+impl<E> AnalysisError<E> {
+    /// The same refusal with the backend's own error mapped by `f`, as a backend wrapping another lifts the inner
+    /// backend's errors.
+    ///
+    /// ```
+    /// use culmen_core::{Analysis, AnalysisError};
+    /// let inner: AnalysisError<u8> = AnalysisError::Backend(7);
+    /// assert_eq!(inner.map_backend(u16::from), AnalysisError::Backend(7_u16));
+    /// let refused: AnalysisError<u8> = AnalysisError::NotSolved { analysis: Analysis::Duals };
+    /// assert_eq!(refused.map_backend(u16::from), AnalysisError::NotSolved { analysis: Analysis::Duals });
+    /// ```
+    pub fn map_backend<F>(self, f: impl FnOnce(E) -> F) -> AnalysisError<F> {
+        match self {
+            Self::Unsupported { analysis, supported } => AnalysisError::Unsupported { analysis, supported },
+            Self::Class { analysis, class } => AnalysisError::Class { analysis, class },
+            Self::Feature { analysis, feature } => AnalysisError::Feature { analysis, feature },
+            Self::NotSolved { analysis } => AnalysisError::NotSolved { analysis },
+            Self::NotOptimal { analysis } => AnalysisError::NotOptimal { analysis },
+            Self::Misfit(misfit) => AnalysisError::Misfit(misfit),
+            Self::Backend(error) => AnalysisError::Backend(f(error)),
+        }
+    }
 }
 
 impl<E: fmt::Display> fmt::Display for AnalysisError<E> {
@@ -124,6 +149,7 @@ impl<E> From<Misfit> for AnalysisError<E> {
 /// assert_eq!(misfit.to_string(), "the basis has 3 row statuses for 2 rows");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Misfit {
     /// A table holds the wrong number of entries.
     Length {
@@ -183,6 +209,7 @@ impl core::error::Error for Misfit {}
 
 /// A per-column or per-row table an analysis takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Table {
     /// [`Basis::cols`](crate::Basis::cols).
     BasisCols,

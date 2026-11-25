@@ -17,8 +17,9 @@ use culmen_core::{
     penalty,
 };
 use culmen_highs::{Highs, HighsStatus};
-use culmen_testing::reference::{Reference, close, solve};
+use culmen_testing::reference::{close, solve};
 use culmen_testing::strategy::small_lp;
+use culmen_testing::tolerance::Tolerances;
 use proptest::prelude::*;
 
 /// Whether `got` is within `1e-6` of `want`, relative to their size above one.
@@ -338,7 +339,8 @@ fn test_a_primal_ray_proves_unboundedness() {
 
 #[test]
 fn test_an_lp_without_rows_has_a_primal_ray_along_one_column() {
-    // HiGHS 1.15 reports no ray for an LP without rows; the backend gives the improving column's direction.
+    // HiGHS 1.16 reports no ray for an LP without rows (`getPrimalRayInterface` returns at once when `num_row == 0`);
+    // the backend gives the improving column's direction.
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(2.0));
     let y = m.add_var(Var::free());
@@ -583,7 +585,8 @@ fn test_a_relaxation_may_move_a_column_past_a_soft_bound() {
 
 #[test]
 fn test_a_relaxation_with_only_hard_bounds_and_rows_finds_nothing() {
-    // HiGHS 1.15 does not report that its elastic program is infeasible; the backend checks the point it returns.
+    // HiGHS 1.16 restores the model status after its elastic program (`elasticityFilterReturn`), so it does not report
+    // that program infeasible; the backend checks the point it returns.
     let (program, _) = gap_of_two();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     assert_eq!(
@@ -760,8 +763,17 @@ proptest! {
     fn test_strong_duality_and_complementary_slackness(
         program in small_lp().prop_filter("an LP", |p| p.class() == ModelClass::Lp)
     ) {
-        let Reference::Optimal(_) = solve(&program) else { return Ok(()) };
-        let exact = solve(&program).objective().unwrap();
+        let reference = solve(&program);
+        // HiGHS's basis meets its basic columns' bounds and rows to its primal feasibility tolerance, 1e-7, and its
+        // reduced costs to its dual feasibility tolerance, 1e-7; the dual objective, which reads the exact bounds, is
+        // the objective of the basis's point, so it lies in the window those tolerances leave around the optimum.
+        let tolerances = Tolerances {
+            feasibility: 1e-7,
+            absolute_gap: 0.0,
+            relative_gap: 0.0,
+            ..Tolerances::HIGHS
+        };
+        let Some(window) = tolerances.window(&program, &reference) else { return Ok(()) };
         let (solver, outcome, status) = solved(&program);
         let Outcome::Optimal(solution) = outcome else { panic!("{outcome:?} {status:?}") };
         let duals = solver.duals().unwrap();
@@ -784,7 +796,24 @@ proptest! {
             panic!("a dual at the wrong bound: {duals:?} {solution:?}")
         };
         let dual = program.offset() + rows + cols;
-        prop_assert!(close(dual, exact, 1e-6), "dual {dual} vs exact {exact}");
+        // A dual within 1e-9 of zero is read as zero, which drops at most 1e-9 times the bound it would select.
+        let largest_end = |b: &Bounds| {
+            [b.lower(), b.upper()]
+                .into_iter()
+                .filter(|v| v.is_finite())
+                .fold(0.0_f64, |m, v| m.max(v.abs()))
+        };
+        let ends: f64 = program
+            .row_bounds()
+            .iter()
+            .chain(program.columns().iter().map(|c| &c.bounds))
+            .map(largest_end)
+            .sum();
+        let zeroed = 1e-9 * ends;
+        prop_assert!(
+            window.least - zeroed <= dual && dual <= window.greatest + zeroed,
+            "dual {dual} vs exact {reference:?}, window {window:?}"
+        );
         for c in program.cols() {
             let coefficient = |r| program.row(r).entries().filter(|e| e.0 == c).map(|e| e.1).sum::<f64>();
             let aty: f64 = program.rows().map(|r| duals.rows[r] * coefficient(r)).sum();

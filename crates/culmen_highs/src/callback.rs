@@ -63,6 +63,7 @@
 use core::any::Any;
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
+use core::fmt;
 use core::ptr;
 use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -221,6 +222,20 @@ pub(crate) struct Hook<'a> {
     pub(crate) incumbent: Option<f64>,
 }
 
+impl fmt::Debug for Hook<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Hook")
+            .field("wanted", &self.wanted)
+            .field("start", &self.start)
+            .field("program", &self.program)
+            .field("panic", &self.panic)
+            .field("last_error", &self.last_error)
+            .field("offered", &self.offered)
+            .field("incumbent", &self.incumbent)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A solution a callback supplied, valued.
 #[derive(Debug)]
 pub(crate) struct Offer {
@@ -311,6 +326,7 @@ unsafe fn interrupt(data_in: *mut HighsCallbackDataIn) {
 }
 
 /// One call of the trampoline, as HiGHS made it.
+#[derive(Debug)]
 struct Call {
     kind: Kind,
     message: *const c_char,
@@ -536,6 +552,7 @@ unsafe fn cut_pool(call: &Call) -> CutPool {
 ///
 /// Each array is as long as HiGHS's counts say, or empty where HiGHS passed none; the reads below never index past
 /// an array, whatever the starts say.
+#[derive(Debug)]
 struct CutArrays<'a> {
     starts: &'a [HighsInt],
     index: &'a [HighsInt],
@@ -628,6 +645,7 @@ fn finite(value: f64) -> Option<f64> {
 
 /// HiGHS's log type of a log line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum HighsLogType {
     /// `kInfo`: the normal log.
     Info,
@@ -749,6 +767,7 @@ impl ProgressContext for HighsMipProgress {
 
 /// Which solver polls.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum PollSource {
     /// The simplex method: `kHighsCallbackSimplexInterrupt`.
     Simplex {
@@ -847,6 +866,7 @@ impl SolutionContext for HighsSolution<'_> {
 
 /// Where in the search HiGHS asks for a user solution: HiGHS's `ExternalMipSolutionQueryOrigin`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum QueryOrigin {
     /// After the MIP solver is set up.
     AfterSetup,
@@ -861,6 +881,7 @@ pub enum QueryOrigin {
 /// Where in the root-node evaluation HiGHS asks for a user solution: HiGHS's
 /// `kExternalMipSolutionQueryOriginEvaluateRootNode0` to `4`, in the order a root-node evaluation reaches them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum RootNodePoint {
     /// Before the root LP is solved: point 0.
     BeforeLp,

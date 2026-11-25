@@ -15,10 +15,10 @@ The one program that changes is the one a `Solver` holds, and only through the `
 it changes anything, and is all or none, so `solver.program()` is always a program `build` accepts; ids are only ever
 appended, so a handle never changes its meaning. Everywhere else a program, once built, stays as it is.
 
-The check happens in one place, `build`, and its error names what is at fault. A model's error names the variable
-or constraint by the name you gave it (`` Model: constraint `big` has the non-finite coefficient inf on variable `x` ``),
-because the model runs the program's checks in its own terms; every model `build` accepts gives a program those
-checks accept.
+The check happens in one place, `build`, and its error names what is at fault. A model's error names the variable or
+constraint by the name you gave it (`` Model: constraint `big` has the non-finite coefficient inf on variable `x` ``),
+because the model runs the program's checks in its own terms; every model `build` accepts gives a program those checks
+accept.
 
 Holding no solver state, a program can be cloned, compared, serialized, written as an [LP file](program.md#lp-files),
 and loaded into any backend.
@@ -31,7 +31,9 @@ columns and rows of the program it builds, so there is no mapping to keep betwee
 columns": `solution.values[x]` is the value of the variable `x`.
 
 The same holds beyond the program. HiGHS's cut pool ranges over the presolved problem, whose columns are not the
-program's; they are `ReducedCol`, a third type, so a cut cannot be read as a row of your program by mistake.
+program's; they are `ReducedCol`, a third type, so a cut cannot be read as a row of your program by mistake. SCIP's
+contexts read every value through SCIP's original variables, so they hand out the program's columns whatever presolve
+did, and a column priced during a solve is a `Col` that continues the program's numbering.
 
 Keyed families give handles domain keys (`x[(product, location)]`), and a family is plain data you can iterate,
 look up and read a solution through.
@@ -43,7 +45,7 @@ are finite and not negative, a thread count is a `NonZeroUsize` and a solution l
 a type is written with a macro, `bounds!(0.0, 40.0)`, `relative_gap!(0.01)`, `threads!(4)`, `solutions!(5)`, which
 checks it when the code is compiled, so a typo in a literal is a compile error, not a run-time `unwrap` panic:
 
-```compile_fail
+```compile_fail,E0080
 use culmen::prelude::*;
 
 let gap = relative_gap!(-0.01); // RelativeGap: below zero
@@ -61,7 +63,7 @@ literals and `..Default::default()`, read and change their fields directly, and 
 A type with an invariant keeps its fields private behind a checked constructor: `Bounds`, `Program`, the gaps. Their
 fields cannot be written from outside, not even all at once:
 
-```compile_fail
+```compile_fail,E0451
 use culmen::Bounds;
 
 let empty = Bounds { lower: 2.0, upper: 1.0 }; // the fields are private
@@ -71,18 +73,45 @@ Constructors take what converts into their input without loss, so a caller passe
 `Bounds` where a `Var` is wanted, and an owned or borrowed value alike. A conversion that can fail is never implicit;
 it is a `TryFrom` or a `new` returning `Result`, so the refusal is visible where the value is made.
 
+## Which types may grow: `#[non_exhaustive]`
+
+Whether a public type is `#[non_exhaustive]` follows from what a user does with it, the same in every crate:
+
+- **A struct with `pub` fields is never non-exhaustive.** Plain data is built with a struct literal and
+  `..Default::default()` and taken apart by destructuring, and Rust forbids both outside the crate for a
+  non-exhaustive struct. A new field is therefore a breaking change, made only in a breaking release. A struct with
+  private fields needs no attribute.
+- **An error enum is non-exhaustive**, and so is every enum that only an error carries as its detail
+  (`InvalidBounds`, `Misfit`, `Table`, `ExprPlace`, `UnsoundQp`, `Dimension`, `Number`, …). A check or a backend
+  learns new refusals; a caller matches the ones it handles and passes the rest on. Inside its crate the match stays
+  exhaustive, so an error's `Display` remains one exhaustive table.
+- **An enum that lists an open set of kinds is non-exhaustive**: a solver's own statuses, return codes, option values
+  and log or poll kinds (`ModelStatus`, `CallStatus`, `LpSolver`, `PollSource`, `Status`, `RetCode`, `Emphasis`,
+  `ParamValue`, …), which grow with the solver's versions, and culmen's own lists of kinds that a further feature
+  adds to (`ModelClass`, `ProgramFeature`, `Analysis`, `Phase`, `StopReason`, `Edit`, `Step`, `ScipEvent`,
+  `LazySource`, `HighsNative`, `ModelFormat`). Code that must handle every kind is told so by a declared set
+  instead (`Backend::CLASSES`, `FEATURES`, `ANALYSES`), which refuses what it does not list.
+- **An enum whose variants its meaning closes stays exhaustive**, so that code which must handle every case is
+  checked to: `Sense`, `Integrality`, `Outcome`, `Objectives`, `Combination`, `PriceMode`, `Start`, `NewRow`,
+  `Side`, `Bound`, `Line`, `BasisStatus`, `LogLevel`, `ScriptStatus`, `Switch`, `OnOff`, and `Unsupported`, which
+  has no variant. A new variant there changes what every match must do, so it is a breaking change by design.
+
+`culmen_testing` is not published and is used only inside the workspace, where a change and every match it breaks
+land in one commit; it follows the rules for structs and leaves its enums exhaustive.
+
 ## The solver-neutral seam
 
 `culmen_core` knows no solver. A solver plugs in by implementing [`Backend`](backends.md#the-seam), an open trait:
 
 - **Events are typed and declared.** A backend names one context type per event kind and lists what it delivers
   in `Backend::EVENTS`. An event it cannot deliver takes `Unsupported`, an enum with no values, so a callback for it
-  compiles everywhere and never runs on that backend.
+  compiles everywhere and never runs on that backend. Pricing, which changes how a solver searches, is declared
+  apart, `Backend::PRICES`, and asked for apart, `Callback::prices`, so no set of events turns it on.
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
   `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the program, the
   same way for every backend.
 - **Actions live where the solver honours them.** Only a poll context can interrupt, only a lazy context can add a
-  lazy constraint, only a heuristic context can supply a solution. Calling an action at a point where the solver
+  lazy constraint, only a heuristic context can supply a solution, only a price context can add a column. Calling an action at a point where the solver
   would ignore it does not compile.
 - **Extras stay with their backend.** Each context type is the backend's own; what one solver reports beyond the
   neutral traits is an inherent method or a native event. Generic code sees the traits; code for one backend sees
@@ -109,11 +138,13 @@ ordinary `Outcome::Stopped` with the best solution and bound.
 ## Where `unsafe` lives
 
 `culmen_core` forbids `unsafe` (`#![forbid(unsafe_code)]`); the facade and the macros contain none. All `unsafe` is in
-`culmen_highs`, where HiGHS's C API makes it necessary, and every `unsafe` block there carries a `// SAFETY:`
-comment saying why it is sound. The parts that matter most:
+the two backends, `culmen_highs` and `culmen_scip`, where the solvers' C APIs make it necessary, and every `unsafe`
+block there carries a `// SAFETY:` comment saying why it is sound. The parts that matter most, for HiGHS:
 
-- **One instance, one owner.** A HiGHS instance is created and destroyed with the `Highs` value that owns it, and
-  every call that changes it borrows it mutably, so no two calls ever overlap on one instance.
+- **One instance, one owner.** A HiGHS instance is created with the `Highs` value that owns it and destroyed when
+  that value drops, and every call that changes it borrows it mutably, so no two calls ever overlap on one instance.
+  Destroying an instance also shuts down the HiGHS task scheduler of the destroying thread, so an instance dropped
+  while its thread is inside a run or a callback waits until that run ends and is destroyed then, on that thread.
 - **Callback data lives exactly as long as the run.** The data HiGHS's callback reaches lives on the stack of
   `solve`; it is installed just before HiGHS runs and uninstalled just after, before it is dropped, so no pointer
   outlives the run.
@@ -125,7 +156,22 @@ comment saying why it is sound. The parts that matter most:
 - **Only fields HiGHS sets are read.** For each callback kind, the trampoline reads only the fields HiGHS sets for
   it, and arrays only within the lengths HiGHS reports.
 
-The rustdoc of `culmen_highs::callback` states these arguments in full.
+The rustdoc of `culmen_highs::callback` states these arguments in full. SCIP's backend keeps the same rules with
+plugins in place of a trampoline:
+
+- **One instance, one owner.** A SCIP instance and every variable and constraint it created are owned by one value,
+  released and freed when it drops, on every path; its methods that change SCIP borrow it mutably.
+- **The run lives exactly as long as `SCIPsolve`.** Each plugin is included once with a pointer to a slot on the heap
+  that outlives the instance; a solve installs its run, which lives on the stack of `solve`, in that slot for the call
+  of `SCIPsolve` alone, and a guard clears it on every path before the run is dropped.
+- **Calls never overlap.** SCIP calls every plugin on the solving thread, one at a time; a plugin called inside
+  another's call finds the callback borrowed and does not deliver, and every change a context asks of SCIP is applied
+  after the callback returns, outside any borrow.
+- **Panics never cross the C boundary.** A panic in a callback is caught in the plugin, which asks SCIP to stop and
+  returns a result its callback allows; the panic resumes once `SCIPsolve` has returned.
+
+The documentation of `culmen_scip`'s private `callback` module (`crates/culmen_scip/src/callback/mod.rs`) states these
+arguments in full.
 
 ## See also
 

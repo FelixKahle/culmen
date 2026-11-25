@@ -4,10 +4,7 @@
 //! The class of a model, and the set of classes a backend solves.
 
 use core::fmt;
-use core::iter::FusedIterator;
-use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
 
-use itertools::Itertools;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +49,14 @@ impl ModelClass {
     #[must_use]
     pub const fn is_quadratic(self) -> bool {
         matches!(self, Self::Qp | Self::Miqp)
+    }
+
+    /// The class with integer columns and the same objective.
+    pub(crate) const fn with_integer(self) -> Self {
+        match self {
+            Self::Lp | Self::Milp => Self::Milp,
+            Self::Qp | Self::Miqp => Self::Miqp,
+        }
     }
 
     /// The class's bit in a [`ModelClasses`].
@@ -104,179 +109,10 @@ impl fmt::Display for ModelClass {
 )]
 pub struct ModelClasses(u8);
 
-impl ModelClasses {
-    /// No class.
-    pub const NONE: Self = Self(0);
-    /// Every class.
-    pub const ALL: Self = Self::of(&ModelClass::ALL);
-
-    /// The set of the given classes.
-    #[must_use]
-    pub const fn of(classes: &[ModelClass]) -> Self {
-        let mut bits = 0;
-        let mut i = 0;
-        while i < classes.len() {
-            bits |= classes[i].bit();
-            i += 1;
-        }
-        Self(bits)
-    }
-
-    /// The classes in either set.
-    #[must_use]
-    pub const fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-
-    /// The classes in both sets.
-    #[must_use]
-    pub const fn intersection(self, other: Self) -> Self {
-        Self(self.0 & other.0)
-    }
-
-    /// Whether `class` is in the set.
-    #[must_use]
-    pub const fn contains(self, class: ModelClass) -> bool {
-        self.0 & class.bit() != 0
-    }
-
-    /// Whether the set is empty.
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// The number of classes in the set.
-    #[must_use]
-    pub const fn len(self) -> usize {
-        self.0.count_ones() as usize
-    }
-
-    /// Each class of the set, in the order of [`ModelClass`]'s variants.
-    pub const fn iter(self) -> ModelClassesIter {
-        ModelClassesIter(self)
-    }
-}
-
-impl From<ModelClass> for ModelClasses {
-    fn from(class: ModelClass) -> Self {
-        Self(class.bit())
-    }
-}
-
-impl BitOr for ModelClasses {
-    type Output = Self;
-    fn bitor(self, other: Self) -> Self {
-        self.union(other)
-    }
-}
-
-impl BitOrAssign for ModelClasses {
-    fn bitor_assign(&mut self, other: Self) {
-        *self = self.union(other);
-    }
-}
-
-impl BitAnd for ModelClasses {
-    type Output = Self;
-    fn bitand(self, other: Self) -> Self {
-        self.intersection(other)
-    }
-}
-
-impl BitAndAssign for ModelClasses {
-    fn bitand_assign(&mut self, other: Self) {
-        *self = self.intersection(other);
-    }
-}
-
-impl FromIterator<ModelClass> for ModelClasses {
-    fn from_iter<I: IntoIterator<Item = ModelClass>>(iter: I) -> Self {
-        iter.into_iter().map(Self::from).fold(Self::NONE, Self::union)
-    }
-}
-
-impl Extend<ModelClass> for ModelClasses {
-    fn extend<I: IntoIterator<Item = ModelClass>>(&mut self, iter: I) {
-        *self = iter.into_iter().map(Self::from).fold(*self, Self::union);
-    }
-}
-
-impl IntoIterator for ModelClasses {
-    type Item = ModelClass;
-    type IntoIter = ModelClassesIter;
-
-    fn into_iter(self) -> ModelClassesIter {
-        self.iter()
-    }
-}
-
-impl From<Vec<ModelClass>> for ModelClasses {
-    fn from(classes: Vec<ModelClass>) -> Self {
-        classes.into_iter().collect()
-    }
-}
-
-impl From<ModelClasses> for Vec<ModelClass> {
-    fn from(classes: ModelClasses) -> Self {
-        classes.iter().collect()
-    }
-}
-
-/// `ModelClasses(LP | QP)`, each class by its abbreviation.
-impl fmt::Debug for ModelClasses {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ModelClasses({})", self.iter().format(" | "))
-    }
-}
-
-/// `{LP, QP}`, each class by its abbreviation; `{}` for none.
-impl fmt::Display for ModelClasses {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{{{}}}", self.iter().format(", "))
-    }
-}
-
 /// The classes of a [`ModelClasses`] set, in the order of [`ModelClass`]'s variants; made by
 /// [`ModelClasses::iter`].
 #[derive(Clone, Debug)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct ModelClassesIter(ModelClasses);
 
-impl ModelClassesIter {
-    /// Removes `class` from the remaining set and returns it.
-    fn remove(&mut self, class: ModelClass) -> ModelClass {
-        (self.0).0 &= !class.bit();
-        class
-    }
-}
-
-impl Iterator for ModelClassesIter {
-    type Item = ModelClass;
-
-    fn next(&mut self) -> Option<ModelClass> {
-        let rest = self.0;
-        ModelClass::ALL
-            .into_iter()
-            .find(|&c| rest.contains(c))
-            .map(|c| self.remove(c))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.0.len(), Some(self.0.len()))
-    }
-}
-
-impl DoubleEndedIterator for ModelClassesIter {
-    fn next_back(&mut self) -> Option<ModelClass> {
-        let rest = self.0;
-        ModelClass::ALL
-            .into_iter()
-            .rfind(|&c| rest.contains(c))
-            .map(|c| self.remove(c))
-    }
-}
-
-impl ExactSizeIterator for ModelClassesIter {}
-
-impl FusedIterator for ModelClassesIter {}
+crate::set::element_set!(ModelClasses, ModelClassesIter, ModelClass, u8, "classes", "{}");

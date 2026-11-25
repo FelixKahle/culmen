@@ -272,6 +272,7 @@ impl fmt::Display for Bounds {
 
 /// Why [`Bounds::new`] refused an interval.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum InvalidBounds {
     /// An end is NaN.
     NotANumber,
@@ -312,7 +313,7 @@ impl core::error::Error for InvalidBounds {}
 
 /// The serialized form of [`Bounds`]: an absent end is infinite, since JSON has no infinity.
 #[cfg(feature = "serde")]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BoundsForm {
     lower: Option<f64>,
     upper: Option<f64>,

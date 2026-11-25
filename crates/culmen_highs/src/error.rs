@@ -11,6 +11,7 @@ use crate::{ModelStatus, OptionValue};
 
 /// Why loading or solving with HiGHS failed.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum HighsError {
     /// A solve was asked for before a program was loaded.
     NotLoaded,
@@ -21,11 +22,10 @@ pub enum HighsError {
         /// How many there are.
         count: usize,
     },
-    /// HiGHS refused the program.
-    Load {
-        /// HiGHS's last error line, if it wrote one.
-        message: Option<String>,
-    },
+    /// HiGHS refused the program, as it refuses a matrix value at or above its `large_matrix_value`. HiGHS's log is
+    /// off outside a run, so its reason is not kept; [`files::write`](crate::files::write) the program and read it
+    /// with HiGHS to see it.
+    Load,
     /// HiGHS refused an option.
     Option {
         /// The option's name.
@@ -57,8 +57,8 @@ pub enum HighsError {
         /// HiGHS's last error line, if it wrote one.
         message: Option<String>,
     },
-    /// HiGHS's QP solver reported an ending that its own measures or the model contradict. HiGHS 1.15's QP solver
-    /// can end so after its iterates turned NaN.
+    /// HiGHS's QP solver reported an ending that its own measures or the model contradict, as HiGHS 1.16 still does
+    /// for a small share of QPs, and 1.15 did after its iterates turned NaN.
     UnsoundQp(UnsoundQp),
     /// HiGHS refused or failed an analysis, as it refuses a basis it finds singular.
     Analysis(Analysis),
@@ -72,15 +72,14 @@ pub enum HighsError {
     },
     /// HiGHS refused a start.
     Start,
-    /// HiGHS refused an edit of the program it holds, and may hold any model after it: HiGHS 1.15 can fail halfway
-    /// through adding columns. The backend then holds no program. A [`Solver`](culmen_core::Solver) loads the program
-    /// before the edit again; when that load fails too, it loads the program before the next call that runs the
-    /// backend, and until then a solve with the backend alone fails with [`HighsError::NotLoaded`].
+    /// HiGHS refused an edit of the program it holds, and may hold any model after it: HiGHS 1.15 could fail halfway
+    /// through adding columns, which no test has shown 1.16 doing, and the backend does not rely on it not. The backend
+    /// then holds no program. A [`Solver`](culmen_core::Solver) loads the program before the edit again; when that load
+    /// fails too, it loads the program before the next call that runs the backend, and until then a solve with the
+    /// backend alone fails with [`HighsError::NotLoaded`].
     Edit {
         /// The C function of HiGHS that refused it.
         call: &'static str,
-        /// HiGHS's last error line, if it wrote one.
-        message: Option<String>,
     },
     /// HiGHS 1.16 gets the analysis wrong for a program with the feature, so the backend refuses it: its feasibility
     /// relaxation keeps a semi column within its bounds, never at zero.
@@ -94,6 +93,7 @@ pub enum HighsError {
 
 /// Why the backend does not trust the ending HiGHS's QP solver reported.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum UnsoundQp {
     /// HiGHS reported an optimum whose relative primal-dual objective error exceeds
     /// [`Highs::QP_OBJECTIVE_ERROR`](crate::Highs::QP_OBJECTIVE_ERROR); the point need not be feasible.
@@ -126,7 +126,7 @@ impl fmt::Display for HighsError {
         match self {
             Self::NotLoaded => write!(f, "HiGHS: no program is loaded"),
             Self::TooLarge { what, count } => write!(f, "HiGHS: {count} {what} exceed HiGHS's 32-bit indices"),
-            Self::Load { message: m } => write!(f, "HiGHS: the program was refused{}", message(m)),
+            Self::Load => write!(f, "HiGHS: the program was refused"),
             Self::Option { name, value } => write!(f, "HiGHS: option `{name}` refused the value {value}"),
             Self::OutOfRange { name, value } => {
                 write!(f, "HiGHS: option `{name}` takes at most {}, not {value}", i32::MAX)
@@ -142,7 +142,7 @@ impl fmt::Display for HighsError {
                 crate::Highs::SEMI_UPPER_LIMIT
             ),
             Self::Start => write!(f, "HiGHS: the start was refused"),
-            Self::Edit { call, message: m } => write!(f, "HiGHS: {call} refused the edit{}", message(m)),
+            Self::Edit { call } => write!(f, "HiGHS: {call} refused the edit"),
             Self::AnalysisFeature { analysis, feature } => {
                 write!(f, "HiGHS: the {analysis} of a program with {feature} is refused")
             }
@@ -159,6 +159,7 @@ impl core::error::Error for HighsError {}
 /// assert_eq!(Dimension::Entries.to_string(), "entries");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Dimension {
     /// The columns.
     Columns,

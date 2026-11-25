@@ -11,9 +11,8 @@ use proc_macro_crate::{Error, FoundCrate, crate_name};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
-/// The crates that reach the layer, each with the path from its root to it, in the order they are tried: the most
-/// direct first.
-const HOMES: [(&str, &[&str]); 2] = [("culmen", &[]), ("culmen_core", &[])];
+/// The crates that reach the layer at their root, in the order they are tried: the most direct first.
+const HOMES: [&str; 2] = ["culmen", "culmen_core"];
 
 /// What a macro answers when the calling crate depends on none of `HOMES`.
 const NOT_FOUND: &str = "the modelling macros build a culmen model, reached through a dependency on `culmen` or \
@@ -42,25 +41,21 @@ pub(crate) fn path() -> syn::Result<TokenStream> {
 ///
 /// If `find` finds none of the crates in `HOMES`.
 fn path_with(mut find: impl FnMut(&str) -> Result<FoundCrate, Error>) -> syn::Result<TokenStream> {
-    for (package, inner) in HOMES {
+    for package in HOMES {
         match find(package) {
-            Ok(FoundCrate::Name(name)) => return Ok(path_in(&name, inner)),
-            Ok(FoundCrate::Itself) => return Ok(path_in(package, inner)),
+            Ok(FoundCrate::Name(name)) => return Ok(path_in(&name)),
+            Ok(FoundCrate::Itself) => return Ok(path_in(package)),
             Err(Error::CrateNotFound { .. }) => {}
-            Err(_) => {
-                let (first, inner) = HOMES[0];
-                return Ok(path_in(first, inner));
-            }
+            Err(_) => return Ok(path_in(HOMES[0])),
         }
     }
     Err(syn::Error::new(Span::call_site(), NOT_FOUND))
 }
 
-/// The path `::root::inner…`.
-fn path_in(root: &str, inner: &[&str]) -> TokenStream {
+/// The path `::root`.
+fn path_in(root: &str) -> TokenStream {
     let root = Ident::new(root, Span::call_site());
-    let inner = inner.iter().map(|module| Ident::new(module, Span::call_site()));
-    quote!(::#root #(::#inner)*)
+    quote!(::#root)
 }
 
 #[cfg(test)]
@@ -86,27 +81,25 @@ mod tests {
 
     #[test]
     fn test_each_home_alone_is_named_by_its_path() {
-        for ((package, _), expected) in HOMES.iter().zip(PATHS) {
+        for (package, expected) in HOMES.into_iter().zip(PATHS) {
             assert_eq!(path(&[(package, package)]), expected);
         }
     }
 
     #[test]
     fn test_the_most_direct_home_is_named() {
-        let all: Vec<(&str, &str)> = HOMES.iter().rev().map(|&(package, _)| (package, package)).collect();
+        let all: Vec<(&str, &str)> = HOMES.iter().rev().map(|&package| (package, package)).collect();
         assert_eq!(path(&all), PATHS[0]);
     }
 
     #[test]
     fn test_a_renamed_dependency_is_named_as_renamed() {
-        let (last, inner) = HOMES[HOMES.len() - 1];
-        let renamed: Vec<&str> = ["::renamed"].into_iter().chain(inner.iter().copied()).collect();
-        assert_eq!(path(&[(last, "renamed")]), renamed.join("::"));
+        assert_eq!(path(&[(HOMES[HOMES.len() - 1], "renamed")]), "::renamed");
     }
 
     #[test]
     fn test_a_home_itself_is_named_by_its_name() {
-        assert_eq!(path(&[(HOMES[0].0, "self")]), PATHS[0]);
+        assert_eq!(path(&[(HOMES[0], "self")]), PATHS[0]);
     }
 
     #[test]

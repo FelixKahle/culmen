@@ -1,0 +1,46 @@
+# Copyright (c) 2026 Felix Kahle
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "culmen_scip"
+description = "The SCIP backend of culmen: SCIP 10 built from source through scip-sys, every callback event through SCIP plugins, branch-and-price included, with typed options and statuses."
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+# The workspace's keywords name HiGHS; this crate names SCIP and branch-and-price instead.
+keywords = ["optimization", "linear-programming", "milp", "scip", "branch-and-price"]
+categories.workspace = true
+# The crate is published with the workspace; its build downloads SCIP's sources, so a `cargo publish` verifies it only
+# with network access.
+publish = true
+
+[features]
+# Serialize and deserialize the SCIP options, statuses and version.
+serde = ["dep:serde", "culmen_core/serde"]
+
+[dependencies]
+# The program, the backend seam and the contexts this crate implements.
+culmen_core.workspace = true
+# SCIP's C API and SCIP itself, built from source; the workspace entry says which features and why.
+scip-sys.workspace = true
+# The serde impls of the options and statuses, behind `serde`.
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The exact reference solver and the property-test strategies the tests compare SCIP with.
+culmen_testing.workspace = true
+# Property tests against the reference.
+proptest.workspace = true
+# The serde round trips run through JSON.
+serde_json.workspace = true
+
+# docs.rs documents the serde impls of the statuses too.
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true

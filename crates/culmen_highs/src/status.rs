@@ -5,12 +5,24 @@
 
 use core::fmt;
 
+use highs_sys::{
+    kHighsModelStatusHighsInterrupt, kHighsModelStatusInfeasible, kHighsModelStatusInterrupt,
+    kHighsModelStatusIterationLimit, kHighsModelStatusLoadError, kHighsModelStatusMemoryLimit,
+    kHighsModelStatusModelEmpty, kHighsModelStatusModelError, kHighsModelStatusNotset, kHighsModelStatusObjectiveBound,
+    kHighsModelStatusObjectiveTarget, kHighsModelStatusOptimal, kHighsModelStatusPostsolveError,
+    kHighsModelStatusPresolveError, kHighsModelStatusSolutionLimit, kHighsModelStatusSolveError,
+    kHighsModelStatusTimeLimit, kHighsModelStatusUnbounded, kHighsModelStatusUnboundedOrInfeasible,
+    kHighsModelStatusUnknown, kHighsSolutionStatusFeasible, kHighsSolutionStatusInfeasible, kHighsStatusOk,
+    kHighsStatusWarning,
+};
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// HiGHS's model status at the end of a run: every value of `HighsModelStatus` in HiGHS 1.16.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum ModelStatus {
     /// No status was set.
     NotSet,
@@ -58,28 +70,32 @@ pub enum ModelStatus {
 
 impl ModelStatus {
     /// The status of HiGHS's number for it.
+    #[expect(
+        non_upper_case_globals,
+        reason = "the patterns are HiGHS's constants under their C names"
+    )]
     pub(crate) const fn from_raw(raw: i32) -> Self {
         match raw {
-            0 => Self::NotSet,
-            1 => Self::LoadError,
-            2 => Self::ModelError,
-            3 => Self::PresolveError,
-            4 => Self::SolveError,
-            5 => Self::PostsolveError,
-            6 => Self::ModelEmpty,
-            7 => Self::Optimal,
-            8 => Self::Infeasible,
-            9 => Self::UnboundedOrInfeasible,
-            10 => Self::Unbounded,
-            11 => Self::ObjectiveBound,
-            12 => Self::ObjectiveTarget,
-            13 => Self::TimeLimit,
-            14 => Self::IterationLimit,
-            15 => Self::Unknown,
-            16 => Self::SolutionLimit,
-            17 => Self::Interrupt,
-            18 => Self::MemoryLimit,
-            19 => Self::HighsInterrupt,
+            kHighsModelStatusNotset => Self::NotSet,
+            kHighsModelStatusLoadError => Self::LoadError,
+            kHighsModelStatusModelError => Self::ModelError,
+            kHighsModelStatusPresolveError => Self::PresolveError,
+            kHighsModelStatusSolveError => Self::SolveError,
+            kHighsModelStatusPostsolveError => Self::PostsolveError,
+            kHighsModelStatusModelEmpty => Self::ModelEmpty,
+            kHighsModelStatusOptimal => Self::Optimal,
+            kHighsModelStatusInfeasible => Self::Infeasible,
+            kHighsModelStatusUnboundedOrInfeasible => Self::UnboundedOrInfeasible,
+            kHighsModelStatusUnbounded => Self::Unbounded,
+            kHighsModelStatusObjectiveBound => Self::ObjectiveBound,
+            kHighsModelStatusObjectiveTarget => Self::ObjectiveTarget,
+            kHighsModelStatusTimeLimit => Self::TimeLimit,
+            kHighsModelStatusIterationLimit => Self::IterationLimit,
+            kHighsModelStatusUnknown => Self::Unknown,
+            kHighsModelStatusSolutionLimit => Self::SolutionLimit,
+            kHighsModelStatusInterrupt => Self::Interrupt,
+            kHighsModelStatusMemoryLimit => Self::MemoryLimit,
+            kHighsModelStatusHighsInterrupt => Self::HighsInterrupt,
             other => Self::Other(other),
         }
     }
@@ -124,6 +140,7 @@ impl fmt::Display for ModelStatus {
 /// Whether a primal or dual solution exists: HiGHS's `kHighsSolutionStatus*`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum SolutionStatus {
     /// There is none.
     None,
@@ -135,10 +152,14 @@ pub enum SolutionStatus {
 
 impl SolutionStatus {
     /// The status of HiGHS's number for it; an unknown number reads as none.
+    #[expect(
+        non_upper_case_globals,
+        reason = "the patterns are HiGHS's constants under their C names"
+    )]
     pub(crate) const fn from_raw(raw: i32) -> Self {
         match raw {
-            1 => Self::Infeasible,
-            2 => Self::Feasible,
+            kHighsSolutionStatusInfeasible => Self::Infeasible,
+            kHighsSolutionStatusFeasible => Self::Feasible,
             _ => Self::None,
         }
     }
@@ -147,6 +168,7 @@ impl SolutionStatus {
 /// What a HiGHS call returned: HiGHS's `kHighsStatus*`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
 pub enum CallStatus {
     /// The call succeeded.
     Ok,
@@ -158,10 +180,14 @@ pub enum CallStatus {
 
 impl CallStatus {
     /// The status of HiGHS's number for it; an unknown number reads as an error.
+    #[expect(
+        non_upper_case_globals,
+        reason = "the patterns are HiGHS's constants under their C names"
+    )]
     pub(crate) const fn from_raw(raw: i32) -> Self {
         match raw {
-            0 => Self::Ok,
-            1 => Self::Warning,
+            kHighsStatusOk => Self::Ok,
+            kHighsStatusWarning => Self::Warning,
             _ => Self::Error,
         }
     }

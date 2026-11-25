@@ -40,7 +40,9 @@ jobs:
             | jq -r '.packages[] | select(.name == "culmen") | .version')
           test "$GITHUB_REF_NAME" = "v$version" \
             || { echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $version"; exit 1; }
-      # highs-sys compiles HiGHS with cmake and generates its bindings with libclang.
+      # highs-sys and scip-sys compile HiGHS, SCIP and SoPlex with cmake and generate their bindings with libclang;
+      # scip-sys downloads SCIP's sources from github.com as it builds, which the semver check and the publish
+      # verification below both do.
       - name: Install cmake and libclang
         run: sudo apt-get update && sudo apt-get install -y cmake libclang-dev
       - uses: dtolnay/rust-toolchain@master
@@ -54,11 +56,15 @@ jobs:
         with:
           # The pinned toolchain installed above, not the action's own stable.
           rust-toolchain: manual
-          # culmen_testing is never published, so it has no release to compare with.
-          exclude: culmen_testing
+          # culmen_testing is never published, so it has no release to compare with. culmen_scip has none before
+          # 0.4.0, and cargo-semver-checks fails on a crate crates.io does not know; remove it from this list once
+          # culmen_scip 0.4.0 is published.
+          exclude: culmen_testing,culmen_scip
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
-      # Cargo publishes the crates in dependency order and verifies each one builds from its package first.
+      # Cargo publishes the crates in dependency order and verifies each one builds from its package first:
+      # culmen_core, then culmen_highs, culmen_macros and culmen_scip, then culmen, which depends on all four.
+      # culmen_testing is `publish = false` and left out.
       - name: Publish
         run: cargo publish --workspace
         env:

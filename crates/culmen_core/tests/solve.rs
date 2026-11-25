@@ -15,9 +15,9 @@ use proptest::prelude::*;
 
 use culmen_core::{
     ActionError, AddedRow, Backend, Callback, Col, CutContext, Events, Found, HeuristicContext, Improvement,
-    InvalidBounds, LazyContext, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, Progress,
-    Request, Script, ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, Var, bounds,
-    stop_fn,
+    InvalidBounds, LazyContext, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, PriceMode,
+    Priced, ProgramPlan, Progress, Request, Script, ScriptStatus, Settings, Solution, SolutionContext, Solver, Step,
+    StopReason, TiVec, Var, bounds, stop_fn,
 };
 
 fn secs(s: u64) -> Duration {
@@ -222,8 +222,12 @@ fn test_every_generic_event_reaches_a_backend_specific_callback() {
     ];
     let mut script = Script::new(steps, Outcome::Unbounded);
     let mut everything = Everything::default();
-    script.load(&m.build().unwrap()).unwrap();
-    let solved = script.solve(&culmen_core::Settings::new(), &mut everything).unwrap();
+    let program = m.build().unwrap();
+    script.load(&program).unwrap();
+    let mut priced = Priced::new(&program, Script::CLASSES);
+    let solved = script
+        .solve(&culmen_core::Settings::new(), &mut everything, &mut priced)
+        .unwrap();
     assert_eq!(solved.outcome, Outcome::Unbounded);
     assert_eq!(
         everything.seen,
@@ -346,7 +350,12 @@ fn test_an_action_error_on_invalid_bounds_names_them_as_its_source() {
 #[test]
 fn test_solving_unloaded_script_is_refused() {
     let mut script = Script::optimal(0.0, Vec::new());
-    assert!(script.solve(&culmen_core::Settings::new(), &mut ()).is_err());
+    let mut priced = Priced::new(&ProgramPlan::new().build().unwrap(), Script::CLASSES);
+    assert!(
+        script
+            .solve(&culmen_core::Settings::new(), &mut (), &mut priced)
+            .is_err()
+    );
 }
 
 /// An observer that counts progress reports.
@@ -493,10 +502,34 @@ fn test_script_steps_name_their_event_kind() {
             relaxation: TiVec::new(),
         },
         Step::Heuristic(p),
+        Step::Price {
+            progress: p,
+            mode: PriceMode::Farkas,
+            duals: TiVec::new(),
+        },
         Step::Note(String::new()),
     ]
     .iter()
-    .map(Step::event)
+    .filter_map(Step::event)
     .collect();
     assert_eq!(kinds, Events::ALL);
+    let price = Step::Price {
+        progress: p,
+        mode: PriceMode::Farkas,
+        duals: TiVec::new(),
+    };
+    assert_eq!(price.event(), None);
+}
+
+#[test]
+fn test_a_callbacks_row_is_checked_with_its_coefficients_added_up() {
+    let x = Col::new(0);
+    let twice = (1e308 * x + 1e308 * x).leq(1.0);
+    assert_eq!(
+        culmen_core::context::check_constraint(&twice, 1),
+        Err(ActionError::NotFinite { col: x })
+    );
+    // Terms that cancel are fine: the row is `0 x <= 1`.
+    let cancel = (1e308 * x - 1e308 * x).leq(1.0);
+    assert!(culmen_core::context::check_constraint(&cancel, 1).is_ok());
 }

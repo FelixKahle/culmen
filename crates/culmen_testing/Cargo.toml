@@ -13,11 +13,18 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+# The programs, the backend seam and the solver the infrastructure is about.
 culmen_core.workspace = true
+# `array_combinations` in the strategies, which std lacks.
 itertools.workspace = true
+# The big integers the reference's rationals are made of.
 num-bigint.workspace = true
+# Exact rational arithmetic for the reference solver, so it shares no floating-point reasoning with the code under
+# test.
 num-rational.workspace = true
+# `Zero`, `One` and `Signed` over the reference's rationals.
 num-traits.workspace = true
+# The strategies are proptest strategies.
 proptest.workspace = true
 
 [lints]

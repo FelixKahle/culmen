@@ -1,7 +1,7 @@
 # Getting started
 
-This page takes you from an empty project to a solved model: what to install, which features to pick, a first
-model written two ways, and how to read its solution.
+This page takes you from an empty project to a solved model: what to install, which features and backend to pick, a
+first model written two ways, and how to read its solution.
 
 ## Requirements
 
@@ -9,17 +9,21 @@ model written two ways, and how to read its solution.
 - For the default `highs` feature: **cmake** and **libclang**. The HiGHS backend builds HiGHS 1.16 from the
   sources bundled with the `highs-sys` crate, so no system HiGHS is needed, but its C++ build needs both tools.
   The first build takes a minute or two; later builds reuse it.
+- For the `scip` feature: **cmake**, a **C and C++ compiler**, **libclang**, and **network access** to `github.com`
+  while it builds. The SCIP backend downloads the SCIP Optimization Suite 10.0.2 sources and compiles SCIP and SoPlex
+  from them, so no system SCIP is needed. The first build takes a few minutes and about 500 MB of disk, once per
+  profile and feature set ([Building SCIP](scip.md#building-scip)).
 
-Without the `highs` feature nothing native is built, and culmen is pure Rust.
+Without the `highs` and `scip` features nothing native is built, and culmen is pure Rust.
 
 ## Adding culmen
 
-culmen is not yet on crates.io. Depend on it by path or by git:
+culmen is on crates.io:
 
 ```toml
 [dependencies]
-culmen = { path = "../culmen/crates/culmen", features = ["macros"] }
-# or: culmen = { git = "<repository url>", features = ["macros"] }
+culmen = { version = "0.4", features = ["macros"] }
+# the main branch instead: culmen = { git = "https://github.com/FelixKahle/culmen", features = ["macros"] }
 ```
 
 Depend on `culmen` only. It re-exports everything a model and a solve need; the other crates are its parts.
@@ -29,8 +33,9 @@ Depend on `culmen` only. It re-exports everything a model and a solve need; the 
 | Feature | Default | What it adds |
 |---|---|---|
 | `highs` | on | The HiGHS backend: `culmen::Highs`, and the whole backend crate as `culmen::highs`. |
+| `scip` | off | The SCIP backend: `culmen::Scip`, and the whole backend crate as `culmen::scip` (see [SCIP](scip.md)). |
 | `macros` | off | `variable!`, `constraint!`, `objective!` and `sum!` (see [Macros](macros.md)). |
-| `serde` | off | `Serialize` and `Deserialize` for the plain data, and for the HiGHS options and statuses with `highs` (see [Serialization](testing.md#serialization)). |
+| `serde` | off | `Serialize` and `Deserialize` for the plain data, and for the options and statuses of each backend enabled (see [Serialization](testing.md#serialization)). |
 
 With `default-features = false` you get the modelling layer, the program and the solve API without a solver: enough to
 build and inspect models, write LP files, or drive a backend of your own.
@@ -40,8 +45,28 @@ build and inspect models, write LP files, or drive a backend of your own.
 `Start`, `Outcome`, `Solution`, `Solved`, `SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`,
 `LogLine`, `Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the functions `product`,
 `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`, `absolute_gap!`, `weight!`, `threads!` and
-`solutions!`, and, with their features, `Highs` and the modelling macros. Everything else is at the
-crate root, `culmen::…`.
+`solutions!`, the [context traits](callbacks.md#contexts) a callback calls (`LogContext`, `PollContext`, `LazyContext`
+and the rest) with `Unsupported`, and, with their features, `Highs`, `Scip` and the modelling macros. Everything else
+is at the crate root, `culmen::…`.
+
+## Choosing a backend
+
+The backend is a type: `Solver::new(Highs::new(), program)` or `Solver::new(Scip::new(), program)`. The model, the
+request and the outcome are the same for both, so switching is one word.
+
+| Need | HiGHS (`highs`, default) | SCIP (`scip`) |
+|---|---|---|
+| LPs, MILPs, convex QPs | yes | yes; a quadratic objective through an epigraph, exact to SCIP's tolerance |
+| A convex quadratic objective over integer columns (MIQP) | no | yes |
+| Lazy constraints, user cuts | no | yes |
+| Pricing at every node (branch-and-price) | no; price in an outer loop with [edits](solving.md#editing-a-loaded-program) | yes |
+| Duals, basis, ranging, rays, IIS, feasibility relaxation | yes | no |
+| Semi-continuous and semi-integer columns, several objectives | yes | no |
+| Reading and writing MPS and LP files with the solver's own readers | yes | no; culmen writes [LP files](program.md#lp-files) itself |
+| Threads | a parallel MIP search | one thread per solve |
+| Build | HiGHS's bundled sources, a minute or two | SCIP's sources downloaded from GitHub, a few minutes and 500 MB |
+
+Start with HiGHS. Enable `scip` for what only SCIP does, and both may be enabled at once: a program solves on either.
 
 ## A first model
 
@@ -121,8 +146,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Each macro expands to the methods of the first version; [Macros](macros.md#expansions) shows each form beside the
-calls it writes.
+Each macro expands to the method calls of the first model; [Macros](macros.md#expansions) shows each form beside
+the calls it writes.
 
 ## Errors
 
@@ -136,14 +161,16 @@ as above. The ones you meet first:
 | `InvalidBounds` | `Bounds::new` and its conversions | [The program as data](program.md#bounds) |
 | `LoadError` | `Solver::new`: a model class the backend does not solve, a feature it does not take, or the backend's own error | [Solving](solving.md#model-classes-and-refusal) |
 | `HighsError` | `Solver::solve` with HiGHS, and inside `LoadError` from `Solver::new` | [HiGHS](highs.md#errors) |
+| `ScipError` | `Solver::solve` with SCIP, and inside `LoadError` from `Solver::new` | [SCIP](scip.md#errors) |
 | `ActionError` | actions inside a callback | [Callbacks](callbacks.md#contexts) |
 
-Each error's message starts with the name of the type it concerns (`Model:`, `Program:`, `Bounds:`, `Solver:`,
-`HiGHS:`), and a model error names the variable or constraint at fault by the name you gave it.
+Each error's message starts with what it concerns (`Model:`, `Program:`, `Bounds:`, `Solver:`, `HiGHS:`, `SCIP:`,
+`callback action:`, `model file:`), and a model error names the variable or constraint at fault by the name you gave
+it.
 
 ## Examples
 
-The `culmen` crate ships six examples:
+The `culmen` crate ships eight examples:
 
 - `cargo run -p culmen --example knapsack`: the knapsack above, with five items.
 - `cargo run -p culmen --release --example warehouse -- 20`: a warehouse slotting problem of 60 products and 30
@@ -152,6 +179,10 @@ The `culmen` crate ships six examples:
   from the last basis ([Editing a loaded program](solving.md#editing-a-loaded-program)).
 - `cargo run -p culmen --example column_generation`: cutting stock by column generation, a pattern appended to the
   master each round.
+- `cargo run -p culmen --example branch_and_price --features scip`: the same cutting stock priced at every node of
+  SCIP's search ([Pricing](scip.md#pricing)).
+- `cargo run -p culmen --example lazy_constraints --features scip`: a round trip through eight towns, its subtours cut
+  off by lazy constraints on SCIP ([Lazy constraints](scip.md#lazy-constraints)).
 
 `knapsack` and `warehouse` each have a `_macros` twin, run with `--features macros`, that writes the same model with
 the macros.

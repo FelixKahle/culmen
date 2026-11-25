@@ -10,9 +10,11 @@
 //! column is read from its definition, zero or in its bounds: every choice of zero or bounds for every semi column is
 //! solved as a program without semi columns, and the best of them is the optimum.
 
+use std::collections::BTreeMap;
+
 use culmen_core::{
-    Bounds, Col, Constraint, Integrality, ModelClasses, NewCol, NewRow, Program, ProgramColumn, ProgramFeatures,
-    ProgramPlan, ProgramRow, Row, Sense,
+    Bounds, Col, Constraint, Integrality, ModelClass, ModelClasses, NewCol, NewRow, Program, ProgramColumn,
+    ProgramFeature, ProgramFeatures, ProgramPlan, ProgramRow, Row, Sense,
 };
 use num_bigint::BigInt;
 use num_rational::BigRational;
@@ -41,6 +43,7 @@ impl Reference {
 }
 
 /// One inequality `Σ a · x <= b` over the continuous columns.
+#[derive(Debug)]
 struct Inequality {
     a: Vec<BigRational>,
     b: BigRational,
@@ -50,10 +53,14 @@ struct Inequality {
 ///
 /// # Panics
 ///
-/// When a column has an infinite bound, the integer box holds more than a million points, or there are more than
-/// twelve semi columns.
+/// When the program has a quadratic objective, which the vertex enumeration cannot optimize; when a column has an
+/// infinite bound, the integer box holds more than a million points, or there are more than twelve semi columns.
 #[must_use]
 pub fn solve(program: &Program) -> Reference {
+    assert!(
+        program.quadratic().is_empty(),
+        "the reference solves linear objectives only, and this program has a quadratic one"
+    );
     let semi: Vec<Col> = program
         .cols()
         .filter(|&col| program.columns()[col].integrality.is_semi())
@@ -82,6 +89,10 @@ fn better(sense: Sense, a: Reference, b: Reference) -> Reference {
 
 /// The program without semi columns in which the `k`-th semi column is zero when bit `k` of `on` is clear, and
 /// continuous or integer in its bounds when it is set.
+///
+/// # Panics
+///
+/// When the program so changed does not build, which a choice of a valid program's semi columns never makes.
 fn chosen(program: &Program, semi: &[Col], on: u32) -> Program {
     let mut plan = ProgramPlan::from(program.clone());
     for (k, &col) in semi.iter().enumerate() {
@@ -99,15 +110,25 @@ fn chosen(program: &Program, semi: &[Col], on: u32) -> Program {
 }
 
 /// Solves a tiny LP or MILP without semi columns exactly.
+///
+/// # Panics
+///
+/// When a column has an infinite bound, or the integer box holds more than a million points.
 fn solve_box(program: &Program) -> Reference {
     let ints: Vec<usize> = (0..program.num_cols()).filter(|&j| is_integer(program, j)).collect();
     let conts: Vec<usize> = (0..program.num_cols()).filter(|&j| !is_integer(program, j)).collect();
     let ranges = integer_ranges(program, &ints);
-    let points: i64 = ranges.iter().map(|&(l, u)| (u - l + 1).max(0)).product();
-    assert!(points <= 1_000_000, "the integer box is too large to enumerate");
     if ranges.iter().any(|&(l, u)| l > u) {
         return Reference::Infeasible;
     }
+    // Counted with checked arithmetic, so a box beyond `i64` is refused as too large rather than overflowing.
+    let points = ranges
+        .iter()
+        .try_fold(1_i64, |n, &(l, u)| n.checked_mul(u.checked_sub(l)?.checked_add(1)?));
+    assert!(
+        points.is_some_and(|points| points <= 1_000_000),
+        "the integer box is too large to enumerate"
+    );
     let mut best: Option<BigRational> = None;
     let mut point: Vec<i64> = ranges.iter().map(|&(l, _)| l).collect();
     loop {
@@ -356,11 +377,23 @@ pub struct Refused {
 /// - A new constraint is the row of its terms in the bounds `lower - constant ..= upper - constant`: its bounds as
 ///   given are a valid interval, its constant is finite, and no finite end becomes infinite by the move.
 /// - A new column is appended after every column, and each entry `(row, a)` adds the term `(column, a)` to `row`.
-/// - The edited plan builds, the backend solves its class (`classes`) and takes its features (`features`).
+/// - Every column's cost is finite, and a semi column's bounds are `lower ..= upper` with `0 < lower` and `upper`
+///   finite. In every row, the coefficients of each column, added up in the order given, are finite.
+/// - The backend solves the edited program's class (`classes`): an LP, or a MILP once a column is integer or semi,
+///   a QP or MIQP alike with a quadratic objective. It takes its features (`features`): a semi-continuous or
+///   semi-integer column, and the program's further objectives.
+///
+/// The rules are judged here, without the checks of `culmen_core` that the code under test calls; the edited plan is
+/// then built into the program returned, and an edit changes nothing else a program is checked for (its offset, its
+/// quadratic part, its further objectives), so a plan these rules accept builds.
 ///
 /// # Errors
 ///
 /// [`Refused`] naming the first rule `op` breaks.
+///
+/// # Panics
+///
+/// When a plan these rules accept does not build: the rules and `Program::from_plan` disagree.
 pub fn edit_plan(
     program: &Program,
     op: &EditOp,
@@ -392,22 +425,74 @@ pub fn edit_plan(
         }
         EditOp::AddCols(new) => new.iter().try_for_each(|new| append_column(&mut plan, new, num_rows))?,
     }
-    let built = plan
-        .build()
-        .map_err(|e| refused(format!("the edited plan does not build: {e}")))?;
-    if !classes.contains(built.class()) {
-        return Err(refused(format!(
-            "the backend solves {classes}, not a {}",
-            built.class()
-        )));
+    check_columns_and_rows(&plan)?;
+    let (class, used) = class_and_features(&plan);
+    if !classes.contains(class) {
+        return Err(refused(format!("the backend solves {classes}, not a {class}")));
     }
-    if !features.contains_all(built.features()) {
-        return Err(refused(format!(
-            "the backend takes {features}, not {}",
-            built.features()
-        )));
+    if !features.contains_all(used) {
+        return Err(refused(format!("the backend takes {features}, not {used}")));
     }
-    Ok(built)
+    let built = plan.build();
+    Ok(built.unwrap_or_else(|e| panic!("the edit rules accept a plan Program::from_plan refuses: {e}")))
+}
+
+/// Checks every cost, every semi column's bounds, and every row's coefficients added up per column.
+///
+/// # Errors
+///
+/// [`Refused`] for the first cost, semi column or row the rules do not allow.
+fn check_columns_and_rows(plan: &ProgramPlan) -> Result<(), Refused> {
+    for (col, column) in plan.columns.iter_enumerated() {
+        if !column.cost.is_finite() {
+            return Err(refused(format!("{col:?} costs {}, not a finite number", column.cost)));
+        }
+        let semi = matches!(
+            column.integrality,
+            Integrality::SemiContinuous | Integrality::SemiInteger
+        );
+        let (lower, upper) = (column.bounds.lower(), column.bounds.upper());
+        if semi && !(lower > 0.0 && upper.is_finite()) {
+            return Err(refused(format!("semi {col:?} has bounds {lower} ..= {upper}")));
+        }
+    }
+    for (row, data) in plan.rows.iter_enumerated() {
+        let mut sums: BTreeMap<Col, f64> = BTreeMap::new();
+        for &(col, value) in &data.terms {
+            *sums.entry(col).or_insert(0.0) += value;
+        }
+        if let Some((col, sum)) = sums.into_iter().find(|(_, sum)| !sum.is_finite()) {
+            return Err(refused(format!("{col:?} has the coefficient {sum} in {row:?}")));
+        }
+    }
+    Ok(())
+}
+
+/// The class of the program a plan builds, and the features it uses, from its columns and objectives.
+fn class_and_features(plan: &ProgramPlan) -> (ModelClass, ProgramFeatures) {
+    let integral = plan
+        .columns
+        .iter()
+        .any(|c| !matches!(c.integrality, Integrality::Continuous));
+    let class = match (integral, plan.quadratic.is_empty()) {
+        (false, true) => ModelClass::Lp,
+        (true, true) => ModelClass::Milp,
+        (false, false) => ModelClass::Qp,
+        (true, false) => ModelClass::Miqp,
+    };
+    let mut used = Vec::new();
+    for (integrality, feature) in [
+        (Integrality::SemiContinuous, ProgramFeature::SemiContinuous),
+        (Integrality::SemiInteger, ProgramFeature::SemiInteger),
+    ] {
+        if plan.columns.iter().any(|c| c.integrality == integrality) {
+            used.push(feature);
+        }
+    }
+    if plan.objectives.are_several() {
+        used.push(ProgramFeature::MultipleObjectives);
+    }
+    (class, ProgramFeatures::of(&used))
 }
 
 /// A refusal for `reason`.
@@ -565,6 +650,26 @@ mod tests {
         assert_eq!(solve(&m.build().unwrap()).objective(), Some(3.0));
         m.add_constraint(y.leq(2.9));
         assert_eq!(solve(&m.build().unwrap()), Reference::Infeasible);
+    }
+
+    #[test]
+    #[should_panic(expected = "the reference solves linear objectives only")]
+    fn test_the_reference_refuses_a_quadratic_objective() {
+        let mut m = Model::new();
+        let x = m.add_var(Var::continuous().upper(4));
+        m.minimize(x * x - x);
+        let _ = solve(&m.build().unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected = "the integer box is too large to enumerate")]
+    fn test_the_reference_refuses_an_integer_box_beyond_i64() {
+        // Each column has 8e18 + 1 whole values, which i64 counts; the box has their square, which it does not.
+        let mut m = Model::new();
+        let x = m.add_var(Var::integer().bounds(-4e18, 4e18));
+        let y = m.add_var(Var::integer().bounds(-4e18, 4e18));
+        m.minimize(x + y);
+        let _ = solve(&m.build().unwrap());
     }
 
     /// Minimize `x + y` over `x`, `y` in `[0, 4]` and the row `x + y >= 1`.

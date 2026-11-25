@@ -93,7 +93,8 @@ impl ProgramColumn {
     }
 }
 
-/// A column to append to a [`Solver`](crate::Solver)'s program: its data and its coefficients in rows the program already has.
+/// A column to append to a [`Solver`](crate::Solver)'s program: its data and its coefficients in rows the program
+/// already has.
 ///
 /// Its coefficient in every further objective is zero, and it has no quadratic term.
 ///
@@ -220,9 +221,18 @@ impl ProgramPlan {
     }
 
     /// Adds an unnamed row and returns its handle.
-    pub fn row(&mut self, bounds: Bounds, terms: impl IntoIterator<Item = (Col, f64)>) -> Row {
+    ///
+    /// ```
+    /// use culmen_core::{Bounds, ProgramColumn, ProgramPlan};
+    ///
+    /// let mut plan = ProgramPlan::new();
+    /// let x = plan.col(ProgramColumn::binary(1.0));
+    /// let free = plan.row(.., [(x, 1.0)]);
+    /// assert_eq!(plan.rows[free].bounds, Bounds::FREE);
+    /// ```
+    pub fn row(&mut self, bounds: impl Into<Bounds>, terms: impl IntoIterator<Item = (Col, f64)>) -> Row {
         self.rows.push_and_get_key(ProgramRow {
-            bounds,
+            bounds: bounds.into(),
             terms: terms.into_iter().collect(),
             name: None,
         })

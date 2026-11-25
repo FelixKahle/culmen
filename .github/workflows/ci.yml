@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Every pull request and every push to main is formatted, linted, documented and tested on Linux. The jobs `lint`
-# and `test` are the status checks branch protection requires before anything merges into main. The jobs `semver`
+# and `test` are the status checks branch protection requires before anything merges into main. Both compile HiGHS
+# and SCIP from source: highs-sys builds HiGHS's bundled sources, and scip-sys downloads the SCIP Optimization Suite
+# sources from github.com during the build and compiles SCIP and SoPlex, so the runner needs cmake, a C and C++
+# compiler (preinstalled on ubuntu-latest), libclang for bindgen, and network access to github.com. The jobs `semver`
 # and `deny` report early what a release would regret: a breaking change the version does not allow, or a dependency
 # with an advisory, a licence or a source outside deny.toml. They are not required checks.
 name: CI
@@ -33,16 +36,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # highs-sys compiles HiGHS with cmake and generates its bindings with libclang.
+      # highs-sys and scip-sys compile HiGHS, SCIP and SoPlex with cmake and generate their bindings with libclang.
       - name: Install cmake and libclang
         run: sudo apt-get update && sudo apt-get install -y cmake libclang-dev
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
+      # The cache keeps the target directory's dependency artifacts, the build-script outputs of highs-sys and scip-sys
+      # among them, so a run whose Cargo.lock and toolchain match reuses the compiled HiGHS and SCIP instead of
+      # downloading and compiling SCIP again. It is saved after a failed run too, so a failure after the long first
+      # build does not throw that build away.
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Format
         run: cargo fmt --all --check
+      # Every feature: both backends, the macros and serde, and every example, the SCIP ones included.
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features
       - name: Docs
@@ -59,12 +69,20 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
-      # glibc fills freed memory with this byte, so a use of freed memory across the HiGHS boundary crashes every run
-      # instead of only when the memory has been reused.
+        with:
+          cache-on-failure: true
+      # glibc fills freed memory with this byte, so a use of freed memory across the HiGHS or SCIP boundary crashes
+      # every run instead of only when the memory has been reused.
+      #
+      # Every feature: the facade with both backends, so the guide's doctests of every page run, and the examples are
+      # built, the SCIP ones included.
       - name: Test, every feature
         env:
           MALLOC_PERTURB_: "165"
         run: cargo test --workspace --all-features
+      # No default features: the facade without a backend, which must build and test on its own, and every crate
+      # without serde. culmen_highs and culmen_scip are workspace members, so they still build and their own tests
+      # still run.
       - name: Test, no default features
         env:
           MALLOC_PERTURB_: "165"
@@ -78,7 +96,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # The check builds rustdoc JSON of culmen_highs, which compiles HiGHS through highs-sys.
+      # The check builds rustdoc JSON of culmen_highs and of culmen with its features, which compiles HiGHS through
+      # highs-sys and SCIP through scip-sys, the latter downloading SCIP's sources.
       - name: Install cmake and libclang
         run: sudo apt-get update && sudo apt-get install -y cmake libclang-dev
       - uses: dtolnay/rust-toolchain@master
@@ -89,8 +108,10 @@ jobs:
         with:
           # The pinned toolchain installed above, not the action's own stable.
           rust-toolchain: manual
-          # culmen_testing is never published, so it has no release to compare with.
-          exclude: culmen_testing
+          # culmen_testing is never published, so it has no release to compare with. culmen_scip has none before
+          # 0.4.0, and cargo-semver-checks fails on a crate crates.io does not know; remove it from this list once
+          # culmen_scip 0.4.0 is published.
+          exclude: culmen_testing,culmen_scip
 
   # Checks the dependency tree against deny.toml: no RustSec advisory, only the allowed licences, only crates.io.
   deny:

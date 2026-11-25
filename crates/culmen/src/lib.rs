@@ -5,9 +5,10 @@
 //! solved on a switchable backend, with a live view of the search (best solution, bound, gap, solver log) and a
 //! cooperative stop.
 //!
-//! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as [`Highs`] (and
-//! the whole backend as [`highs`]) with the default `highs` feature, and the modelling macros with the `macros`
-//! feature. [`prelude`] holds what a model and a solve need.
+//! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as [`Highs`] (and the
+//! whole backend as [`highs`]) with the default `highs` feature, the SCIP backend as `Scip` (and the whole backend as
+//! `scip`) with the `scip` feature, and the modelling macros with the `macros` feature. [`prelude`] holds what a model
+//! and a solve need.
 //!
 //! # A model, two ways
 //!
@@ -131,8 +132,13 @@
 //! # Features
 //!
 //! - **`highs`** (default): the HiGHS backend, built from HiGHS's bundled sources (needs cmake and libclang).
+//! - **`scip`**: the SCIP backend, for MIQPs, lazy constraints, user cuts and branch-and-price. Not a default: its
+//!   build downloads the SCIP Optimization Suite sources from GitHub and compiles SCIP and SoPlex with cmake (needs
+//!   cmake, a C and C++ compiler, libclang and network access), which takes several times as long as HiGHS's build,
+//!   and most models are served by HiGHS alone.
 //! - **`macros`**: `variable!`, `constraint!`, `objective!` and `sum!`.
-//! - **`serde`**: the plain data serializes and reads back.
+//! - **`serde`**: the plain data serializes and reads back, and so do the options and statuses of each backend
+//!   enabled.
 
 pub use culmen_core::*;
 #[cfg(feature = "highs")]
@@ -141,12 +147,16 @@ pub use culmen_highs as highs;
 pub use culmen_highs::Highs;
 #[cfg(feature = "macros")]
 pub use culmen_macros::{constraint, objective, sum, variable};
+#[cfg(feature = "scip")]
+pub use culmen_scip as scip;
+#[cfg(feature = "scip")]
+pub use culmen_scip::Scip;
 
 /// The README and the user guide under `docs/`, compiled as doctests so every snippet in it stays true. A page whose
 /// snippets need a feature is included only with that feature.
 #[cfg(doctest)]
 mod docs {
-    #[cfg(all(feature = "highs", feature = "macros"))]
+    #[cfg(all(feature = "highs", feature = "scip", feature = "macros"))]
     #[doc = include_str!("../../../README.md")]
     struct Readme;
 
@@ -183,6 +193,10 @@ mod docs {
     #[doc = include_str!("../../../docs/highs.md")]
     struct HighsBackend;
 
+    #[cfg(feature = "scip")]
+    #[doc = include_str!("../../../docs/scip.md")]
+    struct ScipBackend;
+
     #[cfg(feature = "highs")]
     #[doc = include_str!("../../../docs/testing.md")]
     struct Testing;
@@ -200,11 +214,19 @@ pub mod prelude {
     pub use culmen_highs::Highs;
     #[cfg(feature = "macros")]
     pub use culmen_macros::{constraint, objective, sum, variable};
+    #[cfg(feature = "scip")]
+    pub use culmen_scip::Scip;
 
     pub use culmen_core::{
         Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Improvement, IndexSet, LinExpr, Linear,
         LogLine, Model, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Request, Row, Sense,
         Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap, absolute_gap,
         bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
+    };
+    // A generic callback calls its contexts through these traits, and a backend names `Unsupported` for an event it
+    // cannot deliver.
+    pub use culmen_core::{
+        CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext,
+        SolutionContext, Unsupported,
     };
 }

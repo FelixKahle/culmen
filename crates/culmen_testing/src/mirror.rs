@@ -7,7 +7,7 @@
 use core::fmt;
 
 use culmen_core::{
-    Analyses, AnalysisError, Backend, Basis, Callback, Col, Duals, Edit, Events, Iis, ModelClasses, Program,
+    Analyses, AnalysisError, Backend, Basis, Callback, Col, Duals, Edit, Events, Iis, ModelClasses, Priced, Program,
     ProgramFeatures, ProgramPlan, Ranging, Relaxed, Row, Settings, Solved, Start, TiVec, Weights,
 };
 
@@ -195,23 +195,24 @@ fn appended_columns(expected: &mut ProgramPlan, got: &ProgramPlan, cols: &[Col])
 
 /// Lifts an inner backend's analysis error to a mirror's.
 fn lift<E>(error: AnalysisError<E>) -> AnalysisError<MirrorError<E>> {
-    match error {
-        AnalysisError::Unsupported { analysis, supported } => AnalysisError::Unsupported { analysis, supported },
-        AnalysisError::Class { analysis, class } => AnalysisError::Class { analysis, class },
-        AnalysisError::Feature { analysis, feature } => AnalysisError::Feature { analysis, feature },
-        AnalysisError::NotSolved { analysis } => AnalysisError::NotSolved { analysis },
-        AnalysisError::NotOptimal { analysis } => AnalysisError::NotOptimal { analysis },
-        AnalysisError::Misfit(misfit) => AnalysisError::Misfit(misfit),
-        AnalysisError::Backend(error) => AnalysisError::Backend(MirrorError::Inner(error)),
-    }
+    error.map_backend(MirrorError::Inner)
 }
 
 /// A mirror's callback, handed to the inner backend: the context types are the same.
 struct Forward<'c, B: Backend>(&'c mut dyn Callback<Mirror<B>>);
 
+impl<B: Backend> fmt::Debug for Forward<'_, B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Forward").finish_non_exhaustive()
+    }
+}
+
 impl<B: Backend> Callback<B> for Forward<'_, B> {
     fn events(&self) -> Events {
         self.0.events()
+    }
+    fn prices(&self) -> bool {
+        self.0.prices()
     }
     fn log(&mut self, ctx: &mut B::Log<'_>) {
         self.0.log(ctx);
@@ -237,6 +238,9 @@ impl<B: Backend> Callback<B> for Forward<'_, B> {
     fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
         self.0.heuristic(ctx);
     }
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        self.0.price(ctx);
+    }
     fn native(&mut self, ctx: &mut B::Native<'_>) {
         self.0.native(ctx);
     }
@@ -253,9 +257,11 @@ impl<B: Backend> Backend for Mirror<B> {
     type Lazy<'a> = B::Lazy<'a>;
     type Cut<'a> = B::Cut<'a>;
     type Heuristic<'a> = B::Heuristic<'a>;
+    type Price<'a> = B::Price<'a>;
     type Native<'a> = B::Native<'a>;
 
     const EVENTS: Events = B::EVENTS;
+    const PRICES: bool = B::PRICES;
     const CLASSES: ModelClasses = B::CLASSES;
     const ANALYSES: Analyses = B::ANALYSES;
     const FEATURES: ProgramFeatures = B::FEATURES;
@@ -313,9 +319,10 @@ impl<B: Backend> Backend for Mirror<B> {
         &mut self,
         settings: &Settings,
         callback: &mut dyn Callback<Self>,
+        priced: &mut Priced,
     ) -> Result<Solved<Self::Status>, Self::Error> {
         self.inner
-            .solve(settings, &mut Forward(callback))
+            .solve(settings, &mut Forward(callback), priced)
             .map_err(MirrorError::Inner)
     }
 

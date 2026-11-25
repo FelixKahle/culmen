@@ -175,6 +175,7 @@ fn block_is_convex(sense: Sense, block: &[(Col, Col, f64)]) -> bool {
 }
 
 /// A union-find forest over the columns whose root is always the smallest column of its tree.
+#[derive(Debug)]
 struct Roots {
     parent: TiVec<Col, Col>,
 }
@@ -191,9 +192,13 @@ impl Roots {
     ///
     /// # Panics
     ///
-    /// When `col` is not a column of the forest.
+    /// When `col` is not a column of the forest, or its path is longer than the forest has columns, which a cycle
+    /// would make and [`Roots::join`] never does: every parent is at most its child.
     fn find(&mut self, mut col: Col) -> Col {
+        let mut steps = 0;
         while self.parent[col] != col {
+            steps += 1;
+            assert!(steps <= self.parent.len(), "Roots: a cycle in the forest");
             self.parent[col] = self.parent[self.parent[col]];
             col = self.parent[col];
         }

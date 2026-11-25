@@ -7,7 +7,7 @@ use core::ptr;
 
 use highs_sys::{
     Highs_feasibilityRelaxation, Highs_getBasis, Highs_getDualRay, Highs_getIis, Highs_getNumRow, Highs_getPrimalRay,
-    Highs_getRanging, Highs_getSolution, Highs_setBasis, HighsInt,
+    Highs_getRanging, Highs_getSolution, Highs_setBasis, HighsInt, kHighsSolutionStatusFeasible,
 };
 
 use super::Instance;
@@ -120,7 +120,7 @@ impl Instance {
     /// HiGHS reports a feasible dual solution.
     pub(crate) fn duals(&self) -> Option<(Vec<f64>, Vec<f64>)> {
         // `Highs_getSolution` checks only the primal solution status, so the dual one is checked here.
-        if self.info_int(c"dual_solution_status") != Some(2) {
+        if self.info_int(c"dual_solution_status") != Some(kHighsSolutionStatusFeasible) {
             return None;
         }
         let (mut cols, mut rows) = (vec![0.0; self.num_col()], vec![0.0; self.num_row()]);

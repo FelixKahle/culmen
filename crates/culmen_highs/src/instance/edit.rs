@@ -235,6 +235,7 @@ impl Instance {
 }
 
 /// The ids a `BySet` call changes, as HiGHS's indices.
+#[derive(Debug)]
 struct Set {
     count: HighsInt,
     indices: Vec<HighsInt>,
@@ -268,12 +269,13 @@ fn ends(bounds: impl Iterator<Item = Bounds>) -> (Vec<f64>, Vec<f64>) {
 /// [`HighsError::Edit`] naming `call` when HiGHS reports an error; the C API returns no message with it.
 fn edited(status: HighsInt, call: &'static str) -> Result<(), HighsError> {
     match CallStatus::from_raw(status) {
-        CallStatus::Error => Err(HighsError::Edit { call, message: None }),
+        CallStatus::Error => Err(HighsError::Edit { call }),
         CallStatus::Ok | CallStatus::Warning => Ok(()),
     }
 }
 
 /// A program's last rows in the layout `Highs_addRows` reads: row-wise, starts relative to the first new row.
+#[derive(Debug)]
 struct NewRows {
     count: HighsInt,
     entries: HighsInt,
@@ -328,6 +330,7 @@ impl NewRows {
 
 /// A program's last columns in the layout `Highs_addCols` reads: column-wise, starts relative to the first new
 /// column; and their HiGHS variable types for `Highs_changeColsIntegralityByRange` from `first` to `last`.
+#[derive(Debug)]
 struct NewCols {
     count: HighsInt,
     entries: HighsInt,

@@ -122,6 +122,7 @@ impl From<ProgramRow> for NewRow {
 /// assert_eq!(error.to_string(), "Solver: the program has no Col(7)");
 /// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum EditError<E> {
     /// A column the program does not have: an edit's target or a new row's term.
     UnknownCol {
@@ -697,10 +698,18 @@ impl NewCol {
             Some(BadTerm::NonFinite(row, value)) => return Err(EditError::NonFiniteCoefficient { row, col, value }),
             None => {}
         }
-        let entries = merge_terms(entries)
+        Ok(Self { column, entries }.merged())
+    }
+
+    /// This column with its entries sorted by row, each row once with its coefficients added up, and none zero.
+    pub(crate) fn merged(self) -> Self {
+        let entries = merge_terms(self.entries)
             .into_iter()
             .filter(|&(_, value)| value != 0.0)
             .collect();
-        Ok(Self { column, entries })
+        Self {
+            column: self.column,
+            entries,
+        }
     }
 }

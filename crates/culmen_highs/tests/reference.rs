@@ -10,8 +10,9 @@
 
 use culmen_core::{Outcome, Request, Settings, Solver, relative_gap};
 use culmen_highs::Highs;
-use culmen_testing::reference::{Reference, close, solve};
+use culmen_testing::reference::{close, solve};
 use culmen_testing::strategy::small_lp;
+use culmen_testing::tolerance::Tolerances;
 use proptest::prelude::*;
 
 proptest! {
@@ -25,18 +26,23 @@ proptest! {
         let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
         let exact = Settings { relative_gap: Some(relative_gap!(0.0)), ..Settings::new() };
         let solved = solver.solve(Request::new().settings_from(exact)).unwrap();
-        match (&expected, &solved.outcome) {
-            (Reference::Infeasible, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => {}
-            (Reference::Optimal(_), Outcome::Optimal(solution)) => {
-                let want = expected.objective().unwrap();
-                // HiGHS meets rows and bounds only to its feasibility tolerance, 1e-6 for a MIP, which rounding can
-                // exceed: the saved seed ends with a row 1.0000000001e-6 below its bound and the objective as far below
-                // the exact 0. Both checks allow ten times that tolerance.
-                prop_assert!(close(solution.objective, want, 1e-5), "HiGHS {} vs exact {}", solution.objective, want);
-                prop_assert!(program.max_violation(&solution.values) <= 1e-5, "an infeasible solution: {solution:?}");
+        // HiGHS meets rows, bounds and integrality only to its absolute MIP feasibility tolerance, 1e-6: the saved
+        // seed ends with a row 1.0000000001e-6 below its bound and the objective as far below the exact 0. Its optimum
+        // lies in the window those tolerances, its dual tolerance and its absolute gap leave around the exact one.
+        let tolerances = Tolerances { relative_gap: 0.0, ..Tolerances::HIGHS };
+        match (tolerances.window(&program, &expected), &solved.outcome) {
+            (None, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => {}
+            (Some(window), Outcome::Optimal(solution)) => {
+                prop_assert!(
+                    window.contains(solution.objective),
+                    "HiGHS {} vs exact {expected:?}, window {window:?}",
+                    solution.objective
+                );
+                let stray = tolerances.stray(&program, &solution.values);
+                prop_assert!(stray.is_none(), "an infeasible solution: {stray:?} {solution:?}");
                 prop_assert!(close(program.objective_value(&solution.values), solution.objective, 1e-6));
             }
-            (want, got) => prop_assert!(false, "exact {want:?}, HiGHS {got:?}, status {:?}", solved.status),
+            (_, got) => prop_assert!(false, "exact {expected:?}, HiGHS {got:?}, status {:?}", solved.status),
         }
     }
 }

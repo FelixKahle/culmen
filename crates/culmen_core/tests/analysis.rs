@@ -54,6 +54,7 @@ impl Backend for Canned {
     type Lazy<'a> = Unsupported;
     type Cut<'a> = Unsupported;
     type Heuristic<'a> = Unsupported;
+    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: culmen_core::Events = culmen_core::Events::NONE;
@@ -64,7 +65,12 @@ impl Backend for Canned {
         Ok(())
     }
 
-    fn solve(&mut self, _: &Settings, _: &mut dyn Callback<Self>) -> Result<Solved<()>, ScriptError> {
+    fn solve(
+        &mut self,
+        _: &Settings,
+        _: &mut dyn Callback<Self>,
+        _: &mut culmen_core::Priced,
+    ) -> Result<Solved<()>, ScriptError> {
         assert!(!self.panics, "Canned: a callback panicked");
         Ok(Solved {
             outcome: self.outcome.clone(),
@@ -688,6 +694,48 @@ mod serde_round_trips {
             bound: Bound::Upper,
             amount: 2.0,
         });
+    }
+
+    /// The values a real ranging holds: a limit never reached in one direction is infinite, and so is the objective
+    /// where the program turns unbounded; a point holding an infinity or NaN is violated by as much.
+    #[test]
+    fn test_infinite_limits_and_violations_round_trip_through_json() {
+        let unreached = Limit {
+            value: f64::NEG_INFINITY,
+            objective: f64::INFINITY,
+            entering: None,
+            leaving: None,
+        };
+        round_trip(&Ranging {
+            costs: vec![Ranged {
+                down: unreached,
+                up: Limit {
+                    value: 2.5,
+                    objective: -7.0,
+                    entering: Some(Line::Col(Col::new(1))),
+                    leaving: Some(Line::Row(Row::new(0))),
+                },
+            }]
+            .into(),
+            col_bounds: vec![].into(),
+            row_bounds: vec![Ranged {
+                down: unreached,
+                up: unreached,
+            }]
+            .into(),
+        });
+        round_trip(&Violation {
+            line: Line::Col(Col::new(0)),
+            bound: Bound::Lower,
+            amount: f64::INFINITY,
+        });
+        let nan = Violation {
+            line: Line::Col(Col::new(0)),
+            bound: Bound::Lower,
+            amount: f64::NAN,
+        };
+        let back: Violation = serde_json::from_str(&serde_json::to_string(&nan).unwrap()).unwrap();
+        assert!(back.amount.is_nan());
     }
 
     #[test]

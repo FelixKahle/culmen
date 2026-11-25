@@ -42,8 +42,8 @@ model is built.
 | `Var::integer()` | integer | `[0, +inf)` |
 | `Var::binary()` | integer | `[0, 1]` |
 | `Var::free()` | continuous | `(-inf, +inf)` |
-| `Var::semi_continuous()` | zero, or any value in its bounds | none until set: `0 < lower <= upper < +inf` |
-| `Var::semi_integer()` | zero, or a whole value in its bounds | none until set: `0 < lower <= upper < +inf` |
+| `Var::semi_continuous()` | zero, or any value in its bounds | `[0, +inf)`, which `build` refuses: set `0 < lower <= upper < +inf` |
+| `Var::semi_integer()` | zero, or a whole value in its bounds | `[0, +inf)`, alike |
 
 | Method | Effect |
 |---|---|
@@ -94,7 +94,7 @@ fn main() -> Result<(), ModelError> {
     assert_eq!(program.class(), ModelClass::Milp);
     assert_eq!(program.columns()[load].integrality, Integrality::SemiContinuous);
 
-    m.add_var(Var::semi_continuous().upper(9).name("unbounded below"));
+    m.add_var(Var::semi_continuous().upper(9).name("zero below"));
     assert!(matches!(m.build(), Err(ModelError::SemiBounds { .. })));
     let _ = trucks;
     Ok(())
@@ -145,9 +145,9 @@ let point: culmen::TiVec<Col, f64> = vec![1.0, 2.0, 4.0].into();
 assert_eq!(load.value(&point), 4.0 + 10.0 + 24.0);
 ```
 
-`LinExpr::new()` is the expression zero. `From` converts a `Col`, a `Term`, an `f64` or an `i32` into a `LinExpr`, and a `Col`
-into a `Term`. `LinExpr::value(&values)` evaluates the expression at a point, such as a solution's values; it panics
-when a term's column has no value there.
+`LinExpr::new()` is the expression zero. `From` converts a `Col`, a `Term`, an `f64` or an `i32` into a `LinExpr`, and a
+`Col` into a `Term`. `LinExpr::value(&values)` evaluates the expression at a point, such as a solution's values; it
+panics when a term's column has no value there.
 
 The trait behind all of this is `Linear`: anything that adds to an expression. `Col`, `Term`, `LinExpr`, `&LinExpr`,
 `f64` and `i32` implement it, and every operator, sum and comparison takes `impl Linear`.
@@ -171,9 +171,10 @@ A product of two linear items is quadratic, for an objective:
 | `e += b`, `e -= b` with `b` any linear or quadratic item; `e *= 2.0`, `e /= 2.0` | in place |
 
 `QuadExpr::sum`, `Iterator::sum` and `collect` add up quadratic items and `extend` adds them to an expression,
-`QuadExpr::add_term(first, second, coefficient)` adds one product, `QuadExpr::value(&values)` evaluates the expression at a point, and `From` converts a `QuadTerm`, a
-`LinExpr`, a `Col`, a `Term`, an `f64` or an `i32` into a `QuadExpr`. The trait behind them is `Quadratic`, which every
-`Linear` item, `QuadTerm`, `QuadExpr` and `&QuadExpr` implement; the objective setters take `impl Quadratic`.
+`QuadExpr::add_term(first, second, coefficient)` adds one product, `QuadExpr::value(&values)` evaluates the expression
+at a point, and `From` converts a `QuadTerm`, a `LinExpr`, a `Col`, a `Term`, an `f64` or an `i32` into a `QuadExpr`.
+The trait behind them is `Quadratic`, which every `Linear` item, `QuadTerm`, `QuadExpr` and `&QuadExpr` implement; the
+objective setters take `impl Quadratic`.
 
 ```rust
 use culmen::prelude::*;
@@ -398,10 +399,10 @@ order and reads them back:
 | `family.keys()`, `family.handles()` | The keys, the handles. |
 | `vars.values(&solution.values)` | `(&key, value)` pairs at a point; `VarMap` only. |
 
-`get` and `contains_key` take any borrowed form of the key, as `HashMap`'s do, so a family keyed by `String` is
-read with a `&str`. The iterators run both ways and know their exact length. `values` panics when a variable of the family has no value
-in the point. `Keyed::new()` and `Keyed::insert(key, handle)` build a family by hand; `insert` panics on a key
-already held.
+`get` and `contains_key` take any borrowed form of the key, as `HashMap`'s do, so a family keyed by `String` is read
+with a `&str`. The iterators run both ways and know their exact length. `values` panics when a variable of the family
+has no value in the point. `Keyed::new()` and `Keyed::insert(key, handle)` build a family by hand; `insert` panics on a
+key already held.
 
 ## Index sets
 
@@ -449,7 +450,7 @@ first variable or constraint at fault. The model is left as it was, so it can be
 | `ObjectiveConstant { value }` | The objective's constant is NaN or infinite. |
 | `Coefficient { constraint, var, value }` | A constraint's coefficient is NaN or infinite, as given or added up. |
 | `ConstraintBounds { constraint, source }` | A constraint's bounds are invalid after its constant moved into them. |
-| `UnknownVar { place, col }` | An expression names a column this model did not hand out, in the objective or a constraint. |
+| `UnknownVar { place, col }` | An expression names a column this model did not hand out, in the objective, a constraint or a further objective. |
 | `ObjectiveQuadCoefficient { first, second, value }` | A quadratic objective coefficient is NaN or infinite, as given or added up over its pair, or a square's is so large that its Hessian value, twice it, is infinite. |
 | `NonConvexObjective { sense, var }` | The quadratic objective is not convex to minimize, or not concave to maximize. |
 | `SemiBounds { var, bounds }` | A semi variable's bounds are not `lower ..= upper` with `0 < lower` and `upper` finite. |
@@ -458,7 +459,8 @@ first variable or constraint at fault. The model is left as it was, so it can be
 | `QuadraticWithObjectives` | The own objective has a quadratic term beside further objectives. |
 
 `var` is a `ModelVar { col, name }` and `constraint` a `ModelConstraint { row, name }`; each displays as its name
-in backticks, or as its handle when it has none. `place` is an `ExprPlace`: `Objective`, `Constraint(..)` or `Further(ObjectiveId)`.
+in backticks, or as its handle when it has none. `place` is an `ExprPlace`: `Objective`, `Constraint(..)` or
+`Further(ObjectiveId)`.
 
 ```rust
 use culmen::prelude::*;
