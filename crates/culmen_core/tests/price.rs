@@ -122,8 +122,13 @@ impl<B: Backend> Callback<B> for Pricer {
     }
 }
 
-/// Fixture 1 of the design: cutting stock of rolls of width 10 into pieces of width 3, 4 and 5 with demands 7, 2 and
-/// 3, every pattern costing one roll. The program starts with the patterns (3,0,0), (0,2,0) and (0,0,2).
+/// The first hand-worked fixture: cutting stock of rolls of width 10 into pieces of width 3, 4 and 5 with demands 7,
+/// 2 and 3, every pattern costing one roll. The program starts with the patterns (3,0,0), (0,2,0) and (0,0,2).
+///
+/// The master LP over the three starting patterns is `min a + d + f` with `3a >= 7`, `2d >= 2`, `2f >= 3`: optimal at
+/// `a = 7/3, d = 1, f = 3/2`, worth 29/6, with duals (1/3, 1/2, 1/2). B then prices at `1 - (2/3 + 1/2) = -1/6` and
+/// improves, E at `1 - (1/2 + 1/2) = 0` and does not. With B, the LP is optimal at `a = 1, d = 0, f = 3/2, b = 2`,
+/// worth 9/2, with duals (1/3, 1/3, 1/2) from `3y1 = 1`, `2y1 + y2 = 1` and `2y3 = 1`, and nothing improves.
 ///
 /// Returns the program and every pattern: the three it holds, then the eight it withholds in the order
 /// (1,0,0), (2,0,0), (0,1,0), (1,1,0), B = (2,1,0), (0,0,1), C = (1,0,1), E = (0,1,1).
@@ -238,8 +243,12 @@ fn test_fixture_one_prices_pattern_b_and_nothing_after_it() {
     assert!(close(program.objective_value(&best.values), 4.5));
 }
 
-/// Fixture 2 of the design: maximize `3x1 + 2x2 + 7x3` over `[0, 10]` each, subject to `x1 + x2 + 2x3 <= 4` and
-/// `x1 + x3 >= 1`, starting with `x2` alone. Returns the program and the columns x2, x1, x3 in that order.
+/// The second hand-worked fixture: maximize `3x1 + 2x2 + 7x3` over `[0, 10]` each, subject to `x1 + x2 + 2x3 <= 4`
+/// and `x1 + x3 >= 1`, starting with `x2` alone. Returns the program and the columns x2, x1, x3 in that order.
+///
+/// With `x2` alone the row `x1 + x3 >= 1` cannot hold, so the first round is Farkas, with multipliers `f0 <= 0 < f1`.
+/// With `x1` the LP is optimal at `x1 = 4`, worth 12, with duals (3, 0), and `x3` prices at `7 - 2·3 = 1 > 0`, which
+/// improves a maximization; with `x3` it is optimal at `x3 = 2`, worth 14, with duals (7/2, 0).
 fn farkas_then_max() -> (Program, Vec<culmen_core::NewCol>) {
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;

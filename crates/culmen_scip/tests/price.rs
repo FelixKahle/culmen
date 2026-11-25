@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Pricing on SCIP: the two hand-worked fixtures of the pricing design with their duals, the integer cutting stock,
+//! Pricing on SCIP: the two hand-worked fixtures with their duals, the integer cutting stock,
 //! a panic and an interrupt during pricing, pricing beside lazy constraints, cuts, heuristic solutions and a start,
 //! the refusals, and random programs split into kept and withheld columns against exact enumeration of the full
 //! program.
@@ -163,10 +163,15 @@ impl Callback<Scip> for Pricer {
     }
 }
 
-/// Fixture 1 of the design: cutting stock of rolls of width 10 into pieces of width 3, 4 and 5 with demands 7, 2 and
-/// 3, every pattern costing one roll. The program starts with the patterns A = (3,0,0), D = (0,2,0) and
+/// The first hand-worked fixture: cutting stock of rolls of width 10 into pieces of width 3, 4 and 5 with demands 7,
+/// 2 and 3, every pattern costing one roll. The program starts with the patterns A = (3,0,0), D = (0,2,0) and
 /// F = (0,0,2); it returns every one of the 11 patterns, those three first, then the eight it withholds:
 /// (1,0,0), (2,0,0), (0,1,0), (1,1,0), B = (2,1,0), (0,0,1), C = (1,0,1), E = (0,1,1).
+///
+/// The master LP over the three starting patterns is `min a + d + f` with `3a >= 7`, `2d >= 2`, `2f >= 3`: optimal at
+/// `a = 7/3, d = 1, f = 3/2`, worth 29/6, with duals (1/3, 1/2, 1/2). B then prices at `1 - (2/3 + 1/2) = -1/6` and
+/// improves, E at `1 - (1/2 + 1/2) = 0` and does not. With B, the LP is optimal at `a = 1, d = 0, f = 3/2, b = 2`,
+/// worth 9/2, with duals (1/3, 1/3, 1/2) from `3y1 = 1`, `2y1 + y2 = 1` and `2y3 = 1`, and nothing improves.
 fn cutting_stock(integer: bool) -> (Program, Vec<NewCol>) {
     let patterns = [
         [3.0, 0.0, 0.0],
@@ -307,8 +312,12 @@ fn test_integer_cutting_stock_needs_five_rolls_and_its_solution_cuts_the_full_pr
     }
 }
 
-/// Fixture 2 of the design: maximize `3x1 + 2x2 + 7x3` subject to `x1 + x2 + 2x3 <= 4` and `x1 + x3 >= 1`, every
-/// column in `[0, 10]`; the program starts with x2, and withholds x1 and then x3.
+/// The second hand-worked fixture: maximize `3x1 + 2x2 + 7x3` subject to `x1 + x2 + 2x3 <= 4` and `x1 + x3 >= 1`,
+/// every column in `[0, 10]`; the program starts with x2, and withholds x1 and then x3.
+///
+/// With `x2` alone the row `x1 + x3 >= 1` cannot hold, so the first round is Farkas, with multipliers `f0 <= 0 < f1`.
+/// With `x1` the LP is optimal at `x1 = 4`, worth 12, with duals (3, 0), and `x3` prices at `7 - 2·3 = 1 > 0`, which
+/// improves a maximization; with `x3` it is optimal at `x3 = 2`, worth 14, with duals (7/2, 0).
 fn max_fixture() -> (Program, Vec<NewCol>) {
     let ten = bounds!(0.0, 10.0);
     let (r0, r1) = (Row::new(0), Row::new(1));
