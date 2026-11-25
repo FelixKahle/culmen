@@ -332,6 +332,27 @@ fn test_lp_file_escapes_names_the_format_reserves() {
 }
 
 #[test]
+fn test_lp_file_labels_every_column_and_row_apart() {
+    // Named lines keep their names in order, the ranged `band` first; every other line takes the next free suffix.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().name("x1"));
+    let y = m.add_var(Var::continuous());
+    let a = m.add_var(Var::continuous().name("a"));
+    let b = m.add_var(Var::continuous().name("a"));
+    m.add_named_constraint("r1", (x - y).geq(1));
+    m.add_constraint((a - b).geq(1));
+    m.add_named_constraint("band", (x + a).between(1, 3));
+    m.add_named_constraint("band_lo", (y + b).leq(5));
+    m.add_named_constraint("obj", (x + b).leq(7));
+    m.minimize(x + 2 * y + a + b);
+    let text = m.build().unwrap().to_lp_string().unwrap();
+    let expected = "Minimize\n obj: 1 x1 + 2 x1~1 + 1 a + 1 a~1\nSubject To\n r1: 1 x1 - 1 x1~1 >= 1\n \
+                    r1~1: 1 a - 1 a~1 >= 1\n band_lo: 1 x1 + 1 a >= 1\n band_hi: 1 x1 + 1 a <= 3\n \
+                    band_lo~1: 1 x1~1 + 1 a~1 <= 5\n obj~1: 1 x1 + 1 a~1 <= 7\nBounds\nEnd\n";
+    assert_eq!(text, expected);
+}
+
+#[test]
 fn test_product_ends_for_good_over_an_inner_set_that_is_not_fused() {
     /// Every other call yields the next number: `Some(1)`, `None`, `Some(3)`, `None`, …
     #[derive(Clone)]

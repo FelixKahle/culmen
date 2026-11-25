@@ -5,6 +5,10 @@
 
 use core::fmt;
 
+use std::collections::HashSet;
+
+use typed_index_collections::TiVec;
+
 use super::{Col, Integrality, Program, ProgramFeature, Row, Sense};
 
 impl Program {
@@ -13,8 +17,10 @@ impl Program {
     /// The output is meant for debugging: names are reduced to the characters the format allows, a name that is one
     /// of its keywords (`max`, `sos`, `end`, …, in any case) is prefixed `_`, an unnamed column is written
     /// `x<index>` and an unnamed row `r<index>`, a ranged row becomes two rows suffixed `_lo` and `_hi`, and a free
-    /// row, which the format cannot state and which constrains nothing, is left out. Distinct names that reduce to the
-    /// same text are not told apart. A quadratic part is written in the
+    /// row, which the format cannot state and which constrains nothing, is left out. Every column and every row gets a
+    /// label of its own, so the file states the same program whatever the names: a label taken already, by a name
+    /// given twice, two names that reduce to the same text, or a generated label equal to a name, is suffixed `~1`,
+    /// `~2`, … until it is free, the columns and rows that keep their own name first. A quadratic part is written in the
     /// format's brackets halved, `[ 2 x ^ 2 + 4 x * y ] / 2` for `x² + 2xy`. Integer and semi-integer columns are
     /// listed under `General`, semi-continuous and semi-integer ones under `Semi-Continuous`: a column in both is
     /// semi-integer, as CPLEX and HiGHS read it.
@@ -59,12 +65,13 @@ impl Program {
                 feature: ProgramFeature::MultipleObjectives,
             });
         }
-        self.write_objective(out)?;
+        let labels = Labels::of(self);
+        self.write_objective(out, &labels)?;
         out.write_str("Subject To\n")?;
-        self.rows().try_for_each(|row| self.write_row(out, row))?;
-        self.write_bounds(out)?;
-        self.write_section(out, "General", Integrality::is_integral)?;
-        self.write_section(out, "Semi-Continuous", Integrality::is_semi)?;
+        self.rows().try_for_each(|row| self.write_row(out, &labels, row))?;
+        self.write_bounds(out, &labels)?;
+        self.write_section(out, &labels, "General", Integrality::is_integral)?;
+        self.write_section(out, &labels, "Semi-Continuous", Integrality::is_semi)?;
         out.write_str("End\n")?;
         Ok(())
     }
@@ -77,6 +84,7 @@ impl Program {
     fn write_section(
         &self,
         out: &mut impl fmt::Write,
+        labels: &Labels,
         title: &str,
         listed: impl Fn(Integrality) -> bool,
     ) -> fmt::Result {
@@ -88,7 +96,7 @@ impl Program {
             return Ok(());
         }
         writeln!(out, "{title}")?;
-        cols.try_for_each(|col| writeln!(out, " {}", self.col_label(col)))
+        cols.try_for_each(|col| writeln!(out, " {}", labels.cols[col]))
     }
 
     /// Writes the sense and the objective: its linear terms, its quadratic part and its offset.
@@ -96,7 +104,7 @@ impl Program {
     /// # Errors
     ///
     /// The writer's error.
-    fn write_objective(&self, out: &mut impl fmt::Write) -> fmt::Result {
+    fn write_objective(&self, out: &mut impl fmt::Write, labels: &Labels) -> fmt::Result {
         out.write_str(match self.sense {
             Sense::Minimize => "Minimize\n",
             Sense::Maximize => "Maximize\n",
@@ -109,10 +117,10 @@ impl Program {
             .filter(|&(_, c)| c != 0.0);
         let linear = costs.clone().next().is_some();
         if linear || self.quadratic.is_empty() {
-            self.write_terms(out, costs)?;
+            write_terms(out, labels, costs)?;
         }
         if !self.quadratic.is_empty() {
-            self.write_quadratic(out, linear)?;
+            self.write_quadratic(out, labels, linear)?;
         }
         if self.offset != 0.0 {
             write!(
@@ -131,13 +139,13 @@ impl Program {
     /// # Errors
     ///
     /// The writer's error.
-    fn write_quadratic(&self, out: &mut impl fmt::Write, after_terms: bool) -> fmt::Result {
+    fn write_quadratic(&self, out: &mut impl fmt::Write, labels: &Labels, after_terms: bool) -> fmt::Result {
         out.write_str(if after_terms { " + [" } else { " [" })?;
         for (k, (i, j, q)) in self.quadratic.entries().enumerate() {
             let product = if i == j {
-                format!("{} ^ 2", self.col_label(i))
+                format!("{} ^ 2", labels.cols[i])
             } else {
-                format!("{} * {}", self.col_label(i), self.col_label(j))
+                format!("{} * {}", labels.cols[i], labels.cols[j])
             };
             write_signed(out, k == 0, 2.0 * q, &product)?;
         }
@@ -149,13 +157,13 @@ impl Program {
     /// # Errors
     ///
     /// The writer's error.
-    fn write_row(&self, out: &mut impl fmt::Write, row: Row) -> fmt::Result {
+    fn write_row(&self, out: &mut impl fmt::Write, labels: &Labels, row: Row) -> fmt::Result {
         let bounds = self.row_bounds[row];
         let (lower, upper) = (bounds.lower(), bounds.upper());
-        let name = self.row_label(row);
+        let name = &labels.rows[row];
         let mut line = |suffix: &str, relation: &str, rhs: f64| -> fmt::Result {
             write!(out, " {name}{suffix}:")?;
-            self.write_terms(out, self.row(row).entries())?;
+            write_terms(out, labels, self.row(row).entries())?;
             writeln!(out, " {relation} {rhs}")
         };
         match (lower.is_finite(), upper.is_finite()) {
@@ -175,11 +183,11 @@ impl Program {
     /// # Errors
     ///
     /// The writer's error.
-    fn write_bounds(&self, out: &mut impl fmt::Write) -> fmt::Result {
+    fn write_bounds(&self, out: &mut impl fmt::Write, labels: &Labels) -> fmt::Result {
         out.write_str("Bounds\n")?;
         for col in self.cols() {
             let bounds = self.columns[col].bounds;
-            let name = self.col_label(col);
+            let name = &labels.cols[col];
             match (bounds.lower(), bounds.upper()) {
                 (0.0, f64::INFINITY) => {}
                 (f64::NEG_INFINITY, f64::INFINITY) => writeln!(out, " {name} free")?,
@@ -191,31 +199,116 @@ impl Program {
         }
         Ok(())
     }
+}
 
-    /// Writes ` c x + d y …`, or ` 0` for no terms.
-    ///
-    /// # Errors
-    ///
-    /// The writer's error.
-    fn write_terms(&self, out: &mut impl fmt::Write, terms: impl Iterator<Item = (Col, f64)>) -> fmt::Result {
-        let mut first = true;
-        for (col, value) in terms {
-            write_signed(out, first, value, &self.col_label(col))?;
-            first = false;
+/// Writes ` c x + d y …`, or ` 0` for no terms.
+///
+/// # Errors
+///
+/// The writer's error.
+fn write_terms(out: &mut impl fmt::Write, labels: &Labels, terms: impl Iterator<Item = (Col, f64)>) -> fmt::Result {
+    let mut first = true;
+    for (col, value) in terms {
+        write_signed(out, first, value, &labels.cols[col])?;
+        first = false;
+    }
+    if first {
+        out.write_str(" 0")?;
+    }
+    Ok(())
+}
+
+/// The label of every column and row in one LP file: no two columns share one, and no two rows write a line of the
+/// same name (a ranged row writes its label suffixed `_lo` and `_hi`), nor one named as the objective, `obj`.
+#[derive(Debug)]
+struct Labels {
+    cols: TiVec<Col, String>,
+    /// The label of every row, which a ranged row writes suffixed.
+    rows: TiVec<Row, String>,
+}
+
+impl Labels {
+    fn of(program: &Program) -> Self {
+        let cols = program.cols().map(|col| {
+            let name = program.columns[col].name.as_deref();
+            Wanted::new(name, label(name, 'x', col.index()), &[""])
+        });
+        let rows = program.rows().map(|row| {
+            let (lower, upper) = (program.row_bounds[row].lower(), program.row_bounds[row].upper());
+            let suffixes: &[&str] = match (lower.is_finite(), upper.is_finite()) {
+                (true, true) if lower != upper => &["_lo", "_hi"],
+                (false, false) => &[],
+                _ => &[""],
+            };
+            let name = program.row_names[row].as_deref();
+            Wanted::new(name, label(name, 'r', row.index()), suffixes)
+        });
+        Self {
+            cols: unique(cols.collect(), &[]).into(),
+            rows: unique(rows.collect(), &["obj"]).into(),
         }
-        if first {
-            out.write_str(" 0")?;
+    }
+}
+
+/// The label a line would take, and the suffixes it writes it with: one line for `[""]`, none for a free row.
+#[derive(Debug)]
+struct Wanted {
+    base: String,
+    /// Whether the line has a name of its own, so its base takes precedence over the generated ones.
+    named: bool,
+    suffixes: &'static [&'static str],
+}
+
+impl Wanted {
+    fn new(name: Option<&str>, base: String, suffixes: &'static [&'static str]) -> Self {
+        Self {
+            base,
+            named: name.is_some_and(|name| !name.is_empty()),
+            suffixes,
         }
-        Ok(())
     }
 
-    fn col_label(&self, col: Col) -> String {
-        label(self.columns[col].name.as_deref(), 'x', col.index())
+    /// Whether `base`, with each of this line's suffixes, is none of `taken`.
+    fn fits(&self, base: &str, taken: &HashSet<String>) -> bool {
+        self.suffixes
+            .iter()
+            .all(|suffix| !taken.contains(&format!("{base}{suffix}")))
     }
 
-    fn row_label(&self, row: Row) -> String {
-        label(self.row_names[row].as_deref(), 'r', row.index())
+    /// Takes `base` with each of this line's suffixes.
+    fn claim(&self, base: String, taken: &mut HashSet<String>) -> String {
+        taken.extend(self.suffixes.iter().map(|suffix| format!("{base}{suffix}")));
+        base
     }
+}
+
+/// A label for each wanted line, such that no two lines and none of `reserved` write the same text: a named line
+/// keeps its base when it is free, in order, and every other line takes the first free of its base, `base~1`,
+/// `base~2`, … in order.
+///
+/// # Panics
+///
+/// Never: each text taken rules out at most one of a line's candidates, so one of the first `taken + 1` is free.
+fn unique(wanted: Vec<Wanted>, reserved: &[&str]) -> Vec<String> {
+    let mut taken: HashSet<String> = reserved.iter().map(|&r| r.to_owned()).collect();
+    let mut labels: Vec<Option<String>> = wanted
+        .iter()
+        .map(|line| (line.named && line.fits(&line.base, &taken)).then(|| line.claim(line.base.clone(), &mut taken)))
+        .collect();
+    for (line, label) in wanted.iter().zip(&mut labels) {
+        if label.is_none() {
+            let candidates = (0..=taken.len()).map(|k| match k {
+                0 => line.base.clone(),
+                k => format!("{}~{k}", line.base),
+            });
+            let mut free = candidates.filter(|candidate| line.fits(candidate, &taken));
+            let chosen = free
+                .next()
+                .expect("Labels: one of the first `taken + 1` candidates is free");
+            *label = Some(line.claim(chosen, &mut taken));
+        }
+    }
+    labels.into_iter().flatten().collect()
 }
 
 /// Writes ` c what` for the first term of a sum and ` + c what` or ` - c what` for any other, `-c` first when
