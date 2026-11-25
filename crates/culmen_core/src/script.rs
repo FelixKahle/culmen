@@ -16,7 +16,8 @@ use crate::{
     Solved, Start, StopReason,
 };
 
-/// A solution a script step reports.
+/// A solution found during a solve, with where the solve stood when it was found: what a [`Script`] step reports, and
+/// what a backend may keep of a solution it delivers to a callback later.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Found {
     /// Where the solve stands.

@@ -19,8 +19,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use culmen_core::{
     ActionError, Bounds, Callback, Col, CutContext, Events, HeuristicContext, Integrality, LazyContext, Linear, NewCol,
-    Outcome, Phase, PollContext, PriceContext, PriceMode, Program, ProgramColumn, ProgramPlan, ProgressContext, Request,
-    Row, Sense, Settings, Solution, SolutionContext, SolveError, Solver, StopReason, TiVec, bounds,
+    Outcome, Phase, PollContext, PriceContext, PriceMode, Program, ProgramColumn, ProgramPlan, ProgressContext,
+    Request, Row, Sense, Settings, Solution, SolutionContext, SolveError, Solver, StopReason, TiVec, bounds,
 };
 use culmen_scip::{Scip, ScipError, ScipEvent, ScipOptions, ScipPrice};
 use culmen_testing::reference::{Reference, close, solve};
@@ -676,7 +676,10 @@ impl Callback<Scip> for Phases {
         self.pricer.price_round(ctx);
     }
     fn progress(&mut self, ctx: &mut culmen_scip::ScipProgress) {
-        assert!(self.phases.len() < MAX_CALLS, "more progress reports than any test expects");
+        assert!(
+            self.phases.len() < MAX_CALLS,
+            "more progress reports than any test expects"
+        );
         self.phases.push(ctx.progress().phase);
     }
 }

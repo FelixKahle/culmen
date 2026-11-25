@@ -79,7 +79,8 @@ impl Emphasis {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ScipParam {
-    /// SCIP's name of the parameter, such as `limits/nodes`.
+    /// SCIP's name of the parameter, such as `limits/maxorigsol` (an `int` parameter) or `limits/nodes` (a
+    /// `SCIP_Longint` one, set with an `i64` value).
     pub name: String,
     /// The value set.
     pub value: ParamValue,

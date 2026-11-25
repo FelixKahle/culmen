@@ -5,10 +5,10 @@
 //! solved on a switchable backend, with a live view of the search (best solution, bound, gap, solver log) and a
 //! cooperative stop.
 //!
-//! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as [`Highs`] (and
-//! the whole backend as [`highs`]) with the default `highs` feature, the SCIP backend as `Scip` (and the whole
-//! backend as `scip`) with the `scip` feature, and the modelling macros with the `macros` feature. [`prelude`] holds what a
-//! model and a solve need.
+//! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as [`Highs`] (and the
+//! whole backend as [`highs`]) with the default `highs` feature, the SCIP backend as `Scip` (and the whole backend as
+//! `scip`) with the `scip` feature, and the modelling macros with the `macros` feature. [`prelude`] holds what a model
+//! and a solve need.
 //!
 //! # A model, two ways
 //!

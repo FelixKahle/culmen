@@ -14,16 +14,16 @@ use super::{Col, Integrality, Program, ProgramFeature, Row, Sense};
 impl Program {
     /// The program in the CPLEX LP file format.
     ///
-    /// The output is meant for debugging: names are reduced to the characters the format allows, a name that is one
-    /// of its keywords (`max`, `sos`, `end`, …, in any case) is prefixed `_`, an unnamed column is written
-    /// `x<index>` and an unnamed row `r<index>`, a ranged row becomes two rows suffixed `_lo` and `_hi`, and a free
-    /// row, which the format cannot state and which constrains nothing, is left out. Every column and every row gets a
-    /// label of its own, so the file states the same program whatever the names: a label taken already, by a name
-    /// given twice, two names that reduce to the same text, or a generated label equal to a name, is suffixed `~1`,
-    /// `~2`, … until it is free, the columns and rows that keep their own name first. A quadratic part is written in the
-    /// format's brackets halved, `[ 2 x ^ 2 + 4 x * y ] / 2` for `x² + 2xy`. Integer and semi-integer columns are
-    /// listed under `General`, semi-continuous and semi-integer ones under `Semi-Continuous`: a column in both is
-    /// semi-integer, as CPLEX and HiGHS read it.
+    /// The output is meant for debugging: names are reduced to the characters the format allows, a name that is one of
+    /// its keywords (`max`, `sos`, `end`, …, in any case) is prefixed `_`, an unnamed column is written `x<index>` and
+    /// an unnamed row `r<index>`, a ranged row becomes two rows suffixed `_lo` and `_hi`, and a free row, which the
+    /// format cannot state and which constrains nothing, is left out. Every column and every row gets a label of its
+    /// own, so the file states the same program whatever the names: a label taken already, by a name given twice, two
+    /// names that reduce to the same text, or a generated label equal to a name, is suffixed `~1`, `~2`, … until it is
+    /// free, the columns and rows that keep their own name first. A quadratic part is written in the format's brackets
+    /// halved, `[ 2 x ^ 2 + 4 x * y ] / 2` for `x² + 2xy`. Integer and semi-integer columns are listed under `General`,
+    /// semi-continuous and semi-integer ones under `Semi-Continuous`: a column in both is semi-integer, as CPLEX and
+    /// HiGHS read it.
     ///
     /// ```
     /// use culmen_core::{ProgramColumn, ProgramPlan, Sense, bounds};

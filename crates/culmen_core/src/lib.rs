@@ -1,16 +1,11 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-#![forbid(unsafe_code)]
-#![cfg_attr(
-    test,
-    allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
-)]
 //! The core of culmen: linear, mixed-integer and convex quadratic programs as data, a modelling layer that reads
 //! like the mathematics, and a solver-neutral seam with rich callbacks, a cooperative stop and a throttled observer.
 //!
 //! This crate holds no solver and no `unsafe`. A solver plugs in by implementing [`Backend`]; the `culmen` facade
-//! re-exports this crate with the HiGHS backend and the modelling macros.
+//! re-exports this crate with the HiGHS and SCIP backends and the modelling macros.
 //!
 //! # The line through the crate
 //!
@@ -70,6 +65,12 @@
 //! - **`serde`**: the plain data ([`Program`], [`ProgramPlan`], [`Bounds`], [`Settings`], [`Outcome`], [`Solution`],
 //!   [`Progress`], …) serializes and reads back; a [`Program`] and every checked value are checked again as they are
 //!   read. A number that may be infinite or NaN, such as a [`Limit`]'s, is written in the form of [`serde_real`].
+
+#![forbid(unsafe_code)]
+#![cfg_attr(
+    test,
+    allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
+)]
 
 mod gap;
 mod model;

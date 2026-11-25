@@ -8,13 +8,13 @@
 //! against the original problem, bounds and integrality included, and stores it if it is feasible and among the
 //! solutions SCIP keeps. Checking it in the original space keeps it independent of what presolve did to the variables.
 //!
-//! In a solve whose callback also [`prices`](culmen_core::Callback::prices), an original solution cannot hold the columns priced so far, which
-//! have no original variable, so the solution is a transformed one (`SCIPcreateSol`) instead: each program column's
-//! value is set through its original variable into whatever presolve made of it, each priced column's on its own
-//! variable, and the solution is handed over only when SCIP reads back every program column's value as given
-//! (`SCIPisEQ`). A column presolve fixed at another value or multi-aggregated over others may not read back so, and
-//! the solution is then refused; SCIP checks a transformed solution against its transformed problem, which presolve
-//! derived from the program, so a solution it stores is feasible in the program.
+//! In a solve whose callback also [`prices`](culmen_core::Callback::prices), an original solution cannot hold the
+//! columns priced so far, which have no original variable, so the solution is a transformed one (`SCIPcreateSol`)
+//! instead: each program column's value is set through its original variable into whatever presolve made of it, each
+//! priced column's on its own variable, and the solution is handed over only when SCIP reads back every program
+//! column's value as given (`SCIPisEQ`). A column presolve fixed at another value or multi-aggregated over others may
+//! not read back so, and the solution is then refused; SCIP checks a transformed solution against its transformed
+//! problem, which presolve derived from the program, so a solution it stores is feasible in the program.
 //!
 //! In a solve that also asks for [`Events::LAZY`], the lazy-constraint callback must judge every solution SCIP
 //! stores, and it cannot while the heuristic callback runs; so there the supplied solutions are tried once the
@@ -64,12 +64,12 @@ impl HeuristicContext for ScipHeuristic<'_> {
         self.progress
     }
 
-    /// SCIP checks the solution against the program, bounds and integrality included, and stores it when it is
-    /// feasible and among the solutions it keeps (`limits/maxsol` of them), so a stored solution need not be the new
-    /// incumbent. In a solve that also asks for [`Events::LAZY`], SCIP tries the solution once this callback
-    /// returns, after the lazy-constraint callback judged it, and `supply` returns `Ok` when it took it to try. In a
-    /// solve whose callback also [`prices`](culmen_core::Callback::prices), the solution is checked against SCIP's transformed problem, and a
-    /// solution presolve's fixings or aggregations cannot hold is refused.
+    /// SCIP checks the solution against the program, bounds and integrality included, and stores it when it is feasible
+    /// and among the solutions it keeps (`limits/maxsol` of them), so a stored solution need not be the new incumbent.
+    /// In a solve that also asks for [`Events::LAZY`], SCIP tries the solution once this callback returns, after the
+    /// lazy-constraint callback judged it, and `supply` returns `Ok` when it took it to try. In a solve whose callback
+    /// also [`prices`](culmen_core::Callback::prices), the solution is checked against SCIP's transformed problem, and
+    /// a solution presolve's fixings or aggregations cannot hold is refused.
     ///
     /// # Errors
     ///

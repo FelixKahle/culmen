@@ -247,10 +247,10 @@ const fn unsupported<B: Backend>(analysis: Analysis) -> AnalysisError<B::Error> 
 
 /// What runs during a solve: one method per event kind, each with the backend's context for it.
 ///
-/// Every method does nothing by default, [`Callback::events`] asks for every event, and [`Callback::prices`] is `false`:
-/// pricing is asked for by name, never by a set of events. Implement it generically (`impl<B: Backend> Callback<B> for …`) to run
-/// on every backend through the neutral context traits, or for one backend to reach its own context types. Two
-/// callbacks run together as a pair `(a, b)`, `a` first.
+/// Every method does nothing by default, [`Callback::events`] asks for every event, and [`Callback::prices`] is
+/// `false`: pricing is asked for by name, never by a set of events. Implement it generically (`impl<B: Backend>
+/// Callback<B> for …`) to run on every backend through the neutral context traits, or for one backend to reach its own
+/// context types. Two callbacks run together as a pair `(a, b)`, `a` first.
 ///
 /// ```
 /// use culmen_core::{Backend, Callback, Events, PollContext};

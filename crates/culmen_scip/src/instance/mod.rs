@@ -50,7 +50,7 @@ const TRUE: c_uint = 1;
 #[derive(Debug)]
 pub(crate) struct Instance {
     scip: NonNull<SCIP>,
-    /// The slot of the callback plugins, from `Box::into_raw`, freed in `Drop` after SCIP.
+    /// The slot of the callback plugins, from `Box::leak`, freed in `Drop` after SCIP.
     slot: NonNull<Slot>,
     vars: TiVec<Col, NonNull<SCIP_VAR>>,
     conss: TiVec<Row, NonNull<SCIP_CONS>>,
@@ -465,7 +465,7 @@ impl Drop for Instance {
         // SAFETY: the instance is live, this instance holds no further reference into it, and it is freed once.
         let code = unsafe { SCIPfree(&raw mut raw) };
         debug_assert!(released(code), "Instance: SCIP failed to free the instance: {code}");
-        // SAFETY: the slot came from `Box::into_raw` and SCIP, whose plugins were the only other holders of it, is
+        // SAFETY: the slot came from `Box::leak` and SCIP, whose plugins were the only other holders of it, is
         // freed; it is freed once, here.
         drop(unsafe { Box::from_raw(self.slot.as_ptr()) });
     }

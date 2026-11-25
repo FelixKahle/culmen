@@ -150,11 +150,11 @@ fn test_the_qp_iteration_limit_stops_the_active_set_solver() {
 
 #[test]
 fn test_a_qp_with_bounds_alone_leaves_its_starting_point() {
-    // Found by the property test below. On a QP without rows HiGHS starts from the unconstrained minimizer clamped
-    // into the bounds (`computeStartingPointBounded`, still taken by 1.16 when there are no rows), here the origin,
-    // and reported it optimal after no iteration although the gradient there, -1 on x3, points into the box; the
-    // backend passes a free row, so HiGHS takes its other start. Its optimum is x2 = 20/51, x3 = 1, at -859/1020: the minimum of
-    // 2.55·x2² - 2·x2 - 0.45, where the gradient is (40/51, 1, 0, 0.1 - 40/51), pointing out of the box.
+    // Found by the property test below. On a QP without rows HiGHS starts from the unconstrained minimizer clamped into
+    // the bounds (`computeStartingPointBounded`, still taken by 1.16 when there are no rows), here the origin, and
+    // reported it optimal after no iteration although the gradient there, -1 on x3, points into the box; the backend
+    // passes a free row, so HiGHS takes its other start. Its optimum is x2 = 20/51, x3 = 1, at -859/1020: the minimum
+    // of 2.55·x2² - 2·x2 - 0.45, where the gradient is (40/51, 1, 0, 0.1 - 40/51), pointing out of the box.
     let mut plan = ProgramPlan::new();
     let x: Vec<Col> = [0.0, 0.0, 0.0, -1.0]
         .into_iter()

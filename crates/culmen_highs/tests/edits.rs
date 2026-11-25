@@ -418,8 +418,8 @@ proptest! {
             let edited = try_solve_exactly(&mut solver);
             prop_assert_eq!(solver.backend().held(), Some(solver.program()));
             let fresh = try_solve_exactly(&mut Solver::new(Highs::new(), solver.program().clone()).unwrap());
-            // Some edits make a QP HiGHS 1.16 still fails as unsound (an optimum with a primal-dual objective error near
-            // 1, two in 256 cases); a fresh solver failing the same way is agreement.
+            // Some edits make a QP HiGHS 1.16 still fails as unsound (an optimum with a primal-dual objective error
+            // near 1, two in 256 cases); a fresh solver failing the same way is agreement.
             let (edited, fresh) = match (edited, fresh) {
                 (Ok(edited), Ok(fresh)) => (edited, fresh),
                 (Err(edited), Err(fresh)) => {

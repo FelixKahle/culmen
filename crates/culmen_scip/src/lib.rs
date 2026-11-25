@@ -31,10 +31,11 @@
 //!
 //! Each solve starts from the program as loaded and from the last solve's best solutions: it frees the last solve's
 //! transformed problem, resets SCIP's parameters to their defaults, keeps SCIP from catching `SIGINT`
-//! (`misc/catchctrlc`), turns off SCIP's reformulation of products of binary variables in nonlinear constraints (`constraints/nonlinear/reformbinprods`;
-//! see [`Scip::CLASSES`] for why), then applies the backend's [`ScipOptions`] and then the solve's [`Settings`], so a
-//! per-solve setting always wins and an option naming either parameter overrides the backend's choice. SCIP's log
-//! stays off standard output unless [`Settings::console`] asks for it.
+//! (`misc/catchctrlc`), turns off SCIP's reformulation of products of binary variables in nonlinear constraints
+//! (`constraints/nonlinear/reformbinprods`; see [`Scip::CLASSES`] for why), then applies the backend's
+//! [`ScipOptions`] and then the solve's [`Settings`], so a per-solve setting always wins and an option naming either
+//! parameter overrides the backend's choice. SCIP's log stays off standard output unless [`Settings::console`] asks
+//! for it.
 //!
 //! Freeing the transformed problem keeps up to `limits/maxorigsol` (10 by default) of the last solve's best solutions
 //! as candidates, which the next solve checks again, against its own lazy constraints too, and may start from, as it
@@ -91,17 +92,17 @@
 //! A solve asking for [`Events::CUT`] or [`Events::HEURISTIC`] calls its separator or heuristic at every node, also
 //! when an emphasis turned SCIP's own off.
 //!
-//! Pricing is opt-in: only a solve whose callback [`prices`](Callback::prices) activates the pricer and marks every
-//! program row modifiable, as SCIP requires of a row a pricer adds variables to; any other solve leaves the pricer
-//! inactive and no row modifiable, so SCIP gives up nothing for it. A pricing solve also turns off the LP solver's
-//! presolving (`lp/presolving`), whose duals of a degenerate node LP need not price out the columns at their bounds,
-//! SCIP's aggregation separator (`separating/aggregation/freq`), which cuts with the objective cutoff over the
-//! columns held as if no other column could enter, and the LP solver's objective limit (`lp/disablecutoff = 1`), so
-//! every node LP handed to the callback is optimal or infeasible, whatever the options set. SCIP does not price a program with a quadratic
-//! objective: such a solve fails with [`ScipError::PricingQuadratic`] before SCIP runs. Every column a callback prices
-//! is a variable of SCIP's transformed problem with no original counterpart, so a heuristic solution of a pricing
-//! solve is a transformed one ([`ScipHeuristic`]), and the backend keeps the priced variables until it frees that
-//! problem, so the best solution has a value for each.
+//! Only a solve whose callback [`prices`](Callback::prices) activates the pricer and marks every program row
+//! modifiable, as SCIP requires of a row a pricer adds variables to; any other solve leaves the pricer inactive and
+//! no row modifiable, so SCIP gives up nothing for it. A pricing solve also turns off the LP solver's presolving
+//! (`lp/presolving`), whose duals of a degenerate node LP need not price out the columns at their bounds, SCIP's
+//! aggregation separator (`separating/aggregation/freq`), which cuts with the objective cutoff over the columns held
+//! as if no other column could enter, and the LP solver's objective limit (`lp/disablecutoff = 1`), so every node LP
+//! handed to the callback is optimal or infeasible, whatever the options set. SCIP does not price a program with a
+//! quadratic objective: such a solve fails with [`ScipError::PricingQuadratic`] before SCIP runs. Every column a
+//! callback prices is a variable of SCIP's transformed problem with no original counterpart, so a heuristic solution
+//! of a pricing solve is a transformed one ([`ScipHeuristic`]), and the backend keeps the priced variables until it
+//! frees that problem, so the best solution has a value for each.
 //!
 //! ```
 //! use culmen_core::{Backend, Callback, Col, Events, LazyContext, Linear, Model, Request, Solver, Var};
@@ -453,11 +454,12 @@ impl Backend for Scip {
     /// # Errors
     ///
     /// [`ScipError::NotLoaded`] before a load; [`ScipError::PricingQuadratic`] for a callback that
-    /// [`prices`](Callback::prices) on a program with a quadratic objective, before SCIP is called; [`ScipError::BranchEarly`] for
-    /// a pricing callback ending pricing early where SCIP cannot branch; the errors of the options and settings the
-    /// module documentation lists; [`ScipError::Call`] when SCIP fails, or a call a plugin makes for the callback does;
-    /// [`ScipError::Failed`] when SCIP ends with a status that proves nothing; [`ScipError::InfeasibleBest`] when
-    /// SCIP's own check finds its best solution infeasible in the original problem, which is then not reported.
+    /// [`prices`](Callback::prices) on a program with a quadratic objective, before SCIP is called;
+    /// [`ScipError::BranchEarly`] for a pricing callback ending pricing early where SCIP cannot branch; the errors of
+    /// the options and settings the module documentation lists; [`ScipError::Call`] when SCIP fails, or a call a plugin
+    /// makes for the callback does; [`ScipError::Failed`] when SCIP ends with a status that proves nothing;
+    /// [`ScipError::InfeasibleBest`] when SCIP's own check finds its best solution infeasible in the original problem,
+    /// which is then not reported.
     ///
     /// # Panics
     ///
