@@ -237,7 +237,8 @@ pub struct Violation {
     pub line: Line,
     /// The end of its bounds the value lies beyond.
     pub bound: Bound,
-    /// How far beyond it, above zero.
+    /// How far beyond it, above zero; infinite or NaN for a point holding such a value.
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_real"))]
     pub amount: f64,
 }
 

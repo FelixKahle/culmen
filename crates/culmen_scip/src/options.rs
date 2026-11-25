@@ -94,8 +94,8 @@ pub enum ParamValue {
     Int(i32),
     /// A `SCIP_Longint` parameter.
     Longint(i64),
-    /// A `SCIP_Real` parameter.
-    Real(f64),
+    /// A `SCIP_Real` parameter; written in the form of [`culmen_core::serde_real`], so an infinity reads back.
+    Real(#[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real"))] f64),
     /// A `char` parameter; SCIP takes only ASCII characters.
     Char(char),
     /// A string parameter.

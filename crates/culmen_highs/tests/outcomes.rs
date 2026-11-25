@@ -328,6 +328,15 @@ fn test_options_and_statuses_round_trip() {
     round_trip(&solved);
     round_trip(&ModelStatus::Other(42));
     round_trip(&culmen_highs::version());
+    // HiGHS's own default objective bound is +inf, and its infinite bound a double option set by name.
+    let infinite = HighsOptions {
+        objective_bound: Some(f64::INFINITY),
+        objective_target: Some(f64::NEG_INFINITY),
+        ..HighsOptions::default()
+    }
+    .option("infinite_bound", f64::INFINITY);
+    round_trip(&infinite);
+    round_trip(&culmen_highs::OptionValue::Double(f64::NEG_INFINITY));
 }
 
 #[test]

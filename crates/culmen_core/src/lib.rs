@@ -69,12 +69,14 @@
 //!
 //! - **`serde`**: the plain data ([`Program`], [`ProgramPlan`], [`Bounds`], [`Settings`], [`Outcome`], [`Solution`],
 //!   [`Progress`], …) serializes and reads back; a [`Program`] and every checked value are checked again as they are
-//!   read.
+//!   read. A number that may be infinite or NaN, such as a [`Limit`]'s, is written in the form of [`serde_real`].
 
 mod gap;
 mod model;
 mod program;
 mod script;
+#[cfg(feature = "serde")]
+pub mod serde_real;
 mod solve;
 
 pub use gap::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, RelativeGap};

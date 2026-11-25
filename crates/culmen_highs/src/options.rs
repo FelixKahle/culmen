@@ -20,8 +20,8 @@ pub enum OptionValue {
     Bool(bool),
     /// An integer option.
     Int(i32),
-    /// A `double` option.
-    Double(f64),
+    /// A `double` option; written in the form of [`culmen_core::serde_real`], so an infinity reads back.
+    Double(#[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real"))] f64),
     /// A string option.
     String(String),
 }
@@ -403,6 +403,8 @@ macro_rules! options {
         /// any other option is set by name through [`HighsOptions::option`], after the typed ones. The
         /// [`Settings`](culmen_core::Settings) of a solve apply after both, so a per-solve limit always wins.
         ///
+        /// An `f64` field is written in the form of [`culmen_core::serde_real`], so an infinity reads back.
+        ///
         /// A `u64` field is a limit, and one beyond HiGHS's integers is HiGHS's largest integer, its "no limit". A
         /// `u32` field is an exact integer, and one beyond HiGHS's integers fails the solve with
         /// [`HighsError::OutOfRange`].
@@ -462,28 +464,40 @@ options! {
     /// Whether to compute cost, bound and right-hand-side ranging.
     ranging: OnOff = "ranging",
     /// The magnitude at which a cost counts as infinite.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     infinite_cost: f64 = "infinite_cost",
     /// The magnitude at which a bound counts as infinite.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     infinite_bound: f64 = "infinite_bound",
     /// The magnitude at or below which a matrix entry counts as zero.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     small_matrix_value: f64 = "small_matrix_value",
     /// The magnitude at or above which a matrix entry counts as infinite.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     large_matrix_value: f64 = "large_matrix_value",
     /// One tolerance for every feasibility and optimality measure.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     kkt_tolerance: f64 = "kkt_tolerance",
     /// The primal feasibility tolerance.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     primal_feasibility_tolerance: f64 = "primal_feasibility_tolerance",
     /// The dual feasibility tolerance.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     dual_feasibility_tolerance: f64 = "dual_feasibility_tolerance",
     /// The primal residual tolerance.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     primal_residual_tolerance: f64 = "primal_residual_tolerance",
     /// The dual residual tolerance.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     dual_residual_tolerance: f64 = "dual_residual_tolerance",
     /// The optimality tolerance.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     optimality_tolerance: f64 = "optimality_tolerance",
     /// The objective bound at which the dual simplex stops.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     objective_bound: f64 = "objective_bound",
     /// The objective value at which a MIP stops.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     objective_target: f64 = "objective_target",
     /// The random seed.
     random_seed: u32 = "random_seed",
@@ -541,8 +555,10 @@ options! {
     /// The clique-table size at which conflict-graph queries run in parallel.
     mip_min_cliquetable_entries_for_parallelism: u64 = "mip_min_cliquetable_entries_for_parallelism",
     /// The integrality tolerance.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     mip_feasibility_tolerance: f64 = "mip_feasibility_tolerance",
     /// The share of effort spent on heuristics, from 0 to 1.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     mip_heuristic_effort: f64 = "mip_heuristic_effort",
     /// Whether the feasibility-jump heuristic runs.
     mip_heuristic_run_feasibility_jump: bool = "mip_heuristic_run_feasibility_jump",
@@ -559,22 +575,27 @@ options! {
     /// Whether cuts are separated at nodes other than the root.
     mip_allow_cut_separation_at_nodes: bool = "mip_allow_cut_separation_at_nodes",
     /// The relative gap at which a MIP counts as solved.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     mip_rel_gap: f64 = "mip_rel_gap",
     /// The absolute gap at which a MIP counts as solved.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     mip_abs_gap: f64 = "mip_abs_gap",
     /// The least time between two lines of the MIP log, in seconds.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     mip_min_logging_interval: f64 = "mip_min_logging_interval",
     /// The LP solver inside the MIP solver.
     mip_lp_solver: MipLpSolver = "mip_lp_solver",
     /// The interior-point solver inside the MIP solver.
     mip_ipm_solver: MipIpmSolver = "mip_ipm_solver",
     /// The interior-point optimality tolerance.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     ipm_optimality_tolerance: f64 = "ipm_optimality_tolerance",
     /// The interior-point iteration limit.
     ipm_iteration_limit: u64 = "ipm_iteration_limit",
     /// The PDLP iteration limit.
     pdlp_iteration_limit: u64 = "pdlp_iteration_limit",
     /// The PDLP optimality tolerance.
+    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     pdlp_optimality_tolerance: f64 = "pdlp_optimality_tolerance",
     /// The iteration limit of the active-set QP solver.
     qp_iteration_limit: u64 = "qp_iteration_limit",

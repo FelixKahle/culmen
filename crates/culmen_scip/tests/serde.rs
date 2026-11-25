@@ -43,6 +43,8 @@ fn test_options_and_parameters_round_trip() {
     }
     round_trip(&Emphasis::Default);
     round_trip(&ParamValue::String(String::new()));
+    round_trip(&ParamValue::Real(f64::INFINITY));
+    round_trip(&ScipOptions::default().param("limits/objectivestop", f64::NEG_INFINITY));
 }
 
 #[test]
