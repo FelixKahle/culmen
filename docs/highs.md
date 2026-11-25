@@ -426,7 +426,7 @@ A `Callback<Highs>` receives HiGHS's own context types. Each implements the neut
 | `INCUMBENT` | `HighsSolution` | `kHighsCallbackMipImprovingSolution` | `mip()` |
 | `HEURISTIC` | `HighsHeuristic` | `kHighsCallbackMipUserSolution` | `origin()`, a `QueryOrigin`; `mip()` |
 | `NATIVE` | `HighsNative` | `kHighsCallbackMipGetCutPool` | the [cut pool](#the-cut-pool) |
-| `LAZY`, `CUT` | `Unsupported` | none | never delivered ([Limitations](#limitations)) |
+| `LAZY`, `CUT`, `PRICE` | `Unsupported` | none | never delivered ([Limitations](#limitations)) |
 
 `MipData` is what every MIP callback reports, in the model's objective space, offset included:
 
@@ -575,14 +575,20 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 ## Limitations
 
 - **No lazy constraints.** HiGHS 1.16 declares `kHighsCallbackMipDefineLazyConstraints` and never calls it, so
-  `Events::LAZY` is not in `Highs::EVENTS` and its context is `Unsupported`.
-- **No user cuts.** HiGHS has no callback for them; `Events::CUT` is `Unsupported` too.
+  `Events::LAZY` is not in `Highs::EVENTS` and its context is `Unsupported`. [SCIP](scip.md#lazy-constraints) takes
+  them.
+- **No user cuts.** HiGHS has no callback for them; `Events::CUT` is `Unsupported` too. [SCIP](scip.md#cuts) takes
+  them.
+- **No pricing.** HiGHS has no pricing callback, so `Events::PRICE` is `Unsupported`: price in an outer loop by
+  [editing](#editing-a-loaded-program) the program, as the `column_generation` example does, or at every node on
+  [SCIP](scip.md#pricing).
 - **An interrupt is honoured only at a poll.** Only `HighsPoll` has `interrupt`, and only `HighsHeuristic` accepts
   a solution.
 - **One thread count per thread.** See [Threads](#threads).
 - **32-bit indices.** A program with more than `i32::MAX` columns, rows, entries or Hessian entries is refused with
   `HighsError::TooLarge`.
-- **No MIQP, and a QP solve sees no progress or improvement.** See [Quadratic programs](#quadratic-programs).
+- **No MIQP, and a QP solve sees no progress or improvement.** See [Quadratic programs](#quadratic-programs); SCIP
+  solves MIQPs ([SCIP](scip.md#quadratic-programs)).
 - **Options do not persist inside HiGHS.** Each solve resets them; set them through `HighsOptions`.
 - **Semi columns up to `1e5`, linear objectives only.** See
   [Semi columns, several objectives and starts](#semi-columns-several-objectives-and-starts).
@@ -592,6 +598,7 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 - [Callbacks](callbacks.md): the neutral events and contexts.
 - [Analysis](analysis.md#highs): duals, basis, ranging, rays, IIS and feasibility relaxation on HiGHS.
 - [Solving](solving.md): requests, settings and outcomes.
+- [SCIP](scip.md): the second backend, for MIQPs, lazy constraints, cuts and pricing.
 - [Backends](backends.md): how HiGHS's callbacks, options and statuses map onto culmen's seam, beside Gurobi and SCIP.
 - [Design](design.md#where-unsafe-lives): why the trampoline is sound.
 - [Documentation index](README.md).

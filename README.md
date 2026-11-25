@@ -10,6 +10,7 @@ cooperatively at any moment.
 [![Rust 1.99+](https://img.shields.io/badge/rust-1.99%2B-orange.svg)](https://www.rust-lang.org)
 [![Edition 2024](https://img.shields.io/badge/edition-2024-orange.svg)](https://doc.rust-lang.org/edition-guide/)
 [![Backend: HiGHS 1.16](https://img.shields.io/badge/backend-HiGHS%201.16-green.svg)](https://highs.dev)
+[![Backend: SCIP 10](https://img.shields.io/badge/backend-SCIP%2010-green.svg)](https://scipopt.org)
 
 ```rust
 use culmen::prelude::*;
@@ -55,14 +56,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   and a request it cannot answer is a typed error naming why.
 - **Any solver behind one seam.** `Backend` is an open trait with typed, solver-neutral callback events: log,
   progress, interrupt poll, feasible and improving solutions, lazy constraints, user cuts, heuristic solutions,
-  and native events for what only one solver offers. HiGHS is the first backend, and every HiGHS callback is
-  mapped.
+  pricing, and native events for what only one solver offers. HiGHS is the default backend, with every HiGHS
+  callback mapped; SCIP, behind the `scip` feature, adds MIQPs, lazy constraints, user cuts and branch-and-price.
 - **A solve you can watch and stop.** A `Stop` can be an `AtomicBool`, a closure or a cancellation token. An
   `Observer` receives throttled progress, every new incumbent and each complete log line, while the solver's own
   console output stays quiet. A panic in an observer or callback stops the solve and unwinds out of `solve`; it
   never aborts the process.
-- **`unsafe` lives in one crate.** `culmen_core` forbids it. `culmen_highs` is the only crate with `unsafe`, and
-  every block there has a `// SAFETY:` comment.
+- **`unsafe` lives in the backends.** `culmen_core` forbids it. `culmen_highs` and `culmen_scip` are the only crates
+  with `unsafe`, and every block there has a `// SAFETY:` comment.
 
 ## Keyed families and the macros
 
@@ -153,7 +154,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 HiGHS 1.16 solves LPs, MILPs and convex QPs, not QPs with integer columns: `Solver::new` refuses a MIQP on HiGHS
-with `LoadError::Unsupported`.
+with `LoadError::Unsupported`. SCIP, with the `scip` feature, solves all four classes.
+
+## SCIP: lazy constraints and pricing
+
+The same models solve on SCIP by naming another backend. A callback can then add constraints only it knows, as each
+candidate arrives, or price columns into every node of the search:
+
+```rust
+use std::time::Duration;
+
+use culmen::LazyContext;
+use culmen::prelude::*;
+
+/// Forbids taking both items, a conflict only the callback knows.
+struct NotBoth(Col, Col);
+
+impl Callback<Scip> for NotBoth {
+    fn events(&self) -> Events {
+        Events::LAZY
+    }
+    fn lazy(&mut self, ctx: &mut <Scip as Backend>::Lazy<'_>) {
+        let candidate = ctx.candidate();
+        if candidate[self.0] + candidate[self.1] > 1.5 {
+            ctx.add_lazy((self.0 + self.1).leq(1)).expect("a valid constraint");
+        }
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut m = Model::new();
+    let x = m.add_var(Var::binary());
+    let y = m.add_var(Var::binary());
+    m.maximize(3.0 * x + 2.0 * y);
+
+    let mut solver = Solver::new(Scip::new(), m.build()?)?;
+    let request = Request::new().time_limit(Duration::from_secs(10));
+    let solved = solver.solve_with(request, &mut NotBoth(x, y))?;
+    assert_eq!(solved.outcome.objective(), Some(3.0));
+    Ok(())
+}
+```
 
 ## Watching and stopping a solve
 
@@ -219,13 +260,16 @@ culmen = { git = "https://github.com/FelixKahle/culmen", features = ["macros"] }
 ```
 
 The HiGHS backend builds HiGHS 1.16 from source through `highs-sys`, which needs **cmake** and **libclang**. The
-first build takes a few minutes.
+first build takes a few minutes. The SCIP backend downloads the SCIP 10 sources from GitHub as it builds and compiles
+SCIP and SoPlex through `scip-sys`, which needs **cmake**, a **C and C++ compiler**, **libclang** and **network
+access**; its first build takes a few minutes more and about 500 MB of disk.
 
 | Feature | Default | What it adds |
 |---|---|---|
 | `highs` | yes | The HiGHS backend, as `culmen::Highs` and the module `culmen::highs`. |
+| `scip` | no | The SCIP backend, as `culmen::Scip` and the module `culmen::scip`: MIQPs, lazy constraints, user cuts and branch-and-price. |
 | `macros` | no | `variable!`, `constraint!`, `objective!` and `sum!`. |
-| `serde` | no | Serialization of the plain data: programs (quadratic parts included), model classes, bounds, settings, outcomes, solutions, HiGHS options and statuses. |
+| `serde` | no | Serialization of the plain data: programs (quadratic parts included), model classes, bounds, settings, outcomes, solutions, and the options and statuses of each backend enabled. |
 
 ## Documentation
 
@@ -237,6 +281,8 @@ The user guide is in [`docs/`](https://github.com/FelixKahle/culmen/blob/main/do
 - [Solving](https://github.com/FelixKahle/culmen/blob/main/docs/solving.md) and [Callbacks](https://github.com/FelixKahle/culmen/blob/main/docs/callbacks.md): model classes, requests, settings, outcomes,
   observers, stops and every callback event.
 - [HiGHS](https://github.com/FelixKahle/culmen/blob/main/docs/highs.md): options, threads, statuses, quadratic programs, callback contexts, and limitations.
+- [SCIP](https://github.com/FelixKahle/culmen/blob/main/docs/scip.md): building, options, statuses, quadratic programs, lazy constraints, cuts, heuristic
+  solutions, pricing, and limitations.
 - [The program as data](https://github.com/FelixKahle/culmen/blob/main/docs/program.md), [Testing](https://github.com/FelixKahle/culmen/blob/main/docs/testing.md), [Design](https://github.com/FelixKahle/culmen/blob/main/docs/design.md), and
   [Backends](https://github.com/FelixKahle/culmen/blob/main/docs/backends.md) for backend authors.
 
@@ -249,19 +295,23 @@ cargo run -p culmen --example knapsack
 cargo run -p culmen --release --example warehouse -- 20
 cargo run -p culmen --example cutting_planes
 cargo run -p culmen --example column_generation
+cargo run -p culmen --example branch_and_price --features scip
+cargo run -p culmen --example lazy_constraints --features scip
 ```
 
 `warehouse` assigns 60 products to 30 locations with live progress. It stops after 20 seconds or on Ctrl-C.
 `knapsack` and `warehouse` each have a `_macros` twin, run with `--features macros`. `cutting_planes` and
-`column_generation` edit a loaded program and solve it again warm.
+`column_generation` edit a loaded program and solve it again warm. `branch_and_price` prices cutting patterns at every
+node of SCIP's search, and `lazy_constraints` cuts subtours off a round trip as SCIP finds them.
 
 ## Crates
 
 | Crate | What it holds |
 |---|---|
-| [`culmen`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen) | The crate to depend on: re-exports, a `prelude`, and the `highs` and `macros` features. |
+| [`culmen`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen) | The crate to depend on: re-exports, a `prelude`, and the `highs`, `scip` and `macros` features. |
 | [`culmen_core`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_core) | The program as data, the modelling layer, the backend seam and the solve API. No solver and no `unsafe`. |
 | [`culmen_highs`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_highs) | The HiGHS backend: every callback as a typed, safe context, typed options and every status. |
+| [`culmen_scip`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_scip) | The SCIP backend: every generic event through SCIP plugins, pricing included, typed options and every status. |
 | [`culmen_macros`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_macros) | The modelling macros, which expand to `culmen_core`'s methods. |
 | [`culmen_testing`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_testing) | Dev-only: an exact reference solver, property-test strategies and hard instances. |
 
@@ -285,7 +335,7 @@ Contributions are welcome, from a typo fix to a new backend. Open an issue for a
 request straight away.
 
 - **Bugs:** the smallest program that shows it helps most. A fix comes with a test that fails without it.
-- **Backends:** HiGHS is the only one so far. [Backends](https://github.com/FelixKahle/culmen/blob/main/docs/backends.md) describes the contract a new solver
+- **Backends:** HiGHS and SCIP so far. [Backends](https://github.com/FelixKahle/culmen/blob/main/docs/backends.md) describes the contract a new solver
   implements.
 - **Pull requests:** CI must pass: formatting, clippy and the docs with warnings denied, and the tests.
 

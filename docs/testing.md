@@ -244,7 +244,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 With `small_lp()`, a property test states that a backend agrees with the reference on every generated problem, as
-`culmen_highs`'s own tests do.
+`culmen_highs`'s and `culmen_scip`'s own tests do; `culmen_scip`'s also price the columns `priced_split()` withholds
+back in and compare the result with the reference's optimum of the whole program.
 
 ## Serialization
 
@@ -260,6 +261,7 @@ With the `serde` feature, the plain data derives `Serialize` and `Deserialize`:
   `Side`, `Weights`, `Penalty`, `Relaxed`, `Violation`, `Bound`.
 - With `highs`: `HighsOptions` and its option types, `OptionValue`, `HighsStatus`, `ModelStatus`, `SolutionStatus`,
   `CallStatus`.
+- With `scip`: `ScipOptions`, `Emphasis`, `ScipParam`, `ParamValue`, `ScipStatus`, `Status`, `RetCode` and `Version`.
 
 The model (`Model`, `Var`, `LinExpr`, `QuadExpr`, `Constraint`, the families) is not serializable: serialize the
 `Program` it builds.

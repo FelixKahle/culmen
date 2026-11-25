@@ -156,7 +156,7 @@ pub use culmen_scip::Scip;
 /// snippets need a feature is included only with that feature.
 #[cfg(doctest)]
 mod docs {
-    #[cfg(all(feature = "highs", feature = "macros"))]
+    #[cfg(all(feature = "highs", feature = "scip", feature = "macros"))]
     #[doc = include_str!("../../../README.md")]
     struct Readme;
 
@@ -192,6 +192,10 @@ mod docs {
     #[cfg(feature = "highs")]
     #[doc = include_str!("../../../docs/highs.md")]
     struct HighsBackend;
+
+    #[cfg(feature = "scip")]
+    #[doc = include_str!("../../../docs/scip.md")]
+    struct ScipBackend;
 
     #[cfg(feature = "highs")]
     #[doc = include_str!("../../../docs/testing.md")]

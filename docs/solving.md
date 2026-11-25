@@ -23,7 +23,8 @@ solve as often as needed, each time with its own request.
 | `set_col_bounds(..)`, `set_col_costs(..)`, `set_col_integrality(..)`, `set_row_bounds(..)`, `add_row(..)`, `add_rows(..)`, `add_col(..)`, `add_cols(..)` | Edit the loaded program, to solve it again warm ([Editing a loaded program](#editing-a-loaded-program)). |
 | `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome ([Analysis](analysis.md)). |
 
-The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Script>` replays a script
+The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Scip>` with SCIP
+([SCIP](scip.md), the `scip` feature), `Solver<Script>` replays a script
 ([Testing](testing.md#the-script-backend)), and a backend of your own plugs in by implementing
 [`Backend`](backends.md).
 
@@ -57,11 +58,13 @@ sees a class it did not declare.
 | Backend | `CLASSES` |
 |---|---|
 | `Highs` | `{LP, MILP, QP}`: HiGHS 1.16 refuses to solve a QP with integer columns. |
+| `Scip` | Every class: a quadratic objective becomes an epigraph ([SCIP](scip.md#quadratic-programs)). |
 | `Script` | Every class: it replays its script rather than solving. |
 
 The same holds for [features](program.md#features): every backend declares the features it takes as
 `Backend::FEATURES`, a `ProgramFeatures` set (none unless declared), and `Solver::new` refuses a program using any
-other before `load`. `Highs` takes every feature; `Script` takes every feature and records each start.
+other before `load`. `Highs` takes every feature; `Scip` takes starts only, so it refuses semi columns and further
+objectives; `Script` takes every feature and records each start.
 
 The refusal is typed: `LoadError<E>` is `Unsupported { class, supported }`, naming the program's class and the backend's
 set, `UnsupportedFeature { feature, supported }`, naming the first feature the backend lacks and its set, or
@@ -118,7 +121,9 @@ A `Start` is a solution the solver may start from: `Start::Full(values)`, one va
 `Start::Sparse(entries)`, values for some columns, the solver choosing the rest. A MIP solver takes a feasible start
 as its first incumbent and may complete a partial or infeasible one; an LP solver may start from it. A start need not
 be feasible, but it must fit the program: `start.check(num_cols)` states it, and `solve` checks it before the backend
-sees it. A start applies to its one solve.
+sees it. A start applies to its one solve; a backend may also start a solve from the last solve's best solution, as
+HiGHS ([HiGHS](highs.md#semi-columns-several-objectives-and-starts)) and SCIP
+([SCIP](scip.md#how-options-and-settings-layer)) do until an edit.
 
 `solve` refuses a start typed, as `SolveError`:
 
@@ -200,8 +205,9 @@ let request = Request::new().settings_from(settings.clone());
 assert_eq!(request.settings(), &settings);
 ```
 
-How each setting maps onto HiGHS is on [HiGHS](highs.md#how-options-and-settings-layer); the
-[Backends](backends.md#settings) page maps them onto HiGHS, Gurobi and SCIP side by side.
+How each setting maps onto HiGHS is on [HiGHS](highs.md#how-options-and-settings-layer), onto SCIP on
+[SCIP](scip.md#how-options-and-settings-layer); the [Backends](backends.md#settings) page maps them onto HiGHS, Gurobi
+and SCIP side by side.
 
 ## Checked literals
 
@@ -253,7 +259,7 @@ A solve returns `Result<Solved<B::Status>, SolveError<B::Error>>`. `Solved` is p
 | Field | Holds |
 |---|---|
 | `outcome` | How the solve ended, as an `Outcome`. |
-| `status` | The backend's own status, for diagnostics; for HiGHS a [`HighsStatus`](highs.md#statuses-and-outcomes). |
+| `status` | The backend's own status, for diagnostics; for HiGHS a [`HighsStatus`](highs.md#statuses-and-outcomes), for SCIP a [`ScipStatus`](scip.md#statuses-and-outcomes). |
 | `elapsed` | The wall-clock time of the solve. |
 
 `Outcome` holds exactly what each ending proves:
@@ -371,7 +377,8 @@ A backend changes its model in place through [`Backend::edit`](backends.md#the-s
 warm start; one that does not loads the edited program whole, which is always correct and starts cold. When the
 backend refuses an edit, `EditError::Backend`, the `Solver` restores its program and loads it into the backend again;
 should that fail too, the next call that runs the backend loads it first. [HiGHS](highs.md#editing-a-loaded-program)
-changes its model in place.
+changes its model in place; [SCIP](scip.md#how-options-and-settings-layer) loads the edited program into a new
+instance.
 
 ```rust
 use culmen::prelude::*;
@@ -419,7 +426,8 @@ The examples `cutting_planes` and `column_generation` of the `culmen` crate edit
 ## A solve that prices
 
 A callback that asks for [`Events::PRICE`](callbacks.md#pricing) adds columns during the solve, column generation at
-every node of the search. Those columns are the program's from then on:
+every node of the search, on a backend that prices: [SCIP](scip.md#pricing). Those columns are the program's from then
+on:
 
 - **The program grows.** Each priced column continues the program's numbering: the first is `Col(n)` for a program
   of `n` columns, and `add_col` returns that id. When the solve ends, however it ends (returning `Ok`, failing, or
@@ -474,6 +482,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+The `branch_and_price` example of the `culmen` crate prices cutting patterns at every node on SCIP.
+
 ## Errors
 
 `Solver::new` fails with a [`LoadError<B::Error>`](#model-classes-and-refusal): a class the backend does not solve, a
@@ -483,7 +493,7 @@ before the backend sees the request, or `SolveError::Backend` with the backend's
 apply, or a failed run. An edit fails with an [`EditError<B::Error>`](#editing-a-loaded-program): an id the program does
 not have, a number that is not finite, invalid bounds, a class or feature the backend lacks, all decided before the
 backend sees the edit, or `EditError::Backend` when the backend refuses it. For HiGHS the backend's error is
-[`HighsError`](highs.md#errors). A solve
+[`HighsError`](highs.md#errors), for SCIP [`ScipError`](scip.md#errors). A solve
 that ends without a solution is not an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
 
 `solve` and `solve_with` panic when an observer or callback panics: the panic continues out of the call once the
@@ -494,5 +504,6 @@ solver has stopped ([Panics and threads](callbacks.md#panics-and-threads)).
 - [Callbacks](callbacks.md): stops, observers and callbacks.
 - [Analysis](analysis.md): duals, the basis, ranging, rays, IIS and feasibility relaxation after a solve.
 - [HiGHS](highs.md): the HiGHS backend's options, statuses and errors.
+- [SCIP](scip.md): the SCIP backend's options, statuses and errors, and pricing at every node.
 - [Testing](testing.md): solving with a scripted backend.
 - [Documentation index](README.md).

@@ -31,7 +31,9 @@ columns and rows of the program it builds, so there is no mapping to keep betwee
 columns": `solution.values[x]` is the value of the variable `x`.
 
 The same holds beyond the program. HiGHS's cut pool ranges over the presolved problem, whose columns are not the
-program's; they are `ReducedCol`, a third type, so a cut cannot be read as a row of your program by mistake.
+program's; they are `ReducedCol`, a third type, so a cut cannot be read as a row of your program by mistake. SCIP's
+contexts read every value through SCIP's original variables, so they hand out the program's columns whatever presolve
+did, and a column priced during a solve is a `Col` that continues the program's numbering.
 
 Keyed families give handles domain keys (`x[(product, location)]`), and a family is plain data you can iterate,
 look up and read a solution through.
@@ -109,8 +111,8 @@ ordinary `Outcome::Stopped` with the best solution and bound.
 ## Where `unsafe` lives
 
 `culmen_core` forbids `unsafe` (`#![forbid(unsafe_code)]`); the facade and the macros contain none. All `unsafe` is in
-`culmen_highs`, where HiGHS's C API makes it necessary, and every `unsafe` block there carries a `// SAFETY:`
-comment saying why it is sound. The parts that matter most:
+the two backends, `culmen_highs` and `culmen_scip`, where the solvers' C APIs make it necessary, and every `unsafe`
+block there carries a `// SAFETY:` comment saying why it is sound. The parts that matter most, for HiGHS:
 
 - **One instance, one owner.** A HiGHS instance is created and destroyed with the `Highs` value that owns it, and
   every call that changes it borrows it mutably, so no two calls ever overlap on one instance.
@@ -125,7 +127,22 @@ comment saying why it is sound. The parts that matter most:
 - **Only fields HiGHS sets are read.** For each callback kind, the trampoline reads only the fields HiGHS sets for
   it, and arrays only within the lengths HiGHS reports.
 
-The rustdoc of `culmen_highs::callback` states these arguments in full.
+The rustdoc of `culmen_highs::callback` states these arguments in full. SCIP's backend keeps the same rules with
+plugins in place of a trampoline:
+
+- **One instance, one owner.** A SCIP instance and every variable and constraint it created are owned by one value,
+  released and freed when it drops, on every path; its methods that change SCIP borrow it mutably.
+- **The run lives exactly as long as `SCIPsolve`.** Each plugin is included once with a pointer to a slot on the heap
+  that outlives the instance; a solve installs its run, which lives on the stack of `solve`, in that slot for the call
+  of `SCIPsolve` alone, and a guard clears it on every path before the run is dropped.
+- **Calls never overlap.** SCIP calls every plugin on the solving thread, one at a time; a plugin called inside
+  another's call finds the callback borrowed and does not deliver, and every change a context asks of SCIP is applied
+  after the callback returns, outside any borrow.
+- **Panics never cross the C boundary.** A panic in a callback is caught in the plugin, which asks SCIP to stop and
+  returns a result its callback allows; the panic resumes once `SCIPsolve` has returned.
+
+The documentation of `culmen_scip`'s private `callback` module (`crates/culmen_scip/src/callback/mod.rs`) states these
+arguments in full.
 
 ## See also
 

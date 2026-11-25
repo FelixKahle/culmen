@@ -62,7 +62,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 A stop is polled only at the backend's poll events, so it acts within one poll interval, not at once. A backend that
 delivers no poll events cannot be stopped this way; HiGHS delivers them from the simplex, interior-point and MIP
-solvers, SCIP (`culmen_scip`) at each presolve round, focused node, solved node LP and solved node.
+solvers, [SCIP](scip.md#callback-events) at each presolve round, focused node, solved node LP and solved node, so a
+stop asked for during one of SCIP's LP solves acts when that LP ends.
 
 ## `Observer`
 
@@ -161,7 +162,8 @@ costs the solver less.
 
 Write it once for every backend, `impl<B: Backend> Callback<B>`, and it sees each context through its neutral
 trait. Write it for one backend, `impl Callback<Highs>`, and it sees that backend's own context types, with
-everything the solver offers beyond the traits ([HiGHS callback contexts](highs.md#callback-contexts)).
+everything the solver offers beyond the traits ([HiGHS callback contexts](highs.md#callback-contexts),
+[SCIP callback events](scip.md#callback-events)).
 
 ```rust
 use std::time::Duration;
@@ -270,19 +272,49 @@ prices gives up reductions that need every column known up front: `events()` def
   improves a minimisation (and every Farkas round) when its reduced cost is below `−tolerance`, a maximisation when
   it is above `tolerance`. A callback that ignores Farkas rounds leaves an infeasible node unrepaired, and the solver
   then counts it infeasible.
+- **The signs, for both senses.** The convention is the same formula in both senses, so the signs follow from it:
+
+  | | Minimize | Maximize | Farkas, either sense |
+  |---|---|---|---|
+  | dual of a row at its lower bound (`≥`) | `≥ 0` | `≤ 0` | the multiplier as the solver reports it |
+  | dual of a row at its upper bound (`≤`) | `≤ 0` | `≥ 0` | |
+  | reduced cost `d` | `cost − Σ duals[r]·a_r` | `cost − Σ duals[r]·a_r` | `−Σ duals[r]·a_r` |
+  | a column in `[0, u]`, `u > 0`, improves when | `d < −tolerance` | `d > tolerance` | `d < −tolerance` |
+
+  A column whose bounds hold zero strictly inside (`lower < 0 < upper`) improves when `|d|` exceeds the tolerance in
+  the direction it can move, and one with `upper = 0` when the inequality is the other way round; `improves` encodes
+  all of it. In Farkas mode the multipliers certify `fᵀAx ≥ fᵀb`, `b` the active side of each row, violated by every
+  point within the bounds of the columns held; a column with `Σ f_r·a_r > 0` that can rise from zero weakens that
+  certificate, which is the reduced-cost rule of the phase-one minimisation with every cost zero.
 - **What is refused.** A priced column's bounds hold zero, so a column left out is the same as one fixed at zero
   (`ExcludesZero`); it is continuous or integer, of a class the backend solves (`Integrality`); its cost and entries
   are finite and name the program's rows. A refused column takes no id.
 - **Ids.** `add_col` returns the column's id, the next after the program's columns and every one priced before: the
   first is `Col(n)` for a program of `n` columns. Every point a later event delivers counts it, and when the solve
   ends the `Solver`'s program holds it ([A solve that prices](solving.md#a-solve-that-prices)).
-- **Exactness is the callback's.** The node LP is a bound only when pricing is exact: whenever some column the
-  problem does not hold yet improves it, the callback adds at least one, or calls `branch_early()`, which ends
-  pricing at the node and leaves the LP value no bound unless `report_bound(bound)` gives one (refused in Farkas
-  mode). The solver prices the columns it holds itself, so the callback never adds one the problem already holds:
-  a copy is not refused, since two identical columns may be meant, but one that branching fixed, added again,
-  escapes the branching. Lazy constraints and cuts must hold for every column the callback may price, each entering
-  them with coefficient zero.
+- **What the callback guarantees.**
+  1. *Exact pricing.* Whenever some column the problem does not hold yet improves the node LP, in either mode, the
+     callback adds at least one improving column, or calls `branch_early()`, which ends pricing at the node and
+     leaves the LP value no bound unless `report_bound(bound)` gives one (refused in Farkas mode). Only then is a node
+     LP's value a bound, and only then is `Outcome::Optimal` a proof.
+  2. *No re-adding.* The solver prices the columns it holds itself, within their bounds at the node, so the callback
+     never adds one the problem already holds. A copy is not refused, since two identical columns may be meant (two
+     identical trucks), but a column branching fixed, added again, escapes the branching, and the search may then
+     revisit what it ruled out.
+  3. *Robust rows.* A priced column has entries only in the program's rows, so it enters every lazy constraint and
+     cut with coefficient zero, and their duals do not change its reduced cost: every lazy constraint and cut must
+     hold for every column the callback may price, each entering it with zero. A bound given to `report_bound` holds
+     for the node's whole subtree over every column the program may price.
+- **What a backend that declares `PRICE` guarantees.** It delivers `PRICE` only after a node LP is solved: optimal in
+  `ReducedCost` mode, infeasible in `Farkas` mode, with every program row's multiplier in the convention above. It
+  ends pricing at a node only after a round that added no column and did not branch early, and counts the node LP as
+  a bound only then; a round that branched early counts only through `report_bound`. Every column added enters the
+  search with its cost, bounds, integrality and entries, stays for the rest of the solve, and is part of every point
+  reported afterwards. A solve whose callback does not ask for `PRICE` runs as if the backend could not price.
+- **Branch-and-price.** On a backend whose search branches, pricing at every node with exact pricing is exact
+  branch-and-price under the backend's own branching. [SCIP](scip.md#pricing) branches on the master's integer
+  columns, as it chooses; culmen has no branching event yet, so branching on the pricing problem (Ryan–Foster) is out
+  of reach.
 
 ```rust
 use std::time::Duration;
@@ -413,10 +445,10 @@ assert!(!Highs::EVENTS.contains(Events::CUT));
 assert!(culmen::Script::EVENTS.contains(Events::ALL));
 ```
 
-HiGHS 1.16 offers neither lazy constraints nor user cuts, nor pricing; see [Limitations](highs.md#limitations). SCIP
-(`culmen_scip`) delivers every generic event, lazy constraints, cuts and pricing included, through plugins it
-includes in each instance; it refuses pricing on a program with a quadratic objective with a typed error before it
-solves.
+HiGHS 1.16 offers neither lazy constraints nor user cuts, nor pricing; see [Limitations](highs.md#limitations).
+[SCIP](scip.md#callback-events), with the `scip` feature, delivers every generic event, lazy constraints, cuts and
+pricing included, through plugins it includes in each instance; it refuses pricing on a program with a quadratic
+objective with a typed error before it solves.
 
 ## Panics and threads
 
@@ -432,6 +464,8 @@ solves.
 
 - [Solving](solving.md): the request that carries the stop and the observer.
 - [HiGHS](highs.md#callback-contexts): what each HiGHS context offers beyond the traits.
+- [SCIP](scip.md#callback-events): the SCIP plugin behind each event, lazy constraints, cuts, heuristic solutions and
+  pricing.
 - [Testing](testing.md#testing-callbacks): driving callbacks with the `Script` backend.
 - [Backends](backends.md): how events map onto HiGHS, Gurobi and SCIP.
 - [Documentation index](README.md).
