@@ -200,9 +200,9 @@ impl Highs {
     /// The largest relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`, at which a QP optimum HiGHS
     /// reports is taken as optimal; above it the solve fails with [`HighsError::UnsoundQp`].
     ///
-    /// HiGHS 1.15's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
-    /// percent, after its iterates turned NaN, and that point need not even be feasible; on random convex QPs its
-    /// correct optima stay below `1e-6`.
+    /// HiGHS's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
+    /// percent, and that point need not even be feasible: 1.15 did so after its iterates turned NaN, and 1.16 still
+    /// does on a small share of edited QPs. On random convex QPs its correct optima stay below `1e-6`.
     pub const QP_OBJECTIVE_ERROR: f64 = 1e-5;
 
     /// The largest upper bound of a semi-continuous or semi-integer column HiGHS 1.16 solves as given
@@ -252,7 +252,7 @@ impl Highs {
     ///
     /// Bounds, costs, integrality and row bounds change through HiGHS's `BySet` calls, rows and columns are appended
     /// with `Highs_addRows` and `Highs_addCols`, and further objectives are passed again after a change of costs or
-    /// columns, since HiGHS 1.15 neither reads the costs into them nor extends them. A QP without rows carries a free
+    /// columns, since HiGHS 1.16 neither reads the costs into them nor extends them. A QP without rows carries a free
     /// row HiGHS needs (see [`Padding`]); rows appended to it, and any edit this version does not know, load the
     /// program whole.
     ///

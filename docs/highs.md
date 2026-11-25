@@ -239,17 +239,19 @@ trusted:
   `Stopped { reason: Interrupted, .. }`; it delivers `FEASIBLE` once, for the starting point, valued by the backend
   since HiGHS reports no objective with it; and `LOG`. It delivers no `PROGRESS` and no `INCUMBENT`, so an observer
   sees no progress and no improvement. The time limit of the [`Settings`](solving.md#settings) applies as before.
-- **A row is always passed.** On a QP without rows HiGHS 1.15 starts from the unconstrained minimizer clamped into
-  the bounds and can report that point optimal after no iteration when it is not. The backend passes such a QP
+- **A row is always passed.** On a QP without rows HiGHS 1.16 starts from the unconstrained minimizer clamped into
+  the bounds, and 1.15 reported that point optimal after no iteration when it was not. The backend passes such a QP
   with one free row without entries, which constrains nothing and makes HiGHS find its starting point with its LP
   solver.
-- **An unsound ending is an error.** On a small share of QPs, after its iterates turned NaN, HiGHS 1.15 reports an
-  optimum at a point holding NaN, an optimum its own primal and dual objectives contradict, at a point that need not
-  be feasible, or reports unbounded a QP whose every column is bounded. The backend fails such a solve with
+- **An unsound ending is an error.** On a small share of QPs HiGHS reports an optimum at a point holding NaN, an
+  optimum its own primal and dual objectives contradict, at a point that need not be feasible, or reports unbounded a
+  QP whose every column is bounded: 1.15 did all three after its iterates turned NaN, and 1.16 still reports the
+  second for some edited QPs, though it solves every one of 5000 random QPs of the tests. The backend fails such a solve with
   [`HighsError::UnsoundQp`](#errors): an optimum at a point holding NaN, an optimum whose relative primal-dual
   objective error exceeds `Highs::QP_OBJECTIVE_ERROR`, `1e-5` (correct optima stay below `1e-6`), or unboundedness
   with every column bounded. An `Optimal` outcome of a QP is therefore one HiGHS's own measures support.
-- **It may not terminate.** On a rare QP HiGHS 1.15's QP solver iterates without end, its memory growing. A
+- **It may not terminate.** On a rare QP HiGHS 1.15's QP solver iterated without end, its memory growing; no test
+  has seen 1.16 do so. A
   [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`, and a `Stop` as
   `Stopped { reason: Interrupted, .. }`; set one for any QP whose solve must end.
 
@@ -355,7 +357,7 @@ Two edits load the program whole instead: rows added to a QP without rows, which
 semi column whose upper bound would exceed `Highs::SEMI_UPPER_LIMIT` is refused with `HighsError::SemiUpper` before
 HiGHS sees the edit, but the refusal comes from the backend: the `Solver` then loads the program before the edit
 again, which costs a full load, and the last solve's result is no longer read. A call HiGHS refuses is
-`HighsError::Edit { call }`, naming it; HiGHS 1.15 can fail halfway through adding columns, after it extended
+`HighsError::Edit { call }`, naming it; HiGHS 1.15 could fail halfway through adding columns, after it extended
 some of its arrays, so the `Solver` then loads the program before the edit again too.
 
 Appending columns costs time in the size of the whole matrix on both sides: the program inserts each new column's

@@ -56,8 +56,8 @@ pub enum HighsError {
         /// HiGHS's last error line, if it wrote one.
         message: Option<String>,
     },
-    /// HiGHS's QP solver reported an ending that its own measures or the model contradict. HiGHS 1.15's QP solver
-    /// can end so after its iterates turned NaN.
+    /// HiGHS's QP solver reported an ending that its own measures or the model contradict, as HiGHS 1.16 still does
+    /// for a small share of QPs, and 1.15 did after its iterates turned NaN.
     UnsoundQp(UnsoundQp),
     /// HiGHS refused or failed an analysis, as it refuses a basis it finds singular.
     Analysis(Analysis),
@@ -71,8 +71,8 @@ pub enum HighsError {
     },
     /// HiGHS refused a start.
     Start,
-    /// HiGHS refused an edit of the program it holds, and may hold any model after it: HiGHS 1.15 can fail halfway
-    /// through adding columns. The backend then holds no program. A [`Solver`](culmen_core::Solver) loads the program
+    /// HiGHS refused an edit of the program it holds, and may hold any model after it: HiGHS 1.15 could fail halfway
+    /// through adding columns, which no test has shown 1.16 doing, and the backend does not rely on it not. The backend then holds no program. A [`Solver`](culmen_core::Solver) loads the program
     /// before the edit again; when that load fails too, it loads the program before the next call that runs the
     /// backend, and until then a solve with the backend alone fails with [`HighsError::NotLoaded`].
     Edit {

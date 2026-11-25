@@ -338,7 +338,8 @@ fn test_a_primal_ray_proves_unboundedness() {
 
 #[test]
 fn test_an_lp_without_rows_has_a_primal_ray_along_one_column() {
-    // HiGHS 1.15 reports no ray for an LP without rows; the backend gives the improving column's direction.
+    // HiGHS 1.16 reports no ray for an LP without rows (`getPrimalRayInterface` returns at once when `num_row == 0`);
+    // the backend gives the improving column's direction.
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(2.0));
     let y = m.add_var(Var::free());
@@ -583,7 +584,8 @@ fn test_a_relaxation_may_move_a_column_past_a_soft_bound() {
 
 #[test]
 fn test_a_relaxation_with_only_hard_bounds_and_rows_finds_nothing() {
-    // HiGHS 1.15 does not report that its elastic program is infeasible; the backend checks the point it returns.
+    // HiGHS 1.16 restores the model status after its elastic program (`elasticityFilterReturn`), so it does not report
+    // that program infeasible; the backend checks the point it returns.
     let (program, _) = gap_of_two();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     assert_eq!(

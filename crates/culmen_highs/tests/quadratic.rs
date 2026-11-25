@@ -18,7 +18,7 @@ use culmen_core::{
     ProgramColumn, ProgramPlan, Progress, QuadExpr, Request, Sense, Solution, SolutionContext, SolveError, Solved,
     Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
 };
-use culmen_highs::{Highs, HighsError, HighsOptions, LpSolver, PollSource, UnsoundQp};
+use culmen_highs::{Highs, HighsError, HighsOptions, LpSolver, PollSource};
 use culmen_testing::reference::close;
 use culmen_testing::strategy::small_qp;
 use proptest::prelude::*;
@@ -150,9 +150,10 @@ fn test_the_qp_iteration_limit_stops_the_active_set_solver() {
 
 #[test]
 fn test_a_qp_with_bounds_alone_leaves_its_starting_point() {
-    // Found by the property test below. On a QP without rows HiGHS 1.15 starts from the unconstrained minimizer
-    // clamped into the bounds, here the origin, and reports it optimal after no iteration although the gradient
-    // there, -1 on x3, points into the box. Its optimum is x2 = 20/51, x3 = 1, at -859/1020: the minimum of
+    // Found by the property test below. On a QP without rows HiGHS starts from the unconstrained minimizer clamped
+    // into the bounds (`computeStartingPointBounded`, still taken by 1.16 when there are no rows), here the origin,
+    // and reported it optimal after no iteration although the gradient there, -1 on x3, points into the box; the
+    // backend passes a free row, so HiGHS takes its other start. Its optimum is x2 = 20/51, x3 = 1, at -859/1020: the minimum of
     // 2.55·x2² - 2·x2 - 0.45, where the gradient is (40/51, 1, 0, 0.1 - 40/51), pointing out of the box.
     let mut plan = ProgramPlan::new();
     let x: Vec<Col> = [0.0, 0.0, 0.0, -1.0]
@@ -178,9 +179,10 @@ fn test_a_qp_with_bounds_alone_leaves_its_starting_point() {
 
 #[test]
 fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
-    // Found by the property test below. HiGHS 1.15 reports this QP optimal at about 34.27 with a relative
+    // Found by the property test below with HiGHS 1.15, which reported this QP optimal at about 34.27 with a relative
     // primal-dual objective error near 1, while the boxes' midpoint (1.5, -1, 0, -2) is feasible at 14.99. The
-    // optimum, from its KKT conditions in exact arithmetic, is about 6.3397 at (2.2599, 0, -0.3997, -2.3602).
+    // optimum, from its KKT conditions in exact arithmetic, is about 6.3397 at (2.2599, 0, -0.3997, -2.3602), which
+    // HiGHS 1.16 reaches.
     let mut plan = ProgramPlan::new();
     let boxes = [(0.0, 3.0, 0.0), (-2.0, 0.0, -5.0), (-1.0, 1.0, 0.0), (-3.0, -1.0, -2.0)];
     let x: Vec<Col> = boxes
@@ -215,15 +217,14 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
             6.339_658_331_975_892,
             &[2.259_895_7, 0.0, -0.399_739_4, -2.360_156_4],
         ),
-        Err(SolveError::Backend(HighsError::UnsoundQp(UnsoundQp::ObjectiveError { error }))) => assert!(error > 1e-5),
         other => panic!("{other:?}"),
     }
 }
 
 #[test]
 fn test_a_bounded_qp_reported_unbounded_is_refused() {
-    // Found by the property test below. HiGHS 1.15 reports this QP unbounded although every column lies in a
-    // finite box, where a continuous objective is bounded.
+    // Found by the property test below with HiGHS 1.15, which reported this QP unbounded although every column lies
+    // in a finite box, where a continuous objective is bounded. HiGHS 1.16 solves it.
     let mut plan = ProgramPlan::new();
     let boxes = [(0.0, 2.0, 0.0), (-2.0, 2.0, -3.0), (1.0, 5.0, -2.0), (-1.0, 1.0, 0.0)];
     let x: Vec<Col> = boxes
@@ -251,16 +252,15 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
             outcome: Outcome::Optimal(solution),
             ..
         }) => assert!(program.max_violation(&solution.values) <= 1e-6),
-        Err(SolveError::Backend(HighsError::UnsoundQp(UnsoundQp::UnboundedInABox))) => {}
         other => panic!("{other:?}"),
     }
 }
 
 #[test]
 fn test_a_qp_optimum_is_valued_as_its_point() {
-    // Found by the property test below: HiGHS 1.15 reports this QP optimal at a point holding NaN, with a NaN objective
-    // and no primal-dual objective error. The backend refuses such an ending; an optimum it reports is worth what it
-    // says at its own point.
+    // Found by the property test below with HiGHS 1.15, which reported this QP optimal at a point holding NaN, with a
+    // NaN objective and no primal-dual objective error. The backend refuses such an ending; HiGHS 1.16 solves it, and
+    // the optimum is worth what it says at its own point.
     let mut plan = ProgramPlan::new();
     let boxes = [(1.0, 4.0, -5.0), (0.0, 3.0, -1.0), (-2.0, 2.0, -2.0), (-1.0, 0.0, 1.0)];
     let x: Vec<Col> = boxes
@@ -299,7 +299,6 @@ fn test_a_qp_optimum_is_valued_as_its_point() {
                 "{best:?}"
             );
         }
-        Err(SolveError::Backend(HighsError::UnsoundQp(UnsoundQp::NotANumber))) => {}
         other => panic!("{other:?}"),
     }
 }
@@ -579,40 +578,98 @@ fn gradient_step(program: &Program, values: &TiVec<Col, f64>) -> TiVec<Col, f64>
         .collect()
 }
 
+/// How many of the random QPs HiGHS did not end optimal, by why.
+#[derive(Debug, Default)]
+struct Unsolved {
+    time_limit: AtomicUsize,
+    run: AtomicUsize,
+    unsound: AtomicUsize,
+}
+
+/// The QPs of [`test_highs_qp_optimum_is_no_worse_than_feasible_points`].
+const QP_CASES: u32 = 200;
+
+/// Checks HiGHS's optimum of one random QP as the test below states, counting a QP it does not solve in `unsolved`.
+fn check_qp_optimum(program: &Program, fractions: &[Vec<f64>], unsolved: &Unsolved) -> Result<(), TestCaseError> {
+    let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
+    // HiGHS's QP solver could fail to terminate on such a QP; the time limit ends it.
+    let best = match solver.solve(Request::new().time_limit(Duration::from_secs(2))) {
+        Ok(Solved {
+            outcome: Outcome::Optimal(best),
+            ..
+        }) => best,
+        Ok(Solved {
+            outcome: Outcome::Stopped {
+                reason: StopReason::TimeLimit,
+                ..
+            },
+            ..
+        }) => {
+            unsolved.time_limit.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        Err(SolveError::Backend(HighsError::Run { .. })) => {
+            unsolved.run.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        Err(SolveError::Backend(HighsError::UnsoundQp(_))) => {
+            unsolved.unsound.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        other => return Err(TestCaseError::fail(format!("{other:?} on {program:?}"))),
+    };
+    prop_assert!(program.max_violation(&best.values) <= 1e-6, "{best:?}");
+    prop_assert!(close(program.objective_value(&best.values), best.objective, 1e-7));
+    let at_best = loss(program, &best.values);
+    let tolerance = 1e-5 * at_best.abs().max(1.0);
+    let mut points: Vec<TiVec<Col, f64>> = fractions.iter().map(|f| point_in_boxes(program, f)).collect();
+    points.push(point_in_boxes(program, &[0.5; 4]));
+    for point in points.into_iter().filter(|p| program.max_violation(p) == 0.0) {
+        prop_assert!(
+            at_best <= loss(program, &point) + tolerance,
+            "{best:?} loses to {point:?}"
+        );
+    }
+    if program.num_rows() == 0 {
+        let step = gradient_step(program, &best.values);
+        prop_assert!(
+            at_best <= loss(program, &step) + tolerance,
+            "{best:?} loses to its step {step:?}"
+        );
+    }
+    Ok(())
+}
+
+/// On random convex QPs HiGHS's optimum is feasible, valued as `Program::objective_value` values it, and no worse
+/// than any feasible point in the boxes nor than a projected gradient step from it. A run HiGHS fails, or whose
+/// optimum its own primal-dual objective error does not support, ends in a typed error, and one that does not
+/// terminate stops at its time limit; those are counted, and HiGHS solves all but a small share.
+#[test]
+fn test_highs_qp_optimum_is_no_worse_than_feasible_points() {
+    let unsolved = Unsolved::default();
+    let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(QP_CASES));
+    let strategy = (
+        small_qp(),
+        prop::collection::vec(prop::collection::vec(0.0..=1.0f64, 4), 8),
+    );
+    let checked = runner.run(&strategy, |(program, fractions)| {
+        check_qp_optimum(&program, &fractions, &unsolved)
+    });
+    if let Err(failure) = checked {
+        panic!("{failure}");
+    }
+    let total = unsolved.time_limit.load(Ordering::Relaxed)
+        + unsolved.run.load(Ordering::Relaxed)
+        + unsolved.unsound.load(Ordering::Relaxed);
+    // HiGHS 1.16 solved every one of 5000 such QPs; edited QPs still meet its unsound endings now and then.
+    assert!(
+        total * 50 <= QP_CASES as usize,
+        "{unsolved:?} of {QP_CASES} QPs unsolved"
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
-
-    /// On random convex QPs HiGHS's optimum is feasible, valued as `Program::objective_value` values it, and no worse
-    /// than any feasible point in the boxes nor than a projected gradient step from it. A run HiGHS fails, or whose
-    /// optimum its own primal-dual objective error does not support, ends in a typed error, and one that does not
-    /// terminate stops at its time limit.
-    #[test]
-    fn test_highs_qp_optimum_is_no_worse_than_feasible_points(
-        program in small_qp(),
-        fractions in prop::collection::vec(prop::collection::vec(0.0..=1.0f64, 4), 8),
-    ) {
-        let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-        // HiGHS 1.15's QP solver can fail to terminate on such a QP; the time limit ends it.
-        let best = match solver.solve(Request::new().time_limit(Duration::from_secs(2))) {
-            Ok(Solved { outcome: Outcome::Optimal(best), .. }) => best,
-            Ok(Solved { outcome: Outcome::Stopped { reason: StopReason::TimeLimit, .. }, .. })
-            | Err(SolveError::Backend(HighsError::Run { .. } | HighsError::UnsoundQp(_))) => return Ok(()),
-            other => return Err(TestCaseError::fail(format!("{other:?} on {program:?}"))),
-        };
-        prop_assert!(program.max_violation(&best.values) <= 1e-6, "{best:?}");
-        prop_assert!(close(program.objective_value(&best.values), best.objective, 1e-7));
-        let at_best = loss(&program, &best.values);
-        let tolerance = 1e-5 * at_best.abs().max(1.0);
-        let mut points: Vec<TiVec<Col, f64>> = fractions.iter().map(|f| point_in_boxes(&program, f)).collect();
-        points.push(point_in_boxes(&program, &[0.5; 4]));
-        for point in points.into_iter().filter(|p| program.max_violation(p) == 0.0) {
-            prop_assert!(at_best <= loss(&program, &point) + tolerance, "{best:?} loses to {point:?}");
-        }
-        if program.num_rows() == 0 {
-            let step = gradient_step(&program, &best.values);
-            prop_assert!(at_best <= loss(&program, &step) + tolerance, "{best:?} loses to its step {step:?}");
-        }
-    }
 
     /// On random convex QPs the QP solver's first feasible point, when HiGHS reports one, is feasible and valued as
     /// `Program::objective_value` values it.

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Editing a program HiGHS holds: hand-worked optima after each kind of edit, the cases HiGHS 1.15 makes hard, the
+//! Editing a program HiGHS holds: hand-worked optima after each kind of edit, the cases HiGHS makes hard, the
 //! warm start an edit keeps, the analyses an edit clears, and a property test whose reference is a fresh solver on
 //! the edited program.
 
@@ -128,8 +128,9 @@ fn test_column_generation_finds_the_cheaper_pattern() {
 
 #[test]
 fn test_adding_a_column_beside_further_objectives_solves() {
-    // HiGHS 1.15 does not extend its further objectives' coefficients when columns are added, and refuses to solve
-    // with coefficient vectors shorter than the model: the edit must pass the objectives again.
+    // HiGHS 1.16 does not extend its further objectives' coefficients when columns are added (only
+    // `passLinearObjectives` and `addLinearObjective` touch them), and refuses to solve with coefficient vectors
+    // shorter than the model: the edit must pass the objectives again.
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(1));
     let y = m.add_var(Var::continuous().upper(1));
@@ -152,7 +153,7 @@ fn test_adding_a_column_beside_further_objectives_solves() {
 
 #[test]
 fn test_adding_rows_to_a_qp_without_rows_solves_it_right() {
-    // HiGHS 1.15 is given a QP without rows with one free row added; rows added later must not be read past it.
+    // HiGHS is given a QP without rows with one free row added; rows added later must not be read past it.
     // Minimize (x - 1)² + (y - 2)²: zero; with x + y <= 1, the point nearest (1, 2) is (0, 1), at 2.
     let mut m = Model::new();
     let x = m.add_var(Var::free());
@@ -417,7 +418,8 @@ proptest! {
             let edited = try_solve_exactly(&mut solver);
             prop_assert_eq!(solver.backend().held(), Some(solver.program()));
             let fresh = try_solve_exactly(&mut Solver::new(Highs::new(), solver.program().clone()).unwrap());
-            // Some edits make a QP HiGHS 1.15 cannot solve; a fresh solver failing the same way is agreement.
+            // Some edits make a QP HiGHS 1.16 still fails as unsound (an optimum with a primal-dual objective error near
+            // 1, two in 256 cases); a fresh solver failing the same way is agreement.
             let (edited, fresh) = match (edited, fresh) {
                 (Ok(edited), Ok(fresh)) => (edited, fresh),
                 (Err(edited), Err(fresh)) => {

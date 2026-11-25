@@ -158,7 +158,7 @@ fn line(index: HighsInt, n: usize) -> Option<Line> {
 
 /// A primal ray of the last run's unbounded LP.
 ///
-/// HiGHS 1.15 reports no primal ray for an LP without rows; there the LP is unbounded along one column whose cost
+/// HiGHS 1.16 reports no primal ray for an LP without rows; there the LP is unbounded along one column whose cost
 /// improves the objective toward an infinite bound, which is the ray.
 ///
 /// # Errors
@@ -259,7 +259,7 @@ fn side(raw: HighsInt) -> Option<Side> {
 /// The feasibility relaxation of the loaded program under `weights`, solved with HiGHS's options reset to the
 /// backend's; `None` when no point meets the hard bounds and rows.
 ///
-/// HiGHS 1.15 does not report whether its elastic program was feasible, so the point it returns is checked against
+/// HiGHS 1.16 does not report whether its elastic program was feasible, as it restores the model status afterwards, so the point it returns is checked against
 /// the hard bounds, rows and integrality instead. Its elastic program keeps a semi column within its bounds, never at
 /// zero (it solves the program without `Highs::run`, which alone reformulates semi columns), so its point can miss the
 /// least violation by any amount; a program with semi columns is refused.

@@ -730,8 +730,8 @@ impl Drop for Instance {
 
 /// Whether a QP without rows gets one free row without entries.
 ///
-/// HiGHS 1.15 solves a QP without rows from the unconstrained minimizer clamped into the bounds, and can report that
-/// point optimal after no iteration when it is not; with a row it finds its starting point with its LP solver and
+/// HiGHS 1.16 solves a QP without rows from the unconstrained minimizer clamped into the bounds, and 1.15 reported that
+/// point optimal after no iteration when it was not; with a row it finds its starting point with its LP solver and
 /// solves correctly. A free row constrains nothing, and the backend reads no row values; a model written to a file
 /// goes without it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -858,7 +858,7 @@ impl Hessian {
     }
 }
 
-/// Whether `program` is a QP without rows, which HiGHS 1.15 solves only with one free, empty row added, and `padding`
+/// Whether `program` is a QP without rows, which HiGHS solves right only with one free, empty row added, and `padding`
 /// asks for that row.
 fn needs_free_row(program: &Program, padding: Padding) -> bool {
     padding == Padding::QpFreeRow && program.num_rows() == 0 && !program.quadratic().is_empty()
