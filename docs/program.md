@@ -273,9 +273,10 @@ assert_eq!(format!("{classes:?}"), "ModelClasses(LP | MILP | QP)");
 assert_eq!(ModelClasses::ALL.len(), 4);
 ```
 
-`ModelClasses` is a small set: `NONE`, `ALL`, `of(&[..])` in a `const`, `From<ModelClass>`, `contains`, `union` and
-`intersection` (also `|`, `&`, `|=`, `&=`), `len`, `is_empty`, an `iter()` that runs both ways, `FromIterator` and
-`Extend` of classes.
+`ModelClasses` is a small set: `NONE`, `ALL`, `of(&[..])` in a `const`, `From<ModelClass>`, `contains` (one class)
+and `contains_all` (a set), `union`, `intersection`, `difference` and `complement` (also `|`, `&`, `-`, `!`, `|=`,
+`&=`, `-=`), `len`, `is_empty`, an `iter()` that runs both ways, `FromIterator` and `Extend` of classes.
+`ProgramFeatures` and `Analyses` are the same set over their own elements, from one implementation.
 
 ## Features
 
@@ -283,8 +284,7 @@ assert_eq!(ModelClasses::ALL.len(), 4);
 `SemiContinuous` and `SemiInteger` for a column of that kind, `MultipleObjectives` for a further objective. A fourth,
 `StartSolution`, belongs to a solve's [start](solving.md#starts), never to a program. A backend declares the features
 it takes in `Backend::FEATURES`, and [`Solver::new`](solving.md#model-classes-and-refusal) refuses a program using
-any other. `ProgramFeature` is non-exhaustive; `ProgramFeatures` is a set like `ModelClasses`, with `difference` and
-`contains_all` besides.
+any other. `ProgramFeature` is non-exhaustive; `ProgramFeatures` is a set like `ModelClasses`, with the same methods.
 
 ```rust
 use culmen::prelude::*;

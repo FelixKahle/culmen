@@ -77,6 +77,7 @@ mod program;
 mod script;
 #[cfg(feature = "serde")]
 pub mod serde_real;
+mod set;
 mod solve;
 
 pub use gap::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, RelativeGap};
