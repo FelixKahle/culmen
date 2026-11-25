@@ -17,6 +17,7 @@ use culmen_core::{
 use culmen_highs::{Highs, HighsError};
 use culmen_testing::reference::{self, close};
 use culmen_testing::strategy::small_semi;
+use culmen_testing::tolerance::Tolerances;
 use proptest::prelude::*;
 
 /// The optimal solution of a program HiGHS solves.
@@ -346,26 +347,24 @@ fn test_a_start_that_does_not_fit_is_refused_typed() {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
 
-    /// HiGHS reaches the exact reference's optimum of a tiny program with semi columns, and every semi column of its
-    /// solution is zero or in its bounds.
+    /// HiGHS reaches the exact reference's optimum of a tiny program with semi columns to its tolerances, and every
+    /// semi column of its solution is zero or in its bounds to them.
     #[test]
     fn test_semi_programs_match_the_reference(program in small_semi()) {
         let solved = Solver::new(Highs::new(), program.clone()).unwrap().solve(Request::new()).unwrap();
-        match (reference::solve(&program).objective(), solved.outcome) {
+        let expected = reference::solve(&program);
+        // HiGHS meets rows, bounds and a semi column's zero only to its absolute MIP feasibility tolerance, 1e-6: the
+        // saved seed ends with a semi-integer column at 1.25e-7 standing for zero. Its optimum lies in the window
+        // those tolerances, its dual tolerance and its default gaps leave around the exact one, and its point meets
+        // every row, bound and semi column's choice to them.
+        match (Tolerances::HIGHS.window(&program, &expected), solved.outcome) {
             (None, Outcome::Infeasible) => {}
-            (Some(expected), Outcome::Optimal(best)) => {
-                // HiGHS meets rows, bounds and a semi column's zero only to its MIP feasibility tolerance, 1e-6,
-                // which rounding can exceed: the saved seed ends with a semi-integer column at 1.25e-7 standing for
-                // zero.
-                prop_assert!(close(best.objective, expected, 1e-5), "{best:?} against {expected}");
-                prop_assert!(program.max_violation(&best.values) <= 1e-5, "{best:?}");
-                let semi_ok = program.cols().filter(|&c| program.columns()[c].integrality.is_semi()).all(|c| {
-                    let v = best.values[c];
-                    v.abs() <= 1e-5 || program.columns()[c].bounds.violation(v) <= 1e-5
-                });
-                prop_assert!(semi_ok, "{best:?}");
+            (Some(window), Outcome::Optimal(best)) => {
+                prop_assert!(window.contains(best.objective), "{best:?} against {expected:?}, window {window:?}");
+                let stray = Tolerances::HIGHS.stray(&program, &best.values);
+                prop_assert!(stray.is_none(), "{stray:?} {best:?}");
             }
-            (expected, outcome) => prop_assert!(false, "{outcome:?} against {expected:?} on {program:?}"),
+            (_, outcome) => prop_assert!(false, "{outcome:?} against {expected:?} on {program:?}"),
         }
     }
 }

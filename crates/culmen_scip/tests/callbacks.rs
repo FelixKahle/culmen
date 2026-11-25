@@ -22,8 +22,9 @@ use culmen_core::{
 };
 use culmen_scip::{Emphasis, LazySource, Scip, ScipEvent, ScipOptions};
 use culmen_testing::instances::assignment;
-use culmen_testing::reference::{Reference, close, solve};
+use culmen_testing::reference::{close, solve};
 use culmen_testing::strategy::small_lp;
+use culmen_testing::tolerance::Tolerances;
 use proptest::prelude::*;
 
 /// A solve to a zero gap, so an optimum is the optimum.
@@ -1237,21 +1238,23 @@ fn implied_cuts(program: &Program) -> Vec<Constraint> {
     cuts
 }
 
-/// Whether SCIP's outcome is the exact reference's, its optimum feasible for the full program.
+/// Whether SCIP's outcome is the exact reference's, its optimum in the window SCIP's tolerances leave around the exact
+/// objective and its point meeting the full program to those tolerances.
 fn agrees(program: &Program, outcome: &Outcome) -> Result<(), TestCaseError> {
-    match (solve(program), outcome) {
-        (Reference::Infeasible, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => Ok(()),
-        (expected @ Reference::Optimal(_), Outcome::Optimal(best)) => {
-            let want = expected.objective().unwrap();
+    let expected = solve(program);
+    match (Tolerances::SCIP.window(program, &expected), outcome) {
+        (None, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => Ok(()),
+        (Some(window), Outcome::Optimal(best)) => {
             prop_assert!(
-                close(best.objective, want, 1e-5),
-                "SCIP {} vs exact {want}",
+                window.contains(best.objective),
+                "SCIP {} vs exact {expected:?}, window {window:?}",
                 best.objective
             );
-            prop_assert!(program.max_violation(&best.values) <= 1e-5, "{best:?}");
+            let stray = Tolerances::SCIP.stray(program, &best.values);
+            prop_assert!(stray.is_none(), "{stray:?} {best:?}");
             Ok(())
         }
-        (want, got) => Err(TestCaseError::fail(format!("exact {want:?}, SCIP {got:?}"))),
+        (_, got) => Err(TestCaseError::fail(format!("exact {expected:?}, SCIP {got:?}"))),
     }
 }
 

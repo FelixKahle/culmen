@@ -16,6 +16,7 @@ use culmen_core::{
 use culmen_scip::{Scip, ScipError, ScipOptions, Status};
 use culmen_testing::reference::close;
 use culmen_testing::strategy::small_qp;
+use culmen_testing::tolerance::Tolerances;
 use proptest::prelude::*;
 
 /// The optimum SCIP finds, which the test expects to exist: feasible, and valued as the program values its point.
@@ -250,7 +251,8 @@ proptest! {
         let Outcome::Optimal(best) = solved.outcome else {
             return Err(TestCaseError::fail(format!("{solved:?} on {program:?}")));
         };
-        prop_assert!(program.max_violation(&best.values) <= 1e-6, "{best:?}");
+        let stray = Tolerances::SCIP.stray(&program, &best.values);
+        prop_assert!(stray.is_none(), "{stray:?} {best:?}");
         prop_assert!(close(program.objective_value(&best.values), best.objective, 1e-9));
         let tolerance = 1e-5 * best.objective.abs().max(1.0);
         let mut points: Vec<TiVec<Col, f64>> = fractions.iter().map(|f| point_in_boxes(&program, f)).collect();
@@ -279,7 +281,8 @@ proptest! {
             (None, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => {}
             (Some(want), Outcome::Optimal(best)) => {
                 prop_assert!(close(best.objective, want, 1e-6), "SCIP {} vs enumeration {want}", best.objective);
-                prop_assert!(program.max_violation(&best.values) <= 1e-6, "{best:?}");
+                let stray = Tolerances::SCIP.stray(&program, &best.values);
+                prop_assert!(stray.is_none(), "{stray:?} {best:?}");
             }
             (want, got) => prop_assert!(false, "enumeration {want:?}, SCIP {got:?}, status {:?}", solved.status),
         }

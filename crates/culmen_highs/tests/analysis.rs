@@ -17,8 +17,9 @@ use culmen_core::{
     penalty,
 };
 use culmen_highs::{Highs, HighsStatus};
-use culmen_testing::reference::{Reference, close, solve};
+use culmen_testing::reference::{close, solve};
 use culmen_testing::strategy::small_lp;
+use culmen_testing::tolerance::Tolerances;
 use proptest::prelude::*;
 
 /// Whether `got` is within `1e-6` of `want`, relative to their size above one.
@@ -762,8 +763,17 @@ proptest! {
     fn test_strong_duality_and_complementary_slackness(
         program in small_lp().prop_filter("an LP", |p| p.class() == ModelClass::Lp)
     ) {
-        let Reference::Optimal(_) = solve(&program) else { return Ok(()) };
-        let exact = solve(&program).objective().unwrap();
+        let reference = solve(&program);
+        // HiGHS's basis meets its basic columns' bounds and rows to its primal feasibility tolerance, 1e-7, and its
+        // reduced costs to its dual feasibility tolerance, 1e-7; the dual objective, which reads the exact bounds, is
+        // the objective of the basis's point, so it lies in the window those tolerances leave around the optimum.
+        let tolerances = Tolerances {
+            feasibility: 1e-7,
+            absolute_gap: 0.0,
+            relative_gap: 0.0,
+            ..Tolerances::HIGHS
+        };
+        let Some(window) = tolerances.window(&program, &reference) else { return Ok(()) };
         let (solver, outcome, status) = solved(&program);
         let Outcome::Optimal(solution) = outcome else { panic!("{outcome:?} {status:?}") };
         let duals = solver.duals().unwrap();
@@ -786,7 +796,24 @@ proptest! {
             panic!("a dual at the wrong bound: {duals:?} {solution:?}")
         };
         let dual = program.offset() + rows + cols;
-        prop_assert!(close(dual, exact, 1e-6), "dual {dual} vs exact {exact}");
+        // A dual within 1e-9 of zero is read as zero, which drops at most 1e-9 times the bound it would select.
+        let largest_end = |b: &Bounds| {
+            [b.lower(), b.upper()]
+                .into_iter()
+                .filter(|v| v.is_finite())
+                .fold(0.0_f64, |m, v| m.max(v.abs()))
+        };
+        let ends: f64 = program
+            .row_bounds()
+            .iter()
+            .chain(program.columns().iter().map(|c| &c.bounds))
+            .map(largest_end)
+            .sum();
+        let zeroed = 1e-9 * ends;
+        prop_assert!(
+            window.least - zeroed <= dual && dual <= window.greatest + zeroed,
+            "dual {dual} vs exact {reference:?}, window {window:?}"
+        );
         for c in program.cols() {
             let coefficient = |r| program.row(r).entries().filter(|e| e.0 == c).map(|e| e.1).sum::<f64>();
             let aty: f64 = program.rows().map(|r| duals.rows[r] * coefficient(r)).sum();

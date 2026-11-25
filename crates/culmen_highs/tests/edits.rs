@@ -20,6 +20,7 @@ use culmen_testing::instances::assignment;
 use culmen_testing::mirror::{Faults, Mirror, MirrorError};
 use culmen_testing::reference::{Reference, close, edit_plan, solve};
 use culmen_testing::strategy::{small_lp, small_qp, small_semi, with_edits};
+use culmen_testing::tolerance::Tolerances;
 use proptest::prelude::*;
 
 /// Solves with a relative gap of zero and returns the outcome, or why the solve failed.
@@ -376,14 +377,17 @@ fn enumerable(program: &Program) -> Option<Reference> {
     (continuous <= 3 && points <= 2000.0).then(|| solve(program))
 }
 
-/// Whether HiGHS's outcome is the exact reference's.
-fn matches_reference(outcome: &Outcome, reference: &Reference) -> bool {
-    match (reference, outcome) {
-        (Reference::Infeasible, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => true,
-        (Reference::Optimal(_), outcome) => optimal(outcome)
-            .zip(reference.objective())
-            .is_some_and(|(got, want)| close(got, want, 1e-5)),
-        (Reference::Infeasible, _) => false,
+/// Whether HiGHS's outcome on `program` is the exact reference's: infeasible alike, or an optimum in the window
+/// HiGHS's tolerances leave around the exact objective at the zero relative gap the solves request.
+fn matches_reference(program: &Program, outcome: &Outcome, reference: &Reference) -> bool {
+    let tolerances = Tolerances {
+        relative_gap: 0.0,
+        ..Tolerances::HIGHS
+    };
+    match (tolerances.window(program, reference), outcome) {
+        (None, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => true,
+        (Some(window), outcome) => optimal(outcome).is_some_and(|got| window.contains(got)),
+        (None, _) => false,
     }
 }
 
@@ -435,7 +439,10 @@ proptest! {
                 prop_assert!(solver.program().max_violation(&solution.values) <= 1e-5, "{solution:?}");
             }
             if let Some(reference) = enumerable(solver.program()) {
-                prop_assert!(matches_reference(&edited, &reference), "exact {reference:?}, edited {edited:?}");
+                prop_assert!(
+                    matches_reference(solver.program(), &edited, &reference),
+                    "exact {reference:?}, edited {edited:?}"
+                );
             }
         }
     }

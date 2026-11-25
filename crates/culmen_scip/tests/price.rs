@@ -25,6 +25,7 @@ use culmen_core::{
 use culmen_scip::{Scip, ScipError, ScipEvent, ScipOptions, ScipPrice};
 use culmen_testing::reference::{Reference, close, solve};
 use culmen_testing::strategy::{PricedSplit, priced_split};
+use culmen_testing::tolerance::{Tolerances, Window};
 use proptest::prelude::*;
 
 /// The most pricing rounds any test here expects; a callback past it fails.
@@ -1074,13 +1075,12 @@ impl Callback<Scip> for SplitPricer {
     }
 }
 
-/// The relative tolerance of the property test's comparisons with the exact reference.
-const TOLERANCE: f64 = 1e-5;
-
-/// Checks one pricing solve of a split, on a backend with `options`, against the reference optimum of its full program.
+/// Checks one pricing solve of a split, on a backend with `options`, against the reference optimum of its full program
+/// and the window SCIP's tolerances leave around it (`window`, `None` when the reference is infeasible).
 fn check_split(
     split: &PricedSplit,
     reference: &Reference,
+    window: Option<Window>,
     pick: Pick,
     presolve: bool,
     options: &ScipOptions,
@@ -1102,7 +1102,7 @@ fn check_split(
     let solved = solver
         .solve_with(limited(presolve), &mut pricer)
         .map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
-    let context = format!("{pick:?} presolve {presolve}: {solved:?}, reference {reference:?}");
+    let context = format!("{pick:?} presolve {presolve}: {solved:?}, reference {reference:?}, window {window:?}");
     let program = solver.program();
     // 3: the program holds the kept and the added columns, and the solution a value for each.
     prop_assert_eq!(program.num_cols(), kept.len() + pricer.added.len(), "{}", context);
@@ -1122,19 +1122,17 @@ fn check_split(
             .collect();
         prop_assert_eq!(&entries, &want.entries, "{}", context);
     }
-    let sense = full.sense();
-    match (reference, &solved.outcome) {
+    match (window, &solved.outcome) {
         // 1: infeasible exactly when the reference is.
-        (Reference::Infeasible, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => {}
-        (Reference::Optimal(_), Outcome::Optimal(best)) => {
-            let opt = reference.objective().unwrap();
-            // 2: the optimum is the reference's. SCIP meets a row to its relative feasibility tolerance, 1e-6 of the
-            // row's side, which on these sides allows a few millionths of violation and of objective; the checks
-            // allow 1e-5, as the reference test of the plain solves does.
-            prop_assert!(close(best.objective, opt, TOLERANCE), "{}", context);
+        (None, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => {}
+        (Some(window), Outcome::Optimal(best)) => {
+            // 2: the optimum is the reference's to SCIP's tolerances: SCIP meets each row and bound only to its
+            // relative feasibility tolerance, so its optimum may beat the exact one by what the loosened program
+            // allows, and stops short of it by at most its dual tolerance and gap.
+            prop_assert!(window.contains(best.objective), "{}", context);
             prop_assert_eq!(best.values.len(), program.num_cols(), "{}", context);
-            // 5: mapped back to the full program, the point is feasible and optimal there, to the tolerance of 2, and
-            // its objective there is the one the solve reported.
+            // 5: mapped back to the full program, the point meets every row and bound to SCIP's tolerance, and its
+            // objective there is the one the solve reported.
             let mut point: TiVec<Col, f64> = vec![0.0; full.num_cols()].into();
             for (col, &original) in kept.iter_enumerated() {
                 point[original] = best.values[col];
@@ -1142,22 +1140,17 @@ fn check_split(
             for &(i, col) in &pricer.added {
                 point[withheld[i].0] = best.values[col];
             }
-            prop_assert!(full.max_violation(&point) <= TOLERANCE, "{:?}: {}", point, context);
+            let stray = Tolerances::SCIP.stray(full, &point);
+            prop_assert!(stray.is_none(), "{:?} {:?}: {}", stray, point, context);
             let objective = full.objective_value(&point);
             prop_assert!(close(objective, best.objective, 1e-9), "{:?}: {}", point, context);
-            prop_assert!(close(objective, opt, TOLERANCE), "{:?}: {}", point, context);
         }
         _ => prop_assert!(false, "{}", context),
     }
-    // 6: no bound a poll reported beats the optimum.
-    if let Some(opt) = reference.objective() {
-        let tolerance = TOLERANCE * opt.abs().max(1.0);
+    // 6: no bound a poll reported beats the optimum by more than SCIP's tolerances allow.
+    if let Some(window) = window {
         for &bound in &pricer.bounds {
-            let valid = match sense {
-                Sense::Minimize => bound <= opt + tolerance,
-                Sense::Maximize => bound >= opt - tolerance,
-            };
-            prop_assert!(valid, "bound {} beats the optimum {}: {}", bound, opt, context);
+            prop_assert!(window.admits_bound(full.sense(), bound), "bound {}: {}", bound, context);
         }
     }
     Ok(())
@@ -1171,9 +1164,10 @@ proptest! {
     #[test]
     fn test_pricing_agrees_with_enumeration_of_the_full_program(split in priced_split()) {
         let reference = solve(&split.full);
+        let window = Tolerances::SCIP.window(&split.full, &reference);
         for pick in [Pick::Every, Pick::Most] {
             for presolve in [true, false] {
-                check_split(&split, &reference, pick, presolve, &ScipOptions::default())?;
+                check_split(&split, &reference, window, pick, presolve, &ScipOptions::default())?;
             }
         }
     }
@@ -1188,9 +1182,10 @@ proptest! {
     #[test]
     fn test_pricing_with_the_lp_cutoff_turned_on_by_option_agrees_with_enumeration(split in priced_split()) {
         let reference = solve(&split.full);
+        let window = Tolerances::SCIP.window(&split.full, &reference);
         let options = ScipOptions::default().param("lp/disablecutoff", 0);
         for presolve in [true, false] {
-            check_split(&split, &reference, Pick::Most, presolve, &options)?;
+            check_split(&split, &reference, window, Pick::Most, presolve, &options)?;
         }
     }
 }

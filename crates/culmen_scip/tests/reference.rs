@@ -15,6 +15,7 @@ use culmen_core::{
 use culmen_scip::Scip;
 use culmen_testing::reference::{Reference, close, edit_plan, solve};
 use culmen_testing::strategy::{small_lp, small_semi, with_edits};
+use culmen_testing::tolerance::Tolerances;
 use proptest::prelude::*;
 
 /// A solve to a zero gap, so an optimum is the optimum.
@@ -25,25 +26,20 @@ fn exact() -> Request<'static> {
     })
 }
 
-/// Whether SCIP's outcome is the exact reference's: infeasible alike, or an optimum at the exact objective whose point
-/// is feasible and valued as the program values it.
+/// Whether SCIP's outcome is the exact reference's: infeasible alike, or an optimum in the window SCIP's tolerances
+/// leave around the exact objective, whose point meets the program to those tolerances and is valued as the program
+/// values it.
 fn agrees(program: &Program, expected: &Reference, outcome: &Outcome) -> Result<(), TestCaseError> {
-    match (expected, outcome) {
-        (Reference::Infeasible, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => Ok(()),
-        (Reference::Optimal(_), Outcome::Optimal(solution)) => {
-            let want = expected.objective().unwrap();
-            // SCIP meets rows and bounds to its feasibility tolerance, `numerics/feastol` = 1e-6, which rounding
-            // can exceed; both checks allow ten times that tolerance.
+    match (Tolerances::SCIP.window(program, expected), outcome) {
+        (None, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => Ok(()),
+        (Some(window), Outcome::Optimal(solution)) => {
             prop_assert!(
-                close(solution.objective, want, 1e-5),
-                "SCIP {} vs exact {}",
-                solution.objective,
-                want
+                window.contains(solution.objective),
+                "SCIP {} vs exact {expected:?}, window {window:?}",
+                solution.objective
             );
-            prop_assert!(
-                program.max_violation(&solution.values) <= 1e-5,
-                "an infeasible solution: {solution:?}"
-            );
+            let stray = Tolerances::SCIP.stray(program, &solution.values);
+            prop_assert!(stray.is_none(), "an infeasible solution: {stray:?} {solution:?}");
             prop_assert!(close(
                 program.objective_value(&solution.values),
                 solution.objective,
@@ -51,7 +47,7 @@ fn agrees(program: &Program, expected: &Reference, outcome: &Outcome) -> Result<
             ));
             Ok(())
         }
-        (want, got) => Err(TestCaseError::fail(format!("exact {want:?}, SCIP {got:?}"))),
+        (_, got) => Err(TestCaseError::fail(format!("exact {expected:?}, SCIP {got:?}"))),
     }
 }
 
