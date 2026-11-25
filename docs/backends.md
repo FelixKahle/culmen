@@ -129,7 +129,7 @@ Gurobi and SCIP solve and HiGHS does not, would be further classes that a backen
 | `LAZY`: cut off a candidate | none: `kHighsCallbackMipDefineLazyConstraints` exists in 1.16 but is never called, so `Unsupported` | `GRB_CB_MIPSOL` (and `MIPNODE`): `GRBcblazy`, with `LazyConstraints = 1` | a constraint handler without constraints, checked and enforced last: `CONSCHECK` rejects, `CONSENFOLP` / `CONSENFOPS` / `CONSENFORELAX` add global linear constraints (`SCIPaddCons`, `CONSADDED`) |
 | `CUT`: cut off a node relaxation | none, so `Unsupported` | `GRB_CB_MIPNODE` with `MIPNODE_STATUS == OPTIMAL`: `GRBcbget(MIPNODE_REL)`, `GRBcbcut` | a separator (`SEPAEXECLP`): `SCIPgetSolVal` of the LP, `SCIPaddRow` and `SCIPaddPoolCut` |
 | `HEURISTIC`: supply a solution | `kHighsCallbackMipUserSolution`: `user_solution` + `user_has_solution`; partial via `Highs_setCallbackSparseSolution` + `Highs_repairCallbackSolution` | `GRB_CB_MIPNODE` (and `MIP`): `GRBcbsolution` (partial values allowed), `GRBcbusesolution` | a primal heuristic (`HEUREXEC`): `SCIPcreateOrigSol`, `SCIPtrySolFree`; no partial solution during the search |
-| `PRICE`: answer a node LP's duals with columns | none, so `Unsupported` | none: Gurobi 12 has no pricing callback | a pricer plugin (`SCIPincludePricerBasic`, `PRICERREDCOST` and `PRICERFARKAS`, `SCIPaddPricedVar`), in the next stage; until then `Unsupported` and not in `Scip::EVENTS` |
+| `PRICE`: answer a node LP's duals with columns | none, so `Unsupported` | none: Gurobi 12 has no pricing callback | a pricer plugin, delayed and active only in a solve that asks for `PRICE`, whose rows are then modifiable (`SCIPincludePricerBasic`, `SCIPactivatePricer`, `SCIPsetConsModifiable`): `PRICERREDCOST` and `PRICERFARKAS` read `SCIPgetDualsolLinear` or `SCIPgetDualfarkasLinear`, then `SCIPcreateVar`, `SCIPaddPricedVar` and `SCIPaddCoefLinear`; refused on a program with a quadratic objective |
 | `NATIVE`: solver-only events | `kHighsCallbackMipGetCutPool` as `HighsNative::CutPool` (presolved-space cuts) | `GRB_CB_PRESOLVE`, `GRB_CB_MULTIOBJ`, `GRB_CB_IIS`, and `MIPNODE` node data beyond the relaxation | none in `culmen_scip`; any other event type (`SCIP_EVENTTYPE_*`), branching or node-selection data would fit |
 
 HiGHS's threading is handled inside culmen_highs. The MIP kinds come from its serial search loop. Logging may come
@@ -190,6 +190,6 @@ types would be `GurobiMessage`, `GurobiMip`, `GurobiMipSol` and `GurobiMipNode`.
 without `PRICE`, and `CLASSES` would be `ModelClasses::ALL`, the quadratic part passed with `GRBaddqpterms`.
 None of this needs a change to culmen_core. SCIP needs more plumbing, since its callbacks are plugins (an event
 handler, a message handler, a constraint handler, a separator and a heuristic, each registered on the `SCIP*`), but
-each plugin maps onto the event kinds above; `culmen_scip` includes them in every instance and delivers every
-generic event but `PRICE` that way, with none of culmen_core changed. `PRICE` is the one event whose seam a pricer
-plugin needed: the sink `Priced` beside the callback, since the columns a solve prices outlive it.
+each plugin maps onto the event kinds above; `culmen_scip` includes them in every instance, a pricer among them, and
+delivers every generic event that way. `PRICE` is the one event whose seam the pricer needed in culmen_core: the sink
+`Priced` beside the callback, since the columns a solve prices outlive it.

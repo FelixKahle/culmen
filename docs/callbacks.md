@@ -414,8 +414,9 @@ assert!(culmen::Script::EVENTS.contains(Events::ALL));
 ```
 
 HiGHS 1.16 offers neither lazy constraints nor user cuts, nor pricing; see [Limitations](highs.md#limitations). SCIP
-(`culmen_scip`) delivers lazy constraints and cuts, and every other generic event but `PRICE`, through plugins it
-includes in each instance; its pricer is the next step.
+(`culmen_scip`) delivers every generic event, lazy constraints, cuts and pricing included, through plugins it
+includes in each instance; it refuses pricing on a program with a quadratic objective with a typed error before it
+solves.
 
 ## Panics and threads
 
