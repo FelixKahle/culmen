@@ -661,6 +661,17 @@ mod tests {
         let _ = solve(&m.build().unwrap());
     }
 
+    #[test]
+    #[should_panic(expected = "the integer box is too large to enumerate")]
+    fn test_the_reference_refuses_an_integer_box_beyond_i64() {
+        // Each column has 8e18 + 1 whole values, which i64 counts; the box has their square, which it does not.
+        let mut m = Model::new();
+        let x = m.add_var(Var::integer().bounds(-4e18, 4e18));
+        let y = m.add_var(Var::integer().bounds(-4e18, 4e18));
+        m.minimize(x + y);
+        let _ = solve(&m.build().unwrap());
+    }
+
     /// Minimize `x + y` over `x`, `y` in `[0, 4]` and the row `x + y >= 1`.
     fn small() -> (Program, Col, Col, Row) {
         let mut m = Model::new();
