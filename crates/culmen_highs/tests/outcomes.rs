@@ -389,3 +389,79 @@ fn test_a_solution_limit_ends_a_mip_with_a_solution() {
         );
     }
 }
+
+/// A generalized assignment HiGHS does not finish at its root.
+fn hard_mip() -> culmen_core::Program {
+    culmen_testing::instances::assignment(60, 30, 12_345, 0.0).program
+}
+
+/// The reason a solve that is expected to stop gives.
+fn stop_reason(solved: &culmen_core::Solved<culmen_highs::HighsStatus>) -> StopReason {
+    match &solved.outcome {
+        Outcome::Stopped { reason, .. } => *reason,
+        other => panic!("expected a stop, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_a_node_limit_stops_a_mip_at_the_node_limit_however_it_is_set() {
+    let limited = Request::new().settings_from(Settings {
+        node_limit: Some(1),
+        time_limit: Some(core::time::Duration::from_secs(60)),
+        ..Settings::new()
+    });
+    let in_settings = Solver::new(Highs::new(), hard_mip()).unwrap().solve(limited).unwrap();
+    assert_eq!(stop_reason(&in_settings), StopReason::NodeLimit, "{in_settings:?}");
+    let timed = || Request::new().time_limit(core::time::Duration::from_secs(60));
+    let typed = HighsOptions {
+        mip_max_nodes: Some(1),
+        ..HighsOptions::default()
+    };
+    let solved = Solver::new(Highs::with_options(typed), hard_mip())
+        .unwrap()
+        .solve(timed())
+        .unwrap();
+    assert_eq!(stop_reason(&solved), StopReason::NodeLimit, "{solved:?}");
+    let by_name = HighsOptions::default().option("mip_max_nodes", 1);
+    let solved = Solver::new(Highs::with_options(by_name), hard_mip())
+        .unwrap()
+        .solve(timed())
+        .unwrap();
+    assert_eq!(stop_reason(&solved), StopReason::NodeLimit, "{solved:?}");
+}
+
+#[test]
+fn test_an_objective_target_stops_a_mip_at_its_first_good_enough_solution() {
+    // Every assignment walks less than a billion, so the first solution meets the target.
+    let target = HighsOptions {
+        objective_target: Some(1e9),
+        ..HighsOptions::default()
+    };
+    let solved = Solver::new(Highs::with_options(target), hard_mip())
+        .unwrap()
+        .solve(Request::new().time_limit(core::time::Duration::from_secs(60)))
+        .unwrap();
+    assert_eq!(stop_reason(&solved), StopReason::ObjectiveLimit, "{solved:?}");
+    assert!(solved.outcome.objective().is_some_and(|objective| objective <= 1e9));
+}
+
+#[test]
+fn test_an_objective_bound_stops_the_dual_simplex_once_the_lp_cannot_beat_it() {
+    // The assignment's LP relaxation walks far more than 1, which the dual simplex proves on its way to the optimum.
+    let mut plan = culmen_core::ProgramPlan::from(hard_mip());
+    for column in &mut plan.columns {
+        column.integrality = culmen_core::Integrality::Continuous;
+    }
+    let bounded = HighsOptions {
+        objective_bound: Some(1.0),
+        presolve: Some(culmen_highs::Switch::Off),
+        solver: Some(culmen_highs::LpSolver::Simplex),
+        simplex_strategy: Some(SimplexStrategy::Dual),
+        ..HighsOptions::default()
+    };
+    let solved = Solver::new(Highs::with_options(bounded), plan.build().unwrap())
+        .unwrap()
+        .solve(Request::new())
+        .unwrap();
+    assert_eq!(stop_reason(&solved), StopReason::ObjectiveLimit, "{solved:?}");
+}

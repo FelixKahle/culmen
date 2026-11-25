@@ -190,8 +190,8 @@ page lists the outcome of every `ModelStatus`. Two of them are decided by more t
   `GapReached` when the gap between the solution and the bound is wider than HiGHS's defaults (a relative gap of
   `1e-4` and an absolute gap of `1e-6`), and `Optimal` otherwise.
 - **`NodeLimit` or `SolutionLimit`.** HiGHS reports one status for its node, leaf and improving-solution limits. The
-  backend reports `StopReason::NodeLimit` when a node limit is set (in `Settings` or `HighsOptions`) and the node
-  count reached it, and `StopReason::SolutionLimit` otherwise.
+  backend reports `StopReason::NodeLimit` when the node limit HiGHS held for the run (`mip_max_nodes`, set in
+  `Settings`, a typed `HighsOptions` field or by name) was reached, and `StopReason::SolutionLimit` otherwise.
 
 An empty model, one without columns, is `Optimal` at its offset when every row admits an activity of zero, and
 `Infeasible` when a row such as `0 = 1` does not.

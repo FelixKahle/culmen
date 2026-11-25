@@ -344,7 +344,7 @@ impl Highs {
     /// [`HighsError::Run`] when HiGHS failed, or reports an optimum without a solution; [`HighsError::UnsoundQp`]
     /// when it reports a QP optimal with a primal-dual objective error above [`Highs::QP_OBJECTIVE_ERROR`], or
     /// unbounded although every column is bounded.
-    fn outcome(&self, loaded: &Loaded, settings: &Settings, status: &HighsStatus) -> Result<Outcome, HighsError> {
+    fn outcome(&self, loaded: &Loaded, status: &HighsStatus) -> Result<Outcome, HighsError> {
         if status.run == CallStatus::Error {
             return Err(run_failed(status));
         }
@@ -355,7 +355,7 @@ impl Highs {
             return Err(HighsError::UnsoundQp(why));
         }
         let bound = self.mip_bound(loaded);
-        match self.ending(settings, status) {
+        match self.ending(status) {
             Ending::Optimal => best
                 .map(|solution| optimum(solution, bound))
                 .ok_or_else(|| run_failed(status)),
@@ -385,7 +385,7 @@ impl Highs {
     }
 
     /// How a run HiGHS reports with `status` ended, in culmen's terms.
-    fn ending(&self, settings: &Settings, status: &HighsStatus) -> Ending {
+    fn ending(&self, status: &HighsStatus) -> Ending {
         match status.model {
             ModelStatus::Optimal => Ending::Optimal,
             ModelStatus::ModelEmpty => Ending::Empty,
@@ -397,7 +397,7 @@ impl Highs {
             ModelStatus::IterationLimit => Ending::Stopped(StopReason::IterationLimit),
             ModelStatus::ObjectiveBound | ModelStatus::ObjectiveTarget => Ending::Stopped(StopReason::ObjectiveLimit),
             ModelStatus::MemoryLimit => Ending::Stopped(StopReason::MemoryLimit),
-            ModelStatus::SolutionLimit => Ending::Stopped(self.search_limit(settings, status.mip_nodes)),
+            ModelStatus::SolutionLimit => Ending::Stopped(self.search_limit(status.mip_nodes)),
             ModelStatus::Unknown | ModelStatus::HighsInterrupt => Ending::Stopped(StopReason::Other),
             ModelStatus::NotSet
             | ModelStatus::LoadError
@@ -432,10 +432,13 @@ impl Highs {
         })
     }
 
-    /// Which of HiGHS's search limits a run that ended at its solution limit reached: the node limit when one is
-    /// set and the node count reached it, else a limit on solutions or leaves.
-    fn search_limit(&self, settings: &Settings, nodes: u64) -> StopReason {
-        let node_limit = settings.node_limit.or(self.options.mip_max_nodes);
+    /// Which of HiGHS's search limits a run that ended at its solution limit reached: the node limit HiGHS held for
+    /// the run, however it was set, when the node count reached it, else a limit on solutions or leaves.
+    fn search_limit(&self, nodes: u64) -> StopReason {
+        let node_limit = self
+            .instance
+            .option_int(c"mip_max_nodes")
+            .and_then(|limit| u64::try_from(limit).ok());
         if node_limit.is_some_and(|limit| nodes >= limit) {
             StopReason::NodeLimit
         } else {
@@ -716,7 +719,7 @@ impl Backend for Highs {
             resume_unwind(payload);
         }
         let status = self.status(loaded, ran.run, ran.last_error);
-        let outcome = self.outcome(loaded, settings, &status)?;
+        let outcome = self.outcome(loaded, &status)?;
         Ok(Solved {
             outcome,
             status,
