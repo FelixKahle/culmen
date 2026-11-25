@@ -19,8 +19,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use culmen_core::{
     ActionError, Bounds, Callback, Col, CutContext, Events, HeuristicContext, Integrality, LazyContext, Linear, NewCol,
-    Outcome, PollContext, PriceContext, PriceMode, Program, ProgramColumn, ProgramPlan, Request, Row, Sense, Settings,
-    Solution, SolutionContext, SolveError, Solver, StopReason, TiVec, bounds,
+    Outcome, Phase, PollContext, PriceContext, PriceMode, Program, ProgramColumn, ProgramPlan, ProgressContext, Request,
+    Row, Sense, Settings, Solution, SolutionContext, SolveError, Solver, StopReason, TiVec, bounds,
 };
 use culmen_scip::{Scip, ScipError, ScipEvent, ScipOptions, ScipPrice};
 use culmen_testing::reference::{Reference, close, solve};
@@ -657,6 +657,49 @@ fn test_a_column_without_an_upper_bound_is_priced_in() {
     assert!(close(best.objective, 1.5, 1e-9), "{best:?}");
     assert_eq!(pricer.added, vec![(1, Col::new(1))]);
     assert!((best.values[Col::new(1)] - 3.0).abs() <= 1e-9, "{best:?}");
+}
+
+/// Prices as a `Pricer` and records the phase of every progress report.
+struct Phases {
+    pricer: Pricer,
+    phases: Vec<Phase>,
+}
+
+impl Callback<Scip> for Phases {
+    fn events(&self) -> Events {
+        Events::PROGRESS
+    }
+    fn prices(&self) -> bool {
+        true
+    }
+    fn price(&mut self, ctx: &mut ScipPrice<'_>) {
+        self.pricer.price_round(ctx);
+    }
+    fn progress(&mut self, ctx: &mut culmen_scip::ScipProgress) {
+        assert!(self.phases.len() < MAX_CALLS, "more progress reports than any test expects");
+        self.phases.push(ctx.progress().phase);
+    }
+}
+
+#[test]
+fn test_an_lp_whose_priced_column_is_integer_reports_its_search_as_a_mip() {
+    // Minimize 2x + y over x + y >= 3/2, with y priced as an integer column: the LP is a MILP once y is held, its root
+    // LP takes y = 3/2, and SCIP branches on y to the optimum 2 (y = 1, x = 1/2, or y = 2).
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
+    plan.row(bounds!(1.5, f64::INFINITY), [(x, 1.0)]);
+    let program = plan.build().unwrap();
+    let y = column(1.0, Bounds::NON_NEGATIVE, true, &[(Row::new(0), 1.0)]);
+    let watched = vec![column(2.0, Bounds::NON_NEGATIVE, false, &[(Row::new(0), 1.0)]), y];
+    let mut solver = Solver::new(Scip::new(), program).unwrap();
+    let mut phases = Phases {
+        pricer: Pricer::new(watched, [1], Pick::Every),
+        phases: Vec::new(),
+    };
+    let solved = solver.solve_with(limited(false), &mut phases).unwrap();
+    assert!(close(optimal(solved.outcome).objective, 2.0, 1e-9));
+    assert_eq!(phases.pricer.added, vec![(1, Col::new(1))]);
+    assert!(phases.phases.contains(&Phase::Mip), "{:?}", phases.phases);
 }
 
 /// Prices as a `Pricer`, supplies one solution at the first heuristic call once every column it names is held, and

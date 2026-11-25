@@ -4,10 +4,10 @@
 //! Pricing: a variable pricer with a reduced-cost and a Farkas callback (`PRICERREDCOST`, `PRICERFARKAS`).
 //!
 //! The pricer is included in every instance, delayed, so SCIP prices the variables it holds before it asks the
-//! callback, and inactive. A solve whose callback [`prices`](culmen_core::Callback::prices) activates it and marks every program
-//! row's constraint modifiable, as SCIP requires of a constraint a pricer adds variables to; a solve that does not
-//! deactivates it and leaves every constraint unmodifiable, so SCIP neither calls it nor gives up a reduction for
-//! it. A modifiable linear constraint is never presolved, upgraded or used to tighten bounds, so it stays a linear
+//! callback, and inactive. A solve whose callback [`prices`](culmen_core::Callback::prices) activates it and marks
+//! every program row's constraint modifiable, as SCIP requires of a constraint a pricer adds variables to; a solve that
+//! does not deactivates it and leaves every constraint unmodifiable, so SCIP neither calls it nor gives up a reduction
+//! for it. A modifiable linear constraint is never presolved, upgraded or used to tighten bounds, so it stays a linear
 //! constraint whose dual SCIP reports.
 //!
 //! SCIP minimizes `s·c` for the program's cost `c`, with `s = 1` when the program minimizes and `s = -1` when it
@@ -420,6 +420,9 @@ impl Run<'_> {
         check("SCIPaddPricedVar", unsafe {
             SCIPaddPricedVar(scip, var.as_ptr(), score)
         })?;
+        if kind == SCIP_Vartype_SCIP_VARTYPE_INTEGER {
+            self.integral.set(true);
+        }
         for &(row, a) in &column.entries {
             // SAFETY: the instance is solving; the row's constraint is one of its own.
             let cons = unsafe { transformed_cons(scip, self.rows[row].as_ptr()) }?;

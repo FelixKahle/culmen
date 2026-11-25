@@ -211,8 +211,9 @@ pub(crate) struct Run<'a> {
     priced_vars: RefCell<Vec<NonNull<SCIP_VAR>>>,
     /// SCIP's infinity: a number of at least this magnitude is infinite to SCIP.
     infinity: f64,
-    /// Whether the program has an integer column, which makes SCIP's search a branch and bound on a MIP.
-    integral: bool,
+    /// Whether the program, or a column priced so far, has an integer column, which makes SCIP's search a branch and
+    /// bound on a MIP.
+    integral: Cell<bool>,
     lazy: RefCell<lazy::Store>,
     /// What a nested call could not deliver while the callback was busy, in order.
     deferred: RefCell<Vec<Deferred>>,
@@ -299,7 +300,7 @@ impl<'a> Run<'a> {
             priced: RefCell::new(priced),
             priced_vars: RefCell::default(),
             infinity,
-            integral: integers > 0,
+            integral: Cell::new(integers > 0),
             lazy: RefCell::default(),
             deferred: RefCell::default(),
             panic: RefCell::default(),
@@ -488,7 +489,7 @@ impl<'a> Run<'a> {
     fn phase(&self, stage: SCIP_STAGE) -> Phase {
         if (SCIP_Stage_SCIP_STAGE_INITPRESOLVE..=SCIP_Stage_SCIP_STAGE_EXITPRESOLVE).contains(&stage) {
             Phase::Presolve
-        } else if self.integral && stage == SCIP_Stage_SCIP_STAGE_SOLVING {
+        } else if self.integral.get() && stage == SCIP_Stage_SCIP_STAGE_SOLVING {
             Phase::Mip
         } else {
             Phase::Other
