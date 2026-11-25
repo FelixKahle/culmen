@@ -20,7 +20,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use culmen_core::{
     ActionError, Bounds, Callback, Col, CutContext, Events, HeuristicContext, LazyContext, Linear, NewCol, Outcome,
     PollContext, PriceContext, PriceMode, Program, ProgramColumn, ProgramPlan, Request, Row, Sense, Settings, Solution,
-    SolveError, Solver, StopReason, TiVec, bounds,
+    SolutionContext, SolveError, Solver, StopReason, TiVec, bounds,
 };
 use culmen_scip::{Scip, ScipError, ScipOptions, ScipPrice};
 use culmen_testing::reference::{Reference, close, solve};
@@ -544,17 +544,19 @@ fn test_a_cut_may_name_a_priced_column() {
     assert!(callback.cuts > 0);
 }
 
-/// Prices as a `Pricer`, and supplies a solution through every priced column it names once all are priced.
+/// Prices as a `Pricer`, supplies one solution at the first heuristic call once every column it names is held, and
+/// records every feasible solution SCIP reports.
 struct Supplies {
     pricer: Pricer,
     /// The solution, by watched column; columns not watched yet read zero.
     solution: Vec<(usize, f64)>,
     results: Vec<Result<(), ActionError>>,
+    feasible: Vec<TiVec<Col, f64>>,
 }
 
 impl Callback<Scip> for Supplies {
     fn events(&self) -> Events {
-        Events::HEURISTIC
+        Events::HEURISTIC | Events::FEASIBLE
     }
     fn prices(&self) -> bool {
         true
@@ -581,29 +583,45 @@ impl Callback<Scip> for Supplies {
         }
         self.results.push(ctx.supply(&values));
     }
+    fn feasible(&mut self, ctx: &mut culmen_scip::ScipSolution<'_>) {
+        assert!(self.feasible.len() < MAX_CALLS, "more solutions than any test expects");
+        self.feasible.push(ctx.values().to_owned());
+    }
 }
 
 #[test]
 fn test_a_heuristic_solution_through_priced_columns_is_stored_with_their_values() {
-    // A + 2B + F + C, five rolls: SCIP stores it with the priced columns' values.
+    // A + 2B + 2F, five rolls: 3 + 4 >= 7 pieces of width 3, 2 >= 2 of width 4, 4 >= 3 of width 5. B is priced at the
+    // root, where the LP's 9/2 is fractional, so the heuristic after the root holds it. Presolve and SCIP's own
+    // heuristics are off, so the supplied solution is the one SCIP stores, with B's value on B's priced variable.
     let (program, patterns) = cutting_stock(true);
     let full = full(&program, &patterns);
-    let mut solver = Solver::new(Scip::new(), program).unwrap();
-    let mut callback = Supplies {
-        pricer: Pricer::new(patterns, [7, 9], Pick::Every),
-        solution: vec![(0, 1.0), (7, 2.0), (2, 1.0), (9, 1.0)],
-        results: Vec::new(),
+    let options = ScipOptions {
+        heuristics: Some(culmen_scip::Emphasis::Off),
+        ..ScipOptions::default()
     };
-    let solved = solver.solve_with(limited(true), &mut callback).unwrap();
+    let mut solver = Solver::new(Scip::with_options(options), program).unwrap();
+    let mut callback = Supplies {
+        pricer: Pricer::new(patterns, [7], Pick::Every),
+        solution: vec![(0, 1.0), (7, 2.0), (2, 2.0)],
+        results: Vec::new(),
+        feasible: Vec::new(),
+    };
+    let solved = solver.solve_with(limited(false), &mut callback).unwrap();
     let best = optimal(solved.outcome);
     assert!(close(best.objective, 5.0, 1e-9), "{best:?}");
     assert!(full.max_violation(&in_full(&callback.pricer, 3, &best.values)) <= 1e-6);
-    if let Some(result) = callback.results.first() {
-        assert!(
-            result.is_ok() || matches!(result, Err(ActionError::Refused(_))),
-            "{result:?}"
-        );
-    }
+    assert_eq!(callback.results, [Ok(())]);
+    let b = callback.pricer.col_of(7).expect("B is priced");
+    let supplied = |values: &TiVec<Col, f64>| {
+        let at = |col: Col, want: f64| values.get(col).is_some_and(|&v| (v - want).abs() <= 1e-9);
+        at(Col::new(0), 1.0) && at(Col::new(1), 0.0) && at(Col::new(2), 2.0) && at(b, 2.0)
+    };
+    assert!(
+        callback.feasible.iter().any(supplied),
+        "no reported solution holds the supplied values: {:?}",
+        callback.feasible
+    );
 }
 
 #[test]
@@ -622,6 +640,7 @@ fn test_a_heuristic_solution_presolve_cannot_hold_is_refused_with_the_reason() {
             pricer: Pricer::new(patterns.clone(), [], Pick::Every),
             solution: vec![(0, 3.0), (1, 1.0), (2, 2.0)],
             results: Vec::new(),
+            feasible: Vec::new(),
         };
         callback.pricer.added.push((3, z));
         callback.solution.push((3, z_value));
