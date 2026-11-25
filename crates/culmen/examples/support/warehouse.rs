@@ -105,15 +105,15 @@ impl Observer for Live {
     }
 }
 
-/// Solves the model, stopping on Ctrl-C or after the seconds given as the first argument (default 10), and prints
-/// the assignment.
+/// Solves the model, stopping on Ctrl-C or after the seconds given as the first argument that is not `--log`
+/// (default 10), and prints the assignment; `--log` anywhere prints HiGHS's log too.
 pub(crate) fn solve(
     warehouse: &Warehouse,
     program: Program,
     x: &VarMap<(usize, usize)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let seconds: u64 = std::env::args().nth(1).map_or(Ok(10), |s| s.parse())?;
-    let show_log = std::env::args().any(|a| a == "--log");
+    let show_log = std::env::args().skip(1).any(|a| a == "--log");
+    let seconds: u64 = std::env::args().skip(1).find(|a| a != "--log").map_or(Ok(10), |s| s.parse())?;
     let stop = Arc::new(AtomicBool::new(false));
     let on_ctrl_c = Arc::clone(&stop);
     ctrlc::set_handler(move || on_ctrl_c.store(true, Ordering::Release))?;
