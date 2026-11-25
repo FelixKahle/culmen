@@ -62,10 +62,38 @@ jobs:
           exclude: culmen_testing,culmen_scip
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
-      # Cargo publishes the crates in dependency order and verifies each one builds from its package first:
-      # culmen_core, then culmen_highs, culmen_macros and culmen_scip, then culmen, which depends on all four.
-      # culmen_testing is `publish = false` and left out.
+      # The crates are published one by one in dependency order: culmen_core, then culmen_highs, culmen_macros and
+      # culmen_scip, then culmen, which depends on all four. Cargo verifies that each one builds from its package and
+      # waits until crates.io lists it before the next starts. culmen_testing is `publish = false` and left out.
+      #
+      # A crate whose version crates.io already lists is skipped, so the job can be run again after it stopped
+      # halfway, and a crate's first release, which crates.io accepts only from its owner's own token because a
+      # trusted publisher can be set up only for a crate that exists, can be published by hand before the tag.
       - name: Publish
-        run: cargo publish --workspace
+        run: |
+          crates="culmen_core culmen_highs culmen_macros culmen_scip culmen"
+          metadata=$(cargo metadata --no-deps --format-version 1)
+          # The list above must be exactly the publishable members, so a new crate cannot be forgotten here.
+          publishable=$(jq -r '[.packages[] | select(.publish == null) | .name] | sort | join(" ")' <<<"$metadata")
+          listed=$(tr ' ' '\n' <<<"$crates" | sort | tr '\n' ' ' | sed 's/ $//')
+          test "$listed" = "$publishable" \
+            || { echo "::error::the publish list ($listed) is not the publishable crates ($publishable)"; exit 1; }
+          version=$(jq -r '.packages[] | select(.name == "culmen") | .version' <<<"$metadata")
+          for crate in $crates; do
+            # The sparse index holds one JSON line per published version; every name here is longer than three
+            # characters, so its file is at <first two>/<next two>/<name>.
+            url="https://index.crates.io/${crate:0:2}/${crate:2:2}/$crate"
+            status=$(curl --silent --show-error --output index.jsonl --write-out '%{http_code}' "$url")
+            case "$status" in
+              200) published=$(jq -r --arg v "$version" 'select(.vers == $v) | .vers' index.jsonl) ;;
+              404) published="" ;;
+              *) echo "::error::crates.io's index answered $status for $crate"; exit 1 ;;
+            esac
+            if [ -n "$published" ]; then
+              echo "$crate $version is already on crates.io; skipped"
+            else
+              cargo publish --package "$crate"
+            fi
+          done
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
