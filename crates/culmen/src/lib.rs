@@ -6,8 +6,9 @@
 //! cooperative stop.
 //!
 //! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as [`Highs`] (and
-//! the whole backend as [`highs`]) with the default `highs` feature, and the modelling macros with the `macros`
-//! feature. [`prelude`] holds what a model and a solve need.
+//! the whole backend as [`highs`]) with the default `highs` feature, the SCIP backend as `Scip` (and the whole
+//! backend as `scip`) with the `scip` feature, and the modelling macros with the `macros` feature. [`prelude`] holds what a
+//! model and a solve need.
 //!
 //! # A model, two ways
 //!
@@ -131,8 +132,13 @@
 //! # Features
 //!
 //! - **`highs`** (default): the HiGHS backend, built from HiGHS's bundled sources (needs cmake and libclang).
+//! - **`scip`**: the SCIP backend, for MIQPs, lazy constraints, user cuts and branch-and-price. Not a default: its
+//!   build downloads the SCIP Optimization Suite sources from GitHub and compiles SCIP and SoPlex with cmake (needs
+//!   cmake, a C and C++ compiler, libclang and network access), which takes several times as long as HiGHS's build,
+//!   and most models are served by HiGHS alone.
 //! - **`macros`**: `variable!`, `constraint!`, `objective!` and `sum!`.
-//! - **`serde`**: the plain data serializes and reads back.
+//! - **`serde`**: the plain data serializes and reads back, and so do the options and statuses of each backend
+//!   enabled.
 
 pub use culmen_core::*;
 #[cfg(feature = "highs")]
@@ -141,6 +147,10 @@ pub use culmen_highs as highs;
 pub use culmen_highs::Highs;
 #[cfg(feature = "macros")]
 pub use culmen_macros::{constraint, objective, sum, variable};
+#[cfg(feature = "scip")]
+pub use culmen_scip as scip;
+#[cfg(feature = "scip")]
+pub use culmen_scip::Scip;
 
 /// The README and the user guide under `docs/`, compiled as doctests so every snippet in it stays true. A page whose
 /// snippets need a feature is included only with that feature.
@@ -200,6 +210,8 @@ pub mod prelude {
     pub use culmen_highs::Highs;
     #[cfg(feature = "macros")]
     pub use culmen_macros::{constraint, objective, sum, variable};
+    #[cfg(feature = "scip")]
+    pub use culmen_scip::Scip;
 
     pub use culmen_core::{
         Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Improvement, IndexSet, LinExpr, Linear,

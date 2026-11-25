@@ -5,9 +5,9 @@
 #
 # The crates point down, never up:
 #
-#   culmen          the facade users depend on: re-exports, a prelude, the `highs` and `macros` features
+#   culmen          the facade users depend on: re-exports, a prelude, the `highs`, `scip` and `macros` features
 #   ├─ culmen_highs   the HiGHS backend over `highs-sys`; with culmen_scip, the only crates with `unsafe`
-#   ├─ culmen_scip    the SCIP backend over `scip-sys`, SCIP built from source; not yet behind a facade feature
+#   ├─ culmen_scip    the SCIP backend over `scip-sys`, SCIP built from source
 #   ├─ culmen_macros  `variable!`, `constraint!`, `objective!` and `sum!`, expanding to culmen_core's methods
 #   └─ culmen_core    the program as data, the modelling layer, the backend seam, the solve API; no `unsafe`
 #
@@ -28,9 +28,11 @@ keywords = ["optimization", "linear-programming", "milp", "highs", "solver"]
 categories = ["mathematics", "science"]
 
 [workspace.dependencies]
+# The workspace's own crates, each published with the workspace's version.
 culmen_core = { path = "crates/culmen_core", version = "0.4.0" }
 culmen_highs = { path = "crates/culmen_highs", version = "0.4.0" }
 culmen_macros = { path = "crates/culmen_macros", version = "0.4.0" }
+culmen_scip = { path = "crates/culmen_scip", version = "0.4.0" }
 culmen_testing = { path = "crates/culmen_testing" }
 
 # Vectors indexed by `Col` and `Row`, so a column table cannot be read with a row id.
