@@ -14,6 +14,7 @@ use quote::{format_ident, quote};
 use crate::tokens::{bound_names, first_span, rewrite_indices, split_commas, split_filter, split_keyword, tuple_of};
 
 /// One loop of an index or a sum: `pattern in domain`.
+#[derive(Debug)]
 pub(crate) struct Loop {
     /// The pattern each item is bound to.
     pub(crate) pattern: TokenStream,
@@ -22,6 +23,7 @@ pub(crate) struct Loop {
 }
 
 /// A loop nest as written, `p in P, q in Q if cond`: the loops, outermost first, and the filter after the last.
+#[derive(Debug)]
 pub(crate) struct Loops {
     /// The loops, outermost first.
     pub(crate) loops: Vec<Loop>,
@@ -69,6 +71,7 @@ pub(crate) fn loops(tokens: TokenStream) -> syn::Result<Loops> {
 }
 
 /// A declared name, with the loop nest of its index if it declares a family.
+#[derive(Debug)]
 pub(crate) struct Head {
     /// The name, bound to the result and given to it.
     pub(crate) name: Ident,
@@ -77,6 +80,7 @@ pub(crate) struct Head {
 }
 
 /// The index of a family: its loop nest, every pattern naming its keys, and the names bound.
+#[derive(Debug)]
 pub(crate) struct Index {
     /// The loops and the filter.
     nest: Loops,

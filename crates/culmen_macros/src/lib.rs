@@ -113,7 +113,7 @@ fn kind(tokens: &TokenStream2) -> syn::Result<Kind> {
 }
 
 /// The bounds a spec gives, as written.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Bounds {
     lower: Option<TokenStream2>,
     upper: Option<TokenStream2>,
@@ -222,7 +222,12 @@ fn var_expr(root: &TokenStream2, kind: Kind, bounds: &Bounds) -> TokenStream2 {
     }
 }
 
-/// `variable!`.
+/// The expansion of `variable!`.
+///
+/// # Errors
+///
+/// For a call without two or three arguments, a spec or declaration that does not read, an unknown kind, or a
+/// `Bin` with bounds.
 fn variable_tokens(root: &TokenStream2, input: TokenStream2) -> syn::Result<TokenStream2> {
     let args = split_commas(input);
     let (model, spec_tokens, kind_tokens) = match args.as_slice() {
@@ -295,7 +300,11 @@ fn between(linear: &TokenStream2, parts: [(&str, &TokenStream2); 3]) -> TokenStr
     quote!({ #(#lets)* #linear::between(#e, #lo, #hi) })
 }
 
-/// `constraint!`.
+/// The expansion of `constraint!`.
+///
+/// # Errors
+///
+/// For a call with more than three arguments, a relation that does not read, or a name or index that does not read.
 fn constraint_tokens(root: &TokenStream2, input: TokenStream2) -> syn::Result<TokenStream2> {
     let args = split_commas(input);
     match args.as_slice() {
@@ -328,7 +337,11 @@ fn constraint_tokens(root: &TokenStream2, input: TokenStream2) -> syn::Result<To
     }
 }
 
-/// `objective!`.
+/// The expansion of `objective!`.
+///
+/// # Errors
+///
+/// For a call without exactly three arguments, or an unknown sense.
 fn objective_tokens(root: &TokenStream2, input: TokenStream2) -> syn::Result<TokenStream2> {
     let args = split_commas(input);
     let [model, sense, expr] = args.as_slice() else {
@@ -343,7 +356,11 @@ fn objective_tokens(root: &TokenStream2, input: TokenStream2) -> syn::Result<Tok
     Ok(quote!((#model).set_objective(#sense, #expr)))
 }
 
-/// `sum!`.
+/// The expansion of `sum!`.
+///
+/// # Errors
+///
+/// For a call without `for`, without a body before it, or with a loop nest that does not read.
 fn sum_tokens(root: &TokenStream2, input: TokenStream2) -> syn::Result<TokenStream2> {
     let (body, Some((_, nest_tokens))) = split_keyword(input, "for") else {
         return Err(syn::Error::new(Span::call_site(), "sum!(body for i in I, …)"));

@@ -175,6 +175,7 @@ fn block_is_convex(sense: Sense, block: &[(Col, Col, f64)]) -> bool {
 }
 
 /// A union-find forest over the columns whose root is always the smallest column of its tree.
+#[derive(Debug)]
 struct Roots {
     parent: TiVec<Col, Col>,
 }

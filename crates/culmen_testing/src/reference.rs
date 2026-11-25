@@ -43,6 +43,7 @@ impl Reference {
 }
 
 /// One inequality `Σ a · x <= b` over the continuous columns.
+#[derive(Debug)]
 struct Inequality {
     a: Vec<BigRational>,
     b: BigRational,

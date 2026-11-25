@@ -189,6 +189,7 @@ impl Loaded {
 }
 
 /// What a run left behind.
+#[derive(Debug)]
 struct Ran {
     elapsed: Duration,
     run: CallStatus,

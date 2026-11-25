@@ -201,6 +201,12 @@ fn lift<E>(error: AnalysisError<E>) -> AnalysisError<MirrorError<E>> {
 /// A mirror's callback, handed to the inner backend: the context types are the same.
 struct Forward<'c, B: Backend>(&'c mut dyn Callback<Mirror<B>>);
 
+impl<B: Backend> fmt::Debug for Forward<'_, B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Forward").finish_non_exhaustive()
+    }
+}
+
 impl<B: Backend> Callback<B> for Forward<'_, B> {
     fn events(&self) -> Events {
         self.0.events()

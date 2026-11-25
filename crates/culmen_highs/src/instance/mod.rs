@@ -396,6 +396,7 @@ impl Instance {
 /// leaving out a negative tolerance; its blend minimizes `Σ weight · objective`. So a lexicographic objective gets
 /// the weight `±1` by its sense and its tolerances, `-1` for an absent one; a blended one its weight signed by its
 /// sense and no tolerances. Every objective gets its own priority, the first the highest, which a blend ignores.
+#[derive(Debug)]
 struct LinearObjectives {
     weights: Vec<f64>,
     offsets: Vec<f64>,
@@ -743,6 +744,7 @@ pub(crate) enum Padding {
 }
 
 /// A program's arrays in the layout `Highs_passModel` reads, with a free row for a QP without rows when padded.
+#[derive(Debug)]
 struct Arrays {
     costs: Vec<f64>,
     lower: Vec<f64>,
@@ -809,6 +811,7 @@ impl Arrays {
 /// The Hessian of a program's quadratic part in the layout `Highs_passModel` reads: its lower triangle in compressed
 /// column form, `rows[starts[c]..starts[c + 1]]` with `values` alike for column `c`, the diagonal first, as
 /// [`QuadObjective::hessian`](culmen_core::QuadObjective::hessian) gives it for HiGHS's `½ xᵀQx`.
+#[derive(Debug)]
 struct Hessian {
     starts: Vec<HighsInt>,
     rows: Vec<HighsInt>,
@@ -875,6 +878,7 @@ pub(crate) const fn var_type(integrality: Integrality) -> HighsInt {
 }
 
 /// The counts `Highs_passModel` reads, each within HiGHS's index type.
+#[derive(Debug)]
 struct Counts {
     cols: HighsInt,
     rows: HighsInt,

@@ -236,6 +236,7 @@ pub(crate) struct Finished {
 }
 
 /// An event kept while the callback was busy.
+#[derive(Debug)]
 enum Deferred {
     /// A log line.
     Log {

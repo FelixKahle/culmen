@@ -61,6 +61,7 @@ impl CutContext for ScipCut<'_> {
 }
 
 /// A row this module created, released when it drops.
+#[derive(Debug)]
 struct OwnedRow {
     scip: *mut SCIP,
     row: NonNull<SCIP_ROW>,

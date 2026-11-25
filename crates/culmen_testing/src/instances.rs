@@ -16,6 +16,7 @@ pub struct Assignment {
 }
 
 /// A deterministic generator of small numbers.
+#[derive(Debug)]
 struct Lcg(u64);
 
 impl Lcg {
