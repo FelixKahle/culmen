@@ -11,16 +11,21 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-keywords.workspace = true
+# The workspace's keywords name HiGHS, which this crate does not depend on.
+keywords = ["optimization", "linear-programming", "milp", "modelling", "macros"]
 categories = ["mathematics", "development-tools::procedural-macro-helpers"]
 
 [lib]
 proc-macro = true
 
 [dependencies]
+# The name the calling crate's manifest gives `culmen` or `culmen_core`, so the expansions' paths resolve.
 proc-macro-crate.workspace = true
+# Token trees and spans outside `proc_macro`, so the scanners are unit-tested.
 proc-macro2.workspace = true
+# The expansions, written as quoted Rust.
 quote.workspace = true
+# Spanned compile errors at the token at fault.
 syn.workspace = true
 
 [lints]
