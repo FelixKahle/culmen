@@ -151,7 +151,7 @@ allow a solver that calls back from other threads.
 | `seed` | `random_seed` (one above `i32::MAX` is refused, not clamped) | `Seed` | `randomization/randomseedshift` (one above `i32::MAX` is refused) |
 | `presolve` | `presolve` = `"on"` / `"off"` | `Presolve` = `-1` / `0` | `SCIPsetPresolving`: `OFF`, or the options' presolving emphasis, else `DEFAULT` |
 | `node_limit` | `mip_max_nodes` | `NodeLimit` | `limits/nodes` (one above `i64::MAX` is refused) |
-| `solution_limit` | `mip_max_improving_sols` | `SolutionLimit` | `limits/solutions` (one above `i32::MAX` is refused) |
+| `solution_limit` (improving solutions) | `mip_max_improving_sols` | none: `SolutionLimit` counts every solution, so a Gurobi backend would count improvements in its callback and stop there | `limits/bestsol` (one above `i32::MAX` is refused) |
 | `console` | `log_to_console` (the log always reaches the callback) | `LogToConsole` (with `OutputFlag = 1`) | the message handler writes to standard output and standard error too (the log always reaches the callback) |
 
 Every backend also has typed options for the rest (`culmen_highs::HighsOptions` covers HiGHS's documented

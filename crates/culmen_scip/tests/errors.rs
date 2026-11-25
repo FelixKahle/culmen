@@ -83,7 +83,7 @@ fn test_settings_beyond_scips_parameters_are_refused_by_name() {
     assert_eq!(
         solutions,
         ScipError::OutOfRange {
-            name: "limits/solutions",
+            name: "limits/bestsol",
             value: 1 << 31,
             max: 2_147_483_647
         }

@@ -371,7 +371,7 @@ fn test_a_solution_limit_reached_by_the_start_stops_at_the_start() {
         ..Settings::new()
     };
     let solved = solve_with(plain(), program, plain_request(settings, last_two()));
-    assert_eq!(solved.status.status, Status::SolutionLimit, "{solved:?}");
+    assert_eq!(solved.status.status, Status::BestSolutionLimit, "{solved:?}");
     let Outcome::Stopped { reason, best, .. } = solved.outcome else {
         panic!("{solved:?}")
     };

@@ -144,7 +144,7 @@ asks for it.
 | `seed` | `randomization/randomseedshift`; a seed above `i32::MAX` is refused |
 | `presolve` | `false`: `SCIPsetPresolving` to `Off`, after the options' parameters, so it wins over them; `true`: the options' `presolving` emphasis is skipped when it is `Off`, and a presolving parameter set by name stays as set |
 | `node_limit` | `limits/nodes`; a limit above `i64::MAX` is refused |
-| `solution_limit` | `limits/solutions`; a limit above `i32::MAX` is refused |
+| `solution_limit` | `limits/bestsol`, which counts improving solutions as `Settings` does (`limits/solutions` would count every solution SCIP stores, a start and the last solve's carried solutions included); a limit above `i32::MAX` is refused |
 | `console` | SCIP's messages reach standard output and standard error, beside the callback |
 
 A value beyond what SCIP's parameter takes is refused with [`ScipError::OutOfRange`](#errors) before any parameter is

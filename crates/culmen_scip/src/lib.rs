@@ -54,7 +54,7 @@
 //! | `seed` | `randomization/randomseedshift`, at most `i32::MAX` |
 //! | `presolve` | `false`: `SCIPsetPresolving` off, after the options' parameters; `true`: the options' presolving emphasis unless it is `Off`, before their parameters, which it leaves as set |
 //! | `node_limit` | `limits/nodes`, at most `i64::MAX` |
-//! | `solution_limit` | `limits/solutions`, at most `i32::MAX` |
+//! | `solution_limit` | `limits/bestsol`, improving solutions as `Settings` counts them, at most `i32::MAX` |
 //! | `console` | SCIP's message handler quiet or not |
 //!
 //! A solve reports a best solution, an optimum or a reached gap only after SCIP's own check
@@ -350,8 +350,8 @@ fn settings_params(settings: &Settings) -> Result<Vec<(&'static str, ParamValue)
     }
     if let Some(solutions) = settings.solution_limit {
         set.push((
-            "limits/solutions",
-            ParamValue::Int(int("limits/solutions", solutions.get())?),
+            "limits/bestsol",
+            ParamValue::Int(int("limits/bestsol", solutions.get())?),
         ));
     }
     Ok(set)
@@ -575,7 +575,7 @@ mod tests {
                 ("limits/absgap", ParamValue::Real(0.5)),
                 ("randomization/randomseedshift", ParamValue::Int(7)),
                 ("limits/nodes", ParamValue::Longint(100)),
-                ("limits/solutions", ParamValue::Int(3)),
+                ("limits/bestsol", ParamValue::Int(3)),
             ])
         );
         assert_eq!(settings_params(&Settings::new()), Ok(vec![]));

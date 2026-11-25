@@ -182,7 +182,7 @@ the backend's options for the one solve they are passed to.
 | `seed` | `Option<u32>` | The seed of the solver's random choices, for reproducible runs. |
 | `presolve` | `Option<bool>` | Whether the solver presolves first. |
 | `node_limit` | `Option<u64>` | The number of branch-and-bound nodes after which a MIP stops. |
-| `solution_limit` | `Option<NonZeroU64>` | The number of feasible solutions after which a MIP stops; `solutions!(n)` writes a literal one. |
+| `solution_limit` | `Option<NonZeroU64>` | The number of improving solutions (each better than every one before, the first included) after which a MIP stops; `solutions!(n)` writes a literal one. |
 | `console` | `bool` | Whether the solver also prints its log to standard output; the log reaches callbacks either way. |
 
 The request sets the time limit itself; every other setting goes through `settings_from`:
