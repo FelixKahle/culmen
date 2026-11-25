@@ -127,7 +127,7 @@ Every solve sets SCIP up from its defaults, in this order:
 5. What the events the callback asks for need is set last ([Callback events](#callback-events)): for `LAZY`, symmetry
    handling and dual reductions off (`misc/usesymmetry`, `misc/allowstrongdualreds`, `misc/allowweakdualreds`); for
    `CUT` and `HEURISTIC`, culmen's separator or heuristic called at every node; for a callback that prices, the pricer active, every
-   row modifiable, `lp/presolving` off and `separating/aggregation/freq` at `-1`.
+   row modifiable, `lp/presolving` off, `separating/aggregation/freq` at `-1` and `lp/disablecutoff` at `1`.
 
 So a per-solve setting always wins over the backend's options, and an option naming one of the two parameters of
 step 2 overrides the backend's choice. The parameters of step 5 are what those events need to be correct, so they
@@ -587,8 +587,9 @@ How SCIP does it:
   tightening on the modifiable rows, the presolvers and propagators that need complete columns, the objective's
   integrality and scaling. The backend also turns off the LP solver's presolving (`lp/presolving`), since SoPlex's
   simplifier can return duals of a degenerate node LP that do not price a column at its bound out, which would end
-  pricing with a wrong optimum; and SCIP's aggregation separator (`separating/aggregation/freq = -1`), which cuts with
-  the objective cutoff over the columns held as if no other column could enter.
+  pricing with a wrong optimum; SCIP's aggregation separator (`separating/aggregation/freq = -1`), which cuts with
+  the objective cutoff over the columns held as if no other column could enter; and the LP solver's objective limit
+  (`lp/disablecutoff = 1`), which would stop a node LP at the cutoff and hand its non-optimal duals to the callback.
 - **Other events beside it.** A priced column has entries only in program rows, so it enters every lazy constraint
   and cut with coefficient zero: those must hold for every column the callback may price. A heuristic solution of a
   pricing solve is a transformed solution (`SCIPcreateSol`) holding the priced columns, refused when presolve fixed or

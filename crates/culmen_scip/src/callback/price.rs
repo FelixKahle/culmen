@@ -29,6 +29,7 @@
 //! | Farkas | returned | `SUCCESS` |
 //! | Farkas | branched early | `DIDNOTRUN` |
 //! | either | busy with an outer event, or panicked | `DIDNOTRUN` |
+//! | reduced cost, on a node LP that is not optimal | not called | `DIDNOTRUN` |
 //!
 //! SCIP can stop pricing early only where it can branch: at a node without an unfixed integer variable, as in a
 //! program without integer columns, an early stop fails the solve with [`ScipError::BranchEarly`] instead.
@@ -273,6 +274,13 @@ impl Run<'_> {
     ///
     /// `scip` is the live instance of the run, in a pricer callback of `farkas`'s kind.
     unsafe fn price(&self, scip: *mut SCIP, farkas: bool) -> Result<Verdict, ScipError> {
+        // SCIP also calls the reduced-cost callback for a node LP the LP solver stopped at the objective limit
+        // (`OBJLIMIT`). A pricing solve keeps that limit off (`lp/disablecutoff`), so this holds unless SCIP changes;
+        // such an LP is not optimal, so it is not handed to the callback, and the round counts as not run.
+        // SAFETY: the instance is pricing a solved node LP.
+        if !farkas && unsafe { SCIPgetLPSolstat(scip) } != SCIP_LPSolStat_SCIP_LPSOLSTAT_OPTIMAL {
+            return Ok(Verdict::DIDNOTRUN);
+        }
         // SAFETY: the caller's contract.
         let duals = unsafe { self.duals(scip, farkas) }?;
         let mode = if farkas {
@@ -282,11 +290,6 @@ impl Run<'_> {
             let objective = unsafe { SCIPretransformObj(scip, SCIPgetLPObjval(scip)) };
             PriceMode::ReducedCost { objective }
         };
-        debug_assert!(
-            // SAFETY: the instance is pricing a solved node LP.
-            farkas || unsafe { SCIPgetLPSolstat(scip) } == SCIP_LPSolStat_SCIP_LPSOLSTAT_OPTIMAL,
-            "Run::price: reduced-cost pricing of a node LP that is not optimal"
-        );
         let progress = self.progress(scip);
         // SAFETY: the instance is solving.
         let tolerance = unsafe { SCIPdualfeastol(scip) };

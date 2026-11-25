@@ -22,7 +22,7 @@ use culmen_core::{
     PollContext, PriceContext, PriceMode, Program, ProgramColumn, ProgramPlan, Request, Row, Sense, Settings, Solution,
     SolveError, Solver, StopReason, TiVec, bounds,
 };
-use culmen_scip::{Scip, ScipError, ScipPrice};
+use culmen_scip::{Scip, ScipError, ScipOptions, ScipPrice};
 use culmen_testing::reference::{Reference, close, solve};
 use culmen_testing::strategy::{PricedSplit, priced_split};
 use proptest::prelude::*;
@@ -867,15 +867,21 @@ impl Callback<Scip> for SplitPricer {
 /// The relative tolerance of the property test's comparisons with the exact reference.
 const TOLERANCE: f64 = 1e-5;
 
-/// Checks one pricing solve of a split against the reference optimum of its full program.
-fn check_split(split: &PricedSplit, reference: &Reference, pick: Pick, presolve: bool) -> Result<(), TestCaseError> {
+/// Checks one pricing solve of a split, on a backend with `options`, against the reference optimum of its full program.
+fn check_split(
+    split: &PricedSplit,
+    reference: &Reference,
+    pick: Pick,
+    presolve: bool,
+    options: &ScipOptions,
+) -> Result<(), TestCaseError> {
     let PricedSplit {
         full,
         start,
         kept,
         withheld,
     } = split;
-    let mut solver = Solver::new(Scip::new(), start.clone()).unwrap();
+    let mut solver = Solver::new(Scip::with_options(options.clone()), start.clone()).unwrap();
     let mut pricer = SplitPricer {
         withheld: withheld.iter().map(|(_, c)| c.clone()).collect(),
         pick,
@@ -957,8 +963,24 @@ proptest! {
         let reference = solve(&split.full);
         for pick in [Pick::Every, Pick::Most] {
             for presolve in [true, false] {
-                check_split(&split, &reference, pick, presolve)?;
+                check_split(&split, &reference, pick, presolve, &ScipOptions::default())?;
             }
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(1000))]
+
+    /// With the LP solver's objective limit turned back on by option (`lp/disablecutoff = 0`), SCIP could stop a node
+    /// LP at the cutoff (`OBJLIMIT`) and still price it; a pricing solve keeps the limit off, so it hands the callback
+    /// only optimal or infeasible node LPs and reaches the reference optimum.
+    #[test]
+    fn test_pricing_with_the_lp_cutoff_turned_on_by_option_agrees_with_enumeration(split in priced_split()) {
+        let reference = solve(&split.full);
+        let options = ScipOptions::default().param("lp/disablecutoff", 0);
+        for presolve in [true, false] {
+            check_split(&split, &reference, Pick::Most, presolve, &options)?;
         }
     }
 }

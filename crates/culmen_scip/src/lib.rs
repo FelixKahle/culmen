@@ -95,8 +95,9 @@
 //! program row modifiable, as SCIP requires of a row a pricer adds variables to; any other solve leaves the pricer
 //! inactive and no row modifiable, so SCIP gives up nothing for it. A pricing solve also turns off the LP solver's
 //! presolving (`lp/presolving`), whose duals of a degenerate node LP need not price out the columns at their bounds,
-//! and SCIP's aggregation separator (`separating/aggregation/freq`), which cuts with the objective cutoff over the
-//! columns held as if no other column could enter. SCIP does not price a program with a quadratic
+//! SCIP's aggregation separator (`separating/aggregation/freq`), which cuts with the objective cutoff over the
+//! columns held as if no other column could enter, and the LP solver's objective limit (`lp/disablecutoff = 1`), so
+//! every node LP handed to the callback is optimal or infeasible, whatever the options set. SCIP does not price a program with a quadratic
 //! objective: such a solve fails with [`ScipError::PricingQuadratic`] before SCIP runs. Every column a callback prices
 //! is a variable of SCIP's transformed problem with no original counterpart, so a heuristic solution of a pricing
 //! solve is a transformed one ([`ScipHeuristic`]), and the backend keeps the priced variables until it frees that
@@ -278,9 +279,9 @@ fn configure(instance: &mut Instance, options: &ScipOptions, settings: &Settings
 /// no dual reductions, which reason about the constraints SCIP holds and not those a callback adds later; for cuts and
 /// heuristic solutions, the culmen separator and heuristic called at every node, even when an emphasis turned the
 /// separators or heuristics off; for pricing, the culmen pricer active, every row modifiable, the LP solver's
-/// presolving off, whose duals of a degenerate node LP need not price its columns out, and SCIP's aggregation
-/// separator off, which cuts with the objective cutoff over the columns held; for a solve without pricing, the pricer
-/// inactive and no row modifiable.
+/// presolving off, whose duals of a degenerate node LP need not price its columns out, SCIP's aggregation separator
+/// off, which cuts with the objective cutoff over the columns held, and the LP solver's objective limit off, so every
+/// node LP priced is solved to optimality; for a solve without pricing, the pricer inactive and no row modifiable.
 ///
 /// # Errors
 ///
@@ -308,6 +309,10 @@ fn configure_events(instance: &mut Instance, wanted: Events, pricing: bool) -> R
         // which a column priced later would refute. Its other aggregations skip modifiable rows, which every program
         // row is in a solve that prices, so it has little else to aggregate.
         instance.set_param("separating/aggregation/freq", &ParamValue::Int(-1))?;
+        // With the LP solver's objective limit on, SCIP stops a node LP at the cutoff (`OBJLIMIT`) and still prices
+        // it, whose duals are not those of an optimal LP. SCIP's default (2) turns the limit off while a pricer is
+        // active; an option may have set another value, so a pricing solve turns it off outright.
+        instance.set_param("lp/disablecutoff", &ParamValue::Int(1))?;
     }
     instance.set_pricing(pricing)
 }
