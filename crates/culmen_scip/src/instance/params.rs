@@ -57,6 +57,15 @@ impl Instance {
         check(call, unsafe { set(self.raw(), emphasis.raw(), TRUE) })
     }
 
+    /// The value of an `int` parameter, `None` when SCIP knows no `int` parameter of that name.
+    #[cfg(test)]
+    pub(crate) fn int_param(&self, name: &core::ffi::CStr) -> Option<i32> {
+        let mut value = 0;
+        // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
+        let code = unsafe { scip_sys::SCIPgetIntParam(self.raw(), name.as_ptr(), &raw mut value) };
+        RetCode::from_raw(code).is_none().then_some(value)
+    }
+
     /// Sets a parameter by SCIP's name.
     ///
     /// # Errors

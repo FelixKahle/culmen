@@ -123,7 +123,8 @@ Every solve sets SCIP up from its defaults, in this order:
      below the objective, and SCIP could report a wrong optimum for an MIQP. Without the rewrite the epigraph stays
      exact ([Quadratic programs](#quadratic-programs)).
 3. The backend's `ScipOptions` apply: the three emphases, then the parameters by name in the order added.
-4. The solve's [`Settings`](solving.md#settings) apply.
+4. The solve's [`Settings`](solving.md#settings) apply. `presolve: Some(true)` acts in step 3 instead, by skipping an
+   `Off` presolving emphasis of the options, so it never resets a presolving parameter the options set by name.
 5. What the events the callback asks for need is set last ([Callback events](#callback-events)): for `LAZY`, symmetry
    handling and dual reductions off (`misc/usesymmetry`, `misc/allowstrongdualreds`, `misc/allowweakdualreds`); for
    `CUT` and `HEURISTIC`, culmen's separator or heuristic called at every node; for a callback that prices, the pricer active, every
@@ -141,7 +142,7 @@ asks for it.
 | `absolute_gap` | `limits/absgap` |
 | `threads` | nothing; see [Threads](#threads) |
 | `seed` | `randomization/randomseedshift`; a seed above `i32::MAX` is refused |
-| `presolve` | `SCIPsetPresolving`: `Off` for `false`; for `true`, the options' `presolving` emphasis when it presolves, else `Default` |
+| `presolve` | `false`: `SCIPsetPresolving` to `Off`, after the options' parameters, so it wins over them; `true`: the options' `presolving` emphasis is skipped when it is `Off`, and a presolving parameter set by name stays as set |
 | `node_limit` | `limits/nodes`; a limit above `i64::MAX` is refused |
 | `solution_limit` | `limits/solutions`; a limit above `i32::MAX` is refused |
 | `console` | SCIP's messages reach standard output and standard error, beside the callback |

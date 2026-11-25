@@ -52,7 +52,7 @@
 //! | `absolute_gap` | `limits/absgap` |
 //! | `threads` | nothing to set: the solve is sequential, so it uses one thread, within any limit |
 //! | `seed` | `randomization/randomseedshift`, at most `i32::MAX` |
-//! | `presolve` | `SCIPsetPresolving`: off, or the presolving emphasis of the options when it is not off, else default |
+//! | `presolve` | `false`: `SCIPsetPresolving` off, after the options' parameters; `true`: the options' presolving emphasis unless it is `Off`, before their parameters, which it leaves as set |
 //! | `node_limit` | `limits/nodes`, at most `i64::MAX` |
 //! | `solution_limit` | `limits/solutions`, at most `i32::MAX` |
 //! | `console` | SCIP's message handler quiet or not |
@@ -234,7 +234,8 @@ fn refuse_unsupported(program: &Program) -> Result<(), ScipError> {
 }
 
 /// Resets SCIP's parameters, keeps SCIP from catching `SIGINT`, turns off the reformulation of binary products in
-/// nonlinear constraints, and applies `options` and then the solve's settings.
+/// nonlinear constraints, and applies `options` and then the solve's settings; asking to presolve only skips an `Off`
+/// presolving emphasis of the options, so a presolving parameter they set by name stays as set.
 ///
 /// # Errors
 ///
@@ -254,7 +255,7 @@ fn configure(instance: &mut Instance, options: &ScipOptions, settings: &Settings
     instance.set_param("constraints/nonlinear/reformbinprods", &ParamValue::Bool(false))?;
     let emphases = [
         (Group::Heuristics, options.heuristics),
-        (Group::Presolving, options.presolving),
+        (Group::Presolving, presolving(options.presolving, settings.presolve)),
         (Group::Separating, options.separating),
     ];
     for (group, emphasis) in emphases {
@@ -265,8 +266,8 @@ fn configure(instance: &mut Instance, options: &ScipOptions, settings: &Settings
     for ScipParam { name, value } in &options.params {
         instance.set_param(name, value)?;
     }
-    if let Some(presolve) = settings.presolve {
-        instance.set_emphasis(Group::Presolving, presolving(options.presolving, presolve))?;
+    if settings.presolve == Some(false) {
+        instance.set_emphasis(Group::Presolving, Emphasis::Off)?;
     }
     for (name, value) in params {
         instance.set_param(name, &value)?;
@@ -317,14 +318,11 @@ fn configure_events(instance: &mut Instance, wanted: Events, pricing: bool) -> R
     instance.set_pricing(pricing)
 }
 
-/// The presolving emphasis of a solve whose settings ask to presolve or not: off, or the options' emphasis when it
-/// presolves, else SCIP's default.
-fn presolving(options: Option<Emphasis>, presolve: bool) -> Emphasis {
-    match options {
-        _ if !presolve => Emphasis::Off,
-        Some(emphasis @ (Emphasis::Aggressive | Emphasis::Fast)) => emphasis,
-        Some(Emphasis::Default | Emphasis::Off) | None => Emphasis::Default,
-    }
+/// The presolving emphasis set before the options' parameters: the options' own, but none in place of `Off` when the
+/// settings ask to presolve, so SCIP's default presolving runs. Asking not to presolve sets `Off` after the parameters
+/// instead, so it wins over them.
+fn presolving(options: Option<Emphasis>, presolve: Option<bool>) -> Option<Emphasis> {
+    options.filter(|&emphasis| !(presolve == Some(true) && emphasis == Emphasis::Off))
 }
 
 /// The SCIP parameters a solve's settings set, beside its presolving and console.
@@ -627,7 +625,45 @@ mod tests {
     }
 
     #[test]
-    fn test_presolving_off_wins_and_on_keeps_an_emphasis_that_presolves() {
+    fn test_presolving_on_keeps_the_presolving_parameters_the_options_set_by_name() {
+        let mut scip = Scip::with_options(ScipOptions::default().param("presolving/domcol/maxrounds", 0));
+        let mut plan = ProgramPlan::new();
+        plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+        scip.load(&plan.build().unwrap()).unwrap();
+        let instance = scip.instance.as_mut().unwrap();
+        for presolve in [None, Some(true)] {
+            let settings = Settings {
+                presolve,
+                ..Settings::new()
+            };
+            configure(instance, &scip.options, &settings).unwrap();
+            assert_eq!(
+                instance.int_param(c"presolving/domcol/maxrounds"),
+                Some(0),
+                "{presolve:?}"
+            );
+        }
+        // Off wins over the options, and an option that turned presolving off is turned back on.
+        let off = Settings {
+            presolve: Some(false),
+            ..Settings::new()
+        };
+        configure(instance, &scip.options, &off).unwrap();
+        assert_eq!(instance.int_param(c"presolving/maxrounds"), Some(0));
+        let on = Settings {
+            presolve: Some(true),
+            ..Settings::new()
+        };
+        let options = ScipOptions {
+            presolving: Some(Emphasis::Off),
+            ..ScipOptions::default()
+        };
+        configure(instance, &options, &on).unwrap();
+        assert_eq!(instance.int_param(c"presolving/maxrounds"), Some(-1));
+    }
+
+    #[test]
+    fn test_presolving_on_drops_only_an_off_emphasis_of_the_options() {
         for options in [
             None,
             Some(Emphasis::Default),
@@ -635,12 +671,16 @@ mod tests {
             Some(Emphasis::Fast),
             Some(Emphasis::Off),
         ] {
-            assert_eq!(presolving(options, false), Emphasis::Off, "{options:?}");
+            assert_eq!(presolving(options, None), options, "{options:?}");
+            assert_eq!(presolving(options, Some(false)), options, "{options:?}");
         }
-        assert_eq!(presolving(None, true), Emphasis::Default);
-        assert_eq!(presolving(Some(Emphasis::Off), true), Emphasis::Default);
-        assert_eq!(presolving(Some(Emphasis::Default), true), Emphasis::Default);
-        assert_eq!(presolving(Some(Emphasis::Aggressive), true), Emphasis::Aggressive);
-        assert_eq!(presolving(Some(Emphasis::Fast), true), Emphasis::Fast);
+        assert_eq!(presolving(None, Some(true)), None);
+        assert_eq!(presolving(Some(Emphasis::Off), Some(true)), None);
+        assert_eq!(presolving(Some(Emphasis::Default), Some(true)), Some(Emphasis::Default));
+        assert_eq!(
+            presolving(Some(Emphasis::Aggressive), Some(true)),
+            Some(Emphasis::Aggressive)
+        );
+        assert_eq!(presolving(Some(Emphasis::Fast), Some(true)), Some(Emphasis::Fast));
     }
 }
