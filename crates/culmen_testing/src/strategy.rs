@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Property-test strategies: tiny bounded LPs and MILPs, with semi columns or without, the reference solver
-//! enumerates, small convex QPs, and sequences of edits of a loaded program.
+//! enumerates, small convex QPs, programs split into kept and withheld columns for pricing, and sequences of edits of
+//! a loaded program.
 
 use culmen_core::{
     Bounds, Col, Constraint, Integrality, LinExpr, NewCol, NewRow, Program, ProgramColumn, ProgramPlan, ProgramRow,
@@ -190,6 +191,149 @@ fn row_through(point: &[f64], (coefficients, below, above): (Vec<i32>, i32, i32)
             .map(|(j, c)| (Col::new(j), f64::from(c)))
             .collect(),
         name: None,
+    }
+}
+
+/// A program split for pricing: the full program, and the program a solve starts from, which holds every row and
+/// the columns kept; the columns withheld are the ones a pricer may add.
+#[derive(Clone, Debug)]
+pub struct PricedSplit {
+    /// The program with every column.
+    pub full: Program,
+    /// The program with every row of `full` and only the columns kept, in their order.
+    pub start: Program,
+    /// The column of `full` each column of `start` stands for, in `start`'s order.
+    pub kept: TiVec<Col, Col>,
+    /// Each column of `full` that `start` lacks, with its column as a pricer adds it, its entries naming `start`'s
+    /// rows, which are `full`'s, in the order of `full`'s columns.
+    pub withheld: Vec<(Col, NewCol)>,
+}
+
+/// A tiny bounded LP or MILP split for pricing: one to three rows of every shape (at most, at least, equal and
+/// ranged) with coefficients in `-2..=2`, two to six columns with costs in `-3..=3` and bounds `[0, u]` for `u` in
+/// `1..=3`, each continuous or integer, either sense, and a random choice of the columns the start keeps.
+///
+/// Every bound holds zero, so a withheld column is the same as one fixed at zero, and the integer box holds at most
+/// `4⁶` points, within [`reference::solve`](crate::reference::solve)'s limit.
+///
+/// # Panics
+///
+/// When a generated plan fails to build, which a strategy defect would cause.
+pub fn priced_split() -> impl Strategy<Value = PricedSplit> {
+    (1..=3usize, 2..=6usize)
+        .prop_flat_map(|(m, n)| {
+            let column = (-3i32..=3, 1i32..=3, any::<bool>());
+            let row = (0u8..4, -3i32..=4, 0i32..=3, prop::collection::vec(-2i32..=2, n));
+            (
+                prop::collection::vec(column, n),
+                prop::collection::vec(row, m),
+                prop::collection::vec(any::<bool>(), n),
+                any::<bool>(),
+            )
+        })
+        .prop_map(|(columns, rows, keep, maximize)| {
+            let columns: TiVec<Col, ProgramColumn> = columns
+                .into_iter()
+                .map(|(cost, upper, integer)| {
+                    let bounds = Bounds::new(0.0, f64::from(upper)).expect("0 <= upper");
+                    if integer {
+                        ProgramColumn::integer(f64::from(cost), bounds)
+                    } else {
+                        ProgramColumn::continuous(f64::from(cost), bounds)
+                    }
+                })
+                .collect();
+            let rows: Vec<ProgramRow> = rows
+                .into_iter()
+                .map(|(shape, end, width, coefficients)| {
+                    let (end, width) = (f64::from(end), f64::from(width));
+                    let bounds = match shape {
+                        0 => Bounds::at_most(end),
+                        1 => Bounds::at_least(end),
+                        2 => Bounds::fixed(end),
+                        _ => Bounds::new(end, end + width),
+                    }
+                    .expect("valid bounds");
+                    let terms = coefficients
+                        .into_iter()
+                        .enumerate()
+                        .filter(|&(_, a)| a != 0)
+                        .map(|(j, a)| (Col::new(j), f64::from(a)))
+                        .collect();
+                    ProgramRow {
+                        bounds,
+                        terms,
+                        name: None,
+                    }
+                })
+                .collect();
+            let sense = if maximize { Sense::Maximize } else { Sense::Minimize };
+            split(sense, columns, rows, &keep)
+        })
+}
+
+/// The full program over `columns` and `rows` and its split by `keep`.
+///
+/// # Panics
+///
+/// When a plan fails to build, which invalid columns or rows would cause.
+fn split(sense: Sense, columns: TiVec<Col, ProgramColumn>, rows: Vec<ProgramRow>, keep: &[bool]) -> PricedSplit {
+    let kept: TiVec<Col, Col> = columns.keys().filter(|col| keep[col.index()]).collect();
+    let position = |col: Col| kept.iter().position(|&k| k == col).map(Col::new);
+    let start_rows = rows
+        .iter()
+        .map(|row| ProgramRow {
+            bounds: row.bounds,
+            terms: row
+                .terms
+                .iter()
+                .filter_map(|&(col, a)| Some((position(col)?, a)))
+                .collect(),
+            name: None,
+        })
+        .collect();
+    let withheld = columns
+        .iter_enumerated()
+        .filter(|(col, _)| !keep[col.index()])
+        .map(|(col, column)| {
+            let entries = rows
+                .iter()
+                .enumerate()
+                .filter_map(|(r, row)| {
+                    let a = row.terms.iter().find(|&&(c, _)| c == col)?.1;
+                    Some((Row::new(r), a))
+                })
+                .collect();
+            (
+                col,
+                NewCol {
+                    column: column.clone(),
+                    entries,
+                },
+            )
+        })
+        .collect();
+    let start = ProgramPlan {
+        sense,
+        columns: kept.iter().map(|&col| columns[col].clone()).collect(),
+        rows: start_rows,
+        ..ProgramPlan::new()
+    }
+    .build()
+    .expect("a valid start plan");
+    let full = ProgramPlan {
+        sense,
+        columns,
+        rows: rows.into(),
+        ..ProgramPlan::new()
+    }
+    .build()
+    .expect("a valid full plan");
+    PricedSplit {
+        full,
+        start,
+        kept,
+        withheld,
     }
 }
 
