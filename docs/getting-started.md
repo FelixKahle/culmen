@@ -18,12 +18,12 @@ Without the `highs` and `scip` features nothing native is built, and culmen is p
 
 ## Adding culmen
 
-culmen is not yet on crates.io. Depend on it by path or by git:
+culmen is on crates.io:
 
 ```toml
 [dependencies]
-culmen = { path = "../culmen/crates/culmen", features = ["macros"] }
-# or: culmen = { git = "<repository url>", features = ["macros"] }
+culmen = { version = "0.4", features = ["macros"] }
+# the main branch instead: culmen = { git = "https://github.com/FelixKahle/culmen", features = ["macros"] }
 ```
 
 Depend on `culmen` only. It re-exports everything a model and a solve need; the other crates are its parts.

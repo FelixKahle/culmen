@@ -252,12 +252,15 @@ backend, and pass it with `solver.solve_with(request, &mut callback)`.
 
 ## Installation
 
-culmen is not on crates.io yet. Depend on it from git:
+culmen is on crates.io:
 
 ```toml
 [dependencies]
-culmen = { git = "https://github.com/FelixKahle/culmen", features = ["macros"] }
+culmen = { version = "0.4", features = ["macros"] }
 ```
+
+To follow the main branch instead, depend on it from git:
+`culmen = { git = "https://github.com/FelixKahle/culmen", features = ["macros"] }`.
 
 The HiGHS backend builds HiGHS 1.16 from source through `highs-sys`, which needs **cmake** and **libclang**. The
 first build takes a few minutes. The SCIP backend downloads the SCIP 10 sources from GitHub as it builds and compiles
