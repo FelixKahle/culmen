@@ -15,24 +15,24 @@ all-features = true
 [advisories]
 # A crate the RustSec database marks yanked fails the check rather than warning: a release must not depend on one.
 yanked = "deny"
-# Advisories against build dependencies of scip-sys 0.1.28, the latest release, which pins them: its build script
-# downloads the SCIP Optimization Suite sources over HTTPS from github.com and unpacks them, and these crates do the
-# unpacking (`zip`, `zip-extract`, `zstd-safe`, and `time` 0.1 under `zip` 0.5). None of them is linked into a binary
-# that depends on culmen; they run once, at build time, on that one archive. Each advisory is about unpacking or
-# decompressing a crafted archive, or, for `time`, reading the local time while another thread changes the
-# environment, which the build script does not do. Whoever could replace the archive could put any C code into the
-# build in any case, so the advisories add nothing to trusting the download. Remove these entries when scip-sys
-# updates or drops these dependencies; `cargo deny check advisories` then passes without them.
+# Advisories against build dependencies of scip-sys 0.1.28, the latest release, which pins them. Its `from-source`
+# feature, which culmen_scip uses, lists `zip` 0.5, `zip-extract`, `ureq`, `flate2` and `tar` together, so cargo
+# compiles all of them into scip-sys's build script; but that path downloads the SCIP sources as a `.tgz` and unpacks
+# them with `flate2` and `tar` (`download_and_extract_tar_gz`). `zip` and `zip-extract`, with zip 0.5's `time` 0.1 and
+# zip 0.6's `zstd-safe`, `zstd-sys` and `constant_time_eq`, serve only `download_and_extract_zip`, which only the
+# `bundled` feature calls: they are compiled into the build script and never run, and none of them is linked into a
+# binary that depends on culmen. Each ignore below is still matched by the tree (cargo-deny warns about one that is
+# not). The fix is upstream: once scip-sys moves `zip` and `zip-extract` out of `from-source`, every entry here goes.
 ignore = [
-    { id = "RUSTSEC-2020-0071", reason = "time 0.1, a build dependency of scip-sys through zip 0.5; see above" },
-    { id = "RUSTSEC-2025-0172", reason = "zip-extract, unmaintained, a build dependency of scip-sys; see above" },
-    { id = "RUSTSEC-2026-0367", reason = "zip 0.5 and 0.6, build dependencies of scip-sys; see above" },
-    { id = "RUSTSEC-2026-0368", reason = "zip 0.5 and 0.6, build dependencies of scip-sys; see above" },
-    { id = "RUSTSEC-2026-0369", reason = "zip 0.5 and 0.6, build dependencies of scip-sys; see above" },
-    { id = "RUSTSEC-2026-0429", reason = "zip 0.5 and 0.6, build dependencies of scip-sys; see above" },
-    { id = "RUSTSEC-2026-0545", reason = "zip 0.6, a build dependency of scip-sys; see above" },
-    { id = "RUSTSEC-2026-0548", reason = "zip 0.5 and 0.6, build dependencies of scip-sys; see above" },
-    { id = "RUSTSEC-2026-0403", reason = "zstd-safe 5, a build dependency of scip-sys through zip 0.6; see above" },
+    { id = "RUSTSEC-2020-0071", reason = "time 0.1.45 under zip 0.5.13: compiled into scip-sys's build script, never run; see above" },
+    { id = "RUSTSEC-2025-0172", reason = "zip-extract 0.1.3, unmaintained: compiled into scip-sys's build script, never run; see above" },
+    { id = "RUSTSEC-2026-0367", reason = "zip 0.5.13 and 0.6.6: compiled into scip-sys's build script, never run; see above" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 0.5.13 and 0.6.6: compiled into scip-sys's build script, never run; see above" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 0.5.13 and 0.6.6: compiled into scip-sys's build script, never run; see above" },
+    { id = "RUSTSEC-2026-0429", reason = "zip 0.5.13 and 0.6.6: compiled into scip-sys's build script, never run; see above" },
+    { id = "RUSTSEC-2026-0545", reason = "zip 0.6.6: compiled into scip-sys's build script, never run; see above" },
+    { id = "RUSTSEC-2026-0548", reason = "zip 0.5.13 and 0.6.6: compiled into scip-sys's build script, never run; see above" },
+    { id = "RUSTSEC-2026-0403", reason = "zstd-safe 5.0.2 under zip 0.6.6: compiled into scip-sys's build script, never run; see above" },
 ]
 
 [licenses]
@@ -43,15 +43,17 @@ ignore = [
 #   Unicode-3.0      unicode-ident's Unicode data tables
 # A new licence is added here only after reading it, so a dependency update cannot bring one in unnoticed.
 allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0"]
-# Three more licences, each allowed for the one crate that needs it, all build dependencies of scip-sys that download
-# and unpack the SCIP sources and are not linked into a binary. Each was read: permissive, without a copyleft term.
-#   CC0-1.0              constant_time_eq 0.1, under zip 0.6
-#   CDLA-Permissive-2.0  webpki-roots 0.26 and 1.0, the certificate roots of ureq, which downloads the sources
-#   BSD-2-Clause         zstd-sys, beside BSD-3-Clause, under zip 0.6
+# Three more licences, each allowed for the one crate version in the lock that needs it, so a new version needs a
+# fresh read. All are build dependencies of scip-sys, compiled into its build script and not linked into a binary.
+# Each was read: permissive, without a copyleft term.
+#   CC0-1.0              constant_time_eq 0.1.5, under zip 0.6: compiled, never run (see the advisories above)
+#   CDLA-Permissive-2.0  webpki-roots 0.26.11 and 1.0.12, the certificate roots of ureq, which downloads the sources
+#   BSD-2-Clause         zstd-sys 2.1.3, beside BSD-3-Clause, under zip 0.6: compiled, never run
 exceptions = [
-    { allow = ["CC0-1.0"], crate = "constant_time_eq" },
-    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" },
-    { allow = ["BSD-2-Clause"], crate = "zstd-sys" },
+    { allow = ["CC0-1.0"], crate = "constant_time_eq@0.1.5" },
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots@0.26.11" },
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots@1.0.12" },
+    { allow = ["BSD-2-Clause"], crate = "zstd-sys@2.1.3+zstd.1.5.7" },
 ]
 # The bar a licence text must clear for cargo-deny to recognise it from the file instead of the manifest's SPDX
 # expression; 0.93 is the documented recommendation, stricter than the 0.8 default.
