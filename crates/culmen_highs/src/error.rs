@@ -73,9 +73,10 @@ pub enum HighsError {
     /// HiGHS refused a start.
     Start,
     /// HiGHS refused an edit of the program it holds, and may hold any model after it: HiGHS 1.15 could fail halfway
-    /// through adding columns, which no test has shown 1.16 doing, and the backend does not rely on it not. The backend then holds no program. A [`Solver`](culmen_core::Solver) loads the program
-    /// before the edit again; when that load fails too, it loads the program before the next call that runs the
-    /// backend, and until then a solve with the backend alone fails with [`HighsError::NotLoaded`].
+    /// through adding columns, which no test has shown 1.16 doing, and the backend does not rely on it not. The backend
+    /// then holds no program. A [`Solver`](culmen_core::Solver) loads the program before the edit again; when that load
+    /// fails too, it loads the program before the next call that runs the backend, and until then a solve with the
+    /// backend alone fails with [`HighsError::NotLoaded`].
     Edit {
         /// The C function of HiGHS that refused it.
         call: &'static str,

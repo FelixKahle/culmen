@@ -207,16 +207,24 @@ impl Instance {
             "Instance: callback data is installed without a callback"
         );
         // SAFETY: the instance is live and borrowed exclusively; the caller vouches for `user` and `callback`.
-        let _ = unsafe { Highs_setCallback(self.raw(), callback, user) };
+        let set = unsafe { Highs_setCallback(self.raw(), callback, user) };
+        debug_assert!(set != kHighsStatusError, "Instance: HiGHS refused the callback");
         for kind in 0..=highs_sys::kHighsCallbackQpInterrupt {
+            // HiGHS refuses to start a kind only when it is no kind of its own or no callback is set; a kind that
+            // did not start would leave a run without the polls through which a panic stops it.
+            let start = !user.is_null() && kinds.contains(&kind);
             // SAFETY: the instance is live and borrowed exclusively, and `kind` is a callback kind of HiGHS 1.16.
-            let _ = unsafe {
-                if !user.is_null() && kinds.contains(&kind) {
+            let status = unsafe {
+                if start {
                     Highs_startCallback(self.raw(), kind)
                 } else {
                     Highs_stopCallback(self.raw(), kind)
                 }
             };
+            debug_assert!(
+                !start || status != kHighsStatusError,
+                "Instance: HiGHS refused to start callback kind {kind}"
+            );
         }
     }
 
@@ -379,8 +387,8 @@ impl Instance {
                 .all(|&c| usize::try_from(c).is_ok_and(|c| c < self.num_col())),
             "Instance: the start names a column HiGHS's model lacks"
         );
-        // SAFETY: the instance is live and borrowed exclusively. `indices` and `values` hold `count` entries each, which
-        // is what HiGHS reads; it copies them and checks each index against its model.
+        // SAFETY: the instance is live and borrowed exclusively. `indices` and `values` hold `count` entries each,
+        // which is what HiGHS reads; it copies them and checks each index against its model.
         let status = unsafe { Highs_setSparseSolution(self.raw(), count, indices.as_ptr(), values.as_ptr()) };
         match CallStatus::from_raw(status) {
             CallStatus::Error => Err(HighsError::Start),

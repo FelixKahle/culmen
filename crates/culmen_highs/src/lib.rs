@@ -80,9 +80,11 @@ pub use status::{CallStatus, HighsStatus, ModelStatus, SolutionStatus};
 use callback::{Hook, NO_RUN, Payload, kinds, trampoline};
 use instance::{Instance, Padding};
 
-/// HiGHS's default relative MIP gap, below which an optimal status is a proof of optimality.
+/// HiGHS's default relative MIP gap, below which an optimal status is a proof of optimality: the default of
+/// `mip_rel_gap` in HiGHS 1.16's `lp_data/HighsOptions.h`, to be read again when the HiGHS version changes.
 const DEFAULT_RELATIVE_GAP: f64 = 1e-4;
-/// HiGHS's default absolute MIP gap.
+/// HiGHS's default absolute MIP gap: the default of `mip_abs_gap` in HiGHS 1.16's `lp_data/HighsOptions.h`, to be read
+/// again when the HiGHS version changes.
 const DEFAULT_ABSOLUTE_GAP: f64 = 1e-6;
 
 /// The HiGHS backend: one HiGHS instance and the options every solve applies.
