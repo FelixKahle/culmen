@@ -268,7 +268,7 @@ fn ends(bounds: impl Iterator<Item = Bounds>) -> (Vec<f64>, Vec<f64>) {
 /// [`HighsError::Edit`] naming `call` when HiGHS reports an error; the C API returns no message with it.
 fn edited(status: HighsInt, call: &'static str) -> Result<(), HighsError> {
     match CallStatus::from_raw(status) {
-        CallStatus::Error => Err(HighsError::Edit { call, message: None }),
+        CallStatus::Error => Err(HighsError::Edit { call }),
         CallStatus::Ok | CallStatus::Warning => Ok(()),
     }
 }

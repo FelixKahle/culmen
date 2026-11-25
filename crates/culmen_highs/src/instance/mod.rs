@@ -91,7 +91,7 @@ impl Instance {
             "Instance: the Hessian passed to HiGHS does not match the program's quadratic part"
         );
         match CallStatus::from_raw(self.pass_model(program, &arrays, &hessian, &counts)) {
-            CallStatus::Error => Err(HighsError::Load { message: None }),
+            CallStatus::Error => Err(HighsError::Load),
             CallStatus::Ok | CallStatus::Warning => Ok(()),
         }
     }
@@ -347,7 +347,7 @@ impl Instance {
             )
         };
         match CallStatus::from_raw(status) {
-            CallStatus::Error => Err(HighsError::Load { message: None }),
+            CallStatus::Error => Err(HighsError::Load),
             CallStatus::Ok | CallStatus::Warning => Ok(()),
         }
     }
@@ -530,7 +530,7 @@ impl Instance {
             }
         };
         match CallStatus::from_raw(status) {
-            CallStatus::Error => Err(HighsError::Load { message: None }),
+            CallStatus::Error => Err(HighsError::Load),
             CallStatus::Ok | CallStatus::Warning => Ok(()),
         }
     }

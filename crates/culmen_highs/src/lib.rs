@@ -304,9 +304,8 @@ impl Highs {
             return Ok(());
         }
         self.instance.pass_objectives(program).map_err(|error| match error {
-            HighsError::Load { message } => HighsError::Edit {
+            HighsError::Load => HighsError::Edit {
                 call: "Highs_passLinearObjectives",
-                message,
             },
             other => other,
         })

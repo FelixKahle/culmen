@@ -21,11 +21,10 @@ pub enum HighsError {
         /// How many there are.
         count: usize,
     },
-    /// HiGHS refused the program.
-    Load {
-        /// HiGHS's last error line, if it wrote one.
-        message: Option<String>,
-    },
+    /// HiGHS refused the program, as it refuses a matrix value at or above its `large_matrix_value`. HiGHS's log is
+    /// off outside a run, so its reason is not kept; [`files::write`](crate::files::write) the program and read it
+    /// with HiGHS to see it.
+    Load,
     /// HiGHS refused an option.
     Option {
         /// The option's name.
@@ -79,8 +78,6 @@ pub enum HighsError {
     Edit {
         /// The C function of HiGHS that refused it.
         call: &'static str,
-        /// HiGHS's last error line, if it wrote one.
-        message: Option<String>,
     },
     /// HiGHS 1.16 gets the analysis wrong for a program with the feature, so the backend refuses it: its feasibility
     /// relaxation keeps a semi column within its bounds, never at zero.
@@ -126,7 +123,7 @@ impl fmt::Display for HighsError {
         match self {
             Self::NotLoaded => write!(f, "HiGHS: no program is loaded"),
             Self::TooLarge { what, count } => write!(f, "HiGHS: {count} {what} exceed HiGHS's 32-bit indices"),
-            Self::Load { message: m } => write!(f, "HiGHS: the program was refused{}", message(m)),
+            Self::Load => write!(f, "HiGHS: the program was refused"),
             Self::Option { name, value } => write!(f, "HiGHS: option `{name}` refused the value {value}"),
             Self::OutOfRange { name, value } => {
                 write!(f, "HiGHS: option `{name}` takes at most {}, not {value}", i32::MAX)
@@ -142,7 +139,7 @@ impl fmt::Display for HighsError {
                 crate::Highs::SEMI_UPPER_LIMIT
             ),
             Self::Start => write!(f, "HiGHS: the start was refused"),
-            Self::Edit { call, message: m } => write!(f, "HiGHS: {call} refused the edit{}", message(m)),
+            Self::Edit { call } => write!(f, "HiGHS: {call} refused the edit"),
             Self::AnalysisFeature { analysis, feature } => {
                 write!(f, "HiGHS: the {analysis} of a program with {feature} is refused")
             }

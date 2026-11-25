@@ -355,7 +355,7 @@ Two edits load the program whole instead: rows added to a QP without rows, which
 semi column whose upper bound would exceed `Highs::SEMI_UPPER_LIMIT` is refused with `HighsError::SemiUpper` before
 HiGHS sees the edit, but the refusal comes from the backend: the `Solver` then loads the program before the edit
 again, which costs a full load, and the last solve's result is no longer read. A call HiGHS refuses is
-`HighsError::Edit { call, message }`, naming it; HiGHS 1.15 can fail halfway through adding columns, after it extended
+`HighsError::Edit { call }`, naming it; HiGHS 1.15 can fail halfway through adding columns, after it extended
 some of its arrays, so the `Solver` then loads the program before the edit again too.
 
 Appending columns costs time in the size of the whole matrix on both sides: the program inserts each new column's
@@ -378,11 +378,11 @@ from.
 |---|---|
 | `NotLoaded` | A solve was asked for before a program was loaded. |
 | `TooLarge { what, count }` | The program has more columns, rows, entries or Hessian entries (`what`, a `Dimension`) than HiGHS's 32-bit indices hold. |
-| `Load { message }` | HiGHS refused the program. |
+| `Load` | HiGHS refused the program, as it refuses a matrix value at or above its `large_matrix_value` (`1e15`); its log is off outside a run, so the reason is not kept. |
 | `Option { name, value }` | HiGHS refused an option: an unknown name, or a value of the wrong kind or out of range. |
 | `SemiUpper { col, upper }` | A semi column's upper bound exceeds `Highs::SEMI_UPPER_LIMIT`; see [Semi columns, several objectives and starts](#semi-columns-several-objectives-and-starts). |
 | `Start` | HiGHS refused a start. |
-| `Edit { call, message }` | HiGHS refused an edit of its model; `call` names the C function, `message` is HiGHS's last error line ([Editing a loaded program](#editing-a-loaded-program)). |
+| `Edit { call }` | HiGHS refused an edit of its model; `call` names the C function ([Editing a loaded program](#editing-a-loaded-program)). |
 | `OptionName { name }` | An option name holds a NUL byte, which HiGHS's C strings cannot carry. |
 | `OptionString { name }` | A string option's value holds a NUL byte. |
 | `OutOfRange { name, value }` | A seed or thread count is above `i32::MAX`, beyond HiGHS's integers. |

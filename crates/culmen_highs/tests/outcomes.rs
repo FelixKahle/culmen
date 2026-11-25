@@ -465,3 +465,31 @@ fn test_an_objective_bound_stops_the_dual_simplex_once_the_lp_cannot_beat_it() {
         .unwrap();
     assert_eq!(stop_reason(&solved), StopReason::ObjectiveLimit, "{solved:?}");
 }
+
+#[test]
+fn test_a_coefficient_highs_finds_excessive_is_refused_at_load_and_at_an_edit() {
+    // HiGHS refuses a matrix value at or above its `large_matrix_value`, 1e15.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1));
+    m.add_constraint((1e16 * x).leq(1));
+    m.maximize(x);
+    let refused = Solver::new(Highs::new(), m.build().unwrap()).unwrap_err();
+    assert_eq!(refused, culmen_core::LoadError::Backend(HighsError::Load));
+    assert_eq!(HighsError::Load.to_string(), "HiGHS: the program was refused");
+
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1));
+    m.maximize(x);
+    let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
+    let edit = solver.add_row((1e16 * x).leq(1)).unwrap_err();
+    assert_eq!(
+        edit,
+        culmen_core::EditError::Backend(HighsError::Edit { call: "Highs_addRows" })
+    );
+    assert_eq!(
+        HighsError::Edit { call: "Highs_addRows" }.to_string(),
+        "HiGHS: Highs_addRows refused the edit"
+    );
+    // The solver holds the program before the edit again.
+    assert_eq!(solver.solve(Request::new()).unwrap().outcome.objective(), Some(1.0));
+}
