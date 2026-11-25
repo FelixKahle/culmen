@@ -108,10 +108,8 @@ jobs:
         with:
           # The pinned toolchain installed above, not the action's own stable.
           rust-toolchain: manual
-          # culmen_testing is never published, so it has no release to compare with. culmen_scip has none before
-          # 0.4.0, and cargo-semver-checks fails on a crate crates.io does not know; remove it from this list once
-          # culmen_scip 0.4.0 is published.
-          exclude: culmen_testing,culmen_scip
+          # culmen_testing is never published, so it has no release to compare with.
+          exclude: culmen_testing
 
   # Checks the dependency tree against deny.toml: no RustSec advisory, only the allowed licences, only crates.io.
   deny:
