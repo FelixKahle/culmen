@@ -99,7 +99,7 @@ impl Outcome {
 pub enum StopReason {
     /// The time limit ran out.
     TimeLimit,
-    /// A callback interrupted the solve, as the [`Stop`](crate::Stop) of a [`Request`](crate::Request) does.
+    /// A callback interrupted the solve, as the [`Stop`](crate::Stop) of a [`Run`](crate::Run) does.
     Interrupted,
     /// The node limit was reached.
     NodeLimit,

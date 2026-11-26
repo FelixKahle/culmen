@@ -36,7 +36,7 @@
 //! m.minimize(x.iter().map(|(&(p, l), x)| walk[p][l] * x).sum::<LinExpr>());
 //!
 //! let mut solver = Solver::new(Highs::new(), m.build()?)?;
-//! let solved = solver.solve(Request::new())?;
+//! let solved = solver.solve()?;
 //! let Outcome::Optimal(best) = solved.outcome else { panic!("{:?}", solved.outcome) };
 //! assert_eq!(best.objective, 6.0);
 //! # }
@@ -118,12 +118,13 @@
 //! let cancel = Arc::new(AtomicBool::new(false)); // set from another thread to stop
 //! let mut print = Print;
 //! let mut solver = Solver::new(Highs::new(), m.build()?)?;
-//! let request = Request::new()
+//! let solved = solver
+//!     .run()
 //!     .time_limit(Duration::from_secs(10))
 //!     .stop(&cancel)
 //!     .observer(&mut print)
-//!     .progress_interval(Duration::from_secs(1));
-//! let solved = solver.solve(request)?;
+//!     .progress_interval(Duration::from_secs(1))
+//!     .solve()?;
 //! assert_eq!(solved.outcome.objective(), Some(7.0));
 //! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -218,10 +219,10 @@ pub mod prelude {
     pub use culmen_scip::Scip;
 
     pub use culmen_core::{
-        Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Hooks, Improvement, IndexSet, LinExpr,
-        Linear, LogLine, Model, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Request, Row,
-        Sense, Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap,
-        absolute_gap, bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
+        Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Improvement, IndexSet, LinExpr, Linear,
+        LogLine, Model, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Row, Sense, Settings,
+        Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap, absolute_gap, bounds,
+        product, relative_gap, set, solutions, stop_fn, threads, weight,
     };
     // A generic callback or handler calls its contexts through these traits, and a backend names `Unsupported` for an
     // event it cannot deliver.

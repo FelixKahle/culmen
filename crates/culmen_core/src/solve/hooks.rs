@@ -9,8 +9,8 @@ use crate::{Backend, Callback, Events, Heuristics, LazyConstraints, Priced, Pric
 
 /// What a solve asks about each candidate solution: lazy constraints that cut it off before the solver accepts it.
 ///
-/// Registered on the [`Hooks`] of a solve, only for a backend that takes lazy constraints. Two handlers run together
-/// as a pair `(a, b)`, `a` first, on one context.
+/// Registered with [`Run::lazy`](crate::Run::lazy), only for a backend that takes lazy constraints. Two handlers run
+/// together as a pair `(a, b)`, `a` first, on one context.
 ///
 /// ```
 /// use culmen_core::{Col, LazyConstraints, LazyContext, LazyHandler, Linear};
@@ -34,8 +34,8 @@ pub trait LazyHandler<B: LazyConstraints>: Send {
 
 /// What a solve asks about node relaxations: user cuts that cut them off.
 ///
-/// Registered on the [`Hooks`] of a solve, only for a backend that takes user cuts. Two handlers run together as a
-/// pair `(a, b)`, `a` first, on one context.
+/// Registered with [`Run::cut`](crate::Run::cut), only for a backend that takes user cuts. Two handlers run together
+/// as a pair `(a, b)`, `a` first, on one context.
 pub trait CutHandler<B: UserCuts>: Send {
     /// A node relaxation, to be cut off by user cuts.
     fn cut(&mut self, ctx: &mut B::Cut<'_>);
@@ -43,8 +43,8 @@ pub trait CutHandler<B: UserCuts>: Send {
 
 /// What a solve asks for heuristic solutions of the handler's own.
 ///
-/// Registered on the [`Hooks`] of a solve, only for a backend that takes heuristic solutions. Two handlers run
-/// together as a pair `(a, b)`, `a` first, on one context.
+/// Registered with [`Run::heuristic`](crate::Run::heuristic), only for a backend that takes heuristic solutions. Two
+/// handlers run together as a pair `(a, b)`, `a` first, on one context.
 pub trait HeuristicHandler<B: Heuristics>: Send {
     /// A chance to hand the solver a heuristic solution.
     fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>);
@@ -52,8 +52,8 @@ pub trait HeuristicHandler<B: Heuristics>: Send {
 
 /// What a solve asks at every node LP: columns that improve it, or make it feasible.
 ///
-/// Registered on the [`Hooks`] of a solve, only for a backend that prices. Two pricers run together as a pair
-/// `(a, b)`, `a` first; they share one context, so the columns of the second follow those of the first.
+/// Registered with [`Run::pricer`](crate::Run::pricer), only for a backend that prices. Two pricers run together as a
+/// pair `(a, b)`, `a` first; they share one context, so the columns of the second follow those of the first.
 pub trait Pricer<B: Prices>: Send {
     /// A node LP's duals, to be answered with columns that improve it.
     fn price(&mut self, ctx: &mut B::Price<'_>);
@@ -228,10 +228,11 @@ impl<B: Prices, P: Pricer<B>> PriceSlot<B> for P {
 /// What one solve runs as the search goes: a callback for the observational events and a handler for each kind of
 /// search event the backend can take, handed to [`Backend::solve`] by value.
 ///
-/// A [`Solver`](crate::Solver) builds the hooks a backend receives from the ones its caller registered, adding its
-/// own stop and observer, which run before the callback, and the sink of the columns a pricer adds. Code that drives
-/// a backend directly builds them with [`Hooks::new`] and the registration methods. Each registration method exists
-/// only for a backend with the capability, so a handler the backend would ignore does not compile:
+/// A [`Solver`](crate::Solver) builds the hooks a backend receives from what its [`Run`](crate::Run) registered,
+/// adding its own stop and observer, which run before the callback, and the sink of the columns a pricer adds. Code
+/// that drives a backend directly builds them with [`Hooks::new`] and the registration methods; their names keep the
+/// `register_` prefix because the short names are the dispatch methods a backend calls. Each registration method
+/// exists only for a backend with the capability, so a handler the backend would ignore does not compile:
 ///
 /// ```compile_fail,E0599
 /// use culmen_core::{Col, Hooks, LazyConstraints, LazyContext, LazyHandler, Linear, Unsupported};
@@ -389,20 +390,8 @@ impl<'h, B: Backend> Hooks<'h, B> {
     /// The sink of the columns the pricer adds, made for the loaded program: `Some` when a pricer is registered, or
     /// relayed with a sink, the first time it is asked for, and `None` after and for hooks without a pricer. A
     /// backend that prices takes it once, before it solves, and hands every column the pricer adds to it.
-    ///
-    /// A [`Solver`](crate::Solver) always gives the sink; code that drives a backend directly gives its own with
-    /// [`Hooks::sink`].
-    ///
-    /// # Panics
-    ///
-    /// When a pricer is registered and no sink was given, which only code driving a backend directly can do.
     pub fn take_priced(&mut self) -> Option<&'h mut Priced> {
-        if self.pricer.is_some() {
-            assert!(
-                self.priced.is_some(),
-                "Hooks: a pricer is registered without a sink; give one with `Hooks::sink`"
-            );
-        } else if self.relay.is_none() {
+        if self.pricer.is_none() && self.relay.is_none() {
             return None;
         }
         self.priced.take()
@@ -501,17 +490,18 @@ impl<'h, B: Heuristics> Hooks<'h, B> {
 }
 
 impl<'h, B: Prices> Hooks<'h, B> {
-    /// Runs `pricer` at every node LP, replacing the pricer registered before. A [`Solver`](crate::Solver) gives the
-    /// sink of the columns it adds; code that drives a backend directly gives one with [`Hooks::sink`].
-    pub fn register_pricer(mut self, pricer: &'h mut impl Pricer<B>) -> Self {
+    /// Runs `pricer` at every node LP and hands the columns it adds to `priced`, made for the loaded program,
+    /// replacing the pricer and the sink registered before.
+    pub fn register_pricer(mut self, pricer: &'h mut impl Pricer<B>, priced: &'h mut Priced) -> Self {
         self.pricer = Some(pricer);
+        self.priced = Some(priced);
         self
     }
 
-    /// Hands the columns the pricer adds to `priced`, made for the loaded program, replacing the sink given before; a
-    /// [`Solver`](crate::Solver) replaces it with its own.
-    pub fn sink(mut self, priced: &'h mut Priced) -> Self {
-        self.priced = Some(priced);
+    /// Runs `pricer` at every node LP without a sink yet: the [`Solver`](crate::Solver) gives its own with
+    /// [`Hooks::install`] before the backend sees the hooks.
+    pub(crate) fn solver_pricer(mut self, pricer: &'h mut impl Pricer<B>) -> Self {
+        self.pricer = Some(pricer);
         self
     }
 

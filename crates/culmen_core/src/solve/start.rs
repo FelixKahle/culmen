@@ -19,7 +19,7 @@ use crate::Col;
 /// The solver may start its search from it: a MIP solver takes a feasible start as its first incumbent and may
 /// complete a partial or infeasible one, an LP solver may start from it. A start need not be feasible, but every value
 /// must be finite and name a column of the program; [`Start::check`] states it, and
-/// [`Solver::solve_from`](crate::Solver::solve_from) checks it before the backend sees the start.
+/// [`Run::solve`](crate::Run::solve) checks it before the backend sees the start.
 ///
 /// ```
 /// use culmen_core::{Col, Start, StartError, TiVec};

@@ -139,7 +139,7 @@ pub struct PriceRound {
 ///
 /// ```
 /// use core::time::Duration;
-/// use culmen_core::{Model, Outcome, Phase, Progress, Request, Script, Solver, Step, StopReason, Var};
+/// use culmen_core::{Model, Outcome, Phase, Progress, Script, Solver, Step, StopReason, Var};
 /// use std::sync::atomic::AtomicBool;
 ///
 /// let mut m = Model::new();
@@ -149,7 +149,7 @@ pub struct PriceRound {
 /// let mut solver = Solver::new(script, m.build()?)?;
 ///
 /// let stop = AtomicBool::new(true);
-/// let solved = solver.solve(Request::new().stop(&stop))?;
+/// let solved = solver.run().stop(&stop).solve()?;
 /// assert_eq!(solved.outcome, Outcome::Stopped { reason: StopReason::Interrupted, best: None, bound: None });
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

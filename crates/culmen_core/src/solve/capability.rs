@@ -79,12 +79,12 @@ pub trait Prices: Backend {
 
 /// The backend takes a start: a solution, full or partial, the next solve may begin its search from.
 ///
-/// [`Solver::solve_from`](crate::Solver::solve_from) exists only for a backend with this capability.
+/// [`Run::start`](crate::Run::start) exists only for a backend with this capability.
 #[diagnostic::on_unimplemented(message = "`{Self}` does not take a start solution")]
 pub trait Starts: Backend {
     /// Hands the solver a start for the next solve of the loaded program.
     ///
-    /// Called by [`Solver::solve_from`](crate::Solver::solve_from) right before [`Backend::solve`], with a start
+    /// Called by [`Run::solve`](crate::Run::solve) right before [`Backend::solve`], with a start
     /// [`Start::check`] accepts for the loaded program.
     ///
     /// # Errors
