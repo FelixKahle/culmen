@@ -21,7 +21,7 @@ known only to a callback, cuts of your own, and column generation at every node 
 | `Scip::PRICES` | `true`: SCIP prices for a callback whose `prices()` is true ([Pricing](#pricing)). |
 | `Scip::CLASSES` | `Lp`, `Milp`, `Qp` and `Miqp`; see [Quadratic programs](#quadratic-programs). |
 | `Scip::FEATURES` | `StartSolution` only; see [Starts](#starts). |
-| `Scip::ANALYSES` | None; see [Limitations](#limitations). |
+| Analysis traits | None implemented; see [Limitations](#limitations). |
 | `culmen_scip::version()` | The version of the linked SCIP; it displays as `10.0.x`. |
 
 ```rust
@@ -736,8 +736,8 @@ the call or parameter and SCIP's return code, and the message is on standard err
 
 - **No semi columns and no several objectives.** `Scip::FEATURES` is `StartSolution` alone, so `Solver::new` refuses a
   program with a semi-continuous or semi-integer column or with further objectives ([Starts](#starts)).
-- **No analyses.** `Scip::ANALYSES` is empty: duals, basis, ranging, rays, IIS and feasibility relaxation are
-  `AnalysisError::Unsupported` ([Analysis](analysis.md)).
+- **No analyses.** `Scip` implements none of the analysis traits, so `Solver<Scip>` has no `duals`, `basis`,
+  `ranging`, rays, `iis` or `feasibility_relaxation` method ([Analysis](analysis.md)).
 - **No partial heuristic solutions.** `supply_partial` is always refused; a partial solution is a sparse start
   ([Heuristic solutions](#heuristic-solutions)).
 - **No native events and no branching event.** `NATIVE` is `Unsupported`, and there is no event to branch on the

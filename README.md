@@ -52,8 +52,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   classes it solves, and `Solver::new` refuses any other with a typed error naming both, before the solver sees it.
 - **More than a solution.** After a solve, `Solver` reports duals and reduced costs, the simplex basis (and takes
   one as a warm start), cost and bound ranging, primal and dual rays, an irreducible infeasible subsystem and a
-  weighted feasibility relaxation, all read with the model's own handles. Each backend declares which it provides,
-  and a request it cannot answer is a typed error naming why.
+  weighted feasibility relaxation, all read with the model's own handles. Each analysis is a trait a backend
+  implements, so asking a backend for one it lacks does not compile, and a request the program or the last solve
+  cannot answer is a typed error naming why.
 - **Any solver behind one seam.** `Backend` is an open trait with typed, solver-neutral callback events: log,
   progress, interrupt poll, feasible and improving solutions, lazy constraints, user cuts, heuristic solutions,
   pricing, and native events for what only one solver offers. HiGHS is the default backend, with every HiGHS

@@ -1,12 +1,16 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The analyses as methods of a [`Solver`], each checked the same way for every backend before the backend is asked.
+//! The analyses as methods of a [`Solver`], each in an `impl` block bounded by its capability trait and checked the
+//! same way for every backend before the backend is asked.
 
 use typed_index_collections::TiVec;
 
 use super::{Analysis, AnalysisError, Basis, Duals, Iis, Ranging, Relaxed, Weights};
-use crate::{Backend, Col, Outcome, Row, Solver};
+use crate::{
+    Backend, BasisAnalysis, Col, DualAnalysis, IisAnalysis, Outcome, RangingAnalysis, RayAnalysis, RelaxationAnalysis,
+    Row, Solver,
+};
 
 /// How the last solve ended, as far as the analyses read it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,32 +43,33 @@ impl Ending {
 /// The result of an analysis, or why it was refused.
 type Analyzed<T, B> = Result<T, AnalysisError<<B as Backend>::Error>>;
 
-impl<B: Backend> Solver<B> {
+impl<B: DualAnalysis> Solver<B> {
     /// The row duals and reduced costs of the last solve, which ended optimal, in the sign convention of [`Duals`].
     ///
     /// A row's activity is read from the solution with [`Program::activities`](crate::Program::activities).
     ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::Duals`], [`AnalysisError::Class`] for a
-    /// MIP, [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::NotOptimal`] when it did not end
+    /// [`AnalysisError::Class`] for a MIP, [`AnalysisError::Feature`] for several objectives,
+    /// [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::NotOptimal`] when it did not end
     /// optimal, [`AnalysisError::Backend`] when the backend fails.
     pub fn duals(&self) -> Analyzed<Duals, B> {
         self.optimal(Analysis::Duals)?;
-        self.backend.duals(&self.program)
+        self.backend.duals(&self.program).map_err(AnalysisError::Backend)
     }
+}
 
+impl<B: BasisAnalysis> Solver<B> {
     /// The basis the last solve ended with; `None` when the backend holds none, as after an interior-point solve
     /// without crossover.
     ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::Basis`], [`AnalysisError::Class`] for any
-    /// program but an LP, [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::Backend`] when the
-    /// backend fails.
+    /// [`AnalysisError::Class`] for any program but an LP, [`AnalysisError::Feature`] for several objectives,
+    /// [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::Backend`] when the backend fails.
     pub fn basis(&self) -> Analyzed<Option<Basis>, B> {
         self.solved(Analysis::Basis)?;
-        self.backend.basis(&self.program)
+        self.backend.basis(&self.program).map_err(AnalysisError::Backend)
     }
 
     /// Sets the basis the next solve starts from, after [`Basis::check`] found that it fits the program. The last
@@ -72,43 +77,55 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::Basis`], [`AnalysisError::Class`] for any
-    /// program but an LP, [`AnalysisError::Misfit`] when the basis does not fit the program,
-    /// [`AnalysisError::Backend`] when the backend refuses it, or the program it reloads after a failed edit.
+    /// [`AnalysisError::Class`] for any program but an LP, [`AnalysisError::Feature`] for several objectives,
+    /// [`AnalysisError::Misfit`] when the basis does not fit the program, [`AnalysisError::Backend`] when the backend
+    /// refuses it, or the program it reloads after a failed edit.
     pub fn set_basis(&mut self, basis: &Basis) -> Analyzed<(), B> {
         self.admit(Analysis::Basis)?;
         basis.check(&self.program)?;
         self.sync().map_err(AnalysisError::Backend)?;
         self.ended = None;
-        self.backend.set_basis(&self.program, basis)
+        self.backend
+            .set_basis(&self.program, basis)
+            .map_err(AnalysisError::Backend)
     }
+}
 
+impl<B: RangingAnalysis> Solver<B> {
     /// How far each cost and bound may move before the last solve's optimal basis changes.
+    ///
+    /// It takes `&mut self` because the backend may compute ranging by work on its own state
+    /// ([`RangingAnalysis::ranging`]).
     ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::Ranging`], [`AnalysisError::Class`] for
-    /// any program but an LP, [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::NotOptimal`]
-    /// when it did not end optimal, [`AnalysisError::Backend`] when the backend fails.
+    /// [`AnalysisError::Class`] for any program but an LP, [`AnalysisError::Feature`] for several objectives,
+    /// [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::NotOptimal`] when it did not end
+    /// optimal, [`AnalysisError::Backend`] when the backend fails.
     pub fn ranging(&mut self) -> Analyzed<Ranging, B> {
         self.optimal(Analysis::Ranging)?;
-        self.backend.ranging(&self.program)
+        self.backend.ranging(&self.program).map_err(AnalysisError::Backend)
     }
+}
 
+impl<B: RayAnalysis> Solver<B> {
     /// A direction of unboundedness of the last solve's LP: a `d` that every row's and column's recession allows
     /// (`d ≥ 0` where only a lower bound is finite, `d ≤ 0` where only an upper one is, `d = 0` where both are) and
     /// along which the objective improves. `None` unless the last solve ended
     /// [`Unbounded`](Outcome::Unbounded) or [`InfeasibleOrUnbounded`](Outcome::InfeasibleOrUnbounded), or when the
     /// backend finds none.
     ///
+    /// It takes `&mut self` because the backend may run again to find the ray ([`RayAnalysis::primal_ray`]).
+    ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::Rays`], [`AnalysisError::Class`] for any
-    /// program but an LP, [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::Backend`] when the
-    /// backend fails.
+    /// [`AnalysisError::Class`] for any program but an LP, [`AnalysisError::Feature`] for several objectives,
+    /// [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::Backend`] when the backend fails.
     pub fn primal_ray(&mut self) -> Analyzed<Option<TiVec<Col, f64>>, B> {
         match self.solved(Analysis::Rays)? {
-            Ending::Unbounded | Ending::Either => self.backend.primal_ray(&self.program),
+            Ending::Unbounded | Ending::Either => {
+                self.backend.primal_ray(&self.program).map_err(AnalysisError::Backend)
+            }
             Ending::Optimal | Ending::Infeasible | Ending::Other => Ok(None),
         }
     }
@@ -118,26 +135,29 @@ impl<B: Backend> Solver<B> {
     /// infinite bound met by a zero. `None` unless the last solve ended [`Infeasible`](Outcome::Infeasible) or
     /// [`InfeasibleOrUnbounded`](Outcome::InfeasibleOrUnbounded), or when the backend finds none.
     ///
+    /// It takes `&mut self` because the backend may run again to find the ray ([`RayAnalysis::dual_ray`]).
+    ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::Rays`], [`AnalysisError::Class`] for any
-    /// program but an LP, [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::Backend`] when the
-    /// backend fails.
+    /// [`AnalysisError::Class`] for any program but an LP, [`AnalysisError::Feature`] for several objectives,
+    /// [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::Backend`] when the backend fails.
     pub fn dual_ray(&mut self) -> Analyzed<Option<TiVec<Row, f64>>, B> {
         match self.solved(Analysis::Rays)? {
-            Ending::Infeasible | Ending::Either => self.backend.dual_ray(&self.program),
+            Ending::Infeasible | Ending::Either => self.backend.dual_ray(&self.program).map_err(AnalysisError::Backend),
             Ending::Optimal | Ending::Unbounded | Ending::Other => Ok(None),
         }
     }
+}
 
+impl<B: IisAnalysis> Solver<B> {
     /// An irreducible infeasible subsystem of the program's constraints; `None` when they are feasible. It needs no
     /// solve before, and the last solve's result is no longer read after, unless that solve proved the constraints
     /// feasible.
     ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::Iis`], [`AnalysisError::Class`] for a MIP,
-    /// [`AnalysisError::Backend`] when the backend fails, or refuses the program it reloads after a failed edit.
+    /// [`AnalysisError::Class`] for a MIP, [`AnalysisError::Backend`] when the backend fails, or refuses the program
+    /// it reloads after a failed edit.
     pub fn iis(&mut self) -> Analyzed<Option<Iis>, B> {
         self.admit(Analysis::Iis)?;
         if matches!(self.ended, Some(Ending::Optimal | Ending::Unbounded)) {
@@ -145,15 +165,16 @@ impl<B: Backend> Solver<B> {
         }
         self.sync().map_err(AnalysisError::Backend)?;
         self.ended = None;
-        self.backend.iis(&self.program)
+        self.backend.iis(&self.program).map_err(AnalysisError::Backend)
     }
+}
 
+impl<B: RelaxationAnalysis> Solver<B> {
     /// A point of least weighted violation of the program's bounds and rows under `weights`; `None` when no point
     /// meets the hard ones. It needs no solve before, and the last solve's result is no longer read after.
     ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`] when the backend lacks [`Analysis::FeasibilityRelaxation`],
     /// [`AnalysisError::Class`] for a QP, [`AnalysisError::Misfit`] when the weights do not fit the program,
     /// [`AnalysisError::Backend`] when the backend fails, or refuses the program it reloads after a failed edit.
     pub fn feasibility_relaxation(&mut self, weights: &Weights) -> Analyzed<Option<Relaxed>, B> {
@@ -161,22 +182,21 @@ impl<B: Backend> Solver<B> {
         weights.check(&self.program)?;
         self.sync().map_err(AnalysisError::Backend)?;
         self.ended = None;
-        self.backend.relax(&self.program, weights)
+        self.backend
+            .relax(&self.program, weights)
+            .map_err(AnalysisError::Backend)
     }
+}
 
-    /// Checks that the backend provides `analysis` and that it is defined for the program's class and features.
+impl<B: Backend> Solver<B> {
+    /// Checks that `analysis` is defined for the program's class and features.
     ///
     /// # Errors
     ///
-    /// [`AnalysisError::Unsupported`], [`AnalysisError::Class`] or [`AnalysisError::Feature`].
+    /// [`AnalysisError::Class`] or [`AnalysisError::Feature`].
     fn admit(&self, analysis: Analysis) -> Analyzed<(), B> {
         let class = self.program.class();
-        if !B::ANALYSES.contains(analysis) {
-            Err(AnalysisError::Unsupported {
-                analysis,
-                supported: B::ANALYSES,
-            })
-        } else if !analysis.classes().contains(class) {
+        if !analysis.classes().contains(class) {
             Err(AnalysisError::Class { analysis, class })
         } else if let Some(feature) = self.program.features().intersection(analysis.refused()).iter().next() {
             Err(AnalysisError::Feature { analysis, feature })

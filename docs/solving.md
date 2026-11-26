@@ -20,7 +20,7 @@ each time with its own request.
 | `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
 | `into_parts()` | The backend and the program, taken apart; the backend may be behind the program after a failed edit or a solve that priced. |
 | `set_col_bounds(..)`, `set_col_costs(..)`, `set_col_integrality(..)`, `set_row_bounds(..)`, `add_row(..)`, `add_rows(..)`, `add_col(..)`, `add_cols(..)` | Edit the loaded program, to solve it again warm ([Editing a loaded program](#editing-a-loaded-program)). |
-| `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome ([Analysis](analysis.md)). |
+| `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome, each for a backend that implements its analysis trait ([Analysis](analysis.md)). |
 
 The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Scip>` with SCIP ([SCIP](scip.md), the
 `scip` feature), `Solver<Script>` replays a script ([Testing](testing.md#the-script-backend)), and a backend of your

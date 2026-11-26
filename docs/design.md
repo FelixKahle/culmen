@@ -90,7 +90,7 @@ Whether a public type is `#[non_exhaustive]` follows from what a user does with 
   `ParamValue`, …), which grow with the solver's versions, and culmen's own lists of kinds that a further feature
   adds to (`ModelClass`, `ProgramFeature`, `Analysis`, `Phase`, `StopReason`, `Edit`, `Step`, `ScipEvent`,
   `LazySource`, `HighsNative`, `ModelFormat`). Code that must handle every kind is told so by a declared set
-  instead (`Backend::CLASSES`, `FEATURES`, `ANALYSES`), which refuses what it does not list.
+  instead (`Backend::CLASSES`, `FEATURES`), which refuses what it does not list.
 - **An enum whose variants its meaning closes stays exhaustive**, so that code which must handle every case is
   checked to: `Sense`, `Integrality`, `Outcome`, `Objectives`, `Combination`, `PriceMode`, `Start`, `NewRow`,
   `Side`, `Bound`, `Line`, `BasisStatus`, `LogLevel`, `ScriptStatus`, `Switch`, `OnOff`, and `Unsupported`, which
@@ -109,7 +109,10 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
   apart, `Backend::PRICES`, and asked for apart, `Callback::prices`, so no set of events turns it on.
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
   `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the program, the
-  same way for every backend.
+  same way for every backend. A class is a property of the program, which edits change, so it stays a run-time check.
+- **Capabilities of the backend are traits.** Each analysis after a solve is a trait a backend implements or leaves
+  out (`DualAnalysis`, …), and the `Solver` methods of an analysis exist only for a backend that has it:
+  `solver.duals()` on a backend without duals does not compile.
 - **Actions live where the solver honours them.** Only a poll context can interrupt, only a lazy context can add a
   lazy constraint, only a heuristic context can supply a solution, only a price context can add a column. Calling an action at a point where the solver
   would ignore it does not compile.

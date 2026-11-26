@@ -7,8 +7,8 @@
 //! numbering to typed lines and drop the free row a QP without rows is given (see `instance`).
 
 use culmen_core::{
-    Analysis, AnalysisError, Basis, BasisStatus, Bound, Col, Duals, Iis, Limit, Line, Program, ProgramFeature,
-    ProgramFeatures, Ranged, Ranging, Relaxed, Row, Sense, Settings, Side, TiVec, Weights,
+    Analysis, Basis, BasisStatus, Bound, Col, Duals, Iis, Limit, Line, Program, ProgramFeature, ProgramFeatures,
+    Ranged, Ranging, Relaxed, Row, Sense, Settings, Side, TiVec, Weights,
 };
 use highs_sys::{
     HighsInt, kHighsBasisStatusBasic, kHighsBasisStatusLower, kHighsBasisStatusNonbasic, kHighsBasisStatusUpper,
@@ -20,11 +20,11 @@ use crate::instance::{Penalties, RangingRecord, RawIis};
 use crate::{Highs, HighsError, ModelStatus, OptionValue, configure};
 
 /// The result of an analysis, or why it failed.
-type Analyzed<T> = Result<T, AnalysisError<HighsError>>;
+type Analyzed<T> = Result<T, HighsError>;
 
 /// The failure of `analysis` inside HiGHS.
-const fn failed(analysis: Analysis) -> AnalysisError<HighsError> {
-    AnalysisError::Backend(HighsError::Analysis(analysis))
+const fn failed(analysis: Analysis) -> HighsError {
+    HighsError::Analysis(analysis)
 }
 
 /// The duals of the last run, in culmen's convention, which is HiGHS's.
@@ -204,11 +204,10 @@ pub(crate) fn dual_ray(highs: &mut Highs) -> Analyzed<Option<TiVec<Row, f64>>> {
 ///
 /// When an option is refused, HiGHS fails, or it finds no IIS of a program it found infeasible.
 pub(crate) fn iis(highs: &mut Highs, program: &Program) -> Analyzed<Option<Iis>> {
-    configure(&mut highs.instance, &highs.options, &Settings::new()).map_err(AnalysisError::Backend)?;
+    configure(&mut highs.instance, &highs.options, &Settings::new())?;
     highs
         .instance
-        .set_option("iis_strategy", &OptionValue::Int(kHighsIisStrategyFromLpRowPriority))
-        .map_err(AnalysisError::Backend)?;
+        .set_option("iis_strategy", &OptionValue::Int(kHighsIisStrategyFromLpRowPriority))?;
     let raw = highs.instance.iis().ok_or(failed(Analysis::Iis))?;
     let iis = typed_iis(&raw, program);
     match (
@@ -270,12 +269,12 @@ fn side(raw: HighsInt) -> Option<Side> {
 pub(crate) fn relax(highs: &mut Highs, program: &Program, weights: &Weights) -> Analyzed<Option<Relaxed>> {
     let semi = ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::SemiInteger]);
     if let Some(feature) = program.features().intersection(semi).iter().next() {
-        return Err(AnalysisError::Backend(HighsError::AnalysisFeature {
+        return Err(HighsError::AnalysisFeature {
             analysis: Analysis::FeasibilityRelaxation,
             feature,
-        }));
+        });
     }
-    configure(&mut highs.instance, &highs.options, &Settings::new()).map_err(AnalysisError::Backend)?;
+    configure(&mut highs.instance, &highs.options, &Settings::new())?;
     let penalties = penalties(weights, highs.instance.num_row());
     let values = highs
         .instance

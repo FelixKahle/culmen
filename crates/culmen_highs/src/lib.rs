@@ -65,10 +65,13 @@ pub use callback::{
     Cut, CutPool, HighsHeuristic, HighsLog, HighsLogType, HighsMipProgress, HighsNative, HighsPoll, HighsSolution,
     MipData, PollSource, QueryOrigin, ReducedCol, RootNodePoint,
 };
-use culmen_core::{Analyses, AnalysisError, Basis, Col, Duals, Iis, Ranging, Relaxed, Row, TiVec, Weights};
 use culmen_core::{
     Backend, Callback, Edit, Events, ModelClass, ModelClasses, Objectives, Outcome, Priced, Program, ProgramFeatures,
     QuadObjective, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice, Unsupported,
+};
+use culmen_core::{
+    Basis, BasisAnalysis, Col, DualAnalysis, Duals, Iis, IisAnalysis, Ranging, RangingAnalysis, RayAnalysis,
+    RelaxationAnalysis, Relaxed, Row, TiVec, Weights,
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
 pub use options::{
@@ -663,8 +666,6 @@ impl Backend for Highs {
     /// MIQP problems with HiGHS").
     const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp, ModelClass::Qp]);
 
-    /// Every analysis, each through its HiGHS call; the `analysis` module documents what HiGHS gives.
-    const ANALYSES: Analyses = Analyses::ALL;
     /// HiGHS 1.16 takes semi-continuous and semi-integer columns (up to [`Highs::SEMI_UPPER_LIMIT`]), multiple
     /// linear objectives, and starts.
     const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
@@ -728,36 +729,54 @@ impl Backend for Highs {
             elapsed: ran.elapsed,
         })
     }
+}
 
-    fn duals(&self, program: &Program) -> Result<Duals, AnalysisError<HighsError>> {
+/// HiGHS's dual solution; the `analysis` module documents what HiGHS gives for each analysis.
+impl DualAnalysis for Highs {
+    fn duals(&self, program: &Program) -> Result<Duals, HighsError> {
         analysis::duals(self, program)
     }
+}
 
-    fn basis(&self, program: &Program) -> Result<Option<Basis>, AnalysisError<HighsError>> {
+/// HiGHS's simplex basis, read through `Highs_getBasis` and set through `Highs_setBasis`.
+impl BasisAnalysis for Highs {
+    fn basis(&self, program: &Program) -> Result<Option<Basis>, HighsError> {
         analysis::basis(self, program)
     }
 
-    fn set_basis(&mut self, _: &Program, basis: &Basis) -> Result<(), AnalysisError<HighsError>> {
+    fn set_basis(&mut self, _: &Program, basis: &Basis) -> Result<(), HighsError> {
         analysis::set_basis(self, basis)
     }
+}
 
-    fn ranging(&mut self, program: &Program) -> Result<Ranging, AnalysisError<HighsError>> {
+/// HiGHS's ranging through `Highs_getRanging`, which writes ranging data into the instance.
+impl RangingAnalysis for Highs {
+    fn ranging(&mut self, program: &Program) -> Result<Ranging, HighsError> {
         analysis::ranging(self, program)
     }
+}
 
-    fn primal_ray(&mut self, program: &Program) -> Result<Option<TiVec<Col, f64>>, AnalysisError<HighsError>> {
+/// HiGHS's rays through `Highs_getPrimalRay` and `Highs_getDualRay`, either of which may run its simplex solver.
+impl RayAnalysis for Highs {
+    fn primal_ray(&mut self, program: &Program) -> Result<Option<TiVec<Col, f64>>, HighsError> {
         analysis::primal_ray(self, program)
     }
 
-    fn dual_ray(&mut self, _: &Program) -> Result<Option<TiVec<Row, f64>>, AnalysisError<HighsError>> {
+    fn dual_ray(&mut self, _: &Program) -> Result<Option<TiVec<Row, f64>>, HighsError> {
         analysis::dual_ray(self)
     }
+}
 
-    fn iis(&mut self, program: &Program) -> Result<Option<Iis>, AnalysisError<HighsError>> {
+/// HiGHS's IIS, computed under the backend's options and its full IIS strategy.
+impl IisAnalysis for Highs {
+    fn iis(&mut self, program: &Program) -> Result<Option<Iis>, HighsError> {
         analysis::iis(self, program)
     }
+}
 
-    fn relax(&mut self, program: &Program, weights: &Weights) -> Result<Option<Relaxed>, AnalysisError<HighsError>> {
+/// HiGHS's feasibility relaxation, refused for a program with semi columns ([`HighsError::AnalysisFeature`]).
+impl RelaxationAnalysis for Highs {
+    fn relax(&mut self, program: &Program, weights: &Weights) -> Result<Option<Relaxed>, HighsError> {
         analysis::relax(self, program, weights)
     }
 }

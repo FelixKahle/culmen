@@ -10,10 +10,10 @@ use typed_index_collections::{TiSlice, TiVec};
 
 use crate::solve::context::{check_constraint, check_entries, check_solution};
 use crate::{
-    ActionError, AddedRow, Analyses, Backend, Callback, Col, Cols, Constraint, CutContext, Events, HeuristicContext,
-    LazyContext, LogContext, LogLevel, ModelClasses, NewCol, Outcome, Phase, PollContext, PriceContext, PriceMode,
-    Priced, Program, ProgramFeatures, Progress, ProgressContext, Row, Sense, Settings, Solution, SolutionContext,
-    Solved, Start, StopReason,
+    ActionError, AddedRow, Backend, Callback, Col, Cols, Constraint, CutContext, Events, HeuristicContext, LazyContext,
+    LogContext, LogLevel, ModelClasses, NewCol, Outcome, Phase, PollContext, PriceContext, PriceMode, Priced, Program,
+    ProgramFeatures, Progress, ProgressContext, Row, Sense, Settings, Solution, SolutionContext, Solved, Start,
+    StopReason,
 };
 
 /// A solution found during a solve, with where the solve stood when it was found: what a [`Script`] step reports, and
@@ -325,6 +325,8 @@ impl fmt::Display for ScriptError {
 
 impl core::error::Error for ScriptError {}
 
+/// A script implements no analysis trait: it replays events and an outcome, and has no duals, basis or other analysis
+/// to report honestly.
 impl Backend for Script {
     type Error = ScriptError;
     type Status = ScriptStatus;
@@ -341,8 +343,6 @@ impl Backend for Script {
     const EVENTS: Events = Events::ALL;
     const PRICES: bool = true;
     const CLASSES: ModelClasses = ModelClasses::ALL;
-    /// A script replays events and an outcome; it has no duals, basis or other analysis to report honestly.
-    const ANALYSES: Analyses = Analyses::NONE;
     const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
 
     fn load(&mut self, program: &Program) -> Result<(), ScriptError> {

@@ -5,6 +5,7 @@
 
 mod analysis;
 mod backend;
+pub mod capability;
 pub mod context;
 mod edit;
 mod events;
@@ -16,10 +17,11 @@ mod start;
 mod watch;
 
 pub use analysis::{
-    Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,
-    Line, Misfit, Penalty, Ranged, Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
+    Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit, Line, Misfit, Penalty,
+    Ranged, Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
 };
 pub use backend::{Backend, Callback};
+pub use capability::{BasisAnalysis, DualAnalysis, IisAnalysis, RangingAnalysis, RayAnalysis, RelaxationAnalysis};
 pub use context::{
     ActionError, AddedRow, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, PriceMode,
     ProgressContext, SolutionContext, Unsupported,

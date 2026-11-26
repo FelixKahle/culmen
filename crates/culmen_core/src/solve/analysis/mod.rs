@@ -3,10 +3,11 @@
 
 //! What a solve reports beyond its outcome: duals, the basis, ranging, rays, an IIS and a feasibility relaxation.
 //!
-//! The types here are solver-neutral plain data read with the program's handles. A [`Solver`](crate::Solver) checks
-//! every request the same way for every backend (the backend provides the analysis, the analysis is defined for
-//! the program's class, a basis or weights fit the program, the solve it reads exists) and only then asks the
-//! backend.
+//! The types here are solver-neutral plain data read with the program's handles. Each analysis is a
+//! [`Solver`](crate::Solver) method that exists only for a backend implementing its trait in
+//! [`capability`](crate::capability); the solver checks every request the same way for every backend (the analysis
+//! is defined for the program's class, a basis or weights fit the program, the solve it reads exists) and only then
+//! asks the backend.
 
 mod basis;
 mod duals;
@@ -22,7 +23,7 @@ pub use basis::{Basis, BasisStatus};
 pub use duals::Duals;
 pub use error::{AnalysisError, Misfit, Table};
 pub use iis::{Iis, Side};
-pub use kind::{Analyses, AnalysesIter, Analysis};
+pub use kind::Analysis;
 pub use line::{Bound, Line};
 pub use ranging::{Limit, Ranged, Ranging};
 pub use relax::{InvalidPenalty, Penalty, Relaxed, Violation, Violations, Weights};

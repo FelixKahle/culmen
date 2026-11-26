@@ -7,8 +7,9 @@
 use core::fmt;
 
 use culmen_core::{
-    Analyses, AnalysisError, Backend, Basis, Callback, Col, Duals, Edit, Events, Iis, ModelClasses, Priced, Program,
-    ProgramFeatures, ProgramPlan, Ranging, Relaxed, Row, Settings, Solved, Start, TiVec, Weights,
+    Backend, Basis, BasisAnalysis, Callback, Col, DualAnalysis, Duals, Edit, Events, Iis, IisAnalysis, ModelClasses,
+    Priced, Program, ProgramFeatures, ProgramPlan, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed,
+    Row, Settings, Solved, Start, TiVec, Weights,
 };
 
 /// A backend that forwards to `inner`, recording what it is asked to hold and failing as [`Faults`] say.
@@ -193,11 +194,6 @@ fn appended_columns(expected: &mut ProgramPlan, got: &ProgramPlan, cols: &[Col])
     true
 }
 
-/// Lifts an inner backend's analysis error to a mirror's.
-fn lift<E>(error: AnalysisError<E>) -> AnalysisError<MirrorError<E>> {
-    error.map_backend(MirrorError::Inner)
-}
-
 /// A mirror's callback, handed to the inner backend: the context types are the same.
 struct Forward<'c, B: Backend>(&'c mut dyn Callback<Mirror<B>>);
 
@@ -263,7 +259,6 @@ impl<B: Backend> Backend for Mirror<B> {
     const EVENTS: Events = B::EVENTS;
     const PRICES: bool = B::PRICES;
     const CLASSES: ModelClasses = B::CLASSES;
-    const ANALYSES: Analyses = B::ANALYSES;
     const FEATURES: ProgramFeatures = B::FEATURES;
 
     fn load(&mut self, program: &Program) -> Result<(), Self::Error> {
@@ -325,37 +320,50 @@ impl<B: Backend> Backend for Mirror<B> {
             .solve(settings, &mut Forward(callback), priced)
             .map_err(MirrorError::Inner)
     }
+}
 
-    fn duals(&self, program: &Program) -> Result<Duals, AnalysisError<Self::Error>> {
-        self.inner.duals(program).map_err(lift)
+/// Every capability is the inner backend's, forwarded with its errors as [`MirrorError::Inner`].
+impl<B: DualAnalysis> DualAnalysis for Mirror<B> {
+    fn duals(&self, program: &Program) -> Result<Duals, Self::Error> {
+        self.inner.duals(program).map_err(MirrorError::Inner)
+    }
+}
+
+impl<B: BasisAnalysis> BasisAnalysis for Mirror<B> {
+    fn basis(&self, program: &Program) -> Result<Option<Basis>, Self::Error> {
+        self.inner.basis(program).map_err(MirrorError::Inner)
     }
 
-    fn basis(&self, program: &Program) -> Result<Option<Basis>, AnalysisError<Self::Error>> {
-        self.inner.basis(program).map_err(lift)
+    fn set_basis(&mut self, program: &Program, basis: &Basis) -> Result<(), Self::Error> {
+        self.inner.set_basis(program, basis).map_err(MirrorError::Inner)
+    }
+}
+
+impl<B: RangingAnalysis> RangingAnalysis for Mirror<B> {
+    fn ranging(&mut self, program: &Program) -> Result<Ranging, Self::Error> {
+        self.inner.ranging(program).map_err(MirrorError::Inner)
+    }
+}
+
+impl<B: RayAnalysis> RayAnalysis for Mirror<B> {
+    fn primal_ray(&mut self, program: &Program) -> Result<Option<TiVec<Col, f64>>, Self::Error> {
+        self.inner.primal_ray(program).map_err(MirrorError::Inner)
     }
 
-    fn set_basis(&mut self, program: &Program, basis: &Basis) -> Result<(), AnalysisError<Self::Error>> {
-        self.inner.set_basis(program, basis).map_err(lift)
+    fn dual_ray(&mut self, program: &Program) -> Result<Option<TiVec<Row, f64>>, Self::Error> {
+        self.inner.dual_ray(program).map_err(MirrorError::Inner)
     }
+}
 
-    fn ranging(&mut self, program: &Program) -> Result<Ranging, AnalysisError<Self::Error>> {
-        self.inner.ranging(program).map_err(lift)
+impl<B: IisAnalysis> IisAnalysis for Mirror<B> {
+    fn iis(&mut self, program: &Program) -> Result<Option<Iis>, Self::Error> {
+        self.inner.iis(program).map_err(MirrorError::Inner)
     }
+}
 
-    fn primal_ray(&mut self, program: &Program) -> Result<Option<TiVec<Col, f64>>, AnalysisError<Self::Error>> {
-        self.inner.primal_ray(program).map_err(lift)
-    }
-
-    fn dual_ray(&mut self, program: &Program) -> Result<Option<TiVec<Row, f64>>, AnalysisError<Self::Error>> {
-        self.inner.dual_ray(program).map_err(lift)
-    }
-
-    fn iis(&mut self, program: &Program) -> Result<Option<Iis>, AnalysisError<Self::Error>> {
-        self.inner.iis(program).map_err(lift)
-    }
-
-    fn relax(&mut self, program: &Program, weights: &Weights) -> Result<Option<Relaxed>, AnalysisError<Self::Error>> {
-        self.inner.relax(program, weights).map_err(lift)
+impl<B: RelaxationAnalysis> RelaxationAnalysis for Mirror<B> {
+    fn relax(&mut self, program: &Program, weights: &Weights) -> Result<Option<Relaxed>, Self::Error> {
+        self.inner.relax(program, weights).map_err(MirrorError::Inner)
     }
 }
 

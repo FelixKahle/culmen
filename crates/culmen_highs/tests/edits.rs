@@ -264,6 +264,7 @@ fn test_a_highs_edit_failing_after_it_applied_is_undone_by_a_reload() {
     assert_eq!(solver.program(), &program);
     assert!(close(optimum(&mut solver), 2.0, 1e-9));
     assert_eq!(solver.backend().held(), Some(solver.program()));
+    assert!(solver.duals().is_ok(), "the mirror forwards HiGHS's analyses");
 }
 
 /// The LP relaxation of a generalized assignment problem, with presolve off so a fresh solve and a warm one count

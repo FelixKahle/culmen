@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The solver-neutral analysis layer: the checks every request passes before a backend is asked, the set of
-//! analyses, the checked penalty, basis fitting, violations against a simple reference, and serde round trips.
+//! The solver-neutral analysis layer: the checks every request passes before a backend is asked, the checked
+//! penalty, basis fitting, violations against a simple reference, and serde round trips.
 
 #![cfg_attr(
     test,
@@ -14,10 +14,10 @@ use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use culmen_core::{
-    Analyses, Analysis, AnalysisError, Backend, Basis, BasisStatus, Bound, Callback, Col, Duals, Iis, InvalidPenalty,
-    Line, Linear, Misfit, Model, ModelClass, ModelClasses, Outcome, Penalty, Program, ProgramPlan, Relaxed, Row,
-    Script, ScriptError, Settings, Solution, Solved, Solver, Table, TiVec, Unsupported, Var, Violation, Weights,
-    penalty,
+    Analysis, AnalysisError, Backend, Basis, BasisAnalysis, BasisStatus, Bound, Callback, Col, DualAnalysis, Duals,
+    Iis, IisAnalysis, InvalidPenalty, Limit, Line, Linear, Misfit, Model, ModelClass, ModelClasses, Outcome, Penalty,
+    Program, ProgramPlan, Ranged, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Row, ScriptError,
+    Settings, Solution, Solved, Solver, Table, TiVec, Unsupported, Var, Violation, Weights, penalty,
 };
 use proptest::prelude::*;
 
@@ -59,7 +59,6 @@ impl Backend for Canned {
 
     const EVENTS: culmen_core::Events = culmen_core::Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::ALL;
-    const ANALYSES: Analyses = Analyses::ALL;
 
     fn load(&mut self, _: &Program) -> Result<(), ScriptError> {
         Ok(())
@@ -78,41 +77,69 @@ impl Backend for Canned {
             elapsed: Duration::ZERO,
         })
     }
+}
 
-    fn duals(&self, program: &Program) -> Result<Duals, AnalysisError<ScriptError>> {
+impl DualAnalysis for Canned {
+    fn duals(&self, program: &Program) -> Result<Duals, ScriptError> {
         self.ask(Analysis::Duals);
         Ok(Duals {
             rows: program.rows().map(|_| 0.0).collect(),
             cols: program.cols().map(|_| 0.0).collect(),
         })
     }
+}
 
-    fn basis(&self, program: &Program) -> Result<Option<Basis>, AnalysisError<ScriptError>> {
+impl BasisAnalysis for Canned {
+    fn basis(&self, program: &Program) -> Result<Option<Basis>, ScriptError> {
         self.ask(Analysis::Basis);
         Ok(Some(Basis::slack(program)))
     }
 
-    fn set_basis(&mut self, _: &Program, _: &Basis) -> Result<(), AnalysisError<ScriptError>> {
+    fn set_basis(&mut self, _: &Program, _: &Basis) -> Result<(), ScriptError> {
         self.ask(Analysis::Basis);
         Ok(())
     }
+}
 
-    fn primal_ray(&mut self, program: &Program) -> Result<Option<TiVec<Col, f64>>, AnalysisError<ScriptError>> {
+impl RangingAnalysis for Canned {
+    fn ranging(&mut self, program: &Program) -> Result<Ranging, ScriptError> {
+        self.ask(Analysis::Ranging);
+        let never = Limit {
+            value: f64::INFINITY,
+            objective: f64::INFINITY,
+            entering: None,
+            leaving: None,
+        };
+        let ranged = Ranged { down: never, up: never };
+        Ok(Ranging {
+            costs: program.cols().map(|_| ranged).collect(),
+            col_bounds: program.cols().map(|_| ranged).collect(),
+            row_bounds: program.rows().map(|_| ranged).collect(),
+        })
+    }
+}
+
+impl RayAnalysis for Canned {
+    fn primal_ray(&mut self, program: &Program) -> Result<Option<TiVec<Col, f64>>, ScriptError> {
         self.ask(Analysis::Rays);
         Ok(Some(program.cols().map(|_| 0.0).collect()))
     }
 
-    fn dual_ray(&mut self, program: &Program) -> Result<Option<TiVec<Row, f64>>, AnalysisError<ScriptError>> {
+    fn dual_ray(&mut self, program: &Program) -> Result<Option<TiVec<Row, f64>>, ScriptError> {
         self.ask(Analysis::Rays);
         Ok(Some(program.rows().map(|_| 0.0).collect()))
     }
+}
 
-    fn iis(&mut self, _: &Program) -> Result<Option<Iis>, AnalysisError<ScriptError>> {
+impl IisAnalysis for Canned {
+    fn iis(&mut self, _: &Program) -> Result<Option<Iis>, ScriptError> {
         self.ask(Analysis::Iis);
         Ok(Some(Iis::default()))
     }
+}
 
-    fn relax(&mut self, program: &Program, _: &Weights) -> Result<Option<Relaxed>, AnalysisError<ScriptError>> {
+impl RelaxationAnalysis for Canned {
+    fn relax(&mut self, program: &Program, _: &Weights) -> Result<Option<Relaxed>, ScriptError> {
         self.ask(Analysis::FeasibilityRelaxation);
         Ok(Some(Relaxed {
             values: program.cols().map(|_| 0.0).collect(),
@@ -144,53 +171,6 @@ fn canned(outcome: Outcome, integer: bool) -> Solver<Canned> {
 
 fn asked(solver: &Solver<Canned>) -> Vec<Analysis> {
     solver.backend().asked.borrow().clone()
-}
-
-#[test]
-fn test_a_script_provides_no_analysis_and_is_refused_first() {
-    let program = lp(false);
-    let weights = Weights::uniform(&program, None, None);
-    let mut solver = Solver::new(Script::optimal(4.0, vec![4.0, 0.0]), program.clone()).unwrap();
-    let unsupported = |analysis| AnalysisError::Unsupported {
-        analysis,
-        supported: Analyses::NONE,
-    };
-    assert_eq!(
-        solver.duals(),
-        Err(unsupported(Analysis::Duals)),
-        "refused before the missing solve"
-    );
-    assert_eq!(
-        solver.set_basis(&Basis::slack(&program)),
-        Err(unsupported(Analysis::Basis))
-    );
-    assert_eq!(solver.iis(), Err(unsupported(Analysis::Iis)));
-    solver.solve(culmen_core::Request::new()).unwrap();
-    assert_eq!(solver.basis(), Err(unsupported(Analysis::Basis)));
-    assert_eq!(solver.ranging().unwrap_err(), unsupported(Analysis::Ranging));
-    assert_eq!(solver.primal_ray(), Err(unsupported(Analysis::Rays)));
-    assert_eq!(solver.dual_ray(), Err(unsupported(Analysis::Rays)));
-    assert_eq!(
-        solver.feasibility_relaxation(&weights),
-        Err(unsupported(Analysis::FeasibilityRelaxation))
-    );
-}
-
-#[test]
-fn test_the_default_bodies_refuse_with_the_backends_set() {
-    // Called directly, past the solver's checks, a backend that declares nothing refuses every analysis.
-    let program = lp(false);
-    let mut script = Script::optimal(0.0, vec![0.0, 0.0]);
-    let unsupported = |analysis| AnalysisError::Unsupported {
-        analysis,
-        supported: Analyses::NONE,
-    };
-    assert_eq!(script.duals(&program), Err(unsupported(Analysis::Duals)));
-    assert_eq!(script.iis(&program), Err(unsupported(Analysis::Iis)));
-    assert_eq!(
-        script.relax(&program, &Weights::uniform(&program, None, None)),
-        Err(unsupported(Analysis::FeasibilityRelaxation))
-    );
 }
 
 #[test]
@@ -266,6 +246,15 @@ fn test_duals_and_ranging_need_an_optimal_solve() {
         }
     );
     assert!(solver.basis().unwrap().is_some(), "a basis needs any solve");
+}
+
+#[test]
+fn test_ranging_after_an_optimal_solve_reaches_the_backend() {
+    let mut solver = canned(optimal(), false);
+    solver.solve(culmen_core::Request::new()).unwrap();
+    let ranging = solver.ranging().unwrap();
+    assert_eq!((ranging.costs.len(), ranging.row_bounds.len()), (2, 1));
+    assert_eq!(asked(&solver), vec![Analysis::Ranging]);
 }
 
 #[test]
@@ -552,43 +541,7 @@ fn small_program() -> impl Strategy<Value = Program> {
         })
 }
 
-fn subset() -> impl Strategy<Value = Vec<bool>> {
-    prop::collection::vec(any::<bool>(), 6)
-}
-
-const ORDER: [Analysis; 6] = [
-    Analysis::Duals,
-    Analysis::Basis,
-    Analysis::Ranging,
-    Analysis::Rays,
-    Analysis::Iis,
-    Analysis::FeasibilityRelaxation,
-];
-
 proptest! {
-    /// A set of analyses holds exactly the analyses it was made of, in variant order, and its operators are the set
-    /// operations on membership flags.
-    #[test]
-    fn test_analyses_behave_as_sets_of_flags(a in subset(), b in subset()) {
-        let set = |flags: &[bool]| ORDER.iter().zip(flags).filter(|(_, f)| **f).map(|(&x, _)| x).collect::<Analyses>();
-        let (sa, sb) = (set(&a), set(&b));
-        let members: Vec<Analysis> = ORDER.iter().zip(&a).filter(|(_, f)| **f).map(|(&x, _)| x).collect();
-        prop_assert_eq!(sa.iter().collect::<Vec<_>>(), members.clone());
-        prop_assert_eq!(sa.iter().rev().collect::<Vec<_>>(), members.iter().rev().copied().collect::<Vec<_>>());
-        prop_assert_eq!(sa.len(), members.len());
-        prop_assert_eq!(sa.is_empty(), members.is_empty());
-        let either: Vec<bool> = a.iter().zip(&b).map(|(x, y)| *x || *y).collect();
-        let both: Vec<bool> = a.iter().zip(&b).map(|(x, y)| *x && *y).collect();
-        prop_assert_eq!(sa | sb, set(&either));
-        prop_assert_eq!(sa & sb, set(&both));
-        let mut extended = sa;
-        extended.extend(sb);
-        prop_assert_eq!(extended, set(&either));
-        for (i, analysis) in ORDER.into_iter().enumerate() {
-            prop_assert_eq!(sa.contains(analysis), a[i]);
-        }
-    }
-
     /// A penalty is accepted exactly when it is finite and not below zero.
     #[test]
     fn test_a_penalty_is_a_finite_non_negative_number(value in prop_oneof![any::<f64>(), -2.0..2.0f64]) {
@@ -653,8 +606,6 @@ mod serde_round_trips {
     fn test_analysis_data_round_trips() {
         let program = lp(false);
         round_trip(&Analysis::FeasibilityRelaxation);
-        round_trip(&Analyses::of(&[Analysis::Duals, Analysis::Iis]));
-        round_trip(&Analyses::ALL);
         round_trip(&Duals {
             rows: vec![-2.0].into(),
             cols: vec![0.5, 0.0].into(),

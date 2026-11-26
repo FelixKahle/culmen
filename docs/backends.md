@@ -26,14 +26,28 @@ pub trait Backend: Sized {
     const EVENTS: Events;                 // what this backend delivers
     const PRICES: bool = false;           // whether it prices
     const CLASSES: ModelClasses;          // the model classes this backend solves
-    const ANALYSES: Analyses = Analyses::NONE; // what it reports after a solve: duals, basis, ranging, …
     const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // semi columns, objectives, starts it takes
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
     fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), Self::Error> { self.load(program) }
     fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> { Ok(()) } // only with StartSolution
     fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>, priced: &mut Priced)
         -> Result<Solved<Self::Status>, Self::Error>;
-    // duals, basis, set_basis, ranging, primal_ray, dual_ray, iis and relax: refused unless overridden
+}
+
+// Analyses beyond the seam, each a trait the backend implements or leaves out (culmen_core::capability).
+pub trait DualAnalysis: Backend { fn duals(&self, program: &Program) -> Result<Duals, Self::Error>; }
+pub trait BasisAnalysis: Backend {
+    fn basis(&self, program: &Program) -> Result<Option<Basis>, Self::Error>;
+    fn set_basis(&mut self, program: &Program, basis: &Basis) -> Result<(), Self::Error>;
+}
+pub trait RangingAnalysis: Backend { fn ranging(&mut self, program: &Program) -> Result<Ranging, Self::Error>; }
+pub trait RayAnalysis: Backend {
+    fn primal_ray(&mut self, program: &Program) -> Result<Option<TiVec<Col, f64>>, Self::Error>;
+    fn dual_ray(&mut self, program: &Program) -> Result<Option<TiVec<Row, f64>>, Self::Error>;
+}
+pub trait IisAnalysis: Backend { fn iis(&mut self, program: &Program) -> Result<Option<Iis>, Self::Error>; }
+pub trait RelaxationAnalysis: Backend {
+    fn relax(&mut self, program: &Program, weights: &Weights) -> Result<Option<Relaxed>, Self::Error>;
 }
 ```
 
@@ -46,10 +60,12 @@ pub trait Backend: Sized {
   with `LoadError::Unsupported { class, supported }`, so `load` never re-checks the class. Features beyond the class
   (semi columns, multiple objectives, starts) are declared alike in `Backend::FEATURES` and refused with
   `LoadError::UnsupportedFeature` or, for a start, `SolveError::UnsupportedFeature`.
-- **Analyses are declared.** A backend lists what it reports after a solve in `Backend::ANALYSES` and implements the
-  matching methods (`duals`, `basis`, `set_basis`, `ranging`, `primal_ray`, `dual_ray`, `iis`, `relax`), whose
-  default bodies refuse. The `Solver` checks the declaration, the program's class, the fit of a basis or weights
-  and the solve read before it asks, for every backend alike ([Analysis](analysis.md)).
+- **Analyses are capability traits.** A backend that reports an analysis after a solve implements its trait
+  (`DualAnalysis`, `BasisAnalysis`, `RangingAnalysis`, `RayAnalysis`, `IisAnalysis`, `RelaxationAnalysis`), and the
+  `Solver` methods of that analysis exist only for such a backend. Each method returns the backend's own error; the
+  `Solver` checks the program's class and features, the fit of a basis or weights and the solve read before it asks,
+  for every backend alike ([Analysis](analysis.md)), and a wrapper backend forwards each trait with a conditional impl
+  (`impl<B: DualAnalysis> DualAnalysis for Wrapper<B>`).
 - **Actions are typed per event.** Only `PollContext` has `interrupt`, only `LazyContext` has `add_lazy`, only
   `CutContext` has `add_cut`, only `HeuristicContext` has `supply` and `supply_partial`, only `PriceContext` has
   `add_col`, `branch_early` and `report_bound`. An action that a solver honours only at certain points exists only on
@@ -118,6 +134,19 @@ backend declares or leaves out.
 | `StartSolution` | yes: `Highs_setSparseSolution`, HiGHS completing the columns a sparse start leaves out | yes: the `Start` attribute, `GRB_UNDEFINED` for a partial one | yes: `SCIPcreateSol` and `SCIPaddSolFree`; a sparse start `SCIPcreatePartialSol`, completed by SCIP's `completesol` heuristic |
 
 `Script` declares every feature and records each start in `record.starts`.
+
+## Analyses
+
+| Capability | HiGHS 1.16 (`culmen_highs`) | Gurobi 12 | SCIP 10 (`culmen_scip`) |
+|---|---|---|---|
+| `DualAnalysis` | yes: `Highs_getSolution` | yes: `Pi`, `RC` | no (SCIP has LP duals, which a later version may read) |
+| `BasisAnalysis` | yes: `Highs_getBasis`, `Highs_setBasis` | yes: `VBasis`, `CBasis` | no |
+| `RangingAnalysis` | yes: `Highs_getRanging` | yes: `SAObjLow`, `SAObjUp`, `SALBLow`, … | no |
+| `RayAnalysis` | yes: `Highs_getPrimalRay`, `Highs_getDualRay` | yes: `UnbdRay`, `FarkasDual` | no |
+| `IisAnalysis` | yes: `Highs_getIis` | yes: `GRBcomputeIIS` | no |
+| `RelaxationAnalysis` | yes: `Highs_feasibilityRelaxation` | yes: `GRBfeasrelax` | no |
+
+`Script` implements no analysis.
 
 ## Events
 

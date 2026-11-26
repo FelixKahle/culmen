@@ -279,7 +279,7 @@ assert_eq!(ModelClasses::ALL.len(), 4);
 `ModelClasses` is a small set: `NONE`, `ALL`, `of(&[..])` in a `const`, `From<ModelClass>`, `contains` (one class)
 and `contains_all` (a set), `union`, `intersection`, `difference` and `complement` (also `|`, `&`, `-`, `!`, `|=`,
 `&=`, `-=`), `len`, `is_empty`, an `iter()` that runs both ways, `FromIterator` and `Extend` of classes.
-`ProgramFeatures` and `Analyses` are the same set over their own elements, from one implementation.
+`ProgramFeatures` is the same set over its own elements, from one implementation.
 
 ## Features
 

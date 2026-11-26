@@ -264,7 +264,7 @@ With the `serde` feature, the plain data derives `Serialize` and `Deserialize`:
   `Stage`, `Weighted`, `Tolerance`, `Weight`.
 - The solve: `Settings`, `RelativeGap`, `AbsoluteGap`, `Start`, `Solved`, `Outcome`, `Solution`, `StopReason`,
   `Progress`, `Phase`, `LogLevel`.
-- The analyses: `Analysis`, `Analyses`, `Duals`, `Basis`, `BasisStatus`, `Ranging`, `Ranged`, `Limit`, `Line`, `Iis`,
+- The analyses: `Analysis`, `Duals`, `Basis`, `BasisStatus`, `Ranging`, `Ranged`, `Limit`, `Line`, `Iis`,
   `Side`, `Weights`, `Penalty`, `Relaxed`, `Violation`, `Bound`.
 - With `highs`: `HighsOptions` and its option types, `OptionValue`, `HighsStatus`, `ModelStatus`, `SolutionStatus`,
   `CallStatus`, `Version` and `files::ModelFormat`.

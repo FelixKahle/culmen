@@ -5,31 +5,24 @@
 
 use core::fmt;
 
-use super::{Analyses, Analysis, BasisStatus, Line};
+use super::{Analysis, BasisStatus, Line};
 use crate::{Col, ModelClass, Program, ProgramFeature};
 
 /// Why a [`Solver`](crate::Solver) refused an analysis, or the backend failed it with its own error `E`.
 ///
 /// Every check but the backend's own is the same for every backend: the solver makes it before the backend is asked.
+/// Whether the backend provides the analysis at all is no refusal here: the [`Solver`](crate::Solver) method exists
+/// only for a backend that implements the analysis's trait in [`capability`](crate::capability).
 ///
 /// ```
-/// use culmen_core::{Analyses, Analysis, AnalysisError, ModelClass};
+/// use culmen_core::{Analysis, AnalysisError, ModelClass};
 ///
-/// let error = AnalysisError::<std::io::Error>::Unsupported { analysis: Analysis::Iis, supported: Analyses::NONE };
-/// assert_eq!(error.to_string(), "Solver: the backend provides {}, not IIS");
 /// let error = AnalysisError::<std::io::Error>::Class { analysis: Analysis::Duals, class: ModelClass::Milp };
 /// assert_eq!(error.to_string(), "Solver: duals are defined for {LP, QP}, not a MILP");
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AnalysisError<E> {
-    /// The backend does not provide the analysis.
-    Unsupported {
-        /// The analysis asked for.
-        analysis: Analysis,
-        /// The analyses the backend provides.
-        supported: Analyses,
-    },
     /// The analysis is not defined for the program's class.
     Class {
         /// The analysis asked for.
@@ -62,36 +55,9 @@ pub enum AnalysisError<E> {
     Backend(E),
 }
 
-impl<E> AnalysisError<E> {
-    /// The same refusal with the backend's own error mapped by `f`, as a backend wrapping another lifts the inner
-    /// backend's errors.
-    ///
-    /// ```
-    /// use culmen_core::{Analysis, AnalysisError};
-    /// let inner: AnalysisError<u8> = AnalysisError::Backend(7);
-    /// assert_eq!(inner.map_backend(u16::from), AnalysisError::Backend(7_u16));
-    /// let refused: AnalysisError<u8> = AnalysisError::NotSolved { analysis: Analysis::Duals };
-    /// assert_eq!(refused.map_backend(u16::from), AnalysisError::NotSolved { analysis: Analysis::Duals });
-    /// ```
-    pub fn map_backend<F>(self, f: impl FnOnce(E) -> F) -> AnalysisError<F> {
-        match self {
-            Self::Unsupported { analysis, supported } => AnalysisError::Unsupported { analysis, supported },
-            Self::Class { analysis, class } => AnalysisError::Class { analysis, class },
-            Self::Feature { analysis, feature } => AnalysisError::Feature { analysis, feature },
-            Self::NotSolved { analysis } => AnalysisError::NotSolved { analysis },
-            Self::NotOptimal { analysis } => AnalysisError::NotOptimal { analysis },
-            Self::Misfit(misfit) => AnalysisError::Misfit(misfit),
-            Self::Backend(error) => AnalysisError::Backend(f(error)),
-        }
-    }
-}
-
 impl<E: fmt::Display> fmt::Display for AnalysisError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported { analysis, supported } => {
-                write!(f, "Solver: the backend provides {supported}, not {analysis}")
-            }
             Self::Class { analysis, class } => {
                 let are = analysis.agree("is", "are");
                 write!(
@@ -126,11 +92,7 @@ impl<E: core::error::Error + 'static> core::error::Error for AnalysisError<E> {
         match self {
             Self::Backend(error) => Some(error),
             Self::Misfit(misfit) => Some(misfit),
-            Self::Unsupported { .. }
-            | Self::Class { .. }
-            | Self::Feature { .. }
-            | Self::NotSolved { .. }
-            | Self::NotOptimal { .. } => None,
+            Self::Class { .. } | Self::Feature { .. } | Self::NotSolved { .. } | Self::NotOptimal { .. } => None,
         }
     }
 }

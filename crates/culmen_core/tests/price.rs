@@ -695,7 +695,6 @@ impl Backend for SelfPricing {
 
     const EVENTS: Events = Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::ALL;
-    const ANALYSES: culmen_core::Analyses = culmen_core::Analyses::ALL;
 
     fn load(&mut self, _: &Program) -> Result<(), ScriptError> {
         Ok(())
@@ -717,8 +716,10 @@ impl Backend for SelfPricing {
             elapsed: Duration::ZERO,
         })
     }
+}
 
-    fn duals(&self, program: &Program) -> Result<Duals, AnalysisError<ScriptError>> {
+impl culmen_core::DualAnalysis for SelfPricing {
+    fn duals(&self, program: &Program) -> Result<Duals, ScriptError> {
         Ok(Duals {
             rows: program.rows().map(|_| 0.0).collect(),
             cols: program.cols().map(|_| 0.0).collect(),

@@ -97,7 +97,6 @@ pub use script::{
     Found, PriceRound, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote,
     ScriptPoll, ScriptPrice, ScriptProgress, ScriptSolution, ScriptStatus, Step,
 };
-pub use solve::context;
 pub use solve::{
     ActionError, AddedRow, Backend, Callback, CutContext, Edit, EditError, Events, EventsIter, HeuristicContext,
     Improvement, LazyContext, LoadError, LogContext, LogLevel, LogLine, NewRow, Observer, Outcome, Phase, PollContext,
@@ -105,7 +104,9 @@ pub use solve::{
     SolveError, Solved, Solver, Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, Watch, stop_fn,
 };
 pub use solve::{
-    Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,
-    Line, Misfit, Penalty, Ranged, Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
+    Analysis, AnalysisError, Basis, BasisAnalysis, BasisStatus, Bound, DualAnalysis, Duals, Iis, IisAnalysis,
+    InvalidPenalty, Limit, Line, Misfit, Penalty, Ranged, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis,
+    Relaxed, Side, Table, Violation, Violations, Weights,
 };
+pub use solve::{capability, context};
 pub use typed_index_collections::{TiSlice, TiVec};

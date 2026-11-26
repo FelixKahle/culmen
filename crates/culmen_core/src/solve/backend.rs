@@ -8,10 +8,7 @@ use core::fmt;
 use super::context::{
     CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext, SolutionContext,
 };
-use crate::{
-    Analyses, Analysis, AnalysisError, Basis, Col, Duals, Edit, Events, Iis, ModelClasses, Priced, Program,
-    ProgramFeatures, Ranging, Relaxed, Row, Settings, Solved, Start, TiVec, Weights,
-};
+use crate::{Edit, Events, ModelClasses, Priced, Program, ProgramFeatures, Settings, Solved, Start};
 
 /// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls a [`Callback`] as the
 /// search goes.
@@ -46,11 +43,9 @@ use crate::{
 /// - A panic in a callback stops the solve as soon as the solver allows and then continues unwinding out of
 ///   `solve`; it never aborts the process and never leaves the backend unusable.
 /// - [`Settings`] apply to this one solve and take precedence over the backend's own options.
-/// - A [`Solver`](crate::Solver) calls an analysis method only for an analysis in [`Backend::ANALYSES`] and
-///   defined for the program's class ([`Analysis::classes`]), with the loaded program, and only in the state its
-///   [`Solver`](crate::Solver) method documents: [`Backend::duals`] and [`Backend::ranging`] after a solve that ended
-///   optimal, [`Backend::basis`] after a solve, the rays after a solve that ended as they prove, a basis or weights
-///   that fit the program. Called otherwise, it may fail or give an unspecified result, never undefined behaviour.
+///
+/// A backend's further capabilities, the analyses after a solve, are the traits of
+/// [`capability`](crate::capability), each with its own contract.
 pub trait Backend: Sized {
     /// Why loading or solving failed.
     type Error: core::error::Error + Send + Sync + 'static;
@@ -86,10 +81,6 @@ pub trait Backend: Sized {
     /// The classes of program this backend solves; [`Solver::new`](crate::Solver::new) refuses any other.
     const CLASSES: ModelClasses;
 
-    /// The analyses this backend provides after a solve; none unless declared. A
-    /// [`Solver`](crate::Solver) refuses any other with [`AnalysisError::Unsupported`], so the default bodies of the
-    /// analysis methods, which return that error, run only when one is called directly.
-    const ANALYSES: Analyses = Analyses::NONE;
     /// The features this backend takes; [`Solver::new`](crate::Solver::new) refuses a program using any other, and
     /// [`Solver::solve`](crate::Solver::solve) a request using any other. None unless declared.
     const FEATURES: ProgramFeatures = ProgramFeatures::NONE;
@@ -153,96 +144,6 @@ pub trait Backend: Sized {
         callback: &mut dyn Callback<Self>,
         priced: &mut Priced,
     ) -> Result<Solved<Self::Status>, Self::Error>;
-
-    /// The row duals and reduced costs of the last solve, in the sign convention of [`Duals`].
-    ///
-    /// # Errors
-    ///
-    /// [`AnalysisError::Unsupported`] unless [`Backend::ANALYSES`] has [`Analysis::Duals`]; the backend's own error.
-    fn duals(&self, program: &Program) -> Result<Duals, AnalysisError<Self::Error>> {
-        let _ = program;
-        Err(unsupported::<Self>(Analysis::Duals))
-    }
-
-    /// The basis of the last solve, `None` when the backend holds none.
-    ///
-    /// # Errors
-    ///
-    /// [`AnalysisError::Unsupported`] unless [`Backend::ANALYSES`] has [`Analysis::Basis`]; the backend's own error.
-    fn basis(&self, program: &Program) -> Result<Option<Basis>, AnalysisError<Self::Error>> {
-        let _ = program;
-        Err(unsupported::<Self>(Analysis::Basis))
-    }
-
-    /// Sets the basis the next solve starts from.
-    ///
-    /// # Errors
-    ///
-    /// [`AnalysisError::Unsupported`] unless [`Backend::ANALYSES`] has [`Analysis::Basis`]; the backend's own error.
-    fn set_basis(&mut self, program: &Program, basis: &Basis) -> Result<(), AnalysisError<Self::Error>> {
-        let _ = (program, basis);
-        Err(unsupported::<Self>(Analysis::Basis))
-    }
-
-    /// The cost and bound ranging of the last solve's optimal basis.
-    ///
-    /// # Errors
-    ///
-    /// [`AnalysisError::Unsupported`] unless [`Backend::ANALYSES`] has [`Analysis::Ranging`]; the backend's own
-    /// error.
-    fn ranging(&mut self, program: &Program) -> Result<Ranging, AnalysisError<Self::Error>> {
-        let _ = program;
-        Err(unsupported::<Self>(Analysis::Ranging))
-    }
-
-    /// A direction of unboundedness, as [`Solver::primal_ray`](crate::Solver::primal_ray) states it.
-    ///
-    /// # Errors
-    ///
-    /// [`AnalysisError::Unsupported`] unless [`Backend::ANALYSES`] has [`Analysis::Rays`]; the backend's own error.
-    fn primal_ray(&mut self, program: &Program) -> Result<Option<TiVec<Col, f64>>, AnalysisError<Self::Error>> {
-        let _ = program;
-        Err(unsupported::<Self>(Analysis::Rays))
-    }
-
-    /// A Farkas certificate of infeasibility, as [`Solver::dual_ray`](crate::Solver::dual_ray) states it.
-    ///
-    /// # Errors
-    ///
-    /// [`AnalysisError::Unsupported`] unless [`Backend::ANALYSES`] has [`Analysis::Rays`]; the backend's own error.
-    fn dual_ray(&mut self, program: &Program) -> Result<Option<TiVec<Row, f64>>, AnalysisError<Self::Error>> {
-        let _ = program;
-        Err(unsupported::<Self>(Analysis::Rays))
-    }
-
-    /// An irreducible infeasible subsystem, `None` when the constraints are feasible.
-    ///
-    /// # Errors
-    ///
-    /// [`AnalysisError::Unsupported`] unless [`Backend::ANALYSES`] has [`Analysis::Iis`]; the backend's own error.
-    fn iis(&mut self, program: &Program) -> Result<Option<Iis>, AnalysisError<Self::Error>> {
-        let _ = program;
-        Err(unsupported::<Self>(Analysis::Iis))
-    }
-
-    /// A point of least weighted violation, `None` when no point meets the hard bounds and rows.
-    ///
-    /// # Errors
-    ///
-    /// [`AnalysisError::Unsupported`] unless [`Backend::ANALYSES`] has [`Analysis::FeasibilityRelaxation`]; the
-    /// backend's own error.
-    fn relax(&mut self, program: &Program, weights: &Weights) -> Result<Option<Relaxed>, AnalysisError<Self::Error>> {
-        let _ = (program, weights);
-        Err(unsupported::<Self>(Analysis::FeasibilityRelaxation))
-    }
-}
-
-/// The refusal of an analysis `B` does not provide.
-const fn unsupported<B: Backend>(analysis: Analysis) -> AnalysisError<B::Error> {
-    AnalysisError::Unsupported {
-        analysis,
-        supported: B::ANALYSES,
-    }
 }
 
 /// What runs during a solve: one method per event kind, each with the backend's context for it.

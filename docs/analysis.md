@@ -8,17 +8,24 @@ infeasible subsystem, and a feasibility relaxation. Every result is plain data r
 
 ## Analyses and refusal
 
-Each kind is an `Analysis`, and a backend declares the ones it provides as `Backend::ANALYSES`, an `Analyses` set.
-Each analysis is defined only for some [classes](program.md#model-classes) of program: `Analysis::classes()`.
+Each analysis is a capability a backend has or lacks: a trait it implements, and the `Solver` methods of an analysis
+exist only for a backend that implements its trait. Asking a backend for an analysis it does not provide does not
+compile. Each kind is also named by an `Analysis`, which the errors carry, and each is defined only for some
+[classes](program.md#model-classes) of program: `Analysis::classes()`.
 
-| `Analysis` | `Solver` methods | Classes | Reads |
-|---|---|---|---|
-| `Duals` | `duals()` | LP, QP | an optimal solve |
-| `Basis` | `basis()`, `set_basis(&basis)` | LP | any solve (`basis`), none (`set_basis`) |
-| `Ranging` | `ranging()` | LP | an optimal solve |
-| `Rays` | `primal_ray()`, `dual_ray()` | LP | any solve |
-| `Iis` | `iis()` | LP, QP | none |
-| `FeasibilityRelaxation` | `feasibility_relaxation(&weights)` | LP, MILP | none |
+| Trait | `Analysis` | `Solver` methods | Classes | Reads |
+|---|---|---|---|---|
+| `DualAnalysis` | `Duals` | `duals()` | LP, QP | an optimal solve |
+| `BasisAnalysis` | `Basis` | `basis()`, `set_basis(&basis)` | LP | any solve (`basis`), none (`set_basis`) |
+| `RangingAnalysis` | `Ranging` | `ranging()` | LP | an optimal solve |
+| `RayAnalysis` | `Rays` | `primal_ray()`, `dual_ray()` | LP | any solve |
+| `IisAnalysis` | `Iis` | `iis()` | LP, QP | none |
+| `RelaxationAnalysis` | `FeasibilityRelaxation` | `feasibility_relaxation(&weights)` | LP, MILP | none |
+
+`duals()` and `basis()` read the backend and take `&self`. `ranging()` and the rays take `&mut self`, because the
+backend may compute them by work on its own state: HiGHS's ranging call writes ranging data into its instance, and to
+find a ray it may run its simplex solver again. `set_basis`, `iis` and `feasibility_relaxation` change what the
+backend holds, and take `&mut self` for that.
 
 A MIP has no duals, basis or ranging: they are statements about a continuous program, and the LP left after fixing
 the integers says nothing about the MIP. An IIS of a MILP's relaxation is not an IIS of the MILP, so `iis` takes only
@@ -32,12 +39,11 @@ objectives](program.md#several-objectives) has none: `Analysis::refused()` names
 `AnalysisError::Feature { analysis, feature }`. An IIS and a feasibility relaxation concern the constraints alone and
 take any objectives.
 
-The `Solver` checks every request the same way for every backend, before the backend is asked, and refuses with a
-typed `AnalysisError<B::Error>`, in this order:
+What depends on the program or on the solve stays a run-time refusal. The `Solver` checks every request the same way
+for every backend, before the backend is asked, and refuses with a typed `AnalysisError<B::Error>`, in this order:
 
 | Variant | When |
 |---|---|
-| `Unsupported { analysis, supported }` | The backend does not declare the analysis. |
 | `Class { analysis, class }` | The analysis is not defined for the program's class. |
 | `Feature { analysis, feature }` | The analysis is not defined for a feature the program uses, as duals for several objectives. |
 | `Misfit(Misfit)` | A basis or weights do not fit the program: `Length { table, expected, found }`, `BasicCount { expected, found }`, `Status { line, status }` for a line put at a bound it does not have, or `SoftSemiBound { col }` for weights pricing a semi column's bound. |
@@ -45,32 +51,35 @@ typed `AnalysisError<B::Error>`, in this order:
 | `NotOptimal { analysis }` | It reads an optimal solve and the last one did not end `Optimal`. |
 | `Backend(E)` | The backend failed; for HiGHS, `HighsError::Analysis(analysis)`. |
 
-| Backend | `ANALYSES` |
+| Backend | Analysis traits |
 |---|---|
-| `Highs` | Every analysis. |
+| `Highs` | All six. |
 | `Scip` | None: culmen reads no analysis from SCIP ([Limitations](scip.md#limitations)). |
 | `Script` | None: it replays events and has no duals to report honestly. |
 
+Generic code names the analyses it needs as bounds, `fn report<B: DualAnalysis>(solver: &Solver<B>)`, so a backend
+without them is refused where the function is called, and `Solver<Script>::duals()` does not compile.
+
 ```rust
 use culmen::prelude::*;
-use culmen::{Analyses, Analysis, AnalysisError, ModelClass, Script};
+use culmen::{Analysis, AnalysisError, DualAnalysis, ModelClass};
+
+/// How many row duals any backend that reports duals gives for its last solve.
+fn row_duals<B: DualAnalysis>(solver: &Solver<B>) -> Result<usize, AnalysisError<B::Error>> {
+    Ok(solver.duals()?.rows.len())
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
     let x = m.add_var(Var::integer().upper(3.0));
     m.add_constraint(x.leq(2.5));
     m.maximize(x);
-    let program = m.build()?;
 
-    let mut solver = Solver::new(Highs::new(), program.clone())?;
+    let mut solver = Solver::new(Highs::new(), m.build()?)?;
     solver.solve(Request::new())?;
-    let refused = solver.duals().unwrap_err();
+    let refused = row_duals(&solver).unwrap_err();
     assert_eq!(refused, AnalysisError::Class { analysis: Analysis::Duals, class: ModelClass::Milp });
     assert_eq!(refused.to_string(), "Solver: duals are defined for {LP, QP}, not a MILP");
-
-    let script = Solver::new(Script::optimal(2.0, vec![2.0]), program)?;
-    let refused = script.basis().unwrap_err();
-    assert_eq!(refused, AnalysisError::Unsupported { analysis: Analysis::Basis, supported: Analyses::NONE });
     Ok(())
 }
 ```
