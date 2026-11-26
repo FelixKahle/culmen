@@ -27,4 +27,4 @@ pub use kind::Analysis;
 pub use line::{Bound, Line};
 pub use ranging::{Limit, Ranged, Ranging};
 pub use relax::{InvalidPenalty, Penalty, Relaxed, Violation, Violations, Weights};
-pub(crate) use solver::Ending;
+pub(crate) use solver::Ended;

@@ -389,6 +389,36 @@ fn test_a_dual_ray_is_a_farkas_certificate() {
 }
 
 #[test]
+fn test_a_ray_that_may_run_highs_again_leaves_no_basis_of_another_run_to_read() {
+    // With presolve, HiGHS proves `contradictory` infeasible without a simplex run and holds neither a dual ray nor a
+    // basis; finding the ray runs its simplex solver on the program with zero costs, whose basis is not one the solve
+    // ended with. Without presolve the simplex run holds the ray already, but the solver cannot tell the two apart.
+    for presolve in [true, false] {
+        let program = contradictory(Sense::Minimize);
+        let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
+        let settings = Settings {
+            presolve: Some(presolve),
+            ..Settings::new()
+        };
+        let solved = solver.solve(Request::new().settings_from(settings)).unwrap();
+        assert!(matches!(solved.outcome, Outcome::Infeasible), "{solved:?}");
+        let before = solver.basis();
+        let ray = solver.dual_ray().unwrap().expect("a certificate");
+        assert!(is_farkas(&program, &ray), "presolve {presolve}: {ray:?}");
+        assert_eq!(
+            solver.basis(),
+            Err(AnalysisError::NotSolved {
+                analysis: Analysis::Basis
+            }),
+            "presolve {presolve}, the basis before the ray: {before:?}"
+        );
+        // The rays still read the solve's ending.
+        assert!(solver.dual_ray().unwrap().is_some());
+        assert_eq!(solver.primal_ray().unwrap(), None);
+    }
+}
+
+#[test]
 fn test_rays_are_none_after_an_optimum() {
     let (program, _, _) = production(Sense::Minimize);
     let (mut solver, _, _) = solved(&program);

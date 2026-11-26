@@ -38,7 +38,7 @@ pub use start::{SolveError, Start, StartEntries, StartError};
 pub use watch::{Improvement, LogLine, Observer, Request, Stop, StopFn, Watch, stop_fn};
 
 use crate::{ModelClass, ModelClasses, Program, ProgramFeature, ProgramFeatures};
-use analysis::Ending;
+use analysis::Ended;
 
 /// A program loaded into a backend, solved as often as needed, each solve with its own [`Request`].
 ///
@@ -62,8 +62,9 @@ pub struct Solver<B> {
     backend: B,
     program: Program,
     /// How the last solve ended; `None` before one, once a later solve reached the backend, until it returns `Ok`, or
-    /// once another later call replaced its result. A request refused before the backend sees it keeps it.
-    ended: Option<Ending>,
+    /// once another later call replaced its result. A request refused before the backend sees it keeps it. A ray asked
+    /// of the backend keeps the ending but marks the result as no longer held, since the backend may have run again.
+    ended: Option<Ended>,
     /// Whether the backend holds `program`. An edit clears it while the backend changes; it stays clear when that
     /// change and the reload after it both fail, or a panic interrupts them, until the next call that runs the
     /// backend reloads `program`.
@@ -260,7 +261,7 @@ impl<B: Backend> Solver<B> {
         both.0.finish();
         // The analyses would read the backend's answer for the program before the priced columns.
         if grow.priced.cols().len() == 0 {
-            self.ended = solved.as_ref().ok().map(|s| Ending::of(&s.outcome));
+            self.ended = solved.as_ref().ok().map(|s| Ended::of(&s.outcome));
         }
         drop(grow);
         solved.map_err(SolveError::Backend)

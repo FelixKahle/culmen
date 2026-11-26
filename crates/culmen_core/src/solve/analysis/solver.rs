@@ -40,6 +40,25 @@ impl Ending {
     }
 }
 
+/// How the last solve ended, and whether the backend still holds that solve's result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Ended {
+    pub(crate) ending: Ending,
+    /// Whether the backend's state is still that solve's; `false` once a ray asked the backend, which may run its
+    /// solver again to find one. The rays read only `ending` and stay answered.
+    pub(crate) held: bool,
+}
+
+impl Ended {
+    /// A solve that ended with `outcome`, whose result the backend holds.
+    pub(crate) const fn of(outcome: &Outcome) -> Self {
+        Self {
+            ending: Ending::of(outcome),
+            held: true,
+        }
+    }
+}
+
 /// The result of an analysis, or why it was refused.
 type Analyzed<T, B> = Result<T, AnalysisError<<B as Backend>::Error>>;
 
@@ -66,9 +85,10 @@ impl<B: BasisAnalysis> Solver<B> {
     /// # Errors
     ///
     /// [`AnalysisError::Class`] for any program but an LP, [`AnalysisError::Feature`] for several objectives,
-    /// [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::Backend`] when the backend fails.
+    /// [`AnalysisError::NotSolved`] without a solve to read, as after a ray the backend was asked for, which may have
+    /// run it again; [`AnalysisError::Backend`] when the backend fails.
     pub fn basis(&self) -> Analyzed<Option<Basis>, B> {
-        self.solved(Analysis::Basis)?;
+        self.held(Analysis::Basis)?;
         self.backend.basis(&self.program).map_err(AnalysisError::Backend)
     }
 
@@ -115,7 +135,8 @@ impl<B: RayAnalysis> Solver<B> {
     /// [`Unbounded`](Outcome::Unbounded) or [`InfeasibleOrUnbounded`](Outcome::InfeasibleOrUnbounded), or when the
     /// backend finds none.
     ///
-    /// It takes `&mut self` because the backend may run again to find the ray ([`RayAnalysis::primal_ray`]).
+    /// It takes `&mut self` because the backend may run again to find the ray ([`RayAnalysis::primal_ray`]); once it
+    /// was asked, [`Solver::basis`] no longer reads the last solve, and the rays still do.
     ///
     /// # Errors
     ///
@@ -124,6 +145,7 @@ impl<B: RayAnalysis> Solver<B> {
     pub fn primal_ray(&mut self) -> Analyzed<Option<TiVec<Col, f64>>, B> {
         match self.solved(Analysis::Rays)? {
             Ending::Unbounded | Ending::Either => {
+                self.release();
                 self.backend.primal_ray(&self.program).map_err(AnalysisError::Backend)
             }
             Ending::Optimal | Ending::Infeasible | Ending::Other => Ok(None),
@@ -135,7 +157,8 @@ impl<B: RayAnalysis> Solver<B> {
     /// infinite bound met by a zero. `None` unless the last solve ended [`Infeasible`](Outcome::Infeasible) or
     /// [`InfeasibleOrUnbounded`](Outcome::InfeasibleOrUnbounded), or when the backend finds none.
     ///
-    /// It takes `&mut self` because the backend may run again to find the ray ([`RayAnalysis::dual_ray`]).
+    /// It takes `&mut self` because the backend may run again to find the ray ([`RayAnalysis::dual_ray`]); once it
+    /// was asked, [`Solver::basis`] no longer reads the last solve, and the rays still do.
     ///
     /// # Errors
     ///
@@ -143,7 +166,10 @@ impl<B: RayAnalysis> Solver<B> {
     /// [`AnalysisError::NotSolved`] without a solve to read, [`AnalysisError::Backend`] when the backend fails.
     pub fn dual_ray(&mut self) -> Analyzed<Option<TiVec<Row, f64>>, B> {
         match self.solved(Analysis::Rays)? {
-            Ending::Infeasible | Ending::Either => self.backend.dual_ray(&self.program).map_err(AnalysisError::Backend),
+            Ending::Infeasible | Ending::Either => {
+                self.release();
+                self.backend.dual_ray(&self.program).map_err(AnalysisError::Backend)
+            }
             Ending::Optimal | Ending::Unbounded | Ending::Other => Ok(None),
         }
     }
@@ -160,7 +186,7 @@ impl<B: IisAnalysis> Solver<B> {
     /// it reloads after a failed edit.
     pub fn iis(&mut self) -> Analyzed<Option<Iis>, B> {
         self.admit(Analysis::Iis)?;
-        if matches!(self.ended, Some(Ending::Optimal | Ending::Unbounded)) {
+        if matches!(self.ended.map(|e| e.ending), Some(Ending::Optimal | Ending::Unbounded)) {
             return Ok(None);
         }
         self.sync().map_err(AnalysisError::Backend)?;
@@ -212,16 +238,38 @@ impl<B: Backend> Solver<B> {
     /// As [`Solver::admit`], and [`AnalysisError::NotSolved`] without a solve to read.
     fn solved(&self, analysis: Analysis) -> Analyzed<Ending, B> {
         self.admit(analysis)?;
-        self.ended.ok_or(AnalysisError::NotSolved { analysis })
+        self.ended
+            .map(|e| e.ending)
+            .ok_or(AnalysisError::NotSolved { analysis })
     }
 
-    /// Admits `analysis` and checks that the solve it reads ended optimal.
+    /// Admits `analysis`, which reads the backend's state, and returns how the solve it reads ended.
     ///
     /// # Errors
     ///
-    /// As [`Solver::solved`], and [`AnalysisError::NotOptimal`] when it did not end optimal.
+    /// As [`Solver::solved`], and [`AnalysisError::NotSolved`] once a ray was asked of the backend.
+    fn held(&self, analysis: Analysis) -> Analyzed<Ending, B> {
+        self.admit(analysis)?;
+        self.ended
+            .filter(|e| e.held)
+            .map(|e| e.ending)
+            .ok_or(AnalysisError::NotSolved { analysis })
+    }
+
+    /// Records that the backend may no longer hold the last solve's result, as it may run again for a ray.
+    fn release(&mut self) {
+        if let Some(ended) = &mut self.ended {
+            ended.held = false;
+        }
+    }
+
+    /// Admits `analysis`, which reads the backend's state, and checks that the solve it reads ended optimal.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::held`], and [`AnalysisError::NotOptimal`] when it did not end optimal.
     fn optimal(&self, analysis: Analysis) -> Analyzed<(), B> {
-        match self.solved(analysis)? {
+        match self.held(analysis)? {
             Ending::Optimal => Ok(()),
             Ending::Infeasible | Ending::Unbounded | Ending::Either | Ending::Other => {
                 Err(AnalysisError::NotOptimal { analysis })

@@ -211,7 +211,8 @@ only a finite lower bound, `d ≤ 0` with only an upper one, zero with both, for
 and the objective improves along it. `dual_ray()` returns a Farkas certificate of infeasibility: row multipliers `y`
 for which the largest `yᵀAx` over the columns' bounds is below the least `yᵀr` over the rows' bounds. Each is `None`
 unless the last solve ended as it proves (`Unbounded` or `Infeasible`, or `InfeasibleOrUnbounded` for either), or
-when the backend finds none.
+when the backend finds none. A backend may run again to find a ray, so once one was asked of it, `basis()` is refused
+with `AnalysisError::NotSolved` until the next solve.
 
 ```rust
 use culmen::prelude::*;
@@ -326,7 +327,10 @@ strategy, and `Highs_feasibilityRelaxation`. An IIS and a relaxation reset HiGHS
   `HighsError::AnalysisFeature { analysis, feature }`.
 - **A QP without rows has no row duals.** HiGHS is given one free row for such a QP (see
   [Quadratic programs](highs.md#quadratic-programs)); it is not one of the program's rows.
-- **A ray can replace the basis.** To find a ray HiGHS may solve the LP again, without presolve or with zero costs.
+- **A ray ends reading the basis.** To find a ray HiGHS may solve the LP again, without presolve or with zero costs,
+  which replaces the basis of the solve: after presolve proves an LP infeasible HiGHS holds no basis, and after the
+  dual ray it holds the basis of that zero-cost run. So once a ray was asked of the backend, `basis()` is refused with
+  `AnalysisError::NotSolved` until the next solve; the rays themselves still answer.
 
 ## See also
 
