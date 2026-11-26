@@ -187,6 +187,38 @@ impl Tolerances {
     /// When `values` holds fewer values than the program has columns.
     #[must_use]
     pub fn stray(&self, program: &Program, values: &TiSlice<Col, f64>) -> Option<String> {
+        self.stray_col(program, values)
+            .or_else(|| self.stray_row(program, values, false))
+    }
+
+    /// As [`Tolerances::stray`], for a point the solver checked only against its presolved rows, as SCIP checks the
+    /// best solution of a solve that prices.
+    ///
+    /// SCIP holds a row of a solve that prices to `numerics/feastol` (1e-6, relative) only in its transformed problem:
+    /// its check in the original problem skips modifiable rows (`SCIPsolCheckOrig`), and every row of such a solve is
+    /// modifiable. There presolve has replaced each column it fixed or shifted by the constant it stands for
+    /// (`applyFixings` in `cons_linear.c`: a fixed column's value, or the lower bound of an integer column it made
+    /// binary) and moved that constant into the row's sides, leaving the row otherwise unscaled. A side `s` becomes
+    /// `s - k`, the activity moves by the same `k`, and the relative tolerance then allows
+    /// `t / (1 - t) · max(1, |s - k|)`, which can exceed `t / (1 - t) · max(1, |s|)`. So each finite side is loosened
+    /// further by `t / (1 - t) · K`, where `K = Σ |a_j| · m_j` bounds `|k|`, with `m_j` the largest magnitude of
+    /// column `j`'s finite bounds and its value. An absolute tolerance does not change with the side.
+    ///
+    /// # Panics
+    ///
+    /// As [`Tolerances::stray`].
+    #[must_use]
+    pub fn stray_presolved(&self, program: &Program, values: &TiSlice<Col, f64>) -> Option<String> {
+        self.stray_col(program, values)
+            .or_else(|| self.stray_row(program, values, true))
+    }
+
+    /// The first column of `values` that passes its bounds or integrality by more than these tolerances allow.
+    ///
+    /// # Panics
+    ///
+    /// As [`Tolerances::stray`].
+    fn stray_col(&self, program: &Program, values: &TiSlice<Col, f64>) -> Option<String> {
         for (col, column) in program.columns().iter_enumerated() {
             let value = values[col];
             let within = self
@@ -204,12 +236,35 @@ impl Tolerances {
                 return Some(format!("{col:?} at {value} passes {column:?}"));
             }
         }
+        None
+    }
+
+    /// The first row whose activity at `values` passes its sides by more than these tolerances allow, each side
+    /// loosened further as [`Tolerances::stray_presolved`] states when `presolved`.
+    ///
+    /// # Panics
+    ///
+    /// As [`Tolerances::stray`].
+    fn stray_row(&self, program: &Program, values: &TiSlice<Col, f64>, presolved: bool) -> Option<String> {
+        let reach = |col: Col| {
+            let bounds = program.columns()[col].bounds;
+            [bounds.lower(), bounds.upper(), values[col]]
+                .into_iter()
+                .filter(|v| v.is_finite())
+                .fold(0.0, |m: f64, v| m.max(v.abs()))
+        };
         for row in program.rows() {
             let view = program.row(row);
             let size: f64 = view.entries().map(|(col, a)| (a * values[col]).abs()).sum();
+            let moved = if presolved && self.relative {
+                let k: f64 = view.entries().map(|(col, a)| a.abs() * reach(col)).sum();
+                self.feasibility / (1.0 - self.feasibility) * k
+            } else {
+                0.0
+            };
             let activity = view.activity(values);
             if self
-                .widened(view.bounds(), ROUNDING * size.max(1.0))
+                .widened(view.bounds(), ROUNDING * size.max(1.0) + moved)
                 .violation(activity)
                 > 0.0
             {
@@ -300,5 +355,30 @@ mod tests {
         );
         assert!(stray(&[0.5, 0.5]).is_some());
         assert_eq!(tolerances.window(&program, &Reference::Infeasible), None);
+    }
+
+    #[test]
+    fn test_a_presolved_row_is_held_relative_to_its_moved_side() {
+        // 2x + 2y <= 2 with x in [-1, 0] and y in [0, 2]. Presolve fixing x at -1 leaves 2y <= 4, which SCIP holds to
+        // 1e-6 relative to 4: y = 2 + 1.9e-6 puts 2y at 4 + 3.8e-6, within 4e-6, and the row of the program at
+        // 2 + 3.8e-6, beyond its own 2e-6. The presolved check loosens the side by 1e-6 / (1 - 1e-6) times
+        // 2·1 + 2·2 = 6 more, to about 8e-6, and still refuses 2 + 1e-5.
+        let mut m = Model::new();
+        let x = m.add_var(Var::continuous().lower(-1).upper(0));
+        let y = m.add_var(Var::continuous().upper(2));
+        m.add_constraint((2.0 * x + 2.0 * y).leq(2));
+        m.minimize(x);
+        let program = m.build().unwrap();
+        let point = |values: &[f64]| TiSlice::from_ref(values).to_owned();
+        let shifted = point(&[-1.0, 2.0 + 1.9e-6]);
+        assert!(Tolerances::SCIP.stray(&program, &shifted).is_some());
+        assert_eq!(Tolerances::SCIP.stray_presolved(&program, &shifted), None);
+        let beyond = point(&[-1.0 + 5e-6, 2.0]);
+        assert!(Tolerances::SCIP.stray_presolved(&program, &beyond).is_some());
+        let absolute = Tolerances::HIGHS;
+        assert_eq!(
+            absolute.stray(&program, &shifted).is_some(),
+            absolute.stray_presolved(&program, &shifted).is_some()
+        );
     }
 }

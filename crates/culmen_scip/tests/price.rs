@@ -1133,7 +1133,9 @@ fn check_split(
             prop_assert!(window.contains(best.objective), "{}", context);
             prop_assert_eq!(best.values.len(), program.num_cols(), "{}", context);
             // 5: mapped back to the full program, the point meets every row and bound to SCIP's tolerance, and its
-            // objective there is the one the solve reported.
+            // objective there is the one the solve reported. SCIP holds the rows of a solve that prices only in its
+            // presolved problem, where a fixed column's constant has moved into the sides and the relative tolerance
+            // scales with the moved side; two saved seeds pass a row of the program by 2⁻¹⁸ and 2⁻¹⁹ that way.
             let mut point: TiVec<Col, f64> = vec![0.0; full.num_cols()].into();
             for (col, &original) in kept.iter_enumerated() {
                 point[original] = best.values[col];
@@ -1141,7 +1143,7 @@ fn check_split(
             for &(i, col) in &pricer.added {
                 point[withheld[i].0] = best.values[col];
             }
-            let stray = Tolerances::SCIP.stray(full, &point);
+            let stray = Tolerances::SCIP.stray_presolved(full, &point);
             prop_assert!(stray.is_none(), "{:?} {:?}: {}", stray, point, context);
             let objective = full.objective_value(&point);
             prop_assert!(close(objective, best.objective, 1e-9), "{:?}: {}", point, context);

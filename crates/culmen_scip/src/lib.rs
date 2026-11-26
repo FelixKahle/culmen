@@ -62,7 +62,10 @@
 //! (`SCIPcheckSolOrig`) finds that solution feasible in the original problem, to SCIP's feasibility tolerance; when
 //! it does not, as when presolve rewrote a constraint unsoundly, the solve fails with [`ScipError::InfeasibleBest`]
 //! instead. That check skips the rows of a solve that prices, which are modifiable, so such a solve also has SCIP
-//! check the solution against its transformed problem (`SCIPcheckSol`), whose rows hold the priced columns.
+//! check the solution against its transformed problem (`SCIPcheckSol`), whose rows hold the priced columns. There
+//! presolve has moved the constant of each column it fixed or shifted into the row's sides, and the relative
+//! feasibility tolerance (`numerics/feastol`) scales with the moved side; so a priced solve's point may pass a row of
+//! the program by more than the tolerance times that row's own side, up to the tolerance times the side SCIP holds.
 //!
 //! A value beyond what SCIP's parameter takes is refused with [`ScipError::OutOfRange`] before any parameter is set.
 //! SCIP prints the error messages of a call it refuses, such as a parameter it does not know, to standard error
