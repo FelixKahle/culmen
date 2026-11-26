@@ -16,9 +16,9 @@ use std::collections::HashSet;
 use culmen_core::{
     Backend, Bound, Bounds, Col, Combination, Events, ExprPlace, Integrality, Line, Linear, LinearObjective, LoadError,
     LpFileError, Model, ModelClass, ModelClasses, ModelError, Objective, ObjectiveId, Objectives, Outcome, Program,
-    ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Relaxed, Request, Script, Sense,
-    Settings, SolveError, Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Unsupported, Var,
-    Violation, Weight, Weighted, absolute_gap, bounds, relative_gap, weight,
+    ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Relaxed, Script, Sense, Settings,
+    SolveError, Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Unsupported, Var, Violation,
+    Weight, Weighted, absolute_gap, bounds, relative_gap, weight,
 };
 use proptest::prelude::*;
 
@@ -397,7 +397,7 @@ fn test_a_backend_without_a_feature_refuses_it_before_it_sees_it() {
     let mut solver = Solver::new(Plain::default(), plain.build().unwrap()).unwrap();
     assert_eq!(solver.backend().loads, 1);
     assert!(
-        solver.solve(Request::new()).is_ok(),
+        solver.solve().is_ok(),
         "a backend without `Starts` solves, and takes no start"
     );
 }
@@ -407,15 +407,15 @@ fn test_a_start_is_checked_against_the_program_and_handed_over() {
     let (m, x, y) = semi();
     let mut solver = Solver::new(Script::optimal(2.0, vec![2.0, 0.0]), m.build().unwrap()).unwrap();
     let full = TiVec::<Col, f64>::from(vec![2.0, 0.0]);
-    solver.solve_from(Request::new(), full.clone()).unwrap();
-    solver.solve_from(Request::new(), vec![(y, 2.0)]).unwrap();
-    solver.solve(Request::new()).unwrap();
+    solver.run().start(full.clone()).solve().unwrap();
+    solver.run().start(vec![(y, 2.0)]).solve().unwrap();
+    solver.solve().unwrap();
     assert_eq!(
         solver.backend().record.starts,
         [Start::Full(full), Start::Sparse(vec![(y, 2.0)])]
     );
 
-    let refused = |solver: &mut Solver<Script>, start: Start| match solver.solve_from(Request::new(), start) {
+    let refused = |solver: &mut Solver<Script>, start: Start| match solver.run().start(start).solve() {
         Err(SolveError::Start(error)) => error,
         other => panic!("{other:?}"),
     };

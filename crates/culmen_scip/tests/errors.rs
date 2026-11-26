@@ -12,8 +12,8 @@
 use core::num::NonZeroU64;
 
 use culmen_core::{
-    Backend, Bounds, Col, Hooks, Linear, LoadError, Model, Program, ProgramColumn, ProgramFeature, ProgramPlan,
-    Request, Row, Settings, SolveError, Solver, Start, Starts, Var, bounds,
+    Backend, Bounds, Col, Hooks, Linear, LoadError, Model, Program, ProgramColumn, ProgramFeature, ProgramPlan, Row,
+    Settings, SolveError, Solver, Start, Starts, Var, bounds,
 };
 use culmen_scip::{Number, ParamValue, RetCode, Scip, ScipError, ScipOptions};
 
@@ -27,10 +27,7 @@ fn knapsack() -> Program {
 }
 
 fn refusal(scip: Scip, settings: Settings) -> ScipError {
-    match Solver::new(scip, knapsack())
-        .unwrap()
-        .solve(Request::new().settings_from(settings))
-    {
+    match Solver::new(scip, knapsack()).unwrap().run().settings(settings).solve() {
         Err(SolveError::Backend(error)) => error,
         other => panic!("expected a refusal, got {other:?}"),
     }
@@ -100,7 +97,9 @@ fn test_the_largest_values_scips_parameters_take_are_accepted() {
     };
     let solved = Solver::new(Scip::new(), knapsack())
         .unwrap()
-        .solve(Request::new().settings_from(settings))
+        .run()
+        .settings(settings)
+        .solve()
         .unwrap();
     assert_eq!(solved.outcome.objective(), Some(2.0));
 }
@@ -159,7 +158,7 @@ fn test_parameters_of_every_type_are_set() {
         .param("visual/vbcfilename", "-");
     let solved = Solver::new(Scip::with_options(options), knapsack())
         .unwrap()
-        .solve(Request::new())
+        .solve()
         .unwrap();
     assert_eq!(solved.outcome.objective(), Some(2.0));
 }

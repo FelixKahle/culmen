@@ -10,8 +10,8 @@
 )]
 
 use culmen_core::{
-    Col, Integrality, Linear, Model, ModelClass, Outcome, Program, ProgramPlan, Request, Sense, Solution, SolveError,
-    Solver, TiVec, Var,
+    Col, Integrality, Linear, Model, ModelClass, Outcome, Program, ProgramPlan, Sense, Solution, SolveError, Solver,
+    TiVec, Var,
 };
 use culmen_scip::{Scip, ScipError, ScipOptions, Status};
 use culmen_testing::reference::close;
@@ -21,10 +21,7 @@ use proptest::prelude::*;
 
 /// The optimum SCIP finds, which the test expects to exist: feasible, and valued as the program values its point.
 fn optimum(program: &Program) -> Solution {
-    let solved = Solver::new(Scip::new(), program.clone())
-        .unwrap()
-        .solve(Request::new())
-        .unwrap();
+    let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve().unwrap();
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!("expected an optimum, got {solved:?}")
     };
@@ -158,7 +155,7 @@ fn test_a_best_solution_scip_finds_infeasible_in_the_original_problem_is_an_erro
     for sense in [Sense::Minimize, Sense::Maximize] {
         let options = ScipOptions::default().param("constraints/nonlinear/reformbinprods", true);
         let mut solver = Solver::new(Scip::with_options(options), binary_products_miqp(sense)).unwrap();
-        let solved = solver.solve(Request::new());
+        let solved = solver.solve();
         assert!(
             matches!(
                 solved,
@@ -179,10 +176,7 @@ fn test_a_qp_with_conflicting_rows_is_infeasible() {
     m.add_constraint(x.geq(4));
     m.add_constraint(x.leq(3));
     m.minimize(x * x);
-    let solved = Solver::new(Scip::new(), m.build().unwrap())
-        .unwrap()
-        .solve(Request::new())
-        .unwrap();
+    let solved = Solver::new(Scip::new(), m.build().unwrap()).unwrap().solve().unwrap();
     assert!(
         matches!(solved.outcome, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded),
         "{solved:?}"
@@ -247,7 +241,7 @@ proptest! {
         program in small_qp(),
         fractions in prop::collection::vec(prop::collection::vec(0.0..=1.0f64, 4), 8),
     ) {
-        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve(Request::new()).unwrap();
+        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve().unwrap();
         let Outcome::Optimal(best) = solved.outcome else {
             return Err(TestCaseError::fail(format!("{solved:?} on {program:?}")));
         };
@@ -276,7 +270,7 @@ proptest! {
             .filter(|p| program.max_violation(p) == 0.0)
             .map(|p| program.objective_value(&p))
             .reduce(|a, b| if no_worse(sense, a, b, 0.0) { a } else { b });
-        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve(Request::new()).unwrap();
+        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve().unwrap();
         match (expected, &solved.outcome) {
             (None, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => {}
             (Some(want), Outcome::Optimal(best)) => {

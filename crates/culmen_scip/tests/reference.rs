@@ -10,7 +10,7 @@
 )]
 
 use culmen_core::{
-    Backend, Col, Integrality, LoadError, Outcome, Program, ProgramFeature, Request, Settings, Solver, relative_gap,
+    Backend, Col, Integrality, LoadError, Outcome, Program, ProgramFeature, Settings, Solver, relative_gap,
 };
 use culmen_scip::Scip;
 use culmen_testing::reference::{Reference, close, edit_plan, solve};
@@ -19,11 +19,11 @@ use culmen_testing::tolerance::Tolerances;
 use proptest::prelude::*;
 
 /// A solve to a zero gap, so an optimum is the optimum.
-fn exact() -> Request<'static> {
-    Request::new().settings_from(Settings {
+fn exact() -> Settings {
+    Settings {
         relative_gap: Some(relative_gap!(0.0)),
         ..Settings::new()
-    })
+    }
 }
 
 /// Whether SCIP's outcome is the exact reference's: infeasible alike, or an optimum in the window SCIP's tolerances
@@ -82,7 +82,7 @@ proptest! {
     fn test_scip_agrees_with_exact_enumeration(program in small_lp()) {
         let expected = solve(&program);
         let mut solver = Solver::new(Scip::new(), program.clone()).unwrap();
-        let solved = solver.solve(exact()).unwrap();
+        let solved = solver.run().settings(exact()).solve().unwrap();
         agrees(&program, &expected, &solved.outcome)?;
     }
 }
@@ -99,10 +99,10 @@ proptest! {
     ) {
         let expected = solve(&program);
         let mut solver = Solver::new(Scip::new(), program.clone()).unwrap();
-        let first = solver.solve(exact()).unwrap().outcome;
+        let first = solver.run().settings(exact()).solve().unwrap().outcome;
         agrees(&program, &expected, &first)?;
         if let Some(best) = first.solution() {
-            let again = solver.solve_from(exact(), best.values.clone()).unwrap();
+            let again = solver.run().settings(exact()).start(best.values.clone()).solve().unwrap();
             agrees(&program, &expected, &again.outcome)?;
         }
         let mut sparse: Vec<(Col, f64)> = Vec::new();
@@ -111,7 +111,7 @@ proptest! {
                 sparse.push((Col::new(j), f64::from(value)));
             }
         }
-        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve_from(exact(), sparse).unwrap();
+        let solved = Solver::new(Scip::new(), program.clone()).unwrap().run().settings(exact()).start(sparse).solve().unwrap();
         agrees(&program, &expected, &solved.outcome)?;
     }
 
@@ -147,7 +147,7 @@ proptest! {
             }
             if let Some(expected) = enumerable(solver.program()) {
                 let program = solver.program().clone();
-                let solved = solver.solve(exact()).unwrap();
+                let solved = solver.run().settings(exact()).solve().unwrap();
                 agrees(&program, &expected, &solved.outcome)?;
             }
         }

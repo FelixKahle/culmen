@@ -19,8 +19,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use culmen_core::{
     Backend, Bounds, Col, Constraint, EditError, Events, Integrality, InvalidBounds, LinExpr, Linear, Model,
     ModelClass, ModelClasses, NewCol, NewRow, Outcome, Program, ProgramColumn, ProgramFeature, ProgramFeatures,
-    ProgramPlan, ProgramRow, Request, Row, Script, ScriptError, Sense, Settings, SolveError, Solved, Solver, Term,
-    Unsupported, Var, bounds,
+    ProgramPlan, ProgramRow, Row, Script, ScriptError, Sense, Settings, SolveError, Solved, Solver, Term, Unsupported,
+    Var, bounds,
 };
 use culmen_testing::mirror::{Call, Edited, Faults, Mirror, MirrorError};
 use culmen_testing::op::{Applied, EditOp};
@@ -735,7 +735,7 @@ fn test_a_failed_restore_is_made_good_before_the_next_solve() {
     );
     assert_eq!(solver.program(), &program);
     assert_eq!(solver.backend().held(), None);
-    solver.solve(Request::new()).unwrap();
+    solver.solve().unwrap();
     assert_eq!(last_call(&solver), &Call::Load(program));
     assert_in_sync(&solver);
 }
@@ -751,10 +751,10 @@ fn test_a_reload_that_fails_again_fails_the_next_solve_and_a_later_one_reloads()
     };
     assert!(solver.set_col_costs([(x, 9.0)]).is_err());
     assert!(matches!(
-        solver.solve(Request::new()),
+        solver.solve(),
         Err(SolveError::Backend(MirrorError::Injected))
     ));
-    solver.solve(Request::new()).unwrap();
+    solver.solve().unwrap();
     assert_eq!(solver.program(), &program);
     assert_in_sync(&solver);
 }
@@ -815,7 +815,7 @@ fn test_a_panicking_edit_leaves_the_solver_to_reload_before_its_next_solve() {
         &Call::Edit(Edited::ColCosts(vec![x]), tried.build().unwrap()),
         "the panic came from the backend"
     );
-    solver.solve(Request::new()).unwrap();
+    solver.solve().unwrap();
     assert_eq!(last_call(&solver), &Call::Load(solver.program().clone()));
     assert_in_sync(&solver);
 }
@@ -932,7 +932,7 @@ proptest! {
                     prop_assert_eq!(solver.program(), &before);
                 }
             }
-            solver.solve(Request::new()).unwrap();
+            solver.solve().unwrap();
             prop_assert_eq!(solver.backend().held(), Some(solver.program()));
             solver.backend_mut().faults = Faults::default();
         }

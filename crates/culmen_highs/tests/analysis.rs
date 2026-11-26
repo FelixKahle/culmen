@@ -13,8 +13,7 @@ use std::collections::BTreeMap;
 
 use culmen_core::{
     Analysis, AnalysisError, Basis, BasisStatus, Bound, Bounds, Col, Iis, Line, Linear, Misfit, Model, ModelClass,
-    Outcome, Program, ProgramPlan, Request, Row, Sense, Settings, Side, Solver, Table, TiVec, Var, Violation, Weights,
-    penalty,
+    Outcome, Program, ProgramPlan, Row, Sense, Settings, Side, Solver, Table, TiVec, Var, Violation, Weights, penalty,
 };
 use culmen_highs::{Highs, HighsStatus};
 use culmen_testing::reference::{close, solve};
@@ -35,7 +34,7 @@ fn assert_all_near(got: &[f64], want: &[f64]) {
 /// A solver on `program` after one solve, and that solve's status.
 fn solved(program: &Program) -> (Solver<Highs>, Outcome, HighsStatus) {
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     (solver, solved.outcome, solved.status)
 }
 
@@ -162,13 +161,13 @@ fn test_an_optimal_basis_warm_starts_a_fresh_solver_without_iterations() {
         ..Settings::new()
     };
     let mut cold = Solver::new(Highs::new(), program.clone()).unwrap();
-    let first = cold.solve(Request::new().settings_from(no_presolve.clone())).unwrap();
+    let first = cold.run().settings(no_presolve.clone()).solve().unwrap();
     assert!(first.status.simplex_iterations > 0, "{:?}", first.status);
     let basis = cold.basis().unwrap().unwrap();
 
     let mut warm = Solver::new(Highs::new(), program).unwrap();
     warm.set_basis(&basis).unwrap();
-    let second = warm.solve(Request::new().settings_from(no_presolve)).unwrap();
+    let second = warm.run().settings(no_presolve).solve().unwrap();
     assert_eq!(second.status.simplex_iterations, 0, "{:?}", second.status);
     let objective = |o: &Outcome| o.solution().unwrap().objective;
     assert!(near(objective(&second.outcome), objective(&first.outcome)));
@@ -380,7 +379,7 @@ fn test_a_dual_ray_is_a_farkas_certificate() {
             presolve: Some(presolve),
             ..Settings::new()
         };
-        let solved = solver.solve(Request::new().settings_from(settings)).unwrap();
+        let solved = solver.run().settings(settings).solve().unwrap();
         assert!(matches!(solved.outcome, Outcome::Infeasible), "{solved:?}");
         let ray = solver.dual_ray().unwrap().expect("a certificate");
         assert!(is_farkas(&program, &ray), "{sense:?}, presolve {presolve}: {ray:?}");
@@ -400,7 +399,7 @@ fn test_a_ray_that_may_run_highs_again_leaves_no_basis_of_another_run_to_read() 
             presolve: Some(presolve),
             ..Settings::new()
         };
-        let solved = solver.solve(Request::new().settings_from(settings)).unwrap();
+        let solved = solver.run().settings(settings).solve().unwrap();
         assert!(matches!(solved.outcome, Outcome::Infeasible), "{solved:?}");
         let before = solver.basis();
         let ray = solver.dual_ray().unwrap().expect("a certificate");
@@ -705,7 +704,7 @@ fn test_a_solve_after_a_relaxation_solves_the_program_again() {
             analysis: Analysis::Duals
         })
     ));
-    let again = solver.solve(Request::new()).unwrap();
+    let again = solver.solve().unwrap();
     assert!(near(again.outcome.solution().unwrap().objective, -11.0));
     assert!(near(solver.duals().unwrap().rows[Row::new(0)], -2.0));
 }

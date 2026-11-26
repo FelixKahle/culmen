@@ -16,9 +16,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use culmen_core::{
     ActionError, Analysis, AnalysisError, Backend, Bounds, Callback, Col, Context, Duals, Events, Found, Hooks,
     Integrality, LazyContext, LazyHandler, Linear, ModelClass, ModelClasses, NewCol, Outcome, Phase, PollContext,
-    PriceContext, PriceMode, Priced, Pricer, Prices, Program, ProgramColumn, ProgramPlan, Progress, Request, Row,
-    Script, ScriptError, ScriptPrice, Sense, Settings, Solution, Solved, Solver, Step, StopReason, TiSlice, TiVec,
-    Unsupported, bounds,
+    PriceContext, PriceMode, Priced, Pricer, Prices, Program, ProgramColumn, ProgramPlan, Progress, Row, Script,
+    ScriptError, ScriptPrice, Sense, Settings, Solution, Solved, Solver, Step, StopReason, TiSlice, TiVec, Unsupported,
+    bounds,
 };
 use culmen_testing::mirror::{Call, Mirror};
 
@@ -184,9 +184,7 @@ fn test_fixture_one_prices_pattern_b_and_nothing_after_it() {
     let end = optimum(4.5, [1.0, 0.0, 1.5, 2.0]);
     let mut solver = Solver::new(Script::new(steps, end), program).unwrap();
     let mut pricer = Watching::new(patterns, 3..11, false);
-    let solved = solver
-        .solve_with(Request::new(), Hooks::new().register_pricer(&mut pricer))
-        .unwrap();
+    let solved = solver.run().pricer(&mut pricer).solve().unwrap();
 
     // Round 1: the hand-worked reduced costs; only B improves, E sits on the boundary and does not.
     let first = [
@@ -275,9 +273,7 @@ fn test_fixture_two_prices_by_farkas_then_by_the_maximizing_sign() {
     let end = optimum(14.0, [0.0, 0.0, 2.0]);
     let mut solver = Solver::new(Script::new(steps, end), program).unwrap();
     let mut pricer = Watching::new(columns, [1, 2], true);
-    solver
-        .solve_with(Request::new(), Hooks::new().register_pricer(&mut pricer))
-        .unwrap();
+    solver.run().pricer(&mut pricer).solve().unwrap();
 
     // Farkas: the cost counts as zero, so x2 prices at -f0 = 0.2 and does not help; x1 at -0.8 and x3 at -0.6 do.
     assert_eq!(pricer.rounds[0].0, PriceMode::Farkas);
@@ -346,9 +342,7 @@ fn test_a_priced_column_continues_the_numbering_and_is_kept_as_checked() {
     let steps = vec![price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0])];
     let mut solver = Solver::new(Script::new(steps, optimum(1.0, [1.0, 0.0, 0.0])), program).unwrap();
     let mut adds = Adds::of([given.clone()]);
-    solver
-        .solve_with(Request::new(), Hooks::new().register_pricer(&mut adds))
-        .unwrap();
+    solver.run().pricer(&mut adds).solve().unwrap();
 
     assert_eq!(adds.results, [Ok(Col::new(n))]);
     let program = solver.program();
@@ -383,9 +377,7 @@ fn test_a_refused_column_names_its_fault_and_takes_no_id() {
     let steps = vec![price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0])];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
     let mut adds = Adds::of(columns);
-    solver
-        .solve_with(Request::new(), Hooks::new().register_pricer(&mut adds))
-        .unwrap();
+    solver.run().pricer(&mut adds).solve().unwrap();
     assert_eq!(
         adds.results,
         [
@@ -479,8 +471,7 @@ fn test_an_event_after_pricing_counts_the_priced_columns() {
         col: Col::new(n),
         results: Vec::new(),
     };
-    let hooks = Hooks::new().register_pricer(&mut pricer).register_lazy(&mut lazy);
-    solver.solve_with(Request::new(), hooks).unwrap();
+    solver.run().pricer(&mut pricer).lazy(&mut lazy).solve().unwrap();
     assert_eq!(pricer.0, [Col::new(n)]);
     assert_eq!(
         lazy.results,
@@ -505,9 +496,7 @@ fn test_a_panic_after_pricing_keeps_the_column_and_the_next_solve_loads_it() {
     let steps = vec![price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0])];
     let script = Script::new(steps, optimum(1.0, [1.0, 0.0, 0.0]));
     let mut solver = Solver::new(Mirror::new(script), program).unwrap();
-    let unwound = catch_unwind(AssertUnwindSafe(|| {
-        solver.solve_with(Request::new(), Hooks::new().register_pricer(&mut AddThenPanic))
-    }));
+    let unwound = catch_unwind(AssertUnwindSafe(|| solver.run().pricer(&mut AddThenPanic).solve()));
     assert!(unwound.is_err());
     assert_eq!(solver.program().num_cols(), n + 1);
     assert_eq!(
@@ -515,7 +504,7 @@ fn test_a_panic_after_pricing_keeps_the_column_and_the_next_solve_loads_it() {
         Some((Col::new(n), 1.0))
     );
 
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     assert_eq!(solved.outcome, optimum(1.0, [1.0, 0.0, 0.0]));
     let Some(Call::Load(loaded)) = solver.backend().calls.last() else {
         panic!(
@@ -550,10 +539,12 @@ fn test_an_interrupt_after_pricing_stops_the_solve_and_keeps_the_columns() {
     ];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
     let (mut pricer, mut interrupt) = (AddOne::default(), Interrupt);
-    let hooks = Hooks::new()
-        .register_pricer(&mut pricer)
-        .register_callback(&mut interrupt);
-    let solved = solver.solve_with(Request::new(), hooks).unwrap();
+    let solved = solver
+        .run()
+        .pricer(&mut pricer)
+        .callback(&mut interrupt)
+        .solve()
+        .unwrap();
     assert!(matches!(
         solved.outcome,
         Outcome::Stopped {
@@ -573,9 +564,7 @@ fn test_a_pair_prices_in_one_context_the_first_callback_first() {
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
     let mut a = Adds::of([column(1.0, &[(Row::new(0), 1.0)])]);
     let mut b = Adds::of([column(2.0, &[(Row::new(0), 1.0)])]);
-    solver
-        .solve_with(Request::new(), Hooks::new().register_pricer(&mut (&mut a, &mut b)))
-        .unwrap();
+    solver.run().pricer(&mut (&mut a, &mut b)).solve().unwrap();
     assert_eq!(a.results, [Ok(Col::new(n))]);
     assert_eq!(b.results, [Ok(Col::new(n + 1))]);
     let program = solver.program();
@@ -614,9 +603,7 @@ fn test_a_bound_and_an_early_stop_are_recorded_and_farkas_takes_no_bound() {
     ];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
     let mut bounding = Bounding::default();
-    solver
-        .solve_with(Request::new(), Hooks::new().register_pricer(&mut bounding))
-        .unwrap();
+    solver.run().pricer(&mut bounding).solve().unwrap();
     assert!(
         matches!(bounding.0[0], Err(ActionError::Refused(_))),
         "{:?}",
@@ -655,9 +642,7 @@ fn test_a_price_step_reaches_only_a_registered_pricer_and_never_a_callback_askin
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), small()).unwrap();
     let mut callback = EveryEvent(0);
     assert_eq!(Callback::<Script>::events(&callback), Events::ALL);
-    solver
-        .solve_with(Request::new(), Hooks::new().register_callback(&mut callback))
-        .unwrap();
+    solver.run().callback(&mut callback).solve().unwrap();
     assert_eq!(callback.0, 1);
     assert!(solver.backend().record.priced.is_empty());
     assert_eq!(solver.program().num_cols(), 2);
@@ -769,14 +754,10 @@ fn test_analyses_after_a_solve_that_priced_find_no_solve_to_read() {
         num_cols: 0,
     };
     let mut solver = Solver::new(backend, small()).unwrap();
-    solver
-        .solve_with(Request::new(), Hooks::new().register_pricer(&mut Idle))
-        .unwrap();
+    solver.run().pricer(&mut Idle).solve().unwrap();
     assert!(solver.duals().is_ok(), "a solve that priced nothing is read as before");
     solver.backend_mut().prices = true;
-    solver
-        .solve_with(Request::new(), Hooks::new().register_pricer(&mut Idle))
-        .unwrap();
+    solver.run().pricer(&mut Idle).solve().unwrap();
     assert_eq!(solver.program().num_cols(), 3);
     assert_eq!(
         solver.duals(),
@@ -785,7 +766,7 @@ fn test_analyses_after_a_solve_that_priced_find_no_solve_to_read() {
         })
     );
     solver.backend_mut().prices = false;
-    solver.solve(Request::new()).unwrap();
+    solver.solve().unwrap();
     assert!(
         solver.duals().is_ok(),
         "the next solve that prices nothing is read again"
@@ -848,9 +829,7 @@ fn test_the_script_price_context_reads_back_its_step() {
     let steps = vec![price(PriceMode::ReducedCost { objective: 12.0 }, [3.0, 0.0])];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
     let mut reads = Reads::default();
-    solver
-        .solve_with(Request::new(), Hooks::new().register_pricer(&mut reads))
-        .unwrap();
+    solver.run().pricer(&mut reads).solve().unwrap();
     assert_eq!(
         reads.0,
         [(
@@ -926,9 +905,7 @@ fn test_improves_reads_the_reduced_cost_by_the_bounds_the_sense_and_the_mode() {
         let steps = vec![price(mode, [2.0])];
         let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), plan.build().unwrap()).unwrap();
         let mut judge = Judge(cases.to_vec(), Vec::new());
-        solver
-            .solve_with(Request::new(), Hooks::new().register_pricer(&mut judge))
-            .unwrap();
+        solver.run().pricer(&mut judge).solve().unwrap();
         let want: Vec<bool> = cases.iter().map(|&(.., improves)| improves).collect();
         assert_eq!(judge.1, want, "{sense:?} {mode:?}");
     }
@@ -943,17 +920,8 @@ fn test_a_backend_driven_directly_prices_into_the_sink_it_is_given() {
     script.load(&program).unwrap();
     let mut priced = Priced::new(&program, Script::CLASSES);
     let mut pricer = AddOne::default();
-    let hooks = Hooks::new().register_pricer(&mut pricer).sink(&mut priced);
+    let hooks = Hooks::new().register_pricer(&mut pricer, &mut priced);
     script.solve(&Settings::new(), hooks).unwrap();
     assert_eq!(pricer.0, [Col::new(n)]);
     assert_eq!(priced.num_cols(), n + 1);
-}
-
-#[test]
-#[should_panic(expected = "a pricer is registered without a sink")]
-fn test_a_pricer_without_a_sink_panics_when_the_backend_takes_the_sink() {
-    let program = small();
-    let mut script = Script::new([], Outcome::Infeasible);
-    script.load(&program).unwrap();
-    let _ = script.solve(&Settings::new(), Hooks::new().register_pricer(&mut Idle));
 }

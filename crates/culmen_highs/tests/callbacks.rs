@@ -16,9 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use culmen_core::{
-    ActionError, Backend, Callback, Col, Context, Events, HeuristicContext, HeuristicHandler, Heuristics, Hooks,
-    Improvement, LinExpr, Linear, LogLine, Model, Observer, Outcome, Phase, PollContext, Program, Progress, Request,
-    Settings, Solution, SolutionContext, SolveError, Solved, Solver, StopReason, TiVec, Var, relative_gap,
+    ActionError, Backend, Callback, Col, Context, Events, HeuristicContext, HeuristicHandler, Heuristics, Improvement,
+    LinExpr, Linear, LogLine, Model, Observer, Outcome, Phase, PollContext, Program, Progress, Settings, Solution,
+    SolutionContext, SolveError, Solved, Solver, StopReason, TiVec, Var, relative_gap,
 };
 use culmen_highs::{
     Highs, HighsError, HighsNative, HighsOptions, HighsStatus, LpSolver, PollSource, QueryOrigin, Switch,
@@ -66,7 +66,7 @@ fn test_log_lines_reach_the_observer_and_stdout_stays_quiet() {
     if std::env::var_os("CULMEN_LOG_CHILD").is_some() {
         let mut seen = Seen::default();
         let mut solver = Solver::new(Highs::new(), knapsack().0).unwrap();
-        solver.solve(Request::new().observer(&mut seen)).unwrap();
+        solver.run().observer(&mut seen).solve().unwrap();
         assert!(
             seen.lines.iter().any(|l| l.starts_with("Solving report")),
             "{:?}",
@@ -102,7 +102,10 @@ fn test_improving_solutions_arrive_feasible_and_improving() {
     let mut seen = Seen::default();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let solved = solver
-        .solve(Request::new().time_limit(Duration::from_secs(20)).observer(&mut seen))
+        .run()
+        .time_limit(Duration::from_secs(20))
+        .observer(&mut seen)
+        .solve()
         .unwrap();
     assert!(!seen.improved.is_empty());
     for (objective, values) in &seen.improved {
@@ -121,11 +124,13 @@ fn test_improving_solutions_arrive_feasible_and_improving() {
 fn test_progress_arrives_about_once_per_interval() {
     let mut seen = Seen::default();
     let mut solver = Solver::new(Highs::new(), hard()).unwrap();
-    let request = Request::new()
+    let solved = solver
+        .run()
         .time_limit(Duration::from_secs(3))
         .progress_interval(Duration::from_millis(500))
-        .observer(&mut seen);
-    let solved = solver.solve(request).unwrap();
+        .observer(&mut seen)
+        .solve()
+        .unwrap();
     assert!(matches!(
         solved.outcome,
         Outcome::Stopped {
@@ -160,7 +165,10 @@ fn test_stop_request_ends_a_hard_mip_early_with_its_incumbent() {
     });
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let solved = solver
-        .solve(Request::new().time_limit(Duration::from_secs(30)).stop(&stop))
+        .run()
+        .time_limit(Duration::from_secs(30))
+        .stop(&stop)
+        .solve()
         .unwrap();
     timer.join().unwrap();
     // Interrupted, not at the time limit: the stop ended it.
@@ -187,9 +195,7 @@ fn test_stop_request_ends_a_hard_mip_early_with_its_incumbent() {
 #[test]
 fn test_time_limit_stops_with_the_incumbent() {
     let mut solver = Solver::new(Highs::new(), hard()).unwrap();
-    let solved = solver
-        .solve(Request::new().time_limit(Duration::from_millis(800)))
-        .unwrap();
+    let solved = solver.run().time_limit(Duration::from_millis(800)).solve().unwrap();
     // HiGHS checks its clock between nodes, so a loaded runner may overrun the limit by a node or two.
     assert!(solved.elapsed < Duration::from_secs(10), "{:?}", solved.elapsed);
     assert!(matches!(
@@ -201,9 +207,7 @@ fn test_time_limit_stops_with_the_incumbent() {
         }
     ));
     // The clock restarts with every solve: a second solve gets its own limit.
-    let solved = solver
-        .solve(Request::new().time_limit(Duration::from_millis(800)))
-        .unwrap();
+    let solved = solver.run().time_limit(Duration::from_millis(800)).solve().unwrap();
     assert!(
         solved.elapsed >= Duration::from_millis(700),
         "the second solve ran {:?}",
@@ -214,13 +218,15 @@ fn test_time_limit_stops_with_the_incumbent() {
 #[test]
 fn test_wide_gap_ends_as_gap_reached() {
     let mut solver = Solver::new(Highs::new(), hard()).unwrap();
-    let request = Request::new()
-        .settings_from(Settings {
+    let solved = solver
+        .run()
+        .settings(Settings {
             relative_gap: Some(relative_gap!(0.5)),
             ..Settings::new()
         })
-        .time_limit(Duration::from_secs(30));
-    let solved = solver.solve(request).unwrap();
+        .time_limit(Duration::from_secs(30))
+        .solve()
+        .unwrap();
     let Outcome::GapReached { solution, bound } = solved.outcome else {
         panic!("expected the gap to be reached, got {:?}", solved.outcome);
     };
@@ -241,12 +247,10 @@ impl Observer for Panicking {
 fn test_a_panicking_observer_panics_out_of_solve_and_leaves_highs_usable() {
     let (program, take) = knapsack();
     let mut solver = Solver::new(Highs::new(), program).unwrap();
-    let caught = catch_unwind(AssertUnwindSafe(|| {
-        solver.solve(Request::new().observer(&mut Panicking))
-    }));
+    let caught = catch_unwind(AssertUnwindSafe(|| solver.run().observer(&mut Panicking).solve()));
     let payload = caught.expect_err("the panic propagates");
     assert_eq!(payload.downcast_ref::<&str>(), Some(&"observer failed"));
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     let Outcome::Optimal(best) = solved.outcome else {
         panic!("{:?}", solved.outcome)
     };
@@ -330,18 +334,20 @@ impl HeuristicHandler<Highs> for Shared<'_> {
     }
 }
 
-/// Solves with `kinds` as the callback and the heuristic handler.
+/// Solves under `settings` with `kinds` as the callback and the heuristic handler.
 fn solve_kinds(
     solver: &mut Solver<Highs>,
-    request: Request<'_>,
+    settings: Settings,
     kinds: &mut Kinds,
 ) -> Result<Solved<HighsStatus>, SolveError<HighsError>> {
     let shared = Mutex::new(core::mem::take(kinds));
     let (mut callback, mut heuristic) = (Shared(&shared), Shared(&shared));
-    let hooks = Hooks::new()
-        .register_callback(&mut callback)
-        .register_heuristic(&mut heuristic);
-    let solved = solver.solve_with(request, hooks);
+    let solved = solver
+        .run()
+        .settings(settings)
+        .callback(&mut callback)
+        .heuristic(&mut heuristic)
+        .solve();
     *kinds = shared.into_inner().unwrap();
     solved
 }
@@ -383,7 +389,7 @@ fn test_simplex_poll_interrupts_an_lp() {
         interrupt_at_first_poll: true,
         ..Kinds::default()
     };
-    let solved = solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
+    let solved = solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
     assert!(
         matches!(kinds.polls[0], PollSource::Simplex { .. }),
         "{:?}",
@@ -412,7 +418,7 @@ fn test_ipm_poll_interrupts_an_lp() {
         interrupt_at_first_poll: true,
         ..Kinds::default()
     };
-    let solved = solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
+    let solved = solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
     assert!(
         kinds.polls.iter().any(|p| matches!(p, PollSource::Ipm { .. })),
         "{:?}",
@@ -438,7 +444,10 @@ fn test_mip_kinds_fire_progress_solutions_queries_and_cut_pool() {
     let mut kinds = Kinds::default();
     let solved = solve_kinds(
         &mut solver,
-        Request::new().time_limit(Duration::from_secs(20)),
+        Settings {
+            time_limit: Some(Duration::from_secs(20)),
+            ..Settings::new()
+        },
         &mut kinds,
     )
     .unwrap();
@@ -470,7 +479,7 @@ fn test_a_supplied_solution_becomes_the_first_incumbent() {
     // HiGHS finds the optimum once; a second solve is handed it at the first query.
     let optimum = Solver::new(Highs::new(), program.clone())
         .unwrap()
-        .solve(Request::new())
+        .solve()
         .unwrap()
         .outcome;
     let Outcome::Optimal(Solution { objective, values }) = optimum else {
@@ -485,7 +494,7 @@ fn test_a_supplied_solution_becomes_the_first_incumbent() {
         supply: Some(values.raw.clone()),
         ..Kinds::default()
     };
-    let solved = solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
+    let solved = solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
     assert_eq!(kinds.supplied, [Ok(())]);
     assert_eq!(
         kinds.incumbents.first().copied(),
@@ -510,7 +519,7 @@ fn test_a_partial_solution_is_repaired_into_an_incumbent() {
         supply_partial: vec![partial],
         ..Kinds::default()
     };
-    solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
+    solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
     assert_eq!(kinds.supplied, [Ok(())]);
     let first = *kinds.incumbents.first().unwrap();
     assert!(
@@ -540,7 +549,7 @@ fn test_partial_solutions_highs_ignores_are_refused_even_after_one_it_repaired()
         ],
         ..Kinds::default()
     };
-    solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
+    solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
     let refused = |reason: &str| Err(ActionError::Refused(reason.to_owned()));
     let infeasible = "HiGHS refused the entries: a value lies outside its column's bounds or integrality";
     assert_eq!(
@@ -569,7 +578,7 @@ fn test_a_partial_solution_without_a_completion_keeps_the_solution_supplied_befo
     };
     let solve = |mut kinds: Kinds| {
         let mut solver = Solver::new(Highs::with_options(options.clone()), program.clone()).unwrap();
-        solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
+        solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
         (kinds.supplied, kinds.incumbents.first().copied())
     };
     let optimum = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
@@ -601,7 +610,7 @@ fn test_a_wrong_solution_is_refused_before_highs_sees_it() {
         supply: Some(vec![1.0; 3]),
         ..Kinds::default()
     };
-    solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
+    solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
     assert_eq!(
         kinds.supplied,
         [Err(culmen_core::ActionError::Length { expected: 6, found: 3 })]
@@ -623,9 +632,7 @@ impl Callback<Highs> for Nothing {
 #[test]
 fn test_events_not_asked_for_are_not_delivered() {
     let mut solver = Solver::new(Highs::new(), knapsack().0).unwrap();
-    let solved = solver
-        .solve_with(Request::new(), Hooks::new().register_callback(&mut Nothing))
-        .unwrap();
+    let solved = solver.run().callback(&mut Nothing).solve().unwrap();
     assert!(matches!(solved.outcome, Outcome::Optimal(_)));
 }
 
@@ -650,10 +657,10 @@ fn test_poll_context_reports_mip_progress_in_generic_terms() {
     let mut solver = Solver::new(Highs::new(), hard()).unwrap();
     let mut first = FirstMipPoll(None);
     let solved = solver
-        .solve_with(
-            Request::new().time_limit(Duration::from_secs(30)),
-            Hooks::new().register_callback(&mut first),
-        )
+        .run()
+        .time_limit(Duration::from_secs(30))
+        .callback(&mut first)
+        .solve()
         .unwrap();
     let progress = first.0.unwrap();
     assert_eq!(progress.phase, Phase::Mip);
@@ -675,15 +682,14 @@ fn test_offset_reaches_every_reported_objective_and_bound() {
     let solve = |program: Program, seen: &mut Seen| {
         Solver::new(Highs::new(), program)
             .unwrap()
-            .solve(
-                Request::new()
-                    .settings_from(Settings {
-                        relative_gap: Some(relative_gap!(0.0)),
-                        ..Settings::new()
-                    })
-                    .observer(seen)
-                    .progress_interval(Duration::ZERO),
-            )
+            .run()
+            .settings(Settings {
+                relative_gap: Some(relative_gap!(0.0)),
+                ..Settings::new()
+            })
+            .observer(seen)
+            .progress_interval(Duration::ZERO)
+            .solve()
             .unwrap()
     };
     let (mut a, mut b) = (Seen::default(), Seen::default());
@@ -710,7 +716,10 @@ fn test_maximization_bounds_lie_above_the_incumbent() {
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
     let mut seen = Seen::default();
     solver
-        .solve(Request::new().observer(&mut seen).progress_interval(Duration::ZERO))
+        .run()
+        .observer(&mut seen)
+        .progress_interval(Duration::ZERO)
+        .solve()
         .unwrap();
     for p in &seen.progress {
         if let (Some(objective), Some(bound)) = (p.objective, p.bound) {
@@ -733,7 +742,7 @@ impl Callback<Highs> for Nested {
         if self.inner.is_none() && matches!(ctx.source(), PollSource::Mip(_)) {
             let mut seen = Seen::default();
             let mut solver = Solver::new(Highs::new(), knapsack().0).unwrap();
-            solver.solve(Request::new().observer(&mut seen)).unwrap();
+            solver.run().observer(&mut seen).solve().unwrap();
             self.inner = Some(seen);
             ctx.interrupt();
         }
@@ -744,9 +753,7 @@ impl Callback<Highs> for Nested {
 fn test_a_solve_nested_in_a_callback_gets_its_own_callbacks() {
     let mut solver = Solver::new(Highs::new(), assignment(30, 12, 7, 0.0).program).unwrap();
     let mut nested = Nested::default();
-    let solved = solver
-        .solve_with(Request::new(), Hooks::new().register_callback(&mut nested))
-        .unwrap();
+    let solved = solver.run().callback(&mut nested).solve().unwrap();
     let inner = nested.inner.unwrap();
     assert!(
         !inner.improved.is_empty() && !inner.lines.is_empty(),

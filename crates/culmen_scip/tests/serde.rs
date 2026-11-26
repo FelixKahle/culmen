@@ -11,7 +11,7 @@
 
 use core::fmt::Debug;
 
-use culmen_core::{Linear, Model, Request, Solver, Var};
+use culmen_core::{Linear, Model, Solver, Var};
 use culmen_scip::{Emphasis, ParamValue, RetCode, Scip, ScipOptions, ScipStatus, Status, Version};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -77,10 +77,7 @@ fn test_a_solved_knapsack_round_trips() {
     let y = m.add_var(Var::binary());
     m.add_constraint((2.0 * x + 3.0 * y).leq(4.0));
     m.maximize(x + 2.0 * y);
-    let solved = Solver::new(Scip::new(), m.build().unwrap())
-        .unwrap()
-        .solve(Request::new())
-        .unwrap();
+    let solved = Solver::new(Scip::new(), m.build().unwrap()).unwrap().solve().unwrap();
     round_trip(&solved.status);
     round_trip(&solved);
 }

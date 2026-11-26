@@ -12,8 +12,8 @@
 
 use culmen_core::{
     Analysis, AnalysisError, Backend, Bounds, Col, EditError, Integrality, LinExpr, Linear, Model, ModelClass, NewCol,
-    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Request, Settings, Solution, SolveError, Solver, Var,
-    bounds, relative_gap,
+    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Settings, Solution, SolveError, Solver, Var, bounds,
+    relative_gap,
 };
 use culmen_highs::{Highs, HighsError, HighsOptions, Switch};
 use culmen_testing::instances::assignment;
@@ -29,9 +29,7 @@ fn try_solve_exactly<B: Backend>(solver: &mut Solver<B>) -> Result<Outcome, Solv
         relative_gap: Some(relative_gap!(0.0)),
         ..Settings::new()
     };
-    solver
-        .solve(Request::new().settings_from(exact))
-        .map(|solved| solved.outcome)
+    solver.run().settings(exact).solve().map(|solved| solved.outcome)
 }
 
 /// Solves with a relative gap of zero and returns the outcome.
@@ -283,7 +281,7 @@ fn relaxed_assignment() -> (Program, HighsOptions) {
 
 /// The simplex iterations and solution of an optimal solve.
 fn iterations_and_solution(solver: &mut Solver<Highs>) -> (u64, Solution) {
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!("expected an optimum, got {:?}", solved.outcome)
     };

@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use culmen_core::{
     Backend, Bounds, Col, Context, Events, LinExpr, Linear, LoadError, Model, ModelClass, Outcome, Phase, PollContext,
-    Program, ProgramColumn, ProgramPlan, Progress, QuadExpr, Request, Sense, Solution, SolutionContext, SolveError,
-    Solved, Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
+    Program, ProgramColumn, ProgramPlan, Progress, QuadExpr, Sense, Solution, SolutionContext, SolveError, Solved,
+    Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
 };
 use culmen_highs::{Highs, HighsError, HighsOptions, LpSolver, PollSource};
 use culmen_testing::reference::close;
@@ -26,7 +26,7 @@ use proptest::prelude::*;
 /// The optimum HiGHS finds, which the test expects to exist.
 fn optimum(program: &Program) -> Solution {
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!("expected an optimum, got {solved:?}")
     };
@@ -128,7 +128,7 @@ fn test_the_qp_iteration_limit_stops_the_active_set_solver() {
         ..HighsOptions::default()
     };
     let mut solver = Solver::new(Highs::with_options(options), m.build().unwrap()).unwrap();
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     assert!(
         matches!(
             solved.outcome,
@@ -140,7 +140,7 @@ fn test_the_qp_iteration_limit_stops_the_active_set_solver() {
         "{solved:?}"
     );
     solver.backend_mut().options_mut().qp_iteration_limit = None;
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     // Each coordinate drops by (15 - 1) / 5 = 2.8 to (-1.8, -0.8, 0.2, 1.2, 2.2), at 5 · 2.8² = 39.2.
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!("{solved:?}")
@@ -205,9 +205,7 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
         (x[2], x[3], -12.0),
         (x[3], x[3], 5.05),
     ];
-    let solved = Solver::new(Highs::new(), plan.build().unwrap())
-        .unwrap()
-        .solve(Request::new());
+    let solved = Solver::new(Highs::new(), plan.build().unwrap()).unwrap().solve();
     match solved {
         Ok(Solved {
             outcome: Outcome::Optimal(solution),
@@ -244,10 +242,7 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
         (x[3], x[3], 5.05),
     ];
     let program = plan.build().unwrap();
-    match Solver::new(Highs::new(), program.clone())
-        .unwrap()
-        .solve(Request::new())
-    {
+    match Solver::new(Highs::new(), program.clone()).unwrap().solve() {
         Ok(Solved {
             outcome: Outcome::Optimal(solution),
             ..
@@ -285,10 +280,7 @@ fn test_a_qp_optimum_is_valued_as_its_point() {
         (x[3], x[3], 0.55),
     ];
     let program = plan.build().unwrap();
-    match Solver::new(Highs::new(), program.clone())
-        .unwrap()
-        .solve(Request::new())
-    {
+    match Solver::new(Highs::new(), program.clone()).unwrap().solve() {
         Ok(Solved {
             outcome: Outcome::Optimal(best),
             ..
@@ -379,9 +371,7 @@ fn projection() -> Program {
 fn test_a_qp_solve_reports_its_log_its_polls_and_its_first_feasible_point() {
     let mut solver = Solver::new(Highs::new(), projection()).unwrap();
     let mut kinds = Kinds(Events::NONE);
-    solver
-        .solve_with(Request::new(), culmen_core::Hooks::new().register_callback(&mut kinds))
-        .unwrap();
+    solver.run().callback(&mut kinds).solve().unwrap();
     assert_eq!(kinds.0, Events::LOG | Events::POLL | Events::FEASIBLE);
 }
 
@@ -407,12 +397,7 @@ impl culmen_core::Callback<Highs> for Polls {
 fn test_a_qp_poll_reports_qp_iterations_and_interrupts_the_solve() {
     let mut solver = Solver::new(Highs::new(), projection()).unwrap();
     let mut watched = Polls::default();
-    let solved = solver
-        .solve_with(
-            Request::new(),
-            culmen_core::Hooks::new().register_callback(&mut watched),
-        )
-        .unwrap();
+    let solved = solver.run().callback(&mut watched).solve().unwrap();
     assert!(matches!(solved.outcome, Outcome::Optimal(_)), "{solved:?}");
     // HiGHS polls once after the starting point, before the first iteration, then at every iteration.
     assert_eq!(watched.sources.first(), Some(&PollSource::Qp { iterations: 0 }));
@@ -427,12 +412,7 @@ fn test_a_qp_poll_reports_qp_iterations_and_interrupts_the_solve() {
         interrupt: true,
         ..Polls::default()
     };
-    let solved = solver
-        .solve_with(
-            Request::new(),
-            culmen_core::Hooks::new().register_callback(&mut interrupting),
-        )
-        .unwrap();
+    let solved = solver.run().callback(&mut interrupting).solve().unwrap();
     assert_eq!(interrupting.sources, [PollSource::Qp { iterations: 0 }]);
     assert!(
         matches!(
@@ -454,7 +434,7 @@ fn test_a_stop_ends_a_qp_solve_as_interrupted() {
         true
     });
     let mut solver = Solver::new(Highs::new(), projection()).unwrap();
-    let solved = solver.solve(Request::new().stop(&stop)).unwrap();
+    let solved = solver.run().stop(&stop).solve().unwrap();
     assert_eq!(polled.load(Ordering::Relaxed), 1);
     assert!(
         matches!(
@@ -489,12 +469,7 @@ fn test_the_first_feasible_point_of_a_qp_is_feasible_and_valued_on_the_program()
     let program = projection();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let mut feasible = Feasible::default();
-    solver
-        .solve_with(
-            Request::new(),
-            culmen_core::Hooks::new().register_callback(&mut feasible),
-        )
-        .unwrap();
+    solver.run().callback(&mut feasible).solve().unwrap();
     let [(objective, values, mip, progress)] = feasible.0.as_slice() else {
         panic!("expected one feasible point, got {:?}", feasible.0)
     };
@@ -606,7 +581,7 @@ const QP_CASES: u32 = 200;
 fn check_qp_optimum(program: &Program, fractions: &[Vec<f64>], unsolved: &Unsolved) -> Result<(), TestCaseError> {
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     // HiGHS's QP solver could fail to terminate on such a QP; the time limit ends it.
-    let best = match solver.solve(Request::new().time_limit(Duration::from_secs(2))) {
+    let best = match solver.run().time_limit(Duration::from_secs(2)).solve() {
         Ok(Solved {
             outcome: Outcome::Optimal(best),
             ..
@@ -691,7 +666,7 @@ proptest! {
         let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
         let mut feasible = Feasible::default();
         // The time limit ends a solve HiGHS's QP solver does not; the point comes before its iterations.
-        let _ = solver.solve_with(Request::new().time_limit(Duration::from_secs(2)), culmen_core::Hooks::new().register_callback(&mut feasible));
+        let _ = solver.run().time_limit(Duration::from_secs(2)).callback(&mut feasible).solve();
         prop_assert!(feasible.0.len() <= 1, "{:?}", feasible.0);
         for (objective, values, mip, _) in &feasible.0 {
             let values = TiSlice::from_ref(values.as_slice());

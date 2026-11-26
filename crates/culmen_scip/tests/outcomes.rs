@@ -12,25 +12,31 @@
 use core::time::Duration;
 
 use culmen_core::{
-    Bounds, Col, LinExpr, Linear, Model, Outcome, Program, ProgramColumn, ProgramPlan, Request, Sense, Settings,
-    Solution, Solved, Solver, StopReason, Var, bounds, relative_gap, solutions,
+    Bounds, Col, LinExpr, Linear, Model, Outcome, Program, ProgramColumn, ProgramPlan, Sense, Settings, Solution,
+    Solved, Solver, StopReason, Var, bounds, relative_gap, solutions,
 };
 use culmen_scip::{Emphasis, Scip, ScipOptions, ScipStatus, Status};
 
 fn solve(program: Program) -> Solved<ScipStatus> {
-    solve_with(Scip::new(), program, Request::new())
+    solve_with(Scip::new(), program, Settings::new())
 }
 
-fn solve_with(scip: Scip, program: Program, request: Request<'_>) -> Solved<ScipStatus> {
-    Solver::new(scip, program).unwrap().solve(request).unwrap()
+fn solve_with(scip: Scip, program: Program, settings: Settings) -> Solved<ScipStatus> {
+    Solver::new(scip, program)
+        .unwrap()
+        .run()
+        .settings(settings)
+        .solve()
+        .unwrap()
 }
 
 /// Solves from `start` when one is given.
-fn solve_from(scip: Scip, program: Program, request: Request<'_>, start: Option<Vec<f64>>) -> Solved<ScipStatus> {
+fn solve_from(scip: Scip, program: Program, settings: Settings, start: Option<Vec<f64>>) -> Solved<ScipStatus> {
     let mut solver = Solver::new(scip, program).unwrap();
+    let run = solver.run().settings(settings);
     match start {
-        Some(start) => solver.solve_from(request, start),
-        None => solver.solve(request),
+        Some(start) => run.start(start).solve(),
+        None => run.solve(),
     }
     .unwrap()
 }
@@ -270,12 +276,12 @@ fn plain() -> Scip {
     })
 }
 
-/// A request without presolving under `settings`.
-fn plain_request(settings: Settings) -> Request<'static> {
-    Request::new().settings_from(Settings {
+/// `settings` with presolving off.
+fn plain_settings(settings: Settings) -> Settings {
+    Settings {
         presolve: Some(false),
         ..settings
-    })
+    }
 }
 
 #[test]
@@ -285,7 +291,7 @@ fn test_a_node_limit_stops_with_the_root_bound_and_without_a_solution() {
         node_limit: Some(1),
         ..Settings::new()
     };
-    let solved = solve_with(plain(), program, plain_request(settings));
+    let solved = solve_with(plain(), program, plain_settings(settings));
     assert_eq!(solved.status.status, Status::NodeLimit, "{solved:?}");
     let Outcome::Stopped { reason, best, bound } = solved.outcome else {
         panic!("{solved:?}")
@@ -301,7 +307,7 @@ fn test_a_node_limit_stops_with_the_start_as_its_best_solution() {
         node_limit: Some(1),
         ..Settings::new()
     };
-    let solved = solve_from(plain(), program, plain_request(settings), last_two());
+    let solved = solve_from(plain(), program, plain_settings(settings), last_two());
     let Outcome::Stopped { reason, best, bound } = solved.outcome else {
         panic!("{solved:?}")
     };
@@ -319,7 +325,7 @@ fn test_a_time_limit_of_zero_stops_with_and_without_a_solution() {
         time_limit: Some(Duration::ZERO),
         ..Settings::new()
     };
-    let without = solve_with(plain(), program.clone(), plain_request(settings.clone()));
+    let without = solve_with(plain(), program.clone(), plain_settings(settings.clone()));
     assert_eq!(without.status.status, Status::TimeLimit, "{without:?}");
     assert!(
         matches!(
@@ -332,7 +338,7 @@ fn test_a_time_limit_of_zero_stops_with_and_without_a_solution() {
         ),
         "{without:?}"
     );
-    let with = solve_from(plain(), program, plain_request(settings), last_two());
+    let with = solve_from(plain(), program, plain_settings(settings), last_two());
     let Outcome::Stopped { reason, best, .. } = with.outcome else {
         panic!("{with:?}")
     };
@@ -354,7 +360,7 @@ fn test_a_solution_limit_ends_with_a_solution() {
         solution_limit: Some(solutions!(1)),
         ..Settings::new()
     };
-    let solved = solve_with(Scip::new(), m.build().unwrap(), Request::new().settings_from(settings));
+    let solved = solve_with(Scip::new(), m.build().unwrap(), settings);
     assert!(
         matches!(
             solved.outcome,
@@ -376,7 +382,7 @@ fn test_a_solution_limit_reached_by_the_start_stops_at_the_start() {
         solution_limit: Some(solutions!(1)),
         ..Settings::new()
     };
-    let solved = solve_from(plain(), program, plain_request(settings), last_two());
+    let solved = solve_from(plain(), program, plain_settings(settings), last_two());
     assert_eq!(solved.status.status, Status::BestSolutionLimit, "{solved:?}");
     let Outcome::Stopped { reason, best, .. } = solved.outcome else {
         panic!("{solved:?}")
@@ -395,7 +401,7 @@ fn test_a_wide_relative_gap_is_reached_at_the_root() {
         ..Settings::new()
     };
     let start = Some(vec![1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
-    let solved = solve_from(plain(), program, plain_request(settings), start);
+    let solved = solve_from(plain(), program, plain_settings(settings), start);
     assert_eq!(solved.status.status, Status::GapLimit, "{solved:?}");
     let Outcome::GapReached { solution, bound } = solved.outcome else {
         panic!("{solved:?}")
@@ -409,7 +415,9 @@ fn test_a_sparse_start_is_taken_and_the_solve_still_proves_the_optimum() {
     let (program, take) = branching();
     let solved = Solver::new(Scip::new(), program)
         .unwrap()
-        .solve_from(Request::new(), vec![(take[5], 1.0)])
+        .run()
+        .start(vec![(take[5], 1.0)])
+        .solve()
         .unwrap();
     let best = optimum(&solved);
     assert_close(best.objective, 2.9);
@@ -424,11 +432,11 @@ fn test_a_second_solve_takes_its_own_settings() {
         node_limit: Some(1),
         ..Settings::new()
     };
-    let first = solver.solve(plain_request(limited)).unwrap();
+    let first = solver.run().settings(plain_settings(limited)).solve().unwrap();
     assert_eq!(first.status.status, Status::NodeLimit);
-    let second = solver.solve(plain_request(Settings::new())).unwrap();
+    let second = solver.run().settings(plain_settings(Settings::new())).solve().unwrap();
     assert_close(optimum(&second).objective, 2.9);
-    let third = solver.solve(Request::new()).unwrap();
+    let third = solver.solve().unwrap();
     assert_close(optimum(&third).objective, 2.9);
 }
 
@@ -441,14 +449,14 @@ fn test_a_second_solve_starts_from_the_last_solves_best_solution_until_an_edit()
     let (program, take) = branching();
     let mut solver = Solver::new(plain(), program).unwrap();
     let one_node = || {
-        plain_request(Settings {
+        plain_settings(Settings {
             node_limit: Some(1),
             ..Settings::new()
         })
     };
-    let first = solver.solve(plain_request(Settings::new())).unwrap();
+    let first = solver.run().settings(plain_settings(Settings::new())).solve().unwrap();
     assert_close(optimum(&first).objective, 2.9);
-    let again = solver.solve(one_node()).unwrap();
+    let again = solver.run().settings(one_node()).solve().unwrap();
     let Outcome::Stopped { reason, best, .. } = again.outcome else {
         panic!("{again:?}")
     };
@@ -458,7 +466,7 @@ fn test_a_second_solve_starts_from_the_last_solves_best_solution_until_an_edit()
     assert_close(best.values[take[0]] + best.values[take[1]], 2.0);
     // The last item is worth 1.0 still less than any other, so the optimum stays; only the instance is new.
     solver.set_col_costs([(take[5], 0.9)]).unwrap();
-    let edited = solver.solve(one_node()).unwrap();
+    let edited = solver.run().settings(one_node()).solve().unwrap();
     assert!(
         matches!(
             edited.outcome,
@@ -481,9 +489,9 @@ fn test_an_edit_reloads_the_program() {
     m.add_constraint((x + y).leq(4.0));
     m.maximize(x + y);
     let mut solver = Solver::new(Scip::new(), m.build().unwrap()).unwrap();
-    assert_close(optimum(&solver.solve(Request::new()).unwrap()).objective, 3.0);
+    assert_close(optimum(&solver.solve().unwrap()).objective, 3.0);
     solver.set_col_bounds([(y, bounds!(0.0, 5.0))]).unwrap();
-    assert_close(optimum(&solver.solve(Request::new()).unwrap()).objective, 4.0);
+    assert_close(optimum(&solver.solve().unwrap()).objective, 4.0);
 }
 
 #[test]
@@ -509,9 +517,7 @@ fn test_columns_and_rows_may_share_a_name_and_go_without_one() {
 #[test]
 fn test_a_moved_backend_solves_on_another_thread() {
     let mut solver = Solver::new(Scip::new(), infeasible(false).build().unwrap()).unwrap();
-    let solved = std::thread::spawn(move || solver.solve(Request::new()).unwrap())
-        .join()
-        .unwrap();
+    let solved = std::thread::spawn(move || solver.solve().unwrap()).join().unwrap();
     assert!(matches!(
         solved.outcome,
         Outcome::Infeasible | Outcome::InfeasibleOrUnbounded
@@ -529,6 +535,6 @@ fn test_threads_a_seed_and_the_console_setting_are_accepted() {
         console: false,
         ..Settings::new()
     };
-    let solved = solve_with(Scip::new(), program, Request::new().settings_from(settings));
+    let solved = solve_with(Scip::new(), program, settings);
     assert_close(optimum(&solved).objective, 2.9);
 }

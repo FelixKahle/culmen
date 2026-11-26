@@ -20,9 +20,9 @@ use std::sync::Mutex;
 
 use culmen_core::{
     ActionError, Bounds, Callback, Col, Context, CutContext, CutHandler, Events, HeuristicContext, HeuristicHandler,
-    Hooks, Integrality, LazyContext, LazyHandler, Linear, NewCol, Outcome, Phase, PollContext, PriceContext, PriceMode,
-    Program, ProgramColumn, ProgramPlan, Request, Row, Sense, Settings, Solution, SolutionContext, SolveError, Solved,
-    Solver, StopReason, TiVec, bounds,
+    Integrality, LazyContext, LazyHandler, Linear, NewCol, Outcome, Phase, PollContext, PriceContext, PriceMode,
+    Program, ProgramColumn, ProgramPlan, Row, Sense, Settings, Solution, SolutionContext, SolveError, Solved, Solver,
+    StopReason, TiVec, bounds,
 };
 use culmen_scip::{
     Scip, ScipCut, ScipError, ScipEvent, ScipHeuristic, ScipLazy, ScipOptions, ScipPoll, ScipPrice, ScipProgress,
@@ -40,13 +40,13 @@ const MAX_ROUNDS: usize = 2_000;
 const MAX_CALLS: usize = 20_000;
 
 /// A request with a node limit and a time limit, presolving or not.
-fn limited(presolve: bool) -> Request<'static> {
-    Request::new().settings_from(Settings {
+fn limited(presolve: bool) -> Settings {
+    Settings {
         node_limit: Some(10_000),
         time_limit: Some(Duration::from_secs(30)),
         presolve: Some(presolve),
         ..Settings::new()
-    })
+    }
 }
 
 fn optimal(outcome: Outcome) -> Solution {
@@ -144,28 +144,30 @@ impl<T: Roles> HeuristicHandler<Scip> for Role<'_, '_, T> {
     }
 }
 
-/// Solves with `roles` as the pricer, the callback, and the handlers its constants name.
+/// Solves under `settings` with `roles` as the pricer, the callback, and the handlers its constants name.
 fn solve_as<T: Roles>(
     solver: &mut Solver<Scip>,
-    request: Request<'_>,
+    settings: Settings,
     roles: &mut T,
 ) -> Result<Solved<ScipStatus>, SolveError<ScipError>> {
     let shared = Mutex::new(roles);
     let (mut callback, mut pricer) = (Role(&shared), Role(&shared));
     let (mut lazy, mut cut, mut heuristic) = (Role(&shared), Role(&shared), Role(&shared));
-    let mut hooks = Hooks::new()
-        .register_callback(&mut callback)
-        .register_pricer(&mut pricer);
+    let mut run = solver
+        .run()
+        .settings(settings)
+        .callback(&mut callback)
+        .pricer(&mut pricer);
     if T::LAZY {
-        hooks = hooks.register_lazy(&mut lazy);
+        run = run.lazy(&mut lazy);
     }
     if T::CUT {
-        hooks = hooks.register_cut(&mut cut);
+        run = run.cut(&mut cut);
     }
     if T::HEURISTIC {
-        hooks = hooks.register_heuristic(&mut heuristic);
+        run = run.heuristic(&mut heuristic);
     }
-    solver.solve_with(request, hooks)
+    run.solve()
 }
 
 /// One pricing round as the callback saw it.
@@ -898,11 +900,11 @@ fn test_a_pricing_solve_starts_from_a_start_over_the_programs_columns() {
     let mut pricer = Pricer::new(patterns, 3..11, Pick::Every);
     // A = 3, D = 1, F = 2: six rolls, feasible.
     let solved = solver
-        .solve_with_from(
-            limited(true),
-            vec![3.0, 1.0, 2.0],
-            Hooks::new().register_pricer(&mut pricer),
-        )
+        .run()
+        .settings(limited(true))
+        .start(vec![3.0, 1.0, 2.0])
+        .pricer(&mut pricer)
+        .solve()
         .unwrap();
     assert!(close(optimal(solved.outcome).objective, 5.0, 1e-9));
 }
@@ -923,7 +925,7 @@ fn test_pricing_a_program_with_a_quadratic_objective_is_refused_before_scip_runs
     );
     assert!(pricer.rounds.is_empty());
     // Without pricing the same solver solves it: x = 1, x² = 1.
-    let solved = solver.solve(limited(true)).unwrap();
+    let solved = solver.run().settings(limited(true)).solve().unwrap();
     assert!(close(optimal(solved.outcome).objective, 1.0, 1e-6));
 }
 

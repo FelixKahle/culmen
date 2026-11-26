@@ -14,8 +14,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use culmen_core::{
-    Bounds, Integrality, Linear, Model, Objective, Outcome, Program, ProgramError, ProgramFeature, Request, Sense,
-    Solver, Var,
+    Bounds, Integrality, Linear, Model, Objective, Outcome, Program, ProgramError, ProgramFeature, Sense, Solver, Var,
 };
 use culmen_highs::Highs;
 use culmen_highs::files::{self, FileError, ModelFormat};
@@ -42,10 +41,7 @@ impl Drop for TempPath {
 
 /// The optimal objective value HiGHS finds, `None` when the program is infeasible.
 fn optimum(program: &Program) -> Option<f64> {
-    let solved = Solver::new(Highs::new(), program.clone())
-        .unwrap()
-        .solve(Request::new())
-        .unwrap();
+    let solved = Solver::new(Highs::new(), program.clone()).unwrap().solve().unwrap();
     match solved.outcome {
         Outcome::Optimal(best) => Some(best.objective),
         Outcome::Infeasible | Outcome::InfeasibleOrUnbounded => None,

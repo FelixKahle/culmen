@@ -167,7 +167,7 @@ fn asked(solver: &Solver<Canned>) -> Vec<Analysis> {
 #[test]
 fn test_an_analysis_undefined_for_the_class_is_refused_before_the_backend_is_asked() {
     let mut solver = canned(optimal(), true);
-    solver.solve(culmen_core::Request::new()).unwrap();
+    solver.solve().unwrap();
     let class = ModelClass::Milp;
     assert_eq!(
         solver.duals(),
@@ -223,7 +223,7 @@ fn test_analyses_that_read_a_solve_wait_for_one() {
 #[test]
 fn test_duals_and_ranging_need_an_optimal_solve() {
     let mut solver = canned(Outcome::Infeasible, false);
-    solver.solve(culmen_core::Request::new()).unwrap();
+    solver.solve().unwrap();
     assert_eq!(
         solver.duals(),
         Err(AnalysisError::NotOptimal {
@@ -242,7 +242,7 @@ fn test_duals_and_ranging_need_an_optimal_solve() {
 #[test]
 fn test_ranging_after_an_optimal_solve_reaches_the_backend() {
     let mut solver = canned(optimal(), false);
-    solver.solve(culmen_core::Request::new()).unwrap();
+    solver.solve().unwrap();
     let ranging = solver.ranging().unwrap();
     assert_eq!((ranging.costs.len(), ranging.row_bounds.len()), (2, 1));
     assert_eq!(asked(&solver), vec![Analysis::Ranging]);
@@ -258,7 +258,7 @@ fn test_rays_are_asked_for_only_after_the_ending_they_prove() {
     ];
     for (outcome, (primal, dual)) in cases {
         let mut solver = canned(outcome.clone(), false);
-        solver.solve(culmen_core::Request::new()).unwrap();
+        solver.solve().unwrap();
         assert_eq!(solver.primal_ray().unwrap().is_some(), primal, "{outcome:?}");
         assert_eq!(solver.dual_ray().unwrap().is_some(), dual, "{outcome:?}");
         assert_eq!(
@@ -273,7 +273,7 @@ fn test_rays_are_asked_for_only_after_the_ending_they_prove() {
 fn test_a_basis_iis_or_relaxation_ends_the_reading_of_the_last_solve() {
     let mut solver = canned(optimal(), false);
     let weights = Weights::uniform(solver.program(), Some(penalty!(1.0)), None);
-    solver.solve(culmen_core::Request::new()).unwrap();
+    solver.solve().unwrap();
     assert_eq!(solver.iis(), Ok(None), "an optimum proves the constraints feasible");
     assert!(solver.duals().is_ok(), "an IIS answered from the last solve keeps it");
 
@@ -284,7 +284,7 @@ fn test_a_basis_iis_or_relaxation_ends_the_reading_of_the_last_solve() {
             analysis: Analysis::Duals
         })
     );
-    solver.solve(culmen_core::Request::new()).unwrap();
+    solver.solve().unwrap();
     solver.feasibility_relaxation(&weights).unwrap();
     assert_eq!(
         solver.duals(),
@@ -292,7 +292,7 @@ fn test_a_basis_iis_or_relaxation_ends_the_reading_of_the_last_solve() {
             analysis: Analysis::Duals
         })
     );
-    solver.solve(culmen_core::Request::new()).unwrap();
+    solver.solve().unwrap();
     assert!(solver.duals().is_ok());
     assert_eq!(
         asked(&solver),
@@ -308,10 +308,10 @@ fn test_a_basis_iis_or_relaxation_ends_the_reading_of_the_last_solve() {
 #[test]
 fn test_a_solve_that_panics_leaves_no_solve_to_read() {
     let mut solver = canned(optimal(), false);
-    solver.solve(culmen_core::Request::new()).unwrap();
+    solver.solve().unwrap();
     assert!(solver.duals().is_ok());
     solver.backend_mut().panics = true;
-    let solved = catch_unwind(AssertUnwindSafe(|| solver.solve(culmen_core::Request::new())));
+    let solved = catch_unwind(AssertUnwindSafe(|| solver.solve()));
     assert!(solved.is_err());
     assert_eq!(
         solver.duals(),

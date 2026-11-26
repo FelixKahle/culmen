@@ -8,7 +8,7 @@
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
 
-use culmen_core::{Outcome, Request, Settings, Solver, relative_gap};
+use culmen_core::{Outcome, Settings, Solver, relative_gap};
 use culmen_highs::Highs;
 use culmen_testing::reference::{close, solve};
 use culmen_testing::strategy::small_lp;
@@ -25,7 +25,7 @@ proptest! {
         let expected = solve(&program);
         let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
         let exact = Settings { relative_gap: Some(relative_gap!(0.0)), ..Settings::new() };
-        let solved = solver.solve(Request::new().settings_from(exact)).unwrap();
+        let solved = solver.run().settings(exact).solve().unwrap();
         // HiGHS meets rows, bounds and integrality only to its absolute MIP feasibility tolerance, 1e-6: the saved
         // seed ends with a row 1.0000000001e-6 below its bound and the objective as far below the exact 0. Its optimum
         // lies in the window those tolerances, its dual tolerance and its absolute gap leave around the exact one.

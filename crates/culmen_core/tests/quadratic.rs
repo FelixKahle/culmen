@@ -584,7 +584,7 @@ fn test_a_class_outside_the_backend_set_is_refused_before_load() {
     // The script replays any class.
     let mut solver = Solver::new(Script::optimal(2.0, vec![1.0, 1.0]), m.build().unwrap()).unwrap();
     assert_eq!(solver.program().class(), ModelClass::Qp);
-    assert!(solver.solve(culmen_core::Request::new()).is_ok());
+    assert!(solver.solve().is_ok());
 }
 
 #[test]

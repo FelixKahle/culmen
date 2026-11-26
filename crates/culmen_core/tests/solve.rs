@@ -17,7 +17,7 @@ use proptest::prelude::*;
 use culmen_core::{
     ActionError, AddedRow, Backend, Callback, Col, Context, CutContext, CutHandler, Events, Found, HeuristicContext,
     HeuristicHandler, Heuristics, Hooks, Improvement, InvalidBounds, LazyConstraints, LazyContext, LazyHandler, Linear,
-    LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, PriceMode, ProgramPlan, Progress, Request, Script,
+    LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, PriceMode, ProgramPlan, Progress, Script,
     ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, UserCuts, Var, bounds, stop_fn,
 };
 
@@ -99,7 +99,7 @@ fn test_watch_joins_log_chunks_throttles_progress_and_reports_incumbents() {
     });
     let mut solver = Solver::new(Script::new(steps, end.clone()), m.build().unwrap()).unwrap();
     let mut seen = Seen::default();
-    let solved = solver.solve(Request::new().observer(&mut seen)).unwrap();
+    let solved = solver.run().observer(&mut seen).solve().unwrap();
     assert_eq!(solved.outcome, end);
     assert_eq!(solved.status, ScriptStatus::Finished);
     assert_eq!(solved.elapsed, secs(2));
@@ -128,7 +128,7 @@ fn test_watch_drops_the_carriage_return_of_a_line_break_split_across_chunks() {
     let steps = vec![log("first\r"), log("\nsecond\r"), log("\r\nthird\r")];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build().unwrap()).unwrap();
     let mut seen = Seen::default();
-    solver.solve(Request::new().observer(&mut seen)).unwrap();
+    solver.run().observer(&mut seen).solve().unwrap();
     assert_eq!(seen.0, ["log Info first", "log Info second", "log Info third"]);
 }
 
@@ -142,7 +142,7 @@ fn test_stop_interrupts_at_the_next_poll_with_the_incumbent_and_bound() {
     ];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build().unwrap()).unwrap();
     let stop = AtomicBool::new(true);
-    let solved = solver.solve(Request::new().stop(&stop)).unwrap();
+    let solved = solver.run().stop(&stop).solve().unwrap();
     assert_eq!(solved.status, ScriptStatus::Interrupted { step: 1 });
     let Outcome::Stopped {
         reason: StopReason::Interrupted,
@@ -157,7 +157,7 @@ fn test_stop_interrupts_at_the_next_poll_with_the_incumbent_and_bound() {
     };
     assert_eq!((best.values[x], best.objective, bound), (1.0, 1.0, 2.0));
 
-    let solved = solver.solve(Request::new().stop(&stop_fn(|| false))).unwrap();
+    let solved = solver.run().stop(&stop_fn(|| false)).solve().unwrap();
     assert_eq!(
         solved.outcome,
         Outcome::Infeasible,
@@ -288,9 +288,7 @@ fn test_a_search_step_reaches_only_a_registered_handler_whatever_the_callback_as
     let mut solver = Solver::new(Script::new(every_step(), Outcome::Unbounded), m.build().unwrap()).unwrap();
     let seen = Mutex::new(Vec::new());
     let mut callback = Everything(&seen);
-    solver
-        .solve_with(Request::new(), Hooks::new().register_callback(&mut callback))
-        .unwrap();
+    solver.run().callback(&mut callback).solve().unwrap();
     assert_eq!(
         seen.into_inner().unwrap(),
         ["feasible 1", "note presolve removed 0 rows"]
@@ -325,9 +323,7 @@ fn test_one_handler_registered_in_both_roles_gets_candidates_and_relaxations() {
     let (m, x, y) = two_binaries();
     let mut solver = Solver::new(Script::new(every_step(), Outcome::Unbounded), m.build().unwrap()).unwrap();
     let mut separator = Separator::default();
-    solver
-        .solve_with(Request::new(), Hooks::new().register_lazy_and_cut(&mut separator))
-        .unwrap();
+    solver.run().lazy_and_cut(&mut separator).solve().unwrap();
     assert_eq!((separator.lazy, separator.cut), (1, 1));
     let record = &solver.backend().record;
     assert_eq!(record.lazy[0].terms, [(x, 1.0)]);
@@ -335,10 +331,12 @@ fn test_one_handler_registered_in_both_roles_gets_candidates_and_relaxations() {
 
     // A cut handler registered after the pair takes the cuts over; the pair keeps the candidates.
     let mut other = Separator::default();
-    let hooks = Hooks::new()
-        .register_lazy_and_cut(&mut separator)
-        .register_cut(&mut other);
-    solver.solve_with(Request::new(), hooks).unwrap();
+    solver
+        .run()
+        .lazy_and_cut(&mut separator)
+        .cut(&mut other)
+        .solve()
+        .unwrap();
     assert_eq!((separator.lazy, separator.cut), (2, 1));
     assert_eq!((other.lazy, other.cut), (0, 1));
 }
@@ -372,12 +370,7 @@ fn test_a_paired_callback_runs_beside_the_watch_and_gets_only_its_events() {
     ];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build().unwrap()).unwrap();
     let (mut seen, mut counter) = (Seen::default(), PollCounter(0));
-    let solved = solver
-        .solve_with(
-            Request::new().observer(&mut seen),
-            Hooks::new().register_callback(&mut counter),
-        )
-        .unwrap();
+    let solved = solver.run().observer(&mut seen).callback(&mut counter).solve().unwrap();
     assert_eq!(counter.0, 2);
     assert_eq!(solved.status, ScriptStatus::Interrupted { step: 2 });
     assert_eq!(
@@ -401,26 +394,33 @@ fn test_a_panicking_observer_panics_out_of_solve() {
     let (m, ..) = two_binaries();
     let steps = vec![Step::Incumbent(found(1, 1.0, [1.0, 0.0]))];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build().unwrap()).unwrap();
-    let _ = solver.solve(Request::new().observer(&mut Panicking));
+    let _ = solver.run().observer(&mut Panicking).solve();
 }
 
 #[test]
 fn test_settings_reach_the_backend_and_events_print_by_name() {
     let (m, ..) = two_binaries();
     let mut solver = Solver::new(Script::optimal(2.0, vec![1.0, 1.0]), m.build().unwrap()).unwrap();
-    let request = Request::new()
-        .settings_from(Settings {
-            console: true,
-            threads: Some(culmen_core::threads!(3)),
-            ..Settings::new()
-        })
-        .time_limit(secs(5));
-    solver.solve(request).unwrap();
-    let settings = &solver.backend().record.settings[0];
+    let settings = Settings {
+        console: true,
+        threads: Some(culmen_core::threads!(3)),
+        ..Settings::new()
+    };
+    solver
+        .run()
+        .settings(settings.clone())
+        .time_limit(secs(5))
+        .solve()
+        .unwrap();
+    let got = &solver.backend().record.settings[0];
     assert_eq!(
-        (settings.time_limit, settings.console, settings.threads.map(|t| t.get())),
+        (got.time_limit, got.console, got.threads.map(|t| t.get())),
         (Some(secs(5)), true, Some(3))
     );
+    // Settings given after a time limit replace it with their own, here none.
+    solver.run().time_limit(secs(5)).settings(settings).solve().unwrap();
+    let got = &solver.backend().record.settings[1];
+    assert_eq!((got.time_limit, got.console), (None, true));
     assert_eq!(format!("{:?}", Events::LOG | Events::NATIVE), "Events(LOG | NATIVE)");
     assert_eq!(Script::EVENTS, Events::ALL);
 }
@@ -460,8 +460,12 @@ fn test_an_unbounded_progress_interval_reports_once() {
     let steps = vec![Step::Progress(mip(1, None, None)), Step::Poll(mip(2, None, None))];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build().unwrap()).unwrap();
     let mut count = CountProgress::default();
-    let request = Request::new().observer(&mut count).progress_interval(Duration::MAX);
-    let solved = solver.solve(request).unwrap();
+    let solved = solver
+        .run()
+        .observer(&mut count)
+        .progress_interval(Duration::MAX)
+        .solve()
+        .unwrap();
     assert_eq!(solved.outcome, Outcome::Infeasible);
     assert_eq!(count.0, 1);
 }
@@ -472,7 +476,7 @@ fn test_a_script_outcome_does_not_depend_on_the_events_asked_for() {
     let steps = vec![Step::Progress(mip(1, None, Some(5.0))), Step::Poll(mip(2, None, None))];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build().unwrap()).unwrap();
     let stop = AtomicBool::new(true);
-    let solved = solver.solve(Request::new().stop(&stop)).unwrap();
+    let solved = solver.run().stop(&stop).solve().unwrap();
     assert_eq!(
         solved.outcome,
         Outcome::Stopped {
