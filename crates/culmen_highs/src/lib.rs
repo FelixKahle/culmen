@@ -6,8 +6,11 @@
 //!
 //! [`Highs`] implements [`Backend`]: load a [`Program`], solve it under [`Settings`], and HiGHS's callbacks reach a
 //! [`Callback<Highs>`](culmen_core::Callback) as the generic events of culmen_core, each with a HiGHS context type
-//! that offers what HiGHS reports beyond the generic traits ([`callback`] maps every kind). The generic path, a
-//! [`Request`](culmen_core::Request) with a stop and an observer, works unchanged.
+//! that offers what HiGHS reports beyond the generic traits ([`callback`] maps every kind). Of the search
+//! capabilities it has [`Heuristics`]: a [`HeuristicHandler`](culmen_core::HeuristicHandler) supplies solutions at
+//! HiGHS's user-solution callback. HiGHS takes no lazy constraints and no user cuts and does not price, so a handler of
+//! those kinds does not compile for it. The generic path, a [`Request`](culmen_core::Request) with a stop and an
+//! observer, works unchanged.
 //!
 //! ```
 //! use culmen_core::{Linear, LinExpr, Model, Outcome, Request, Solver, Var};
@@ -66,8 +69,8 @@ pub use callback::{
     MipData, PollSource, QueryOrigin, ReducedCol, RootNodePoint,
 };
 use culmen_core::{
-    Backend, Callback, Edit, Events, ModelClass, ModelClasses, Objectives, Outcome, Priced, Program, ProgramFeatures,
-    QuadObjective, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice, Unsupported,
+    Backend, Edit, Events, Heuristics, Hooks, ModelClass, ModelClasses, Objectives, Outcome, Program, ProgramFeatures,
+    QuadObjective, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice,
 };
 use culmen_core::{
     Basis, BasisAnalysis, Col, DualAnalysis, Duals, Iis, IisAnalysis, Ranging, RangingAnalysis, RayAnalysis,
@@ -98,8 +101,7 @@ const DEFAULT_ABSOLUTE_GAP: f64 = 1e-6;
 ///
 /// let highs = Highs::with_options(HighsOptions { presolve: Some(Switch::Off), ..HighsOptions::default() });
 /// assert_eq!(highs.options().presolve, Some(Switch::Off));
-/// assert!(Highs::EVENTS.contains(Events::HEURISTIC));
-/// assert!(!Highs::EVENTS.contains(Events::LAZY), "HiGHS 1.16 never calls its lazy-constraint callback");
+/// assert!(Highs::EVENTS.contains(Events::NATIVE));
 /// assert!(!Highs::CLASSES.contains(ModelClass::Miqp), "HiGHS 1.16 refuses to solve a MIQP");
 /// ```
 #[derive(Debug)]
@@ -566,12 +568,12 @@ fn configure(instance: &mut Instance, options: &HighsOptions, settings: &Setting
     Ok(())
 }
 
-/// Runs HiGHS on `loaded` with `callback` installed for the run alone.
-fn run_hooked(instance: &mut Instance, loaded: &Loaded, callback: &mut dyn Callback<Highs>) -> Ran {
-    let wanted = callback.events().intersection(Highs::EVENTS);
+/// Runs HiGHS on `loaded` with `hooks` installed for the run alone.
+fn run_hooked(instance: &mut Instance, loaded: &Loaded, hooks: Hooks<'_, Highs>) -> Ran {
+    let (wanted, heuristic) = (hooks.events(), hooks.wants_heuristic());
     let start = Instant::now();
     let hook = Mutex::new(Hook {
-        callback,
+        hooks,
         wanted,
         start,
         program: loaded,
@@ -585,7 +587,7 @@ fn run_hooked(instance: &mut Instance, loaded: &Loaded, callback: &mut dyn Callb
     // SAFETY: `hook` lives on this frame until after the second `hook` call below uninstalls it, and the
     // trampoline reaches it only through a shared reference to its `Mutex`; `trampoline` treats its arguments as
     // HiGHS passes them.
-    unsafe { instance.hook(Some(trampoline), user, &kinds(wanted)) };
+    unsafe { instance.hook(Some(trampoline), user, &kinds(wanted, heuristic)) };
     instance.zero_clocks();
     let run = instance.run();
     // SAFETY: uninstalling, with a null data pointer, before `hook` drops.
@@ -648,19 +650,10 @@ impl Backend for Highs {
     type Progress<'a> = HighsMipProgress;
     type Poll<'a> = HighsPoll<'a>;
     type Solution<'a> = HighsSolution<'a>;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = HighsHeuristic<'a>;
-    type Price<'a> = Unsupported;
     type Native<'a> = HighsNative;
 
-    const EVENTS: Events = Events::LOG
-        .union(Events::PROGRESS)
-        .union(Events::POLL)
-        .union(Events::FEASIBLE)
-        .union(Events::INCUMBENT)
-        .union(Events::HEURISTIC)
-        .union(Events::NATIVE);
+    /// Every observational event.
+    const EVENTS: Events = Events::ALL;
 
     /// HiGHS 1.16 solves LPs, MILPs and convex QPs; `Highs::run` refuses a QP with integer columns ("Cannot solve
     /// MIQP problems with HiGHS").
@@ -694,20 +687,15 @@ impl Backend for Highs {
         Ok(())
     }
 
-    /// Runs HiGHS on the loaded model; HiGHS prices nothing, so `priced` stays as it was handed over.
-    fn solve(
-        &mut self,
-        settings: &Settings,
-        callback: &mut dyn Callback<Self>,
-        _: &mut Priced,
-    ) -> Result<Solved<HighsStatus>, HighsError> {
+    /// Runs HiGHS on the loaded model, with the user-solution callback started only for a heuristic handler.
+    fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<HighsStatus>, HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         configure(&mut self.instance, &self.options, settings)?;
         if let Some(blend) = loaded.combined.blend() {
             self.instance
                 .set_option("blend_multi_objectives", &OptionValue::Bool(blend))?;
         }
-        let ran = run_hooked(&mut self.instance, loaded, callback);
+        let ran = run_hooked(&mut self.instance, loaded, hooks);
         if let Some(payload) = ran.panic {
             resume_unwind(payload);
         }
@@ -719,6 +707,12 @@ impl Backend for Highs {
             elapsed: ran.elapsed,
         })
     }
+}
+
+/// HiGHS asks a heuristic handler for a solution at its user-solution callback, `kHighsCallbackMipUserSolution`, at
+/// the points [`QueryOrigin`] names.
+impl Heuristics for Highs {
+    type Heuristic<'a> = HighsHeuristic<'a>;
 }
 
 impl Starts for Highs {

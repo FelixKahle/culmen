@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use typed_index_collections::TiSlice;
 
-use super::context::{LogContext, PollContext, ProgressContext, SolutionContext};
+use super::context::{Context, LogContext, PollContext, SolutionContext};
 use crate::{Backend, Callback, Col, Events, LogLevel, Progress, Settings};
 
 /// A cooperative stop request, polled while a solve runs.

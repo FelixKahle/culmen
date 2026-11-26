@@ -19,7 +19,7 @@ use core::ptr::{self, NonNull};
 use core::time::Duration;
 use std::io::Write as _;
 
-use culmen_core::{Events, LogContext, LogLevel, Phase, Progress};
+use culmen_core::{Context, Events, LogContext, LogLevel, Phase, Progress};
 use scip_sys::{
     FILE, SCIP, SCIP_MESSAGEHDLR, SCIPmessagehdlrCreate, SCIPmessagehdlrGetData, SCIPmessagehdlrRelease,
     SCIPsetMessagehdlr, fflush, fputs,
@@ -43,6 +43,12 @@ impl<'a> ScipLog<'a> {
     }
 }
 
+impl Context for ScipLog<'_> {
+    fn progress(&self) -> Progress {
+        Progress::at(self.elapsed, Phase::Other)
+    }
+}
+
 impl LogContext for ScipLog<'_> {
     fn text(&self) -> &str {
         self.text
@@ -50,9 +56,6 @@ impl LogContext for ScipLog<'_> {
     /// [`LogLevel::Info`] for an info message, [`LogLevel::Warning`] for a warning.
     fn level(&self) -> LogLevel {
         self.level
-    }
-    fn progress(&self) -> Progress {
-        Progress::at(self.elapsed, Phase::Other)
     }
 }
 

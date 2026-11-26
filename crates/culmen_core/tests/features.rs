@@ -14,10 +14,10 @@ use core::time::Duration;
 use std::collections::HashSet;
 
 use culmen_core::{
-    Backend, Bound, Bounds, Callback, Col, Combination, Events, ExprPlace, Integrality, Line, Linear, LinearObjective,
-    LoadError, LpFileError, Model, ModelClass, ModelClasses, ModelError, Objective, ObjectiveId, Objectives, Outcome,
-    Program, ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Relaxed, Request, Script,
-    Sense, Settings, SolveError, Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Unsupported, Var,
+    Backend, Bound, Bounds, Col, Combination, Events, ExprPlace, Integrality, Line, Linear, LinearObjective, LoadError,
+    LpFileError, Model, ModelClass, ModelClasses, ModelError, Objective, ObjectiveId, Objectives, Outcome, Program,
+    ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Relaxed, Request, Script, Sense,
+    Settings, SolveError, Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Unsupported, Var,
     Violation, Weight, Weighted, absolute_gap, bounds, relative_gap, weight,
 };
 use proptest::prelude::*;
@@ -349,10 +349,6 @@ impl Backend for Plain {
     type Progress<'a> = Unsupported;
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = Unsupported;
-    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: Events = Events::NONE;
@@ -363,12 +359,7 @@ impl Backend for Plain {
         Ok(())
     }
 
-    fn solve(
-        &mut self,
-        _: &Settings,
-        _: &mut dyn Callback<Self>,
-        _: &mut culmen_core::Priced,
-    ) -> Result<Solved<()>, Never> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::Hooks<'_, Self>) -> Result<Solved<()>, Never> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),

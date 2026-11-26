@@ -15,7 +15,7 @@
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
-use culmen_core::{Col, Events, Found, PollContext, Progress, ProgressContext, SolutionContext, TiSlice};
+use culmen_core::{Col, Context, Events, Found, PollContext, Progress, ProgressContext, SolutionContext, TiSlice};
 use scip_sys::{
     SCIP, SCIP_EVENT, SCIP_EVENTDATA, SCIP_EVENTHDLR, SCIP_EVENTTYPE, SCIP_RETCODE, SCIP_Retcode_SCIP_OKAY,
     SCIP_Stage_SCIP_STAGE_EXITSOLVE, SCIP_Stage_SCIP_STAGE_TRANSFORMED, SCIPcatchEvent, SCIPdropEvent, SCIPeventGetSol,
@@ -98,10 +98,13 @@ impl ScipPoll<'_> {
     }
 }
 
-impl PollContext for ScipPoll<'_> {
+impl Context for ScipPoll<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
+
+impl PollContext for ScipPoll<'_> {
     /// SCIP stops through `SCIPinterruptSolve`, at its next check of its limits.
     fn interrupt(&mut self) {
         *self.interrupt = true;
@@ -123,11 +126,13 @@ impl ScipProgress {
     }
 }
 
-impl ProgressContext for ScipProgress {
+impl Context for ScipProgress {
     fn progress(&self) -> Progress {
         self.progress
     }
 }
+
+impl ProgressContext for ScipProgress {}
 
 /// A solution SCIP stored, read in the program's columns: any one as [`Events::FEASIBLE`], a new best one also as
 /// [`Events::INCUMBENT`].
@@ -142,10 +147,13 @@ impl<'a> ScipSolution<'a> {
     }
 }
 
-impl SolutionContext for ScipSolution<'_> {
+impl Context for ScipSolution<'_> {
     fn progress(&self) -> Progress {
         self.found.progress
     }
+}
+
+impl SolutionContext for ScipSolution<'_> {
     fn objective(&self) -> f64 {
         self.found.objective
     }
@@ -154,14 +162,14 @@ impl SolutionContext for ScipSolution<'_> {
     }
 }
 
-impl Run<'_> {
+impl Run<'_, '_> {
     /// Hands a poll and a progress report to the callback, as it asked; neither while it is busy.
     fn poll(&self, scip: *mut SCIP, event: ScipEvent) {
         let progress = self.progress(scip);
         if self.wanted.contains(Events::POLL) {
             let mut interrupt = false;
-            let delivered = self.deliver(scip, |callback| {
-                callback.poll(&mut ScipPoll {
+            let delivered = self.deliver(scip, |hooks| {
+                hooks.poll(&mut ScipPoll {
                     progress,
                     event,
                     interrupt: &mut interrupt,
@@ -172,8 +180,8 @@ impl Run<'_> {
             }
         }
         if self.wanted.contains(Events::PROGRESS) {
-            self.deliver(scip, |callback| {
-                callback.progress(&mut ScipProgress { progress, event });
+            self.deliver(scip, |hooks| {
+                hooks.progress(&mut ScipProgress { progress, event });
             });
         }
     }

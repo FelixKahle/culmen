@@ -7,9 +7,10 @@
 use core::fmt;
 
 use culmen_core::{
-    Backend, Basis, BasisAnalysis, Callback, Col, DualAnalysis, Duals, Edit, Events, Iis, IisAnalysis, ModelClasses,
-    Priced, Program, ProgramFeatures, ProgramPlan, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed,
-    Row, Settings, Solved, Start, Starts, TiVec, Weights,
+    Backend, Basis, BasisAnalysis, Callback, Col, DualAnalysis, Duals, Edit, Events, Heuristics, Hooks, Iis,
+    IisAnalysis, LazyConstraints, ModelClasses, Prices, Program, ProgramFeatures, ProgramPlan, Ranging,
+    RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Relay, Row, Settings, Solved, Start, Starts, TiVec,
+    UserCuts, Weights,
 };
 
 /// A backend that forwards to `inner`, recording what it is asked to hold and failing as [`Faults`] say.
@@ -194,21 +195,18 @@ fn appended_columns(expected: &mut ProgramPlan, got: &ProgramPlan, cols: &[Col])
     true
 }
 
-/// A mirror's callback, handed to the inner backend: the context types are the same.
-struct Forward<'c, B: Backend>(&'c mut dyn Callback<Mirror<B>>);
+/// A mirror's hooks, relayed to the inner backend: the context types are the same.
+struct Forward<'f, 'h, B: Backend>(&'f mut Hooks<'h, Mirror<B>>);
 
-impl<B: Backend> fmt::Debug for Forward<'_, B> {
+impl<B: Backend> fmt::Debug for Forward<'_, '_, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Forward").finish_non_exhaustive()
+        f.debug_tuple("Forward").field(&self.0).finish()
     }
 }
 
-impl<B: Backend> Callback<B> for Forward<'_, B> {
+impl<B: Backend> Callback<B> for Forward<'_, '_, B> {
     fn events(&self) -> Events {
         self.0.events()
-    }
-    fn prices(&self) -> bool {
-        self.0.prices()
     }
     fn log(&mut self, ctx: &mut B::Log<'_>) {
         self.0.log(ctx);
@@ -225,20 +223,60 @@ impl<B: Backend> Callback<B> for Forward<'_, B> {
     fn incumbent(&mut self, ctx: &mut B::Solution<'_>) {
         self.0.incumbent(ctx);
     }
-    fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
-        self.0.lazy(ctx);
-    }
-    fn cut(&mut self, ctx: &mut B::Cut<'_>) {
-        self.0.cut(ctx);
-    }
-    fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
-        self.0.heuristic(ctx);
-    }
-    fn price(&mut self, ctx: &mut B::Price<'_>) {
-        self.0.price(ctx);
-    }
     fn native(&mut self, ctx: &mut B::Native<'_>) {
         self.0.native(ctx);
+    }
+}
+
+/// Each search event goes to the mirror's own hooks, which have the capability exactly when `B` has it.
+impl<B: Backend> Relay<B> for Forward<'_, '_, B> {
+    fn wants_lazy(&self) -> bool
+    where
+        B: LazyConstraints,
+    {
+        self.0.wants_lazy()
+    }
+    fn lazy(&mut self, ctx: &mut <B as LazyConstraints>::Lazy<'_>)
+    where
+        B: LazyConstraints,
+    {
+        self.0.lazy(ctx);
+    }
+    fn wants_cut(&self) -> bool
+    where
+        B: UserCuts,
+    {
+        self.0.wants_cut()
+    }
+    fn cut(&mut self, ctx: &mut <B as UserCuts>::Cut<'_>)
+    where
+        B: UserCuts,
+    {
+        self.0.cut(ctx);
+    }
+    fn wants_heuristic(&self) -> bool
+    where
+        B: Heuristics,
+    {
+        self.0.wants_heuristic()
+    }
+    fn heuristic(&mut self, ctx: &mut <B as Heuristics>::Heuristic<'_>)
+    where
+        B: Heuristics,
+    {
+        self.0.heuristic(ctx);
+    }
+    fn wants_price(&self) -> bool
+    where
+        B: Prices,
+    {
+        self.0.wants_price()
+    }
+    fn price(&mut self, ctx: &mut <B as Prices>::Price<'_>)
+    where
+        B: Prices,
+    {
+        self.0.price(ctx);
     }
 }
 
@@ -250,14 +288,9 @@ impl<B: Backend> Backend for Mirror<B> {
     type Progress<'a> = B::Progress<'a>;
     type Poll<'a> = B::Poll<'a>;
     type Solution<'a> = B::Solution<'a>;
-    type Lazy<'a> = B::Lazy<'a>;
-    type Cut<'a> = B::Cut<'a>;
-    type Heuristic<'a> = B::Heuristic<'a>;
-    type Price<'a> = B::Price<'a>;
     type Native<'a> = B::Native<'a>;
 
     const EVENTS: Events = B::EVENTS;
-    const PRICES: bool = B::PRICES;
     const CLASSES: ModelClasses = B::CLASSES;
     const FEATURES: ProgramFeatures = B::FEATURES;
 
@@ -306,19 +339,35 @@ impl<B: Backend> Backend for Mirror<B> {
         Ok(())
     }
 
-    fn solve(
-        &mut self,
-        settings: &Settings,
-        callback: &mut dyn Callback<Self>,
-        priced: &mut Priced,
-    ) -> Result<Solved<Self::Status>, Self::Error> {
+    /// Relays the hooks to the inner backend, the sink of a pricer with them.
+    fn solve(&mut self, settings: &Settings, mut hooks: Hooks<'_, Self>) -> Result<Solved<Self::Status>, Self::Error> {
+        let priced = hooks.take_priced();
+        let mut forward = Forward(&mut hooks);
         self.inner
-            .solve(settings, &mut Forward(callback), priced)
+            .solve(settings, Hooks::relay(&mut forward, priced))
             .map_err(MirrorError::Inner)
     }
 }
 
-/// Every capability is the inner backend's, forwarded with its errors as [`MirrorError::Inner`].
+/// Every search capability is the inner backend's, with its contexts; [`Mirror::solve`](Backend::solve) relays the
+/// handlers.
+impl<B: LazyConstraints> LazyConstraints for Mirror<B> {
+    type Lazy<'a> = B::Lazy<'a>;
+}
+
+impl<B: UserCuts> UserCuts for Mirror<B> {
+    type Cut<'a> = B::Cut<'a>;
+}
+
+impl<B: Heuristics> Heuristics for Mirror<B> {
+    type Heuristic<'a> = B::Heuristic<'a>;
+}
+
+impl<B: Prices> Prices for Mirror<B> {
+    type Price<'a> = B::Price<'a>;
+}
+
+/// Every other capability is the inner backend's, forwarded with its errors as [`MirrorError::Inner`].
 impl<B: Starts> Starts for Mirror<B> {
     fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> {
         self.inner.set_start(start).map_err(MirrorError::Inner)
@@ -371,7 +420,12 @@ impl<B: RelaxationAnalysis> RelaxationAnalysis for Mirror<B> {
 
 #[cfg(test)]
 mod tests {
-    use culmen_core::{EditError, Linear, Model, Request, Script, Solver, Var};
+    use core::time::Duration;
+
+    use culmen_core::{
+        EditError, Found, LazyContext, LazyHandler, Linear, Model, Outcome, Phase, Progress, Request, Script, Solver,
+        Step, Var,
+    };
 
     use super::*;
 
@@ -406,6 +460,47 @@ mod tests {
         let mut solver = Solver::new(Mirror::new(Script::optimal(0.0, vec![])), before).unwrap();
         solver.solve_from(Request::new(), vec![(y, 1.0)]).unwrap();
         assert_eq!(solver.backend().inner.record.starts, [Start::Sparse(vec![(y, 1.0)])]);
+    }
+
+    /// Cuts off every candidate by a constraint on its first column, counting its calls.
+    struct FirstAtZero(usize);
+
+    impl<B: LazyConstraints> LazyHandler<B> for FirstAtZero {
+        fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
+            self.0 += 1;
+            ctx.add_lazy(Col::new(0).leq(0)).unwrap();
+        }
+    }
+
+    /// Counts the polls it sees.
+    struct Polls(usize);
+
+    impl<B: Backend> Callback<B> for Polls {
+        fn poll(&mut self, _: &mut B::Poll<'_>) {
+            self.0 += 1;
+        }
+    }
+
+    #[test]
+    fn test_a_mirror_relays_its_callback_and_handlers_to_its_inner_backend() {
+        let (before, ..) = programs();
+        let at = Progress::at(Duration::ZERO, Phase::Other);
+        let candidate = Found {
+            progress: at,
+            objective: 0.0,
+            values: vec![1.0, 0.0].into(),
+        };
+        let script = Script::new([Step::Poll(at), Step::Lazy(candidate)], Outcome::Infeasible);
+        let mut solver = Solver::new(Mirror::new(script), before).unwrap();
+        let (mut polls, mut lazy) = (Polls(0), FirstAtZero(0));
+        let hooks = Hooks::new().register_callback(&mut polls).register_lazy(&mut lazy);
+        solver.solve_with(Request::new(), hooks).unwrap();
+        assert_eq!((polls.0, lazy.0), (1, 1));
+        assert_eq!(solver.backend().inner.record.lazy.len(), 1);
+
+        // Without a handler, the inner backend sees none either.
+        solver.solve(Request::new()).unwrap();
+        assert_eq!(solver.backend().inner.record.lazy.len(), 1);
     }
 
     #[test]

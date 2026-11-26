@@ -16,13 +16,18 @@
 
 use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Mutex;
 
 use culmen_core::{
-    ActionError, Bounds, Callback, Col, CutContext, Events, HeuristicContext, Integrality, LazyContext, Linear, NewCol,
-    Outcome, Phase, PollContext, PriceContext, PriceMode, Program, ProgramColumn, ProgramPlan, ProgressContext,
-    Request, Row, Sense, Settings, Solution, SolutionContext, SolveError, Solver, StopReason, TiVec, bounds,
+    ActionError, Bounds, Callback, Col, Context, CutContext, CutHandler, Events, HeuristicContext, HeuristicHandler,
+    Hooks, Integrality, LazyContext, LazyHandler, Linear, NewCol, Outcome, Phase, PollContext, PriceContext, PriceMode,
+    Program, ProgramColumn, ProgramPlan, Request, Row, Sense, Settings, Solution, SolutionContext, SolveError, Solved,
+    Solver, StopReason, TiVec, bounds,
 };
-use culmen_scip::{Scip, ScipError, ScipEvent, ScipOptions, ScipPrice};
+use culmen_scip::{
+    Scip, ScipCut, ScipError, ScipEvent, ScipHeuristic, ScipLazy, ScipOptions, ScipPoll, ScipPrice, ScipProgress,
+    ScipSolution, ScipStatus,
+};
 use culmen_testing::reference::{Reference, close, solve};
 use culmen_testing::strategy::{PricedSplit, priced_split};
 use culmen_testing::tolerance::{Tolerances, Window};
@@ -62,6 +67,105 @@ fn column(cost: f64, bounds: Bounds, integer: bool, entries: &[(Row, f64)]) -> N
         column,
         entries: entries.to_vec(),
     }
+}
+
+/// A test's pricer and the callback and handlers beside it, in one value: every role but pricing does nothing by
+/// default, and [`solve_as`] registers the pricer, the callback, and each handler its constant names.
+trait Roles: Send {
+    /// Whether the value is a lazy-constraint handler too.
+    const LAZY: bool = false;
+    /// Whether the value is a cut handler too.
+    const CUT: bool = false;
+    /// Whether the value is a heuristic handler too.
+    const HEURISTIC: bool = false;
+    fn events(&self) -> Events {
+        Events::NONE
+    }
+    fn price(&mut self, ctx: &mut ScipPrice<'_>);
+    fn poll(&mut self, ctx: &mut ScipPoll<'_>) {
+        let _ = ctx;
+    }
+    fn progress(&mut self, ctx: &mut ScipProgress) {
+        let _ = ctx;
+    }
+    fn feasible(&mut self, ctx: &mut ScipSolution<'_>) {
+        let _ = ctx;
+    }
+    fn lazy(&mut self, ctx: &mut ScipLazy<'_>) {
+        let _ = ctx;
+    }
+    fn cut(&mut self, ctx: &mut ScipCut<'_>) {
+        let _ = ctx;
+    }
+    fn heuristic(&mut self, ctx: &mut ScipHeuristic<'_>) {
+        let _ = ctx;
+    }
+}
+
+/// One role of a shared [`Roles`] value; SCIP never calls two roles at once.
+struct Role<'a, 'r, T>(&'a Mutex<&'r mut T>);
+
+impl<T: Roles> Callback<Scip> for Role<'_, '_, T> {
+    fn events(&self) -> Events {
+        self.0.lock().unwrap().events()
+    }
+    fn poll(&mut self, ctx: &mut ScipPoll<'_>) {
+        self.0.lock().unwrap().poll(ctx);
+    }
+    fn progress(&mut self, ctx: &mut ScipProgress) {
+        self.0.lock().unwrap().progress(ctx);
+    }
+    fn feasible(&mut self, ctx: &mut ScipSolution<'_>) {
+        self.0.lock().unwrap().feasible(ctx);
+    }
+}
+
+impl<T: Roles> culmen_core::Pricer<Scip> for Role<'_, '_, T> {
+    fn price(&mut self, ctx: &mut ScipPrice<'_>) {
+        self.0.lock().unwrap().price(ctx);
+    }
+}
+
+impl<T: Roles> LazyHandler<Scip> for Role<'_, '_, T> {
+    fn lazy(&mut self, ctx: &mut ScipLazy<'_>) {
+        self.0.lock().unwrap().lazy(ctx);
+    }
+}
+
+impl<T: Roles> CutHandler<Scip> for Role<'_, '_, T> {
+    fn cut(&mut self, ctx: &mut ScipCut<'_>) {
+        self.0.lock().unwrap().cut(ctx);
+    }
+}
+
+impl<T: Roles> HeuristicHandler<Scip> for Role<'_, '_, T> {
+    fn heuristic(&mut self, ctx: &mut ScipHeuristic<'_>) {
+        self.0.lock().unwrap().heuristic(ctx);
+    }
+}
+
+/// Solves with `roles` as the pricer, the callback, and the handlers its constants name.
+fn solve_as<T: Roles>(
+    solver: &mut Solver<Scip>,
+    request: Request<'_>,
+    roles: &mut T,
+) -> Result<Solved<ScipStatus>, SolveError<ScipError>> {
+    let shared = Mutex::new(roles);
+    let (mut callback, mut pricer) = (Role(&shared), Role(&shared));
+    let (mut lazy, mut cut, mut heuristic) = (Role(&shared), Role(&shared), Role(&shared));
+    let mut hooks = Hooks::new()
+        .register_callback(&mut callback)
+        .register_pricer(&mut pricer);
+    if T::LAZY {
+        hooks = hooks.register_lazy(&mut lazy);
+    }
+    if T::CUT {
+        hooks = hooks.register_cut(&mut cut);
+    }
+    if T::HEURISTIC {
+        hooks = hooks.register_heuristic(&mut heuristic);
+    }
+    solver.solve_with(request, hooks)
 }
 
 /// One pricing round as the callback saw it.
@@ -152,13 +256,13 @@ impl Pricer {
     }
 }
 
-impl Callback<Scip> for Pricer {
-    fn events(&self) -> Events {
-        Events::NONE
+impl Roles for Pricer {
+    fn price(&mut self, ctx: &mut ScipPrice<'_>) {
+        self.price_round(ctx);
     }
-    fn prices(&self) -> bool {
-        true
-    }
+}
+
+impl culmen_core::Pricer<Scip> for Pricer {
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.price_round(ctx);
     }
@@ -261,7 +365,7 @@ fn test_fixture_one_prices_pattern_b_alone_and_reaches_nine_halves() {
         let (program, patterns) = cutting_stock(false);
         let mut solver = Solver::new(Scip::new(), program).unwrap();
         let mut pricer = Pricer::new(patterns, 3..11, Pick::Every);
-        let solved = solver.solve_with(limited(presolve), &mut pricer).unwrap();
+        let solved = solve_as(&mut solver, limited(presolve), &mut pricer).unwrap();
 
         // Round 1: duals (1/3, 1/2, 1/2) at 29/6; only B improves, E sits on the boundary.
         assert_objective(&pricer.rounds[0], 29.0 / 6.0);
@@ -303,7 +407,7 @@ fn test_integer_cutting_stock_needs_five_rolls_and_its_solution_cuts_the_full_pr
         let full = full(&program, &patterns);
         let mut solver = Solver::new(Scip::new(), program).unwrap();
         let mut pricer = Pricer::new(patterns, 3..11, Pick::Every);
-        let solved = solver.solve_with(limited(presolve), &mut pricer).unwrap();
+        let solved = solve_as(&mut solver, limited(presolve), &mut pricer).unwrap();
         let best = optimal(solved.outcome);
         assert!(close(best.objective, 5.0, 1e-9), "{best:?}");
         assert_eq!(best.values.len(), solver.program().num_cols());
@@ -341,7 +445,7 @@ fn test_fixture_two_prices_through_farkas_then_with_the_maximization_sign() {
         let (program, columns) = max_fixture();
         let mut solver = Solver::new(Scip::new(), program).unwrap();
         let mut pricer = Pricer::new(columns, [1, 2], Pick::First);
-        let solved = solver.solve_with(limited(presolve), &mut pricer).unwrap();
+        let solved = solve_as(&mut solver, limited(presolve), &mut pricer).unwrap();
 
         // Round 1: the start is infeasible; any valid ray has f0 <= 0 < f1, and x1 improves.
         let farkas = &pricer.rounds[0];
@@ -372,13 +476,7 @@ struct Panics {
     round: usize,
 }
 
-impl Callback<Scip> for Panics {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl Roles for Panics {
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
         assert!(self.pricer.rounds.len() < self.round, "a panic in round {}", self.round);
@@ -393,14 +491,14 @@ fn test_a_panic_in_price_unwinds_after_scip_stopped_and_the_program_keeps_the_co
         pricer: Pricer::new(patterns.clone(), 3..11, Pick::Every),
         round: 1,
     };
-    let caught = catch_unwind(AssertUnwindSafe(|| solver.solve_with(limited(true), &mut panics)));
+    let caught = catch_unwind(AssertUnwindSafe(|| solve_as(&mut solver, limited(true), &mut panics)));
     assert!(caught.is_err());
     assert_eq!(panics.pricer.added, vec![(7, Col::new(3))]);
     assert_eq!(solver.program().num_cols(), 4);
     // The backend reloads the grown program and solves it, B now an ordinary column.
     let mut pricer = Pricer::new(patterns, 3..11, Pick::Every);
     pricer.added.push((7, Col::new(3)));
-    let solved = solver.solve_with(limited(true), &mut pricer).unwrap();
+    let solved = solve_as(&mut solver, limited(true), &mut pricer).unwrap();
     assert!(close(optimal(solved.outcome).objective, 4.5, 1e-9));
 }
 
@@ -410,12 +508,9 @@ struct Interrupts {
     interrupted: bool,
 }
 
-impl Callback<Scip> for Interrupts {
+impl Roles for Interrupts {
     fn events(&self) -> Events {
         Events::POLL
-    }
-    fn prices(&self) -> bool {
-        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -436,7 +531,7 @@ fn test_an_interrupt_during_pricing_stops_the_solve_and_keeps_the_columns() {
         pricer: Pricer::new(patterns, 3..11, Pick::Every),
         interrupted: false,
     };
-    let solved = solver.solve_with(limited(true), &mut interrupts).unwrap();
+    let solved = solve_as(&mut solver, limited(true), &mut interrupts).unwrap();
     assert!(interrupts.interrupted);
     let Outcome::Stopped { reason, best, .. } = solved.outcome else {
         panic!("expected a stop, got {:?}", solved.outcome)
@@ -458,13 +553,8 @@ struct AtMostOneB {
     calls: usize,
 }
 
-impl Callback<Scip> for AtMostOneB {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl Roles for AtMostOneB {
+    const LAZY: bool = true;
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
     }
@@ -492,7 +582,7 @@ fn test_a_lazy_constraint_on_a_priced_column_holds_and_the_optimum_stays_five() 
         accepted: Vec::new(),
         calls: 0,
     };
-    let solved = solver.solve_with(limited(true), &mut callback).unwrap();
+    let solved = solve_as(&mut solver, limited(true), &mut callback).unwrap();
     let best = optimal(solved.outcome);
     assert!(close(best.objective, 5.0, 1e-9), "{best:?}");
     let b = callback.pricer.col_of(7).expect("B is priced");
@@ -510,13 +600,8 @@ struct CutsB {
     calls: usize,
 }
 
-impl Callback<Scip> for CutsB {
-    fn events(&self) -> Events {
-        Events::CUT
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl Roles for CutsB {
+    const CUT: bool = true;
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
     }
@@ -543,7 +628,7 @@ fn test_a_cut_may_name_a_priced_column() {
             cuts: 0,
             calls: 0,
         };
-        let solved = solver.solve_with(limited(presolve), &mut callback).unwrap();
+        let solved = solve_as(&mut solver, limited(presolve), &mut callback).unwrap();
         assert!(
             close(optimal(solved.outcome).objective, 5.0, 1e-9),
             "presolve {presolve}"
@@ -558,12 +643,9 @@ struct PollsWhilePricing {
     events: Vec<ScipEvent>,
 }
 
-impl Callback<Scip> for PollsWhilePricing {
+impl Roles for PollsWhilePricing {
     fn events(&self) -> Events {
         Events::POLL
-    }
-    fn prices(&self) -> bool {
-        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -582,7 +664,7 @@ fn test_a_pricing_solve_polls_at_each_solved_node_lp() {
         pricer: Pricer::new(patterns, 3..11, Pick::Every),
         events: Vec::new(),
     };
-    let solved = solver.solve_with(limited(false), &mut callback).unwrap();
+    let solved = solve_as(&mut solver, limited(false), &mut callback).unwrap();
     assert!(close(optimal(solved.outcome).objective, 5.0, 1e-9));
     for event in [ScipEvent::NodeFocused, ScipEvent::LpSolved, ScipEvent::NodeSolved] {
         assert!(callback.events.contains(&event), "{event:?} in {:?}", callback.events);
@@ -595,13 +677,7 @@ struct FarkasEarly {
     bound: Option<Result<(), ActionError>>,
 }
 
-impl Callback<Scip> for FarkasEarly {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl Roles for FarkasEarly {
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         if self.bound.is_none() {
             assert_eq!(ctx.mode(), PriceMode::Farkas, "the start is infeasible");
@@ -633,7 +709,7 @@ fn test_branching_early_in_a_farkas_round_is_a_round_not_run() {
         pricer: Pricer::new(columns, 1..3, Pick::Every),
         bound: None,
     };
-    let solved = solver.solve_with(limited(false), &mut callback);
+    let solved = solve_as(&mut solver, limited(false), &mut callback);
     assert!(
         matches!(&callback.bound, Some(Err(ActionError::Refused(reason))) if reason.contains("Farkas")),
         "{:?}",
@@ -653,7 +729,7 @@ fn test_a_column_without_an_upper_bound_is_priced_in() {
     let watched = vec![column(1.0, Bounds::NON_NEGATIVE, false, &[(Row::new(0), 1.0)]), y];
     let mut solver = Solver::new(Scip::new(), program).unwrap();
     let mut pricer = Pricer::new(watched, [1], Pick::Every);
-    let solved = solver.solve_with(limited(true), &mut pricer).unwrap();
+    let solved = solve_as(&mut solver, limited(true), &mut pricer).unwrap();
     let best = optimal(solved.outcome);
     assert!(close(best.objective, 1.5, 1e-9), "{best:?}");
     assert_eq!(pricer.added, vec![(1, Col::new(1))]);
@@ -666,12 +742,9 @@ struct Phases {
     phases: Vec<Phase>,
 }
 
-impl Callback<Scip> for Phases {
+impl Roles for Phases {
     fn events(&self) -> Events {
         Events::PROGRESS
-    }
-    fn prices(&self) -> bool {
-        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -700,7 +773,7 @@ fn test_an_lp_whose_priced_column_is_integer_reports_its_search_as_a_mip() {
         pricer: Pricer::new(watched, [1], Pick::Every),
         phases: Vec::new(),
     };
-    let solved = solver.solve_with(limited(false), &mut phases).unwrap();
+    let solved = solve_as(&mut solver, limited(false), &mut phases).unwrap();
     assert!(close(optimal(solved.outcome).objective, 2.0, 1e-9));
     assert_eq!(phases.pricer.added, vec![(1, Col::new(1))]);
     assert!(phases.phases.contains(&Phase::Mip), "{:?}", phases.phases);
@@ -716,12 +789,10 @@ struct Supplies {
     feasible: Vec<TiVec<Col, f64>>,
 }
 
-impl Callback<Scip> for Supplies {
+impl Roles for Supplies {
+    const HEURISTIC: bool = true;
     fn events(&self) -> Events {
-        Events::HEURISTIC | Events::FEASIBLE
-    }
-    fn prices(&self) -> bool {
-        true
+        Events::FEASIBLE
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -769,7 +840,7 @@ fn test_a_heuristic_solution_through_priced_columns_is_stored_with_their_values(
         results: Vec::new(),
         feasible: Vec::new(),
     };
-    let solved = solver.solve_with(limited(false), &mut callback).unwrap();
+    let solved = solve_as(&mut solver, limited(false), &mut callback).unwrap();
     let best = optimal(solved.outcome);
     assert!(close(best.objective, 5.0, 1e-9), "{best:?}");
     assert!(full.max_violation(&in_full(&callback.pricer, 3, &best.values)) <= 1e-6);
@@ -806,7 +877,7 @@ fn test_a_heuristic_solution_presolve_cannot_hold_is_refused_with_the_reason() {
         };
         callback.pricer.added.push((3, z));
         callback.solution.push((3, z_value));
-        let solved = solver.solve_with(limited(true), &mut callback).unwrap();
+        let solved = solve_as(&mut solver, limited(true), &mut callback).unwrap();
         assert!(close(optimal(solved.outcome).objective, 29.0 / 6.0, 1e-9));
         let result = callback.results.first().expect("the heuristic ran");
         if refused {
@@ -827,7 +898,11 @@ fn test_a_pricing_solve_starts_from_a_start_over_the_programs_columns() {
     let mut pricer = Pricer::new(patterns, 3..11, Pick::Every);
     // A = 3, D = 1, F = 2: six rolls, feasible.
     let solved = solver
-        .solve_with_from(limited(true), vec![3.0, 1.0, 2.0], &mut pricer)
+        .solve_with_from(
+            limited(true),
+            vec![3.0, 1.0, 2.0],
+            Hooks::new().register_pricer(&mut pricer),
+        )
         .unwrap();
     assert!(close(optimal(solved.outcome).objective, 5.0, 1e-9));
 }
@@ -841,7 +916,7 @@ fn test_pricing_a_program_with_a_quadratic_objective_is_refused_before_scip_runs
     let program = plan.build().unwrap();
     let mut solver = Solver::new(Scip::new(), program).unwrap();
     let mut pricer = Pricer::new(vec![], [], Pick::Every);
-    let refused = solver.solve_with(limited(true), &mut pricer);
+    let refused = solve_as(&mut solver, limited(true), &mut pricer);
     assert!(
         matches!(refused, Err(SolveError::Backend(ScipError::PricingQuadratic))),
         "{refused:?}"
@@ -862,13 +937,7 @@ struct Refusals {
     local: Vec<Option<Bounds>>,
 }
 
-impl Callback<Scip> for Refusals {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl Roles for Refusals {
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         if self.results.is_empty() {
             let row = Row::new(0);
@@ -904,7 +973,7 @@ fn test_scip_refuses_a_column_it_cannot_hold_before_it_takes_an_id() {
         beyond: None,
         local: Vec::new(),
     };
-    let solved = solver.solve_with(limited(true), &mut callback).unwrap();
+    let solved = solve_as(&mut solver, limited(true), &mut callback).unwrap();
     for result in &callback.results[..4] {
         assert!(matches!(result, Err(ActionError::Refused(_))), "{:?}", callback.results);
     }
@@ -937,13 +1006,7 @@ struct Early {
     early: Option<Result<(), ActionError>>,
 }
 
-impl Callback<Scip> for Early {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl Roles for Early {
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         if self.early.is_none() && matches!(ctx.mode(), PriceMode::ReducedCost { .. }) {
             self.early = Some(ctx.report_bound(4.0));
@@ -962,7 +1025,7 @@ fn test_branching_early_with_a_bound_still_reaches_the_integer_optimum() {
         pricer: Pricer::new(patterns, 3..11, Pick::Every),
         early: None,
     };
-    let solved = solver.solve_with(limited(true), &mut early).unwrap();
+    let solved = solve_as(&mut solver, limited(true), &mut early).unwrap();
     assert_eq!(early.early, Some(Ok(())));
     assert!(close(optimal(solved.outcome).objective, 5.0, 1e-9));
 }
@@ -975,7 +1038,7 @@ fn test_branching_early_where_scip_cannot_branch_fails_the_solve_with_a_typed_er
         pricer: Pricer::new(patterns, 3..11, Pick::Every),
         early: None,
     };
-    let failed = solver.solve_with(limited(true), &mut early);
+    let failed = solve_as(&mut solver, limited(true), &mut early);
     assert!(
         matches!(failed, Err(SolveError::Backend(ScipError::BranchEarly))),
         "{failed:?}"
@@ -998,7 +1061,7 @@ fn test_a_degenerate_node_lp_hands_out_duals_that_price_its_bounds() {
         let x1 = column(0.0, bounds!(0.0, 1.0), false, &[(Row::new(0), 1.0)]);
         let mut solver = Solver::new(Scip::new(), program.clone()).unwrap();
         let mut pricer = Pricer::new(vec![x1], [0], Pick::Every);
-        let solved = solver.solve_with(limited(presolve), &mut pricer).unwrap();
+        let solved = solve_as(&mut solver, limited(presolve), &mut pricer).unwrap();
         assert!(pricer.rounds[0].duals[0] <= -2.0 + 1e-9, "{:?}", pricer.rounds);
         assert!(
             close(optimal(solved.outcome).objective, 2.0, 1e-9),
@@ -1026,7 +1089,7 @@ fn test_no_cut_from_the_objective_over_the_columns_held_cuts_off_a_column_pricin
     for presolve in [true, false] {
         let mut solver = Solver::new(Scip::new(), program.clone()).unwrap();
         let mut pricer = Pricer::new(vec![x1.clone(), x4.clone()], [0, 1], Pick::Every);
-        let solved = solver.solve_with(limited(presolve), &mut pricer).unwrap();
+        let solved = solve_as(&mut solver, limited(presolve), &mut pricer).unwrap();
         let best = optimal(solved.outcome);
         assert!(close(best.objective, -1.5, 1e-9), "{best:?}, {:?}", pricer.rounds);
     }
@@ -1041,12 +1104,9 @@ struct SplitPricer {
     bounds: Vec<f64>,
 }
 
-impl Callback<Scip> for SplitPricer {
+impl Roles for SplitPricer {
     fn events(&self) -> Events {
         Events::POLL
-    }
-    fn prices(&self) -> bool {
-        true
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.rounds += 1;
@@ -1100,9 +1160,8 @@ fn check_split(
         rounds: 0,
         bounds: Vec::new(),
     };
-    let solved = solver
-        .solve_with(limited(presolve), &mut pricer)
-        .map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
+    let solved =
+        solve_as(&mut solver, limited(presolve), &mut pricer).map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
     let context = format!("{pick:?} presolve {presolve}: {solved:?}, reference {reference:?}, window {window:?}");
     let program = solver.program();
     // 3: the program holds the kept and the added columns, and the solution a value for each.

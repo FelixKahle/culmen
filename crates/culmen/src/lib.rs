@@ -218,15 +218,19 @@ pub mod prelude {
     pub use culmen_scip::Scip;
 
     pub use culmen_core::{
-        Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Improvement, IndexSet, LinExpr, Linear,
-        LogLine, Model, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Request, Row, Sense,
-        Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap, absolute_gap,
-        bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
+        Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Hooks, Improvement, IndexSet, LinExpr,
+        Linear, LogLine, Model, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Request, Row,
+        Sense, Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap,
+        absolute_gap, bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
     };
-    // A generic callback calls its contexts through these traits, and a backend names `Unsupported` for an event it
-    // cannot deliver.
+    // A generic callback or handler calls its contexts through these traits, and a backend names `Unsupported` for an
+    // event it cannot deliver.
     pub use culmen_core::{
-        CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext,
+        Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext,
         SolutionContext, Unsupported,
+    };
+    // The search capabilities a backend may have, and the handler each one takes.
+    pub use culmen_core::{
+        CutHandler, HeuristicHandler, Heuristics, LazyConstraints, LazyHandler, Pricer, Prices, UserCuts,
     };
 }

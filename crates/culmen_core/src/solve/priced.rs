@@ -9,9 +9,10 @@ use crate::{ActionError, Col, Cols, ModelClass, ModelClasses, NewCol, Program};
 /// The columns one solve prices in, numbered after the program's columns: what a backend's price context hands every
 /// added column to, so that the [`Solver`](crate::Solver) can append them to its program.
 ///
-/// The [`Solver`](crate::Solver) makes one for each solve and hands it to [`Backend::solve`](crate::Backend::solve);
-/// code that drives a backend directly makes its own and owns the columns it holds afterwards
-/// ([`Priced::into_cols`]).
+/// The [`Solver`](crate::Solver) makes one for each solve and hands it to [`Backend::solve`](crate::Backend::solve) in
+/// the [`Hooks`](crate::Hooks), where a backend that prices takes it ([`Hooks::take_priced`](crate::Hooks::take_priced));
+/// code that drives a backend directly makes its own, gives it with [`Hooks::sink`](crate::Hooks::sink), and owns the
+/// columns it holds afterwards ([`Priced::into_cols`]).
 ///
 /// ```
 /// use culmen_core::{Backend, Bounds, Col, Linear, Model, NewCol, Priced, ProgramColumn, Script, Var};

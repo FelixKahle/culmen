@@ -15,10 +15,11 @@ use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
 use culmen_core::{
-    ActionError, Backend, Callback, Col, Constraint, CutContext, Events, Found, HeuristicContext, LazyContext, LinExpr,
-    Linear, LogContext, LogLevel, Model, Observer, Outcome, Phase, PollContext, Program, ProgramPlan, ProgramRow,
-    Progress, ProgressContext, Request, Script, Settings, Solution, SolutionContext, Solver, Step, StopReason, Term,
-    TiSlice, TiVec, Var, relative_gap,
+    ActionError, Backend, Callback, Col, Constraint, Context, CutContext, CutHandler, Events, Found, HeuristicContext,
+    HeuristicHandler, Heuristics, Hooks, LazyConstraints, LazyContext, LazyHandler, LinExpr, Linear, LogContext,
+    LogLevel, Model, Observer, Outcome, Phase, PollContext, Program, ProgramPlan, ProgramRow, Progress, Request,
+    Script, Settings, Solution, SolutionContext, Solver, Step, StopReason, Term, TiSlice, TiVec, UserCuts, Var,
+    relative_gap,
 };
 use culmen_scip::{Emphasis, LazySource, Scip, ScipEvent, ScipOptions};
 use culmen_testing::instances::assignment;
@@ -77,10 +78,7 @@ impl NotBoth {
     }
 }
 
-impl<B: Backend> Callback<B> for NotBoth {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
+impl<B: LazyConstraints> LazyHandler<B> for NotBoth {
     fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
         self.calls += 1;
         assert!(self.calls <= 1000, "the lazy callback was called {} times", self.calls);
@@ -100,7 +98,12 @@ fn test_a_lazy_conflict_moves_the_optimum_and_every_later_candidate_meets_it() {
     let (program, [x, y, z]) = conflict();
     let mut solver = Solver::new(Scip::new(), program.clone()).unwrap();
     let mut not_both = NotBoth::new(x, y);
-    let best = optimal(solver.solve_with(exact(), &mut not_both).unwrap().outcome);
+    let best = optimal(
+        solver
+            .solve_with(exact(), Hooks::new().register_lazy(&mut not_both))
+            .unwrap()
+            .outcome,
+    );
     assert_eq!(best.objective, 4.0);
     assert_eq!(
         [best.values[x], best.values[y], best.values[z]].map(f64::round),
@@ -132,7 +135,9 @@ fn test_the_same_lazy_callback_on_the_script_adds_the_row_that_gives_scips_optim
     };
     let script = Script::new([Step::Lazy(both), Step::Lazy(one)], Outcome::Infeasible);
     let mut scripted = Solver::new(script, program.clone()).unwrap();
-    scripted.solve_with(Request::new(), &mut NotBoth::new(x, y)).unwrap();
+    scripted
+        .solve_with(Request::new(), Hooks::new().register_lazy(&mut NotBoth::new(x, y)))
+        .unwrap();
     let rows = scripted.backend().record.lazy.clone();
     assert_eq!(rows.len(), 1);
     // The program with the scripted record's rows has SCIP's lazy optimum as its plain optimum.
@@ -150,7 +155,7 @@ fn test_the_same_lazy_callback_on_the_script_adds_the_row_that_gives_scips_optim
     let lazy = optimal(
         Solver::new(Scip::new(), program)
             .unwrap()
-            .solve_with(exact(), &mut NotBoth::new(x, y))
+            .solve_with(exact(), Hooks::new().register_lazy(&mut NotBoth::new(x, y)))
             .unwrap()
             .outcome,
     );
@@ -263,10 +268,7 @@ impl Subtours {
     }
 }
 
-impl<B: Backend> Callback<B> for Subtours {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
+impl<B: LazyConstraints> LazyHandler<B> for Subtours {
     fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
         self.calls += 1;
         assert!(
@@ -302,7 +304,12 @@ fn test_lazy_subtour_constraints_find_the_shortest_tour_found_by_brute_force() {
         late_violations: 0,
         calls: 0,
     };
-    let best = optimal(solver.solve_with(exact(), &mut subtours).unwrap().outcome);
+    let best = optimal(
+        solver
+            .solve_with(exact(), Hooks::new().register_lazy(&mut subtours))
+            .unwrap()
+            .outcome,
+    );
     assert!(
         close(best.objective, shortest_tour(), 1e-6),
         "{} vs {}",
@@ -327,11 +334,8 @@ fn test_a_lazy_constraint_on_a_qp_moves_its_optimum() {
     let program = m.build().unwrap();
 
     struct Diagonal(Col, Col, Vec<(f64, f64)>);
-    impl Callback<Scip> for Diagonal {
-        fn events(&self) -> Events {
-            Events::LAZY
-        }
-        fn lazy(&mut self, ctx: &mut <Scip as Backend>::Lazy<'_>) {
+    impl LazyHandler<Scip> for Diagonal {
+        fn lazy(&mut self, ctx: &mut <Scip as LazyConstraints>::Lazy<'_>) {
             assert!(self.2.len() < 10_000);
             let c = ctx.candidate();
             self.2
@@ -345,7 +349,7 @@ fn test_a_lazy_constraint_on_a_qp_moves_its_optimum() {
     let best = optimal(
         Solver::new(Scip::new(), program)
             .unwrap()
-            .solve_with(exact(), &mut diagonal)
+            .solve_with(exact(), Hooks::new().register_lazy(&mut diagonal))
             .unwrap()
             .outcome,
     );
@@ -364,11 +368,8 @@ fn test_a_lazy_constraint_on_a_qp_moves_its_optimum() {
 #[derive(Default)]
 struct Sources(Vec<LazySource>);
 
-impl Callback<Scip> for Sources {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
-    fn lazy(&mut self, ctx: &mut <Scip as Backend>::Lazy<'_>) {
+impl LazyHandler<Scip> for Sources {
+    fn lazy(&mut self, ctx: &mut <Scip as LazyConstraints>::Lazy<'_>) {
         assert!(self.0.len() < 10_000);
         self.0.push(ctx.source());
     }
@@ -380,7 +381,7 @@ fn test_lazy_candidates_come_from_checked_solutions_and_node_lps() {
     let mut sources = Sources::default();
     Solver::new(Scip::new(), program)
         .unwrap()
-        .solve_with(exact(), &mut sources)
+        .solve_with(exact(), Hooks::new().register_lazy(&mut sources))
         .unwrap();
     assert!(sources.0.contains(&LazySource::Check), "{:?}", sources.0);
 }
@@ -389,11 +390,8 @@ fn test_lazy_candidates_come_from_checked_solutions_and_node_lps() {
 fn test_an_invalid_lazy_constraint_is_refused_typed() {
     let (program, [x, _, _]) = conflict();
     struct Bad(Col, Vec<ActionError>);
-    impl Callback<Scip> for Bad {
-        fn events(&self) -> Events {
-            Events::LAZY
-        }
-        fn lazy(&mut self, ctx: &mut <Scip as Backend>::Lazy<'_>) {
+    impl LazyHandler<Scip> for Bad {
+        fn lazy(&mut self, ctx: &mut <Scip as LazyConstraints>::Lazy<'_>) {
             if self.1.is_empty() {
                 let x = self.0;
                 let rows = [
@@ -417,7 +415,7 @@ fn test_an_invalid_lazy_constraint_is_refused_typed() {
     let best = optimal(
         Solver::new(Scip::new(), program)
             .unwrap()
-            .solve_with(exact(), &mut bad)
+            .solve_with(exact(), Hooks::new().register_lazy(&mut bad))
             .unwrap()
             .outcome,
     );
@@ -508,10 +506,7 @@ struct Covers {
     calls: usize,
 }
 
-impl<B: Backend> Callback<B> for Covers {
-    fn events(&self) -> Events {
-        Events::CUT
-    }
+impl<B: UserCuts> CutHandler<B> for Covers {
     fn cut(&mut self, ctx: &mut B::Cut<'_>) {
         self.calls += 1;
         assert!(self.calls <= 10_000, "the cut callback was called {} times", self.calls);
@@ -550,38 +545,50 @@ fn test_cover_cuts_are_taken_and_leave_the_knapsack_optimum() {
         accepted: 0,
         calls: 0,
     };
-    let best = optimal(solver.solve_with(without_presolve(), &mut covers).unwrap().outcome);
+    let best = optimal(
+        solver
+            .solve_with(without_presolve(), Hooks::new().register_cut(&mut covers))
+            .unwrap()
+            .outcome,
+    );
     assert_eq!(best.objective, best_subset());
     assert!(covers.accepted >= 1, "the root relaxation takes a fraction of an item");
     let plain = optimal(solver.solve(without_presolve()).unwrap().outcome);
     assert_eq!(plain.objective, best.objective);
 }
 
-/// What a heuristic callback supplies at its first call, and what came of it.
+/// What a heuristic handler supplies at its first call, and what came of it.
 #[derive(Default)]
 struct Supplier {
     full: Option<Vec<f64>>,
-    partial: Option<Vec<(Col, f64)>>,
     results: Vec<Result<(), ActionError>>,
-    incumbents: Vec<f64>,
     calls: usize,
 }
 
-impl Callback<Scip> for Supplier {
-    fn events(&self) -> Events {
-        Events::HEURISTIC | Events::INCUMBENT
-    }
-    fn heuristic(&mut self, ctx: &mut <Scip as Backend>::Heuristic<'_>) {
+impl HeuristicHandler<Scip> for Supplier {
+    fn heuristic(&mut self, ctx: &mut <Scip as Heuristics>::Heuristic<'_>) {
         self.calls += 1;
+        assert!(
+            self.calls <= 10_000,
+            "the heuristic handler was called {} times",
+            self.calls
+        );
         if let Some(values) = self.full.take() {
             self.results.push(ctx.supply(TiSlice::from_ref(values.as_slice())));
         }
-        if let Some(entries) = self.partial.take() {
-            self.results.push(ctx.supply_partial(&entries));
-        }
+    }
+}
+
+/// Every incumbent's objective.
+#[derive(Default)]
+struct Incumbents(Vec<f64>);
+
+impl Callback<Scip> for Incumbents {
+    fn events(&self) -> Events {
+        Events::INCUMBENT
     }
     fn incumbent(&mut self, ctx: &mut <Scip as Backend>::Solution<'_>) {
-        self.incumbents.push(ctx.objective());
+        self.0.push(ctx.objective());
     }
 }
 
@@ -595,99 +602,81 @@ fn test_a_supplied_optimum_becomes_the_first_incumbent() {
         full: Some(chosen),
         ..Supplier::default()
     };
-    let best = optimal(solver.solve_with(without_presolve(), &mut supplier).unwrap().outcome);
+    let mut incumbents = Incumbents::default();
+    let hooks = Hooks::new()
+        .register_heuristic(&mut supplier)
+        .register_callback(&mut incumbents);
+    let best = optimal(solver.solve_with(without_presolve(), hooks).unwrap().outcome);
     assert_eq!(supplier.results, [Ok(())]);
-    assert_eq!(supplier.incumbents.first(), Some(&value), "{:?}", supplier.incumbents);
+    assert_eq!(incumbents.0.first(), Some(&value), "{:?}", incumbents.0);
     assert_eq!(best.objective, value);
 }
 
 #[test]
-fn test_an_infeasible_wrong_or_partial_solution_is_refused() {
+fn test_an_infeasible_or_wrong_solution_is_refused() {
+    // SCIP's heuristic context has no partial solution to supply: SCIP completes one only as a start.
     let (program, take) = knapsack();
     let mut solver = Solver::new(bare(), program).unwrap();
-    let mut everything = Supplier {
+    let mut infeasible = Supplier {
         full: Some(vec![1.0; take.len()]),
-        partial: Some(vec![(take[0], 1.0)]),
         ..Supplier::default()
     };
-    let best = optimal(solver.solve_with(without_presolve(), &mut everything).unwrap().outcome);
+    let mut incumbents = Incumbents::default();
+    let hooks = Hooks::new()
+        .register_heuristic(&mut infeasible)
+        .register_callback(&mut incumbents);
+    let best = optimal(solver.solve_with(without_presolve(), hooks).unwrap().outcome);
     assert_eq!(best.objective, best_subset());
     assert!(
-        matches!(&everything.results[0], Err(ActionError::Refused(reason)) if reason.contains("infeasible")),
+        matches!(&infeasible.results[0], Err(ActionError::Refused(reason)) if reason.contains("infeasible")),
         "{:?}",
-        everything.results
+        infeasible.results
     );
-    assert!(
-        matches!(&everything.results[1], Err(ActionError::Refused(reason)) if reason.contains("partial")),
-        "{:?}",
-        everything.results
-    );
-    assert!(
-        everything.incumbents.iter().all(|&o| o <= best_subset()),
-        "{:?}",
-        everything.incumbents
-    );
+    assert!(incumbents.0.iter().all(|&o| o <= best_subset()), "{:?}", incumbents.0);
     let mut short = Supplier {
         full: Some(vec![1.0; 3]),
-        partial: Some(vec![(Col::new(9), 1.0)]),
         ..Supplier::default()
     };
-    solver.solve_with(without_presolve(), &mut short).unwrap();
-    assert_eq!(
-        short.results,
-        [
-            Err(ActionError::Length { expected: 8, found: 3 }),
-            Err(ActionError::UnknownColumn { col: Col::new(9) })
-        ]
-    );
+    solver
+        .solve_with(without_presolve(), Hooks::new().register_heuristic(&mut short))
+        .unwrap();
+    assert_eq!(short.results, [Err(ActionError::Length { expected: 8, found: 3 })]);
 }
 
-/// Supplies a solution violating the conflict, which the lazy callback, asked along, rejects.
-struct SupplyAndForbid {
-    not_both: NotBoth,
-    supplied: Vec<Result<(), ActionError>>,
-    incumbents: Vec<f64>,
-}
+/// Supplies, once, a solution taking all three items of the conflict.
+#[derive(Default)]
+struct SupplyAll(Vec<Result<(), ActionError>>);
 
-impl Callback<Scip> for SupplyAndForbid {
-    fn events(&self) -> Events {
-        Events::LAZY | Events::HEURISTIC | Events::INCUMBENT
-    }
-    fn lazy(&mut self, ctx: &mut <Scip as Backend>::Lazy<'_>) {
-        Callback::<Scip>::lazy(&mut self.not_both, ctx);
-    }
-    fn heuristic(&mut self, ctx: &mut <Scip as Backend>::Heuristic<'_>) {
-        if self.supplied.is_empty() {
-            self.supplied.push(ctx.supply(TiSlice::from_ref(&[1.0, 1.0, 1.0][..])));
+impl HeuristicHandler<Scip> for SupplyAll {
+    fn heuristic(&mut self, ctx: &mut <Scip as Heuristics>::Heuristic<'_>) {
+        if self.0.is_empty() {
+            self.0.push(ctx.supply(TiSlice::from_ref(&[1.0, 1.0, 1.0][..])));
         }
-    }
-    fn incumbent(&mut self, ctx: &mut <Scip as Backend>::Solution<'_>) {
-        self.incumbents.push(ctx.objective());
     }
 }
 
 #[test]
-fn test_a_supplied_solution_meets_the_lazy_callback_before_scip_keeps_it() {
+fn test_a_supplied_solution_meets_the_lazy_handler_before_scip_keeps_it() {
     let (program, [x, y, _]) = conflict();
-    let mut both = SupplyAndForbid {
-        not_both: NotBoth::new(x, y),
-        supplied: Vec::new(),
-        incumbents: Vec::new(),
-    };
+    let (mut not_both, mut supply, mut incumbents) = (NotBoth::new(x, y), SupplyAll::default(), Incumbents::default());
+    let hooks = Hooks::new()
+        .register_lazy(&mut not_both)
+        .register_heuristic(&mut supply)
+        .register_callback(&mut incumbents);
     let best = optimal(
         Solver::new(bare(), program)
             .unwrap()
-            .solve_with(exact(), &mut both)
+            .solve_with(exact(), hooks)
             .unwrap()
             .outcome,
     );
     assert_eq!(
-        both.supplied,
+        supply.0,
         [Ok(())],
-        "a run asking for lazy constraints tries the solution after the callback"
+        "a run with a lazy-constraint handler tries the solution after the heuristic handler"
     );
-    assert!(both.not_both.added, "the lazy callback saw the supplied solution");
-    assert!(both.incumbents.iter().all(|&o| o <= 4.0), "{:?}", both.incumbents);
+    assert!(not_both.added, "the lazy-constraint handler saw the supplied solution");
+    assert!(incumbents.0.iter().all(|&o| o <= 4.0), "{:?}", incumbents.0);
     assert_eq!(best.objective, 4.0);
 }
 
@@ -717,7 +706,9 @@ fn test_an_interrupt_at_the_first_poll_stops_the_solve() {
         when: |_: &Progress| true,
         polls: Vec::new(),
     };
-    let solved = solver.solve_with(exact(), &mut first).unwrap();
+    let solved = solver
+        .solve_with(exact(), Hooks::new().register_callback(&mut first))
+        .unwrap();
     assert!(
         matches!(
             solved.outcome,
@@ -741,7 +732,9 @@ fn test_an_interrupt_once_there_is_an_incumbent_keeps_it() {
         when: |p: &Progress| p.objective.is_some(),
         polls: Vec::new(),
     };
-    let solved = solver.solve_with(exact(), &mut found).unwrap();
+    let solved = solver
+        .solve_with(exact(), Hooks::new().register_callback(&mut found))
+        .unwrap();
     let Outcome::Stopped {
         reason: StopReason::Interrupted,
         best: Some(best),
@@ -793,7 +786,7 @@ fn test_a_pure_lp_is_polled_at_its_one_node() {
     let best = optimal(
         Solver::new(Scip::new(), m.build().unwrap())
             .unwrap()
-            .solve_with(without_presolve(), &mut polls)
+            .solve_with(without_presolve(), Hooks::new().register_callback(&mut polls))
             .unwrap()
             .outcome,
     );
@@ -826,7 +819,10 @@ fn test_progress_moves_one_way_and_the_bound_stays_below_the_incumbent() {
     let mut reports = Reports::default();
     Solver::new(Scip::new(), program)
         .unwrap()
-        .solve_with(Request::new().time_limit(Duration::from_secs(5)), &mut reports)
+        .solve_with(
+            Request::new().time_limit(Duration::from_secs(5)),
+            Hooks::new().register_callback(&mut reports),
+        )
         .unwrap();
     let reports = reports.0;
     assert!(reports.iter().any(|p| p.phase == Phase::Presolve));
@@ -908,7 +904,9 @@ fn test_log_lines_arrive_whole_and_reach_stdout_only_with_the_console() {
                 ..Settings::new()
             })
             .observer(&mut told);
-        solver.solve_with(request, &mut lines).unwrap();
+        solver
+            .solve_with(request, Hooks::new().register_callback(&mut lines))
+            .unwrap();
         assert!(!lines.chunks.is_empty());
         assert!(
             lines.chunks.iter().all(|(_, text)| text.ends_with('\n')),
@@ -960,37 +958,60 @@ impl Callback<Scip> for PanicAt {
     fn incumbent(&mut self, _: &mut <Scip as Backend>::Solution<'_>) {
         self.fire();
     }
-    fn lazy(&mut self, _: &mut <Scip as Backend>::Lazy<'_>) {
-        self.fire();
+}
+
+/// Panics at its first call as a search handler, naming its kind.
+struct PanicIn(&'static str);
+
+impl LazyHandler<Scip> for PanicIn {
+    fn lazy(&mut self, _: &mut <Scip as LazyConstraints>::Lazy<'_>) {
+        panic!("panic at {}", self.0);
     }
-    fn cut(&mut self, _: &mut <Scip as Backend>::Cut<'_>) {
-        self.fire();
+}
+
+impl CutHandler<Scip> for PanicIn {
+    fn cut(&mut self, _: &mut <Scip as UserCuts>::Cut<'_>) {
+        panic!("panic at {}", self.0);
     }
-    fn heuristic(&mut self, _: &mut <Scip as Backend>::Heuristic<'_>) {
-        self.fire();
+}
+
+impl HeuristicHandler<Scip> for PanicIn {
+    fn heuristic(&mut self, _: &mut <Scip as Heuristics>::Heuristic<'_>) {
+        panic!("panic at {}", self.0);
     }
-    fn price(&mut self, _: &mut <Scip as Backend>::Price<'_>) {
-        self.fire();
-    }
+}
+
+/// Solves `program` with the hooks `solve` registers, expects the panic `expected` out of the solve, and then a plain
+/// solve of the same solver to the knapsack's optimum.
+fn panics_out(program: &Program, expected: &str, solve: impl FnOnce(&mut Solver<Scip>)) {
+    let mut solver = Solver::new(bare(), program.clone()).unwrap();
+    let caught = catch_unwind(AssertUnwindSafe(|| solve(&mut solver)));
+    let payload = caught.expect_err("the panic propagates");
+    assert_eq!(payload.downcast_ref::<String>().map(String::as_str), Some(expected));
+    let best = optimal(solver.solve(without_presolve()).unwrap().outcome);
+    assert_eq!(best.objective, best_subset(), "{expected}");
 }
 
 #[test]
 fn test_a_panic_in_every_plugin_panics_out_of_solve_and_leaves_scip_usable() {
     let (program, _) = knapsack();
     for event in Scip::EVENTS {
-        let mut solver = Solver::new(bare(), program.clone()).unwrap();
-        let caught = catch_unwind(AssertUnwindSafe(|| {
-            solver.solve_with(without_presolve(), &mut PanicAt(event))
-        }));
-        let payload = caught.expect_err("the panic propagates");
-        assert_eq!(
-            payload.downcast_ref::<String>().map(String::as_str),
-            Some(format!("panic at {event}").as_str())
-        );
-        let best = optimal(solver.solve(without_presolve()).unwrap().outcome);
-        assert_eq!(best.objective, best_subset(), "{event}");
-        drop(solver);
+        panics_out(&program, &format!("panic at {event}"), |solver| {
+            let _ = solver.solve_with(without_presolve(), Hooks::new().register_callback(&mut PanicAt(event)));
+        });
     }
+    panics_out(&program, "panic at lazy", |solver| {
+        let _ = solver.solve_with(without_presolve(), Hooks::new().register_lazy(&mut PanicIn("lazy")));
+    });
+    panics_out(&program, "panic at cut", |solver| {
+        let _ = solver.solve_with(without_presolve(), Hooks::new().register_cut(&mut PanicIn("cut")));
+    });
+    panics_out(&program, "panic at heuristic", |solver| {
+        let _ = solver.solve_with(
+            without_presolve(),
+            Hooks::new().register_heuristic(&mut PanicIn("heuristic")),
+        );
+    });
 }
 
 /// Records which events arrive.
@@ -1016,30 +1037,60 @@ impl Callback<Scip> for Seen {
     fn incumbent(&mut self, _: &mut <Scip as Backend>::Solution<'_>) {
         self.0 |= Events::INCUMBENT;
     }
-    fn lazy(&mut self, _: &mut <Scip as Backend>::Lazy<'_>) {
-        self.0 |= Events::LAZY;
+}
+
+/// Counts its calls as a search handler, adding nothing.
+#[derive(Default)]
+struct Hit(usize);
+
+impl Hit {
+    fn count(&mut self) {
+        self.0 += 1;
+        assert!(self.0 <= 10_000, "the handler was called {} times", self.0);
     }
-    fn cut(&mut self, _: &mut <Scip as Backend>::Cut<'_>) {
-        self.0 |= Events::CUT;
+}
+
+impl LazyHandler<Scip> for Hit {
+    fn lazy(&mut self, _: &mut <Scip as LazyConstraints>::Lazy<'_>) {
+        self.count();
     }
-    fn heuristic(&mut self, _: &mut <Scip as Backend>::Heuristic<'_>) {
-        self.0 |= Events::HEURISTIC;
+}
+
+impl CutHandler<Scip> for Hit {
+    fn cut(&mut self, _: &mut <Scip as UserCuts>::Cut<'_>) {
+        self.count();
     }
-    fn price(&mut self, _: &mut <Scip as Backend>::Price<'_>) {
-        unreachable!("every event asked for, and still no pricing");
+}
+
+impl HeuristicHandler<Scip> for Hit {
+    fn heuristic(&mut self, _: &mut <Scip as Heuristics>::Heuristic<'_>) {
+        self.count();
     }
 }
 
 #[test]
-fn test_scips_events_are_exactly_the_events_it_delivers() {
+fn test_scips_events_are_exactly_the_events_it_delivers_and_every_handler_runs() {
     assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE);
     let (program, _) = knapsack();
     let mut seen = Seen::default();
+    let (mut lazy, mut cut, mut heuristic) = (Hit::default(), Hit::default(), Hit::default());
+    let hooks = Hooks::new()
+        .register_callback(&mut seen)
+        .register_lazy(&mut lazy)
+        .register_cut(&mut cut)
+        .register_heuristic(&mut heuristic);
     Solver::new(Scip::new(), program)
         .unwrap()
-        .solve_with(without_presolve(), &mut seen)
+        .solve_with(without_presolve(), hooks)
         .unwrap();
     assert_eq!(seen.0, Scip::EVENTS);
+    assert!(
+        lazy.0 > 0 && cut.0 > 0 && heuristic.0 > 0,
+        "{} {} {}",
+        lazy.0,
+        cut.0,
+        heuristic.0
+    );
 }
 
 /// Asks for nothing and fails on any event.
@@ -1055,12 +1106,6 @@ impl Callback<Scip> for Nothing {
     fn poll(&mut self, _: &mut <Scip as Backend>::Poll<'_>) {
         unreachable!("not asked for");
     }
-    fn lazy(&mut self, _: &mut <Scip as Backend>::Lazy<'_>) {
-        unreachable!("not asked for");
-    }
-    fn heuristic(&mut self, _: &mut <Scip as Backend>::Heuristic<'_>) {
-        unreachable!("not asked for");
-    }
 }
 
 #[test]
@@ -1069,7 +1114,7 @@ fn test_events_not_asked_for_are_not_delivered() {
     let best = optimal(
         Solver::new(Scip::new(), program)
             .unwrap()
-            .solve_with(without_presolve(), &mut Nothing)
+            .solve_with(without_presolve(), Hooks::new().register_callback(&mut Nothing))
             .unwrap()
             .outcome,
     );
@@ -1100,7 +1145,7 @@ fn test_a_callback_asking_for_every_event_solves_a_qp_without_pricing() {
     let mut everything = Everything::default();
     let solved = Solver::new(Scip::new(), m.build().unwrap())
         .unwrap()
-        .solve_with(exact(), &mut everything);
+        .solve_with(exact(), Hooks::new().register_callback(&mut everything));
     let best = optimal(solved.unwrap().outcome);
     assert!(close(best.objective, 0.5, 1e-5), "{best:?}");
     assert!(everything.0 > 0);
@@ -1136,7 +1181,7 @@ fn test_solutions_arrive_in_the_programs_columns_with_the_offset_and_improve() {
     let best = optimal(
         Solver::new(Scip::new(), program.clone())
             .unwrap()
-            .solve_with(exact(), &mut solutions)
+            .solve_with(exact(), Hooks::new().register_callback(&mut solutions))
             .unwrap()
             .outcome,
     );
@@ -1174,10 +1219,7 @@ struct Withheld {
     calls: usize,
 }
 
-impl<B: Backend> Callback<B> for Withheld {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
+impl<B: LazyConstraints> LazyHandler<B> for Withheld {
     fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
         self.calls += 1;
         assert!(
@@ -1201,10 +1243,7 @@ struct Implied {
     calls: usize,
 }
 
-impl<B: Backend> Callback<B> for Implied {
-    fn events(&self) -> Events {
-        Events::CUT
-    }
+impl<B: UserCuts> CutHandler<B> for Implied {
     fn cut(&mut self, ctx: &mut B::Cut<'_>) {
         self.calls += 1;
         assert!(self.calls <= 10_000, "the cut callback was called {} times", self.calls);
@@ -1277,7 +1316,7 @@ proptest! {
         let mut withheld = Withheld { rows: held.into_iter().map(|(row, _)| row).collect(), calls: 0 };
         let solved = Solver::new(Scip::new(), plan.build().unwrap())
             .unwrap()
-            .solve_with(exact(), &mut withheld)
+            .solve_with(exact(), Hooks::new().register_lazy(&mut withheld))
             .unwrap();
         agrees(&program, &solved.outcome)?;
     }
@@ -1288,7 +1327,7 @@ proptest! {
         let mut implied = Implied { cuts: implied_cuts(&program), calls: 0 };
         let solved = Solver::new(Scip::new(), program.clone())
             .unwrap()
-            .solve_with(exact(), &mut implied)
+            .solve_with(exact(), Hooks::new().register_cut(&mut implied))
             .unwrap();
         agrees(&program, &solved.outcome)?;
     }

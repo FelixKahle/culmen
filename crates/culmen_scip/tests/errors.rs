@@ -12,7 +12,7 @@
 use core::num::NonZeroU64;
 
 use culmen_core::{
-    Backend, Bounds, Col, Linear, LoadError, Model, Priced, Program, ProgramColumn, ProgramFeature, ProgramPlan,
+    Backend, Bounds, Col, Hooks, Linear, LoadError, Model, Program, ProgramColumn, ProgramFeature, ProgramPlan,
     Request, Row, Settings, SolveError, Solver, Start, Starts, Var, bounds,
 };
 use culmen_scip::{Number, ParamValue, RetCode, Scip, ScipError, ScipOptions};
@@ -285,13 +285,12 @@ fn test_a_failed_load_leaves_no_program_and_a_later_load_works() {
     let mut plan = ProgramPlan::new();
     plan.col(ProgramColumn::continuous(1e30, Bounds::NON_NEGATIVE));
     assert!(scip.load(&plan.build().unwrap()).is_err());
-    let mut priced = Priced::new(&knapsack(), Scip::CLASSES);
     assert_eq!(
-        scip.solve(&Settings::new(), &mut (), &mut priced).unwrap_err(),
+        scip.solve(&Settings::new(), Hooks::new()).unwrap_err(),
         ScipError::NotLoaded
     );
     scip.load(&knapsack()).unwrap();
-    let solved = scip.solve(&Settings::new(), &mut (), &mut priced).unwrap();
+    let solved = scip.solve(&Settings::new(), Hooks::new()).unwrap();
     assert_eq!(solved.outcome.objective(), Some(2.0));
 }
 
@@ -318,9 +317,8 @@ fn test_programs_with_features_it_does_not_declare_are_refused() {
 #[test]
 fn test_solving_or_starting_before_loading_is_refused() {
     let mut scip = Scip::new();
-    let mut priced = Priced::new(&knapsack(), Scip::CLASSES);
     assert_eq!(
-        scip.solve(&Settings::new(), &mut (), &mut priced).unwrap_err(),
+        scip.solve(&Settings::new(), Hooks::new()).unwrap_err(),
         ScipError::NotLoaded
     );
     assert_eq!(scip.set_start(&Start::from(vec![1.0])), Err(ScipError::NotLoaded));

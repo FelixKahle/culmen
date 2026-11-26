@@ -21,14 +21,14 @@
 //!
 //! The handler may constrain any variable, so its lock (`CONSLOCK`) locks every variable of the transformed problem
 //! both ways, which keeps presolve from fixing a variable by a dual argument that a constraint added later would
-//! refute. It does so only for a solve whose callback asks for [`Events::LAZY`]; that solve also turns off SCIP's
+//! refute. It does so only for a solve with a lazy-constraint handler; that solve also turns off SCIP's
 //! symmetry handling and its dual reductions, which reason about the constraints SCIP holds, and its copies are
 //! invalid, so a sub-SCIP's solution is checked by the main SCIP and its components presolver does not run.
 
 use core::ffi::{c_int, c_uint};
 use core::ptr::{self, NonNull};
 
-use culmen_core::{ActionError, AddedRow, Col, Constraint, Events, LazyContext, Progress, TiSlice};
+use culmen_core::{ActionError, AddedRow, Col, Constraint, Context, LazyContext, Progress, TiSlice};
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_CONSHDLR, SCIP_LOCKTYPE, SCIP_RESULT, SCIP_RETCODE, SCIP_Result_SCIP_CONSADDED,
     SCIP_Result_SCIP_CUTOFF, SCIP_Result_SCIP_FEASIBLE, SCIP_Result_SCIP_INFEASIBLE, SCIP_Retcode_SCIP_OKAY, SCIP_SOL,
@@ -147,10 +147,13 @@ impl ScipLazy<'_> {
     }
 }
 
-impl LazyContext for ScipLazy<'_> {
+impl Context for ScipLazy<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
+
+impl LazyContext for ScipLazy<'_> {
     fn objective(&self) -> f64 {
         self.objective
     }
@@ -170,7 +173,7 @@ impl LazyContext for ScipLazy<'_> {
     }
 }
 
-impl Run<'_> {
+impl Run<'_, '_> {
     /// Asks the callback about a candidate; the constraints it added, `None` when it did not run.
     fn ask_lazy(
         &self,
@@ -181,8 +184,8 @@ impl Run<'_> {
     ) -> Option<Vec<AddedRow>> {
         let progress = self.progress(scip);
         let mut added = Vec::new();
-        let delivered = self.deliver(scip, |callback| {
-            callback.lazy(&mut ScipLazy {
+        let delivered = self.deliver(scip, |hooks| {
+            hooks.lazy(&mut ScipLazy {
                 progress,
                 objective,
                 candidate,
@@ -437,18 +440,18 @@ pub(super) unsafe fn include(scip: *mut SCIP, slot: NonNull<Slot>) -> Result<(),
     }
 }
 
-/// The handler's slot and its run, `None` when no run asking for lazy constraints is installed.
+/// The handler's slot and its run, `None` when no run with a lazy-constraint handler is installed.
 ///
 /// # Safety
 ///
 /// `conshdlr` is the handler, called by SCIP.
-unsafe fn lazy_run<'s>(scip: *mut SCIP, conshdlr: *mut SCIP_CONSHDLR) -> Option<&'s Run<'s>> {
+unsafe fn lazy_run<'s>(scip: *mut SCIP, conshdlr: *mut SCIP_CONSHDLR) -> Option<&'s Run<'s, 's>> {
     // SAFETY: the handler's data is its slot.
     let slot = unsafe { slot::<_>(SCIPconshdlrGetData(conshdlr)) }?;
     // SAFETY: SCIP calls the handler during the solve the run is installed for, or with none installed.
     let run = unsafe { slot.run() }?;
     run.pass_stop(scip);
-    run.wanted.contains(Events::LAZY).then_some(run)
+    run.wants_lazy.then_some(run)
 }
 
 /// `CONSCHECK`: the candidate is feasible unless it violates a lazy constraint.
@@ -550,7 +553,7 @@ unsafe extern "C" fn enforelax(
     unsafe { enforced(scip, conshdlr, sol, LazySource::Relaxation, infeasible, result) }
 }
 
-/// `CONSLOCK`: every variable both ways for a solve asking for lazy constraints, undone when SCIP unlocks.
+/// `CONSLOCK`: every variable both ways for a solve with a lazy-constraint handler, undone when SCIP unlocks.
 unsafe extern "C" fn conslock(
     scip: *mut SCIP,
     conshdlr: *mut SCIP_CONSHDLR,
@@ -585,7 +588,7 @@ unsafe extern "C" fn conslock(
     }
 }
 
-/// `CONSHDLRCOPY`: a copy is valid unless the solve asks for lazy constraints, which a copy would not see.
+/// `CONSHDLRCOPY`: a copy is valid unless the solve has a lazy-constraint handler, which a copy would not see.
 unsafe extern "C" fn copy(_target: *mut SCIP, conshdlr: *mut SCIP_CONSHDLR, valid: *mut c_uint) -> SCIP_RETCODE {
     // SAFETY: the handler's data is its slot.
     let lazy = unsafe { slot::<_>(SCIPconshdlrGetData(conshdlr)) }

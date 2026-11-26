@@ -3,9 +3,12 @@
 
 //! The solver-neutral callback contexts: what each event lets a callback read and do.
 //!
-//! A [`Backend`](crate::Backend) names one concrete type per event kind, implementing the matching trait here. Code
-//! generic over backends uses the traits; code written for one backend gets that backend's type, with whatever the
-//! solver offers beyond the traits as its inherent methods. A backend that cannot deliver an event names
+//! A [`Backend`](crate::Backend) names one concrete type per observational event kind, and a backend with a search
+//! capability ([`LazyConstraints`](crate::LazyConstraints), [`UserCuts`](crate::UserCuts),
+//! [`Heuristics`](crate::Heuristics), [`Prices`](crate::Prices)) names the context of its handler, each implementing
+//! the matching trait here. Every context is a [`Context`]: it reports where the solve stands. Code generic over
+//! backends uses the traits; code written for one backend gets that backend's type, with whatever the solver offers
+//! beyond the traits as its inherent methods. A backend that cannot deliver an observational event names
 //! [`Unsupported`], which has no values, so a callback for that event can never run.
 
 use core::fmt;
@@ -17,35 +20,35 @@ use typed_index_collections::TiSlice;
 use crate::program::{BadTerm, bad_term};
 use crate::{Bounds, Col, Constraint, Integrality, InvalidBounds, LogLevel, NewCol, Progress, Row, Sense};
 
+/// What every context reports: where the solve stands when the event is delivered.
+///
+/// Every context trait below has it as a supertrait, so code that only needs the progress, such as a deadline check,
+/// takes any context as `&impl Context`.
+pub trait Context {
+    /// Where the solve stands; for a log chunk often only the elapsed time.
+    fn progress(&self) -> Progress;
+}
+
 /// A chunk of the solver's log. A line may arrive in several chunks; [`Watch`](crate::Watch) joins them.
-pub trait LogContext {
+pub trait LogContext: Context {
     /// The text as the solver wrote it, line breaks included.
     fn text(&self) -> &str;
     /// How much the chunk matters.
     fn level(&self) -> LogLevel;
-    /// Where the solve stands; often only the elapsed time.
-    fn progress(&self) -> Progress;
 }
 
-/// A progress report the solver issues at its own pace.
-pub trait ProgressContext {
-    /// Where the solve stands.
-    fn progress(&self) -> Progress;
-}
+/// A progress report the solver issues at its own pace; its [`Context::progress`] is the report.
+pub trait ProgressContext: Context {}
 
 /// A frequent poll at which the callback may stop the solve.
-pub trait PollContext {
-    /// Where the solve stands.
-    fn progress(&self) -> Progress;
+pub trait PollContext: Context {
     /// Asks the solver to stop as soon as it can. The solve then ends as
     /// [`StopReason::Interrupted`](crate::StopReason::Interrupted), with the best solution found.
     fn interrupt(&mut self);
 }
 
 /// A feasible solution the solver found: any one, or a new incumbent.
-pub trait SolutionContext {
-    /// Where the solve stands.
-    fn progress(&self) -> Progress;
+pub trait SolutionContext: Context {
     /// The solution's objective value, offset included.
     fn objective(&self) -> f64;
     /// The solution's value of every column the problem holds when the event is delivered, the columns priced so far
@@ -54,9 +57,7 @@ pub trait SolutionContext {
 }
 
 /// A candidate solution the callback may cut off with lazy constraints before the solver accepts it.
-pub trait LazyContext {
-    /// Where the solve stands.
-    fn progress(&self) -> Progress;
+pub trait LazyContext: Context {
     /// The candidate's objective value, offset included.
     fn objective(&self) -> f64;
     /// The candidate's value of every column the problem holds when the event is delivered, the columns priced so
@@ -72,9 +73,7 @@ pub trait LazyContext {
 }
 
 /// A node relaxation the callback may cut off with user cuts.
-pub trait CutContext {
-    /// Where the solve stands.
-    fn progress(&self) -> Progress;
+pub trait CutContext: Context {
     /// The node relaxation's value of every column the problem holds when the event is delivered, the columns priced
     /// so far in this solve included.
     fn relaxation(&self) -> &TiSlice<Col, f64>;
@@ -87,9 +86,10 @@ pub trait CutContext {
 }
 
 /// A point at which the callback may hand the solver a heuristic solution.
-pub trait HeuristicContext {
-    /// Where the solve stands.
-    fn progress(&self) -> Progress;
+///
+/// A solver that completes a partial solution offers it as an inherent method of its own context, since not every
+/// solver honours one.
+pub trait HeuristicContext: Context {
     /// Offers a value for every column the problem holds when the event is delivered, the columns priced so far in
     /// this solve included. The solver checks it and keeps it if it is feasible and better.
     ///
@@ -97,13 +97,6 @@ pub trait HeuristicContext {
     ///
     /// [`ActionError`] when `values` does not hold one finite value per column, or the solver refuses it.
     fn supply(&mut self, values: &TiSlice<Col, f64>) -> Result<(), ActionError>;
-    /// Offers values for some columns, for the solver to complete into a feasible solution if it can.
-    ///
-    /// # Errors
-    ///
-    /// [`ActionError`] when an entry names an unknown column or a non-finite value, or the solver offers no
-    /// completion.
-    fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError>;
 }
 
 /// What the node LP is when the solver asks for columns, and so what a [`PriceContext`]'s duals mean.
@@ -130,9 +123,7 @@ pub enum PriceMode {
 /// improves the node LP, or makes it feasible, the callback adds at least one such column or calls
 /// [`PriceContext::branch_early`]. The solver prices the columns it holds itself, so a callback never adds a column
 /// the problem already holds unless it means a second copy.
-pub trait PriceContext {
-    /// Where the solve stands.
-    fn progress(&self) -> Progress;
+pub trait PriceContext: Context {
     /// Whether the node LP is optimal, with its objective, or infeasible.
     fn mode(&self) -> PriceMode;
     /// Whether the program minimizes or maximizes.
@@ -208,9 +199,16 @@ pub trait PriceContext {
     }
 }
 
-/// The context of an event a backend cannot deliver. It has no values, so a callback for it never runs.
+/// The context of an observational event a backend cannot deliver, and its native event when it has none. It has no
+/// values, so a callback for it never runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unsupported {}
+
+impl Context for Unsupported {
+    fn progress(&self) -> Progress {
+        match *self {}
+    }
+}
 
 impl LogContext for Unsupported {
     fn text(&self) -> &str {
@@ -219,100 +217,21 @@ impl LogContext for Unsupported {
     fn level(&self) -> LogLevel {
         match *self {}
     }
-    fn progress(&self) -> Progress {
-        match *self {}
-    }
 }
 
-impl ProgressContext for Unsupported {
-    fn progress(&self) -> Progress {
-        match *self {}
-    }
-}
+impl ProgressContext for Unsupported {}
 
 impl PollContext for Unsupported {
-    fn progress(&self) -> Progress {
-        match *self {}
-    }
     fn interrupt(&mut self) {
         match *self {}
     }
 }
 
 impl SolutionContext for Unsupported {
-    fn progress(&self) -> Progress {
-        match *self {}
-    }
     fn objective(&self) -> f64 {
         match *self {}
     }
     fn values(&self) -> &TiSlice<Col, f64> {
-        match *self {}
-    }
-}
-
-impl LazyContext for Unsupported {
-    fn progress(&self) -> Progress {
-        match *self {}
-    }
-    fn objective(&self) -> f64 {
-        match *self {}
-    }
-    fn candidate(&self) -> &TiSlice<Col, f64> {
-        match *self {}
-    }
-    fn add_lazy(&mut self, _: Constraint) -> Result<(), ActionError> {
-        match *self {}
-    }
-}
-
-impl CutContext for Unsupported {
-    fn progress(&self) -> Progress {
-        match *self {}
-    }
-    fn relaxation(&self) -> &TiSlice<Col, f64> {
-        match *self {}
-    }
-    fn add_cut(&mut self, _: Constraint) -> Result<(), ActionError> {
-        match *self {}
-    }
-}
-
-impl HeuristicContext for Unsupported {
-    fn progress(&self) -> Progress {
-        match *self {}
-    }
-    fn supply(&mut self, _: &TiSlice<Col, f64>) -> Result<(), ActionError> {
-        match *self {}
-    }
-    fn supply_partial(&mut self, _: &[(Col, f64)]) -> Result<(), ActionError> {
-        match *self {}
-    }
-}
-
-impl PriceContext for Unsupported {
-    fn progress(&self) -> Progress {
-        match *self {}
-    }
-    fn mode(&self) -> PriceMode {
-        match *self {}
-    }
-    fn sense(&self) -> Sense {
-        match *self {}
-    }
-    fn duals(&self) -> &TiSlice<Row, f64> {
-        match *self {}
-    }
-    fn tolerance(&self) -> f64 {
-        match *self {}
-    }
-    fn add_col(&mut self, _: NewCol) -> Result<Col, ActionError> {
-        match *self {}
-    }
-    fn branch_early(&mut self) {
-        match *self {}
-    }
-    fn report_bound(&mut self, _: f64) -> Result<(), ActionError> {
         match *self {}
     }
 }

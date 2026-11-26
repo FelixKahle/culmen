@@ -11,16 +11,18 @@
 use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use culmen_core::{
-    ActionError, Backend, Callback, Col, Events, HeuristicContext, Improvement, LinExpr, Linear, LogLine, Model,
-    Observer, Outcome, Phase, PollContext, Program, Progress, Request, Settings, Solution, SolutionContext, Solver,
-    StopReason, TiVec, Var, relative_gap,
+    ActionError, Backend, Callback, Col, Context, Events, HeuristicContext, HeuristicHandler, Heuristics, Hooks,
+    Improvement, LinExpr, Linear, LogLine, Model, Observer, Outcome, Phase, PollContext, Program, Progress, Request,
+    Settings, Solution, SolutionContext, SolveError, Solved, Solver, StopReason, TiVec, Var, relative_gap,
 };
-use culmen_highs::{Highs, HighsNative, HighsOptions, LpSolver, PollSource, QueryOrigin, Switch};
+use culmen_highs::{
+    Highs, HighsError, HighsNative, HighsOptions, HighsStatus, LpSolver, PollSource, QueryOrigin, Switch,
+};
 use culmen_testing::instances::assignment;
 use culmen_testing::reference::close;
 
@@ -287,18 +289,6 @@ impl Callback<Highs> for Kinds {
     fn incumbent(&mut self, ctx: &mut <Highs as Backend>::Solution<'_>) {
         self.incumbents.push(ctx.objective());
     }
-    fn heuristic(&mut self, ctx: &mut <Highs as Backend>::Heuristic<'_>) {
-        self.queries.push(ctx.origin());
-        if ctx.origin() != QueryOrigin::AfterSetup {
-            return;
-        }
-        if let Some(values) = self.supply.take() {
-            self.supplied.push(ctx.supply(&TiVec::from(values)));
-        }
-        for entries in core::mem::take(&mut self.supply_partial) {
-            self.supplied.push(ctx.supply_partial(&entries));
-        }
-    }
     fn native(&mut self, ctx: &mut <Highs as Backend>::Native<'_>) {
         match ctx {
             HighsNative::CutPool(pool) => {
@@ -308,6 +298,65 @@ impl Callback<Highs> for Kinds {
                 self.cut_pools.push((pool.num_cols, entries.count()));
             }
             _ => unreachable!("HiGHS 1.16 reports no other native event"),
+        }
+    }
+}
+
+/// One [`Kinds`] in both roles, the callback and the heuristic handler, behind a lock: the two are never called at
+/// once.
+struct Shared<'a>(&'a Mutex<Kinds>);
+
+impl Callback<Highs> for Shared<'_> {
+    fn poll(&mut self, ctx: &mut <Highs as Backend>::Poll<'_>) {
+        self.0.lock().unwrap().poll(ctx);
+    }
+    fn progress(&mut self, ctx: &mut <Highs as Backend>::Progress<'_>) {
+        self.0.lock().unwrap().progress(ctx);
+    }
+    fn feasible(&mut self, ctx: &mut <Highs as Backend>::Solution<'_>) {
+        self.0.lock().unwrap().feasible(ctx);
+    }
+    fn incumbent(&mut self, ctx: &mut <Highs as Backend>::Solution<'_>) {
+        self.0.lock().unwrap().incumbent(ctx);
+    }
+    fn native(&mut self, ctx: &mut <Highs as Backend>::Native<'_>) {
+        self.0.lock().unwrap().native(ctx);
+    }
+}
+
+impl HeuristicHandler<Highs> for Shared<'_> {
+    fn heuristic(&mut self, ctx: &mut <Highs as Heuristics>::Heuristic<'_>) {
+        self.0.lock().unwrap().heuristic(ctx);
+    }
+}
+
+/// Solves with `kinds` as the callback and the heuristic handler.
+fn solve_kinds(
+    solver: &mut Solver<Highs>,
+    request: Request<'_>,
+    kinds: &mut Kinds,
+) -> Result<Solved<HighsStatus>, SolveError<HighsError>> {
+    let shared = Mutex::new(core::mem::take(kinds));
+    let (mut callback, mut heuristic) = (Shared(&shared), Shared(&shared));
+    let hooks = Hooks::new()
+        .register_callback(&mut callback)
+        .register_heuristic(&mut heuristic);
+    let solved = solver.solve_with(request, hooks);
+    *kinds = shared.into_inner().unwrap();
+    solved
+}
+
+impl HeuristicHandler<Highs> for Kinds {
+    fn heuristic(&mut self, ctx: &mut <Highs as Heuristics>::Heuristic<'_>) {
+        self.queries.push(ctx.origin());
+        if ctx.origin() != QueryOrigin::AfterSetup {
+            return;
+        }
+        if let Some(values) = self.supply.take() {
+            self.supplied.push(ctx.supply(&TiVec::from(values)));
+        }
+        for entries in core::mem::take(&mut self.supply_partial) {
+            self.supplied.push(ctx.supply_partial(&entries));
         }
     }
 }
@@ -334,7 +383,7 @@ fn test_simplex_poll_interrupts_an_lp() {
         interrupt_at_first_poll: true,
         ..Kinds::default()
     };
-    let solved = solver.solve_with(Request::new(), &mut kinds).unwrap();
+    let solved = solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
     assert!(
         matches!(kinds.polls[0], PollSource::Simplex { .. }),
         "{:?}",
@@ -363,7 +412,7 @@ fn test_ipm_poll_interrupts_an_lp() {
         interrupt_at_first_poll: true,
         ..Kinds::default()
     };
-    let solved = solver.solve_with(Request::new(), &mut kinds).unwrap();
+    let solved = solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
     assert!(
         kinds.polls.iter().any(|p| matches!(p, PollSource::Ipm { .. })),
         "{:?}",
@@ -387,9 +436,12 @@ fn test_mip_kinds_fire_progress_solutions_queries_and_cut_pool() {
     let program = assignment(30, 12, 7, 0.0).program;
     let mut solver = Solver::new(Highs::new(), program).unwrap();
     let mut kinds = Kinds::default();
-    let solved = solver
-        .solve_with(Request::new().time_limit(Duration::from_secs(20)), &mut kinds)
-        .unwrap();
+    let solved = solve_kinds(
+        &mut solver,
+        Request::new().time_limit(Duration::from_secs(20)),
+        &mut kinds,
+    )
+    .unwrap();
     assert!(kinds.polls.iter().any(|p| matches!(p, PollSource::Mip(_))));
     assert!(kinds.mip_progress > 0, "MIP log lines fire progress events");
     assert!(!kinds.incumbents.is_empty());
@@ -433,7 +485,7 @@ fn test_a_supplied_solution_becomes_the_first_incumbent() {
         supply: Some(values.raw.clone()),
         ..Kinds::default()
     };
-    let solved = solver.solve_with(Request::new(), &mut kinds).unwrap();
+    let solved = solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
     assert_eq!(kinds.supplied, [Ok(())]);
     assert_eq!(
         kinds.incumbents.first().copied(),
@@ -458,7 +510,7 @@ fn test_a_partial_solution_is_repaired_into_an_incumbent() {
         supply_partial: vec![partial],
         ..Kinds::default()
     };
-    solver.solve_with(Request::new(), &mut kinds).unwrap();
+    solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
     assert_eq!(kinds.supplied, [Ok(())]);
     let first = *kinds.incumbents.first().unwrap();
     assert!(
@@ -488,7 +540,7 @@ fn test_partial_solutions_highs_ignores_are_refused_even_after_one_it_repaired()
         ],
         ..Kinds::default()
     };
-    solver.solve_with(Request::new(), &mut kinds).unwrap();
+    solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
     let refused = |reason: &str| Err(ActionError::Refused(reason.to_owned()));
     let infeasible = "HiGHS refused the entries: a value lies outside its column's bounds or integrality";
     assert_eq!(
@@ -517,7 +569,7 @@ fn test_a_partial_solution_without_a_completion_keeps_the_solution_supplied_befo
     };
     let solve = |mut kinds: Kinds| {
         let mut solver = Solver::new(Highs::with_options(options.clone()), program.clone()).unwrap();
-        solver.solve_with(Request::new(), &mut kinds).unwrap();
+        solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
         (kinds.supplied, kinds.incumbents.first().copied())
     };
     let optimum = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
@@ -549,7 +601,7 @@ fn test_a_wrong_solution_is_refused_before_highs_sees_it() {
         supply: Some(vec![1.0; 3]),
         ..Kinds::default()
     };
-    solver.solve_with(Request::new(), &mut kinds).unwrap();
+    solve_kinds(&mut solver, Request::new(), &mut kinds).unwrap();
     assert_eq!(
         kinds.supplied,
         [Err(culmen_core::ActionError::Length { expected: 6, found: 3 })]
@@ -571,7 +623,9 @@ impl Callback<Highs> for Nothing {
 #[test]
 fn test_events_not_asked_for_are_not_delivered() {
     let mut solver = Solver::new(Highs::new(), knapsack().0).unwrap();
-    let solved = solver.solve_with(Request::new(), &mut Nothing).unwrap();
+    let solved = solver
+        .solve_with(Request::new(), Hooks::new().register_callback(&mut Nothing))
+        .unwrap();
     assert!(matches!(solved.outcome, Outcome::Optimal(_)));
 }
 
@@ -596,7 +650,10 @@ fn test_poll_context_reports_mip_progress_in_generic_terms() {
     let mut solver = Solver::new(Highs::new(), hard()).unwrap();
     let mut first = FirstMipPoll(None);
     let solved = solver
-        .solve_with(Request::new().time_limit(Duration::from_secs(30)), &mut first)
+        .solve_with(
+            Request::new().time_limit(Duration::from_secs(30)),
+            Hooks::new().register_callback(&mut first),
+        )
         .unwrap();
     let progress = first.0.unwrap();
     assert_eq!(progress.phase, Phase::Mip);
@@ -687,7 +744,9 @@ impl Callback<Highs> for Nested {
 fn test_a_solve_nested_in_a_callback_gets_its_own_callbacks() {
     let mut solver = Solver::new(Highs::new(), assignment(30, 12, 7, 0.0).program).unwrap();
     let mut nested = Nested::default();
-    let solved = solver.solve_with(Request::new(), &mut nested).unwrap();
+    let solved = solver
+        .solve_with(Request::new(), Hooks::new().register_callback(&mut nested))
+        .unwrap();
     let inner = nested.inner.unwrap();
     assert!(
         !inner.improved.is_empty() && !inner.lines.is_empty(),

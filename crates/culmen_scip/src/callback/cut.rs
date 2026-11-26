@@ -14,7 +14,7 @@
 use core::ffi::{c_int, c_uint};
 use core::ptr::{self, NonNull};
 
-use culmen_core::{ActionError, AddedRow, Col, Constraint, CutContext, Events, Progress, TiSlice};
+use culmen_core::{ActionError, AddedRow, Col, Constraint, Context, CutContext, Progress, TiSlice};
 use scip_sys::{
     SCIP, SCIP_RESULT, SCIP_RETCODE, SCIP_ROW, SCIP_Result_SCIP_CUTOFF, SCIP_Result_SCIP_DIDNOTFIND,
     SCIP_Result_SCIP_DIDNOTRUN, SCIP_Result_SCIP_SEPARATED, SCIP_Retcode_SCIP_OKAY, SCIP_SEPA, SCIP_VAR,
@@ -39,10 +39,13 @@ pub struct ScipCut<'a> {
     added: &'a mut Vec<AddedRow>,
 }
 
-impl CutContext for ScipCut<'_> {
+impl Context for ScipCut<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
+
+impl CutContext for ScipCut<'_> {
     fn relaxation(&self) -> &TiSlice<Col, f64> {
         self.relaxation
     }
@@ -126,7 +129,7 @@ unsafe fn row(
     Ok(row)
 }
 
-impl Run<'_> {
+impl Run<'_, '_> {
     /// Hands the LP solution to the callback and the cuts it added to SCIP; the separator's result.
     ///
     /// # Errors
@@ -141,8 +144,8 @@ impl Run<'_> {
         let relaxation = unsafe { self.values(scip, ptr::null_mut()) };
         let progress = self.progress(scip);
         let mut added = Vec::new();
-        let delivered = self.deliver(scip, |callback| {
-            callback.cut(&mut ScipCut {
+        let delivered = self.deliver(scip, |hooks| {
+            hooks.cut(&mut ScipCut {
                 progress,
                 relaxation: &relaxation,
                 infinity: self.infinity,
@@ -218,7 +221,7 @@ unsafe extern "C" fn execlp(
         // SAFETY: SCIP calls the separator during the solve the run is installed for.
         .and_then(|slot| unsafe { slot.run() })
         .inspect(|run| run.pass_stop(scip))
-        .filter(|run| run.wanted.contains(Events::CUT));
+        .filter(|run| run.wants_cut);
     let (verdict, code) = match run {
         // SAFETY: SCIP separates while solving, with the node's LP solved.
         Some(run) => match unsafe { run.separate(scip, sepa) } {

@@ -4,10 +4,9 @@
 //! Pricing: a variable pricer with a reduced-cost and a Farkas callback (`PRICERREDCOST`, `PRICERFARKAS`).
 //!
 //! The pricer is included in every instance, delayed, so SCIP prices the variables it holds before it asks the
-//! callback, and inactive. A solve whose callback [`prices`](culmen_core::Callback::prices) activates it and marks
-//! every program row's constraint modifiable, as SCIP requires of a constraint a pricer adds variables to; a solve that
-//! does not deactivates it and leaves every constraint unmodifiable, so SCIP neither calls it nor gives up a reduction
-//! for it. A modifiable linear constraint is never presolved, upgraded or used to tighten bounds, so it stays a linear
+//! [`Pricer`](culmen_core::Pricer), and inactive. A solve with a pricer activates it and marks every program row's
+//! constraint modifiable, as SCIP requires of a constraint a pricer adds variables to; a solve without one deactivates
+//! it and leaves every constraint unmodifiable, so SCIP neither calls it nor gives up a reduction for it. A modifiable linear constraint is never presolved, upgraded or used to tighten bounds, so it stays a linear
 //! constraint whose dual SCIP reports.
 //!
 //! SCIP minimizes `s·c` for the program's cost `c`, with `s = 1` when the program minimizes and `s = -1` when it
@@ -40,8 +39,8 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 
 use culmen_core::{
-    ActionError, Bounds, Col, Integrality, NewCol, PriceContext, PriceMode, Priced, Progress, Row, Sense, TiSlice,
-    TiVec,
+    ActionError, Bounds, Col, Context, Integrality, NewCol, PriceContext, PriceMode, Priced, Progress, Row, Sense,
+    TiSlice, TiVec,
 };
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_LPSolStat_SCIP_LPSOLSTAT_OPTIMAL, SCIP_PRICER, SCIP_RESULT, SCIP_RETCODE,
@@ -156,10 +155,13 @@ impl ScipPrice<'_> {
     }
 }
 
-impl PriceContext for ScipPrice<'_> {
+impl Context for ScipPrice<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
+
+impl PriceContext for ScipPrice<'_> {
     fn mode(&self) -> PriceMode {
         self.mode
     }
@@ -231,7 +233,7 @@ impl Verdict {
     };
 }
 
-impl Run<'_> {
+impl Run<'_, '_> {
     /// The multiplier of every program row in `mode`: the program's dual in reduced-cost mode, SCIP's Farkas
     /// multiplier in Farkas mode.
     ///
@@ -297,8 +299,12 @@ impl Run<'_> {
         let delivered = {
             let priced_vars = self.priced_vars.borrow();
             let mut priced = self.priced.borrow_mut();
-            self.deliver(scip, |callback| {
-                callback.price(&mut ScipPrice {
+            // A run prices only with the sink its hooks gave.
+            let Some(priced) = priced.as_deref_mut() else {
+                return Ok(Verdict::DIDNOTRUN);
+            };
+            self.deliver(scip, |hooks| {
+                hooks.price(&mut ScipPrice {
                     scip,
                     progress,
                     mode,
@@ -308,7 +314,7 @@ impl Run<'_> {
                     infinity: self.infinity,
                     priced_vars: &priced_vars,
                     vars: self.cols.vars,
-                    priced: &mut priced,
+                    priced,
                     round: &mut round,
                 });
             })
@@ -349,7 +355,7 @@ impl Run<'_> {
     ///
     /// # Panics
     ///
-    /// When the solve's `Priced` did not hand `col` out.
+    /// When the run has no sink, or the sink did not hand `col` out.
     ///
     /// # Safety
     ///
@@ -362,7 +368,10 @@ impl Run<'_> {
         farkas: bool,
     ) -> Result<(), ScipError> {
         let priced = self.priced.borrow();
-        let column = priced.get(col).expect("a column the solve's `Priced` handed out");
+        let column = priced
+            .as_deref()
+            .and_then(|priced| priced.get(col))
+            .expect("a column the solve's `Priced` handed out");
         let data = &column.column;
         let s = match self.sense {
             Sense::Minimize => 1.0,

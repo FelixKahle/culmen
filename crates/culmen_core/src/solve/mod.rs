@@ -9,6 +9,7 @@ pub mod capability;
 pub mod context;
 mod edit;
 mod events;
+mod hooks;
 mod load;
 mod outcome;
 mod priced;
@@ -22,14 +23,16 @@ pub use analysis::{
 };
 pub use backend::{Backend, Callback};
 pub use capability::{
-    BasisAnalysis, DualAnalysis, IisAnalysis, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Starts,
+    BasisAnalysis, DualAnalysis, Heuristics, IisAnalysis, LazyConstraints, Prices, RangingAnalysis, RayAnalysis,
+    RelaxationAnalysis, Starts, UserCuts,
 };
 pub use context::{
-    ActionError, AddedRow, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, PriceMode,
-    ProgressContext, SolutionContext, Unsupported,
+    ActionError, AddedRow, Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext,
+    PriceMode, ProgressContext, SolutionContext, Unsupported,
 };
 pub use edit::{Edit, EditError, NewRow};
 pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
+pub use hooks::{CutHandler, HeuristicHandler, Hooks, LazyHandler, Pricer, Relay};
 pub use load::LoadError;
 pub use outcome::{Outcome, Solution, Solved, StopReason};
 pub use priced::Priced;
@@ -196,11 +199,6 @@ impl<B: Backend> Solver<B> {
 
     /// Solves under the request's settings, polling its stop and reporting to its observer.
     ///
-    /// A solve whose callback priced columns ([`Callback::prices`](crate::Callback::prices)) appends them to the
-    /// program, in the order of their ids, however it ends: returning, failing or unwinding from a panic. The backend
-    /// loads the grown program at the next call that runs it, and the analyses find no solve to read until the next
-    /// solve that prices nothing.
-    ///
     /// # Errors
     ///
     /// [`SolveError::Backend`] when the backend refuses the program it reloads after an edit whose reload failed, a
@@ -210,10 +208,40 @@ impl<B: Backend> Solver<B> {
     ///
     /// When the observer panics: the panic continues once the solver has stopped.
     pub fn solve(&mut self, request: Request<'_>) -> Result<Solved<B::Status>, SolveError<B::Error>> {
-        self.solve_with(request, &mut ())
+        self.solve_with(request, Hooks::new())
     }
 
-    /// Solves as [`Solver::solve`] does, and also runs `callback` with the backend's full context types.
+    /// Solves as [`Solver::solve`] does, and also runs the callback and the handlers registered on `hooks`, with the
+    /// backend's full context types. The request's stop and observer run before the callback.
+    ///
+    /// ```
+    /// use core::time::Duration;
+    /// use culmen_core::{Backend, Callback, Hooks, Model, Outcome, Phase, Progress, Request, Script, Solver, Step, Var};
+    ///
+    /// /// Counts the polls a solve delivers.
+    /// #[derive(Default)]
+    /// struct Count(usize);
+    ///
+    /// impl<B: Backend> Callback<B> for Count {
+    ///     fn poll(&mut self, _: &mut B::Poll<'_>) {
+    ///         self.0 += 1;
+    ///     }
+    /// }
+    ///
+    /// let mut m = Model::new();
+    /// m.add_var(Var::binary());
+    /// let poll = Step::Poll(Progress::at(Duration::from_secs(1), Phase::Mip));
+    /// let mut solver = Solver::new(Script::new([poll.clone(), poll], Outcome::Infeasible), m.build()?)?;
+    /// let mut count = Count::default();
+    /// solver.solve_with(Request::new(), Hooks::new().register_callback(&mut count))?;
+    /// assert_eq!(count.0, 2);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// A solve with a [`Pricer`] appends the columns it priced to the program, in the order of their ids, however it
+    /// ends: returning, failing or unwinding from a panic. The backend loads the grown program at the next call that
+    /// runs it, and the analyses find no solve to read until the next solve that prices nothing. A sink given with
+    /// [`Hooks::sink`] is replaced by the solver's own.
     ///
     /// # Errors
     ///
@@ -221,16 +249,16 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Panics
     ///
-    /// When the observer or `callback` panics: the panic continues once the solver has stopped.
+    /// When the observer, the callback or a handler panics: the panic continues once the solver has stopped.
     pub fn solve_with(
         &mut self,
         request: Request<'_>,
-        callback: &mut impl Callback<B>,
+        hooks: Hooks<'_, B>,
     ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
-        self.run(request, callback, |_| Ok(()))
+        self.run(request, hooks, |_| Ok(()))
     }
 
-    /// Syncs the backend, calls `before`, and solves under `request` with `callback`.
+    /// Syncs the backend, calls `before`, and solves under `request` with `hooks`.
     ///
     /// # Errors
     ///
@@ -238,27 +266,28 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Panics
     ///
-    /// When the observer or `callback` panics: the panic continues once the solver has stopped.
+    /// When the observer, the callback or a handler panics: the panic continues once the solver has stopped.
     fn run(
         &mut self,
         request: Request<'_>,
-        callback: &mut impl Callback<B>,
+        hooks: Hooks<'_, B>,
         before: impl FnOnce(&mut Self) -> Result<(), SolveError<B::Error>>,
     ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
-        let (watch, settings) = request.into_watch();
+        let (mut watch, settings) = request.into_watch();
         self.sync().map_err(SolveError::Backend)?;
         before(self)?;
         // The backend's result is replaced from here on, so the last solve is read no longer even when the backend
         // fails or a panic unwinds out of it.
         self.ended = None;
-        let mut both = (watch, callback);
         let mut grow = Grow {
             priced: Priced::new(&self.program, B::CLASSES),
             program: &mut self.program,
             synced: &mut self.synced,
         };
-        let solved = self.backend.solve(&settings, &mut both, &mut grow.priced);
-        both.0.finish();
+        let solved = self
+            .backend
+            .solve(&settings, hooks.install(&mut watch, &mut grow.priced));
+        watch.finish();
         // The analyses would read the backend's answer for the program before the priced columns.
         if grow.priced.cols().len() == 0 {
             self.ended = solved.as_ref().ok().map(|s| Ended::of(&s.outcome));
@@ -313,7 +342,7 @@ impl<B: Starts> Solver<B> {
         request: Request<'_>,
         start: impl Into<Start>,
     ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
-        self.solve_with_from(request, start, &mut ())
+        self.solve_with_from(request, start, Hooks::new())
     }
 
     /// Solves as [`Solver::solve_with`] does, from `start` as [`Solver::solve_from`] takes it.
@@ -324,15 +353,15 @@ impl<B: Starts> Solver<B> {
     ///
     /// # Panics
     ///
-    /// When the observer or `callback` panics: the panic continues once the solver has stopped.
+    /// When the observer, the callback or a handler panics: the panic continues once the solver has stopped.
     pub fn solve_with_from(
         &mut self,
         request: Request<'_>,
         start: impl Into<Start>,
-        callback: &mut impl Callback<B>,
+        hooks: Hooks<'_, B>,
     ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
         let start = start.into();
-        self.run(request, callback, |solver| solver.hand_start(&start))
+        self.run(request, hooks, |solver| solver.hand_start(&start))
     }
 
     /// Checks a start against the program, and hands it to the backend.

@@ -73,51 +73,51 @@
 //!
 //! # Callbacks
 //!
-//! [`Scip::EVENTS`] is every generic event, each from a SCIP plugin, with a context of this crate's, and SCIP prices
-//! ([`Backend::PRICES`]) for a callback that [`prices`](Callback::prices):
+//! [`Scip::EVENTS`] is every observational event but the native one, each from a SCIP plugin, with a context of this
+//! crate's, and SCIP has every search capability ([`LazyConstraints`], [`UserCuts`], [`Heuristics`], [`Prices`]):
 //!
-//! | Event | SCIP plugin | Context |
+//! | Event or handler | SCIP plugin | Context |
 //! |---|---|---|
 //! | `LOG` | the instance's message handler: each info message and warning, a whole line | [`ScipLog`] |
 //! | `POLL`, `PROGRESS` | an event handler: each presolve round, focused node, solved node LP and solved node | [`ScipPoll`], [`ScipProgress`] |
 //! | `FEASIBLE`, `INCUMBENT` | an event handler: each solution SCIP stores, a new best one as the incumbent too | [`ScipSolution`] |
-//! | `LAZY` | a constraint handler without constraints, checked and enforced after every other | [`ScipLazy`] |
-//! | `CUT` | a separator on each node's LP solution | [`ScipCut`] |
-//! | `HEURISTIC` | a primal heuristic before and after each node | [`ScipHeuristic`] |
-//! | pricing | a variable pricer, delayed, on each optimal or infeasible node LP | [`ScipPrice`] |
+//! | [`LazyHandler`](culmen_core::LazyHandler) | a constraint handler without constraints, checked and enforced after every other | [`ScipLazy`] |
+//! | [`CutHandler`](culmen_core::CutHandler) | a separator on each node's LP solution | [`ScipCut`] |
+//! | [`HeuristicHandler`](culmen_core::HeuristicHandler) | a primal heuristic before and after each node | [`ScipHeuristic`] |
+//! | [`Pricer`](culmen_core::Pricer) | a variable pricer, delayed, on each optimal or infeasible node LP | [`ScipPrice`] |
 //!
 //! Every value a context reports is the program's: a candidate, a relaxation and a solution hold one value per
 //! column, read through SCIP's original variables whatever presolve did to them, and every objective value and
-//! bound is in the program's sense with its offset and quadratic part. A lazy constraint holds for the rest of the
-//! solve, so every later candidate satisfies it; a solve asking for [`Events::LAZY`] therefore locks every variable
-//! against dual reductions and turns off `misc/usesymmetry`, `misc/allowstrongdualreds` and
-//! `misc/allowweakdualreds`, which reason about the constraints SCIP holds rather than those a callback adds later.
-//! A solve asking for [`Events::CUT`] or [`Events::HEURISTIC`] calls its separator or heuristic at every node, also
-//! when an emphasis turned SCIP's own off.
+//! bound is in the program's sense with its offset and quadratic part.
 //!
-//! Only a solve whose callback [`prices`](Callback::prices) activates the pricer and marks every program row
+//! What a solve gives up for the search handlers is decided by which handlers its [`Hooks`] hold, never by the
+//! events a callback asks for, so a callback that only watches costs SCIP no reduction. A lazy constraint holds for
+//! the rest of the solve, so every later candidate satisfies it; a solve with a lazy-constraint handler therefore
+//! locks every variable against dual reductions and turns off `misc/usesymmetry`, `misc/allowstrongdualreds` and
+//! `misc/allowweakdualreds`, which reason about the constraints SCIP holds rather than those a handler adds later. A
+//! solve with a cut or a heuristic handler calls its separator or heuristic at every node, also when an emphasis
+//! turned SCIP's own off.
+//!
+//! Only a solve with a pricer activates SCIP's pricer and marks every program row
 //! modifiable, as SCIP requires of a row a pricer adds variables to; any other solve leaves the pricer inactive and
 //! no row modifiable, so SCIP gives up nothing for it. A pricing solve also turns off the LP solver's presolving
 //! (`lp/presolving`), whose duals of a degenerate node LP need not price out the columns at their bounds, SCIP's
 //! aggregation separator (`separating/aggregation/freq`), which cuts with the objective cutoff over the columns held
 //! as if no other column could enter, and the LP solver's objective limit (`lp/disablecutoff = 1`), so every node LP
-//! handed to the callback is optimal or infeasible, whatever the options set. SCIP does not price a program with a
+//! handed to the pricer is optimal or infeasible, whatever the options set. SCIP does not price a program with a
 //! quadratic objective: such a solve fails with [`ScipError::PricingQuadratic`] before SCIP runs. Every column a
-//! callback prices is a variable of SCIP's transformed problem with no original counterpart, so a heuristic solution
+//! pricer adds is a variable of SCIP's transformed problem with no original counterpart, so a heuristic solution
 //! of a pricing solve is a transformed one ([`ScipHeuristic`]), and the backend keeps the priced variables until it
 //! frees that problem, so the best solution has a value for each.
 //!
 //! ```
-//! use culmen_core::{Backend, Callback, Col, Events, LazyContext, Linear, Model, Request, Solver, Var};
+//! use culmen_core::{Col, Hooks, LazyConstraints, LazyContext, LazyHandler, Linear, Model, Request, Solver, Var};
 //! use culmen_scip::Scip;
 //!
-//! /// Forbids taking both items, a conflict only the callback knows.
+//! /// Forbids taking both items, a conflict only the handler knows.
 //! struct NotBoth(Col, Col);
 //!
-//! impl<B: Backend> Callback<B> for NotBoth {
-//!     fn events(&self) -> Events {
-//!         Events::LAZY
-//!     }
+//! impl<B: LazyConstraints> LazyHandler<B> for NotBoth {
 //!     fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
 //!         let candidate = ctx.candidate();
 //!         if candidate[self.0] + candidate[self.1] > 1.5 {
@@ -131,12 +131,13 @@
 //! let y = m.add_var(Var::binary());
 //! m.maximize(3.0 * x + 2.0 * y);
 //! let mut solver = Solver::new(Scip::new(), m.build()?)?;
-//! let solved = solver.solve_with(Request::new(), &mut NotBoth(x, y))?;
+//! let mut not_both = NotBoth(x, y);
+//! let solved = solver.solve_with(Request::new(), Hooks::new().register_lazy(&mut not_both))?;
 //! assert_eq!(solved.outcome.objective(), Some(3.0));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! A panic in a callback never unwinds into SCIP: the plugin catches it and asks SCIP to stop, and the panic resumes
+//! A panic in a callback or handler never unwinds into SCIP: the plugin catches it and asks SCIP to stop, and the panic resumes
 //! once SCIP has returned. The backend stays usable.
 //!
 //! # Threads
@@ -165,7 +166,8 @@ pub use callback::{
     LazySource, ScipCut, ScipEvent, ScipHeuristic, ScipLazy, ScipLog, ScipPoll, ScipPrice, ScipProgress, ScipSolution,
 };
 use culmen_core::{
-    Backend, Callback, Events, ModelClasses, Outcome, Priced, Program, Settings, Solved, Start, Starts, Unsupported,
+    Backend, Events, Heuristics, Hooks, LazyConstraints, ModelClasses, Outcome, Prices, Program, Settings, Solved,
+    Start, Starts, Unsupported, UserCuts,
 };
 pub use error::{Number, RetCode, ScipError};
 pub use options::{Emphasis, ParamValue, ScipOptions, ScipParam};
@@ -279,27 +281,28 @@ fn configure(instance: &mut Instance, options: &ScipOptions, settings: &Settings
     Ok(())
 }
 
-/// Sets what the events `wanted` need, after the options and settings: for lazy constraints, no symmetry handling and
-/// no dual reductions, which reason about the constraints SCIP holds and not those a callback adds later; for cuts and
-/// heuristic solutions, the culmen separator and heuristic called at every node, even when an emphasis turned the
-/// separators or heuristics off; for pricing, the culmen pricer active, every row modifiable, the LP solver's
-/// presolving off, whose duals of a degenerate node LP need not price its columns out, SCIP's aggregation separator
-/// off, which cuts with the objective cutoff over the columns held, and the LP solver's objective limit off, so every
-/// node LP priced is solved to optimality; for a solve without pricing, the pricer inactive and no row modifiable.
+/// Sets what the handlers `hooks` hold need, after the options and settings, whatever events the callback asks for:
+/// for a lazy-constraint handler, no symmetry handling and no dual reductions, which reason about the constraints SCIP
+/// holds and not those a handler adds later; for a cut or a heuristic handler, the culmen separator or heuristic called
+/// at every node, even when an emphasis turned the separators or heuristics off; when `pricing`, the culmen pricer
+/// active, every row modifiable, the LP solver's presolving off, whose duals of a degenerate node LP need not price its
+/// columns out, SCIP's aggregation separator off, which cuts with the objective cutoff over the columns held, and the
+/// LP solver's objective limit off, so every node LP priced is solved to optimality; for a solve without pricing, the
+/// pricer inactive and no row modifiable.
 ///
 /// # Errors
 ///
 /// [`ScipError::Param`] when SCIP refuses a parameter, [`ScipError::Call`] when it refuses another call.
-fn configure_events(instance: &mut Instance, wanted: Events, pricing: bool) -> Result<(), ScipError> {
-    if wanted.contains(Events::LAZY) {
+fn configure_hooks(instance: &mut Instance, hooks: &Hooks<'_, Scip>, pricing: bool) -> Result<(), ScipError> {
+    if hooks.wants_lazy() {
         instance.set_param("misc/usesymmetry", &ParamValue::Int(0))?;
         instance.set_param("misc/allowstrongdualreds", &ParamValue::Bool(false))?;
         instance.set_param("misc/allowweakdualreds", &ParamValue::Bool(false))?;
     }
-    if wanted.contains(Events::CUT) {
+    if hooks.wants_cut() {
         instance.set_param("separating/culmen/freq", &ParamValue::Int(1))?;
     }
-    if wanted.contains(Events::HEURISTIC) {
+    if hooks.wants_heuristic() {
         instance.set_param("heuristics/culmen/freq", &ParamValue::Int(1))?;
     }
     if pricing {
@@ -393,16 +396,11 @@ impl Backend for Scip {
     type Progress<'a> = ScipProgress;
     type Poll<'a> = ScipPoll<'a>;
     type Solution<'a> = ScipSolution<'a>;
-    type Lazy<'a> = ScipLazy<'a>;
-    type Cut<'a> = ScipCut<'a>;
-    type Heuristic<'a> = ScipHeuristic<'a>;
-    type Price<'a> = ScipPrice<'a>;
     type Native<'a> = Unsupported;
 
-    /// Every generic event, each from a plugin the instance includes (the module documentation lists them); no
+    /// Every observational event, each from a plugin the instance includes (the module documentation lists them); no
     /// native event.
     const EVENTS: Events = Events::ALL.difference(Events::NATIVE);
-    const PRICES: bool = true;
 
     /// Every class: a quadratic objective `q(x)` becomes an epigraph variable `t` with cost one, bounded by the
     /// quadratic constraint `q(x) - t <= 0` and `t >= 0` when minimizing, `q(x) - t >= 0` and `t <= 0` when
@@ -434,14 +432,14 @@ impl Backend for Scip {
     }
 
     /// Solves the loaded program under the backend's options and `settings`, from its start and the last solve's best
-    /// solutions as the module documentation says, delivering to `callback` the events it asks for and handing every
-    /// column it prices to `priced`.
+    /// solutions as the module documentation says, delivering to the callback of `hooks` the events it asks for,
+    /// calling its handlers, and handing every column its pricer adds to the sink it gives.
     ///
     /// # Errors
     ///
-    /// [`ScipError::NotLoaded`] before a load; [`ScipError::PricingQuadratic`] for a callback that
-    /// [`prices`](Callback::prices) on a program with a quadratic objective, before SCIP is called;
-    /// [`ScipError::BranchEarly`] for a pricing callback ending pricing early where SCIP cannot branch; the errors of
+    /// [`ScipError::NotLoaded`] before a load; [`ScipError::PricingQuadratic`] for a solve with a pricer on a program
+    /// with a quadratic objective, before SCIP is called; [`ScipError::BranchEarly`] for a pricer ending pricing early
+    /// where SCIP cannot branch; the errors of
     /// the options and settings the module documentation lists; [`ScipError::Call`] when SCIP fails, or a call a plugin
     /// makes for the callback does; [`ScipError::Failed`] when SCIP ends with a status that proves nothing;
     /// [`ScipError::InfeasibleBest`] when SCIP's own check finds its best solution infeasible in the original problem,
@@ -449,23 +447,19 @@ impl Backend for Scip {
     ///
     /// # Panics
     ///
-    /// When `callback` panics, once SCIP has stopped.
-    fn solve(
-        &mut self,
-        settings: &Settings,
-        callback: &mut dyn Callback<Self>,
-        priced: &mut Priced,
-    ) -> Result<Solved<ScipStatus>, ScipError> {
+    /// When a callback or handler panics, once SCIP has stopped; when a pricer is registered without a sink, which only
+    /// code driving the backend directly can do ([`Hooks::take_priced`]).
+    fn solve(&mut self, settings: &Settings, mut hooks: Hooks<'_, Self>) -> Result<Solved<ScipStatus>, ScipError> {
         let instance = self.instance.as_mut().ok_or(ScipError::NotLoaded)?;
-        let wanted = callback.events().intersection(Self::EVENTS);
-        let pricing = callback.prices();
+        let priced = hooks.take_priced();
+        let pricing = priced.is_some();
         if pricing && instance.quadratic() {
             return Err(ScipError::PricingQuadratic);
         }
         configure(instance, &self.options, settings)?;
-        configure_events(instance, wanted, pricing)?;
+        configure_hooks(instance, &hooks, pricing)?;
         let start = Instant::now();
-        let ran = instance.solve(callback, wanted, start, priced);
+        let ran = instance.solve(hooks, priced, start);
         let elapsed = start.elapsed();
         if let Some(payload) = ran.panic {
             resume_unwind(payload);
@@ -488,6 +482,27 @@ impl Backend for Scip {
             elapsed,
         })
     }
+}
+
+/// Lazy constraints through a constraint handler, checked and enforced after every other.
+impl LazyConstraints for Scip {
+    type Lazy<'a> = ScipLazy<'a>;
+}
+
+/// User cuts through a separator on each node's LP solution.
+impl UserCuts for Scip {
+    type Cut<'a> = ScipCut<'a>;
+}
+
+/// Heuristic solutions through a primal heuristic before and after each node.
+impl Heuristics for Scip {
+    type Heuristic<'a> = ScipHeuristic<'a>;
+}
+
+/// Pricing through a variable pricer, delayed, on each optimal or infeasible node LP; not for a program with a
+/// quadratic objective ([`ScipError::PricingQuadratic`]).
+impl Prices for Scip {
+    type Price<'a> = ScipPrice<'a>;
 }
 
 /// Starts: a full start as a SCIP solution, a sparse one as a partial solution SCIP completes.
@@ -554,7 +569,7 @@ mod tests {
     use core::num::NonZeroU64;
     use core::time::Duration;
 
-    use culmen_core::{Bounds, ProgramColumn, ProgramPlan, absolute_gap, bounds, relative_gap, threads};
+    use culmen_core::{Bounds, Priced, ProgramColumn, ProgramPlan, absolute_gap, bounds, relative_gap, threads};
 
     use super::*;
 
@@ -585,20 +600,45 @@ mod tests {
         assert_eq!(settings_params(&Settings::new()), Ok(vec![]));
     }
 
-    /// Asks for the events it holds, prices or not, and does nothing with them.
-    struct Asks(Events, bool);
+    /// Asks for every event and does nothing with them.
+    struct Watches;
 
-    impl Callback<Scip> for Asks {
-        fn events(&self) -> Events {
-            self.0
-        }
-        fn prices(&self) -> bool {
-            self.1
+    impl culmen_core::Callback<Scip> for Watches {}
+
+    /// Prices nothing; never called on a program whose columns price out.
+    struct Idle;
+
+    impl culmen_core::Pricer<Scip> for Idle {
+        fn price(&mut self, _: &mut ScipPrice<'_>) {}
+    }
+
+    /// Adds nothing, counting its calls.
+    #[derive(Default)]
+    struct Calls(usize);
+
+    impl culmen_core::LazyHandler<Scip> for Calls {
+        fn lazy(&mut self, _: &mut ScipLazy<'_>) {
+            self.0 += 1;
+            assert!(self.0 < 10_000, "Calls: the lazy-constraint handler ran without end");
         }
     }
 
-    #[test]
-    fn test_a_solve_without_price_leaves_no_active_pricer_and_no_modifiable_row() {
+    impl culmen_core::CutHandler<Scip> for Calls {
+        fn cut(&mut self, _: &mut ScipCut<'_>) {
+            self.0 += 1;
+            assert!(self.0 < 10_000, "Calls: the cut handler ran without end");
+        }
+    }
+
+    impl culmen_core::HeuristicHandler<Scip> for Calls {
+        fn heuristic(&mut self, _: &mut ScipHeuristic<'_>) {
+            self.0 += 1;
+            assert!(self.0 < 10_000, "Calls: the heuristic handler ran without end");
+        }
+    }
+
+    /// `x >= 1` and `2x <= 4` over one continuous column of cost one, loaded into SCIP.
+    fn one_column() -> (Scip, Program) {
         let mut plan = ProgramPlan::new();
         let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
         plan.row(bounds!(1.0, f64::INFINITY), [(x, 1.0)]);
@@ -606,26 +646,94 @@ mod tests {
         let program = plan.build().unwrap();
         let mut scip = Scip::new();
         scip.load(&program).unwrap();
-        let settings = Settings {
+        (scip, program)
+    }
+
+    fn limited() -> Settings {
+        Settings {
             node_limit: Some(100),
             time_limit: Some(Duration::from_secs(10)),
             ..Settings::new()
-        };
-        for (wanted, prices, state) in [
-            (Events::ALL, false, (0, 0)),
-            (Events::NONE, true, (1, 2)),
-            (Events::NONE, false, (0, 0)),
-            (Events::LAZY, true, (1, 2)),
-            (Events::ALL, false, (0, 0)),
+        }
+    }
+
+    #[test]
+    fn test_a_solve_without_price_leaves_no_active_pricer_and_no_modifiable_row() {
+        let (mut scip, program) = one_column();
+        for (callback, pricer, state) in [
+            (true, false, (0, 0)),
+            (false, true, (1, 2)),
+            (false, false, (0, 0)),
+            (true, true, (1, 2)),
+            (true, false, (0, 0)),
         ] {
             let mut priced = Priced::new(&program, Scip::CLASSES);
-            let mut callback = Asks(wanted, prices);
-            let solved = scip.solve(&settings, &mut callback, &mut priced).unwrap();
-            assert_eq!(solved.outcome.objective(), Some(1.0), "{wanted} {prices}");
+            let (mut watches, mut idle) = (Watches, Idle);
+            let mut hooks = Hooks::new();
+            if callback {
+                hooks = hooks.register_callback(&mut watches);
+            }
+            if pricer {
+                hooks = hooks.register_pricer(&mut idle).sink(&mut priced);
+            }
+            let solved = scip.solve(&limited(), hooks).unwrap();
+            assert_eq!(solved.outcome.objective(), Some(1.0), "{callback} {pricer}");
             assert_eq!(priced.num_cols(), 1);
             let instance = scip.instance.as_ref().unwrap();
-            assert_eq!(instance.pricing_state(), state, "{wanted} {prices}");
+            assert_eq!(instance.pricing_state(), state, "{callback} {pricer}");
         }
+    }
+
+    /// The parameters a search handler sets: symmetry handling, the two dual reductions, and how often the culmen
+    /// separator and heuristic run.
+    type SearchParams = (Option<i32>, Option<bool>, Option<bool>, Option<i32>, Option<i32>);
+
+    fn search_params(scip: &Scip) -> SearchParams {
+        let instance = scip.instance.as_ref().unwrap();
+        (
+            instance.int_param(c"misc/usesymmetry"),
+            instance.bool_param(c"misc/allowstrongdualreds"),
+            instance.bool_param(c"misc/allowweakdualreds"),
+            instance.int_param(c"separating/culmen/freq"),
+            instance.int_param(c"heuristics/culmen/freq"),
+        )
+    }
+
+    #[test]
+    fn test_a_callback_asking_for_every_event_leaves_the_reductions_the_handlers_turn_off() {
+        // The emphases turn SCIP's separators and heuristics off, the culmen ones included, so that only a handler
+        // turns those back on.
+        let (_, program) = one_column();
+        let mut scip = Scip::with_options(ScipOptions {
+            separating: Some(Emphasis::Off),
+            heuristics: Some(Emphasis::Off),
+            ..ScipOptions::default()
+        });
+        scip.load(&program).unwrap();
+        scip.solve(&limited(), Hooks::new()).unwrap();
+        let plain = search_params(&scip);
+        assert_ne!(plain.0, Some(0), "{plain:?}");
+        assert_eq!((plain.1, plain.2), (Some(true), Some(true)));
+        assert!(plain.3 != Some(1) && plain.4 != Some(1), "{plain:?}");
+
+        // A callback that only watches, asking for every event, changes none of them.
+        let mut watches = Watches;
+        assert_eq!(culmen_core::Callback::<Scip>::events(&watches), Events::ALL);
+        scip.solve(&limited(), Hooks::new().register_callback(&mut watches))
+            .unwrap();
+        assert_eq!(search_params(&scip), plain);
+
+        // Each handler changes its own.
+        let mut lazy = Calls::default();
+        scip.solve(&limited(), Hooks::new().register_lazy(&mut lazy)).unwrap();
+        assert_eq!(
+            search_params(&scip),
+            (Some(0), Some(false), Some(false), plain.3, plain.4)
+        );
+        let (mut cut, mut heuristic) = (Calls::default(), Calls::default());
+        let hooks = Hooks::new().register_cut(&mut cut).register_heuristic(&mut heuristic);
+        scip.solve(&limited(), hooks).unwrap();
+        assert_eq!(search_params(&scip), (plain.0, plain.1, plain.2, Some(1), Some(1)));
     }
 
     #[test]

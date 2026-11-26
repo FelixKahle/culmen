@@ -19,7 +19,7 @@ use core::ptr::{self, NonNull};
 
 use std::time::Instant;
 
-use culmen_core::{Callback, Col, Events, Priced, QuadObjective, Row, Solution, Start, TiVec};
+use culmen_core::{Col, Hooks, Priced, QuadObjective, Row, Solution, Start, TiVec};
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_VAR, SCIPactivatePricer,
     SCIPaddSolFree, SCIPcheckSol, SCIPcheckSolOrig, SCIPcreate, SCIPcreatePartialSol, SCIPcreateProbBasic,
@@ -315,23 +315,17 @@ impl Instance {
         Ok(())
     }
 
-    /// Solves the problem, delivering the events `wanted` to `callback` and handing every column it prices to
-    /// `priced`; a panic of the callback is returned, not resumed. The instance holds the priced columns' variables
-    /// afterwards, so its best solution has a value for each.
+    /// Solves the problem, delivering events to `hooks` and handing every column its pricer prices to `priced`, the
+    /// sink the hooks gave; a panic of a callback or handler is returned, not resumed. The instance holds the priced
+    /// columns' variables afterwards, so its best solution has a value for each.
     ///
-    /// The callback's run is installed in the slot for the call of `SCIPsolve` alone, and SCIP reads the columns
-    /// through shared references during it.
-    pub(crate) fn solve(
-        &mut self,
-        callback: &mut dyn Callback<Scip>,
-        wanted: Events,
-        start: Instant,
-        priced: &mut Priced,
-    ) -> Ran {
+    /// The run is installed in the slot for the call of `SCIPsolve` alone, and SCIP reads the columns through shared
+    /// references during it.
+    pub(crate) fn solve<'h>(&mut self, hooks: Hooks<'h, Scip>, priced: Option<&'h mut Priced>, start: Instant) -> Ran {
         let this: &Self = self;
         // SAFETY: the instance is live, holds the columns and rows, and is in its problem stage, as configuring left
         // it.
-        let run = unsafe { Run::new(this.raw(), callback, wanted, start, this.columns(), &this.conss, priced) };
+        let run = unsafe { Run::new(this.raw(), hooks, priced, start, this.columns(), &this.conss) };
         let solved = {
             let _installed = this.slot().install(&run);
             // SAFETY: the instance is live and borrowed exclusively by the caller, and holds its problem; the run its

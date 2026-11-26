@@ -1,22 +1,22 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The seam a solver plugs into, and the callbacks it drives.
+//! The seam a solver plugs into, and the observational callbacks it drives.
 
 use core::fmt;
 
-use super::context::{
-    CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext, SolutionContext,
-};
-use crate::{Edit, Events, ModelClasses, Priced, Program, ProgramFeatures, Settings, Solved};
+use super::context::{LogContext, PollContext, ProgressContext, SolutionContext};
+use crate::{Edit, Events, Hooks, ModelClasses, Program, ProgramFeatures, Settings, Solved};
 
-/// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls a [`Callback`] as the
-/// search goes.
+/// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls the [`Hooks`] of the
+/// solve as the search goes.
 ///
 /// The trait is open: any crate may implement it for its solver. Each associated context type implements the
-/// solver-neutral trait of its event and may offer more as inherent methods; an event the solver cannot deliver
-/// takes [`Unsupported`](crate::Unsupported) and is left out of [`Backend::EVENTS`]. The classes of program it
-/// solves are [`Backend::CLASSES`].
+/// solver-neutral trait of its event and may offer more as inherent methods; an observational event the solver cannot
+/// deliver takes [`Unsupported`](crate::Unsupported) and is left out of [`Backend::EVENTS`]. The classes of program it
+/// solves are [`Backend::CLASSES`]. What changes the search (lazy constraints, user cuts, heuristic solutions,
+/// pricing), taking a start and the analyses are the traits of [`capability`](crate::capability), each with its own
+/// contract.
 ///
 /// # Contract
 ///
@@ -30,22 +30,11 @@ use crate::{Edit, Events, ModelClasses, Priced, Program, ProgramFeatures, Settin
 ///   reads with that program's handles: a [`Solution`](crate::Solution) holds one value per column, the columns
 ///   priced in the solve included, and every objective value and bound includes the program's quadratic part and
 ///   offset.
-/// - A backend that declares [`Backend::PRICES`] calls [`Callback::price`] only after a node LP is solved, optimal in
-///   [`PriceMode::ReducedCost`](crate::PriceMode::ReducedCost) and infeasible in
-///   [`PriceMode::Farkas`](crate::PriceMode::Farkas), with every program row's multiplier in the convention of
-///   [`PriceContext::duals`]. It ends pricing at a node only after a round that added no column and did not branch
-///   early, and counts the node LP as a bound only then. Every column a callback adds goes through
-///   [`Priced::push`] of the solve's `priced`, enters the search with its cost, bounds, integrality and entries, stays
-///   for the rest of the solve, and is part of every point the backend reports afterwards. A solve whose callback does
-///   not price ([`Callback::prices`]) behaves as if the backend did not declare it.
-/// - It calls a callback method only for an event in both [`Backend::EVENTS`] and the callback's
-///   [`Callback::events`], and only while `solve` runs; it never calls two callback methods at once.
-/// - A panic in a callback stops the solve as soon as the solver allows and then continues unwinding out of
-///   `solve`; it never aborts the process and never leaves the backend unusable.
+/// - It delivers an observational event only when it is in [`Hooks::events`], which is within [`Backend::EVENTS`],
+///   and only while `solve` runs; it never calls two callback or handler methods at once.
+/// - A panic in a callback or handler stops the solve as soon as the solver allows and then continues unwinding out
+///   of `solve`; it never aborts the process and never leaves the backend unusable.
 /// - [`Settings`] apply to this one solve and take precedence over the backend's own options.
-///
-/// A backend's further capabilities, taking a start and the analyses after a solve, are the traits of
-/// [`capability`](crate::capability), each with its own contract.
 pub trait Backend: Sized {
     /// Why loading or solving failed.
     type Error: core::error::Error + Send + Sync + 'static;
@@ -59,24 +48,11 @@ pub trait Backend: Sized {
     type Poll<'a>: PollContext;
     /// The context of a [`Events::FEASIBLE`] or [`Events::INCUMBENT`] event.
     type Solution<'a>: SolutionContext;
-    /// The context of a [`Events::LAZY`] event.
-    type Lazy<'a>: LazyContext;
-    /// The context of a [`Events::CUT`] event.
-    type Cut<'a>: CutContext;
-    /// The context of a [`Events::HEURISTIC`] event.
-    type Heuristic<'a>: HeuristicContext;
-    /// The context of a pricing round: a node LP whose duals a callback answers with columns.
-    type Price<'a>: PriceContext;
     /// The context of a [`Events::NATIVE`] event: whatever only this solver reports.
     type Native<'a>: fmt::Debug;
 
-    /// The events this backend delivers.
+    /// The observational events this backend delivers.
     const EVENTS: Events;
-
-    /// Whether this backend prices: calls [`Callback::price`] for a callback that [`prices`](Callback::prices), and
-    /// takes the columns it adds into the search. A backend that does not price leaves it `false` and its
-    /// [`Backend::Price`] [`Unsupported`](crate::Unsupported).
-    const PRICES: bool = false;
 
     /// The classes of program this backend solves; [`Solver::new`](crate::Solver::new) refuses any other.
     const CLASSES: ModelClasses;
@@ -110,11 +86,12 @@ pub trait Backend: Sized {
         self.load(program)
     }
 
-    /// Solves the loaded program, calling `callback` as the search goes and handing every column a callback prices in
-    /// to `priced`, which was made for the loaded program.
+    /// Solves the loaded program, delivering events to `hooks` as the search goes and calling the handlers it holds.
     ///
-    /// The columns in `priced` when `solve` returns or unwinds belong to the caller: a [`Solver`](crate::Solver)
-    /// appends them to its program and loads it again before the next call that runs the backend.
+    /// A backend that [`Prices`](crate::Prices) hands every column the pricer adds to the sink
+    /// [`Hooks::take_priced`] gives, which was made for the loaded program. The columns in it when `solve` returns or
+    /// unwinds belong to the caller: a [`Solver`](crate::Solver) appends them to its program and loads it again
+    /// before the next call that runs the backend.
     ///
     /// # Errors
     ///
@@ -122,24 +99,21 @@ pub trait Backend: Sized {
     ///
     /// # Panics
     ///
-    /// When `callback` panics, after the solver has stopped.
-    fn solve(
-        &mut self,
-        settings: &Settings,
-        callback: &mut dyn Callback<Self>,
-        priced: &mut Priced,
-    ) -> Result<Solved<Self::Status>, Self::Error>;
+    /// When a callback or handler panics, after the solver has stopped.
+    fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<Self::Status>, Self::Error>;
 }
 
-/// What runs during a solve: one method per event kind, each with the backend's context for it.
+/// What watches a solve: one method per observational event kind, each with the backend's context for it.
 ///
-/// Every method does nothing by default, [`Callback::events`] asks for every event, and [`Callback::prices`] is
-/// `false`: pricing is asked for by name, never by a set of events. Implement it generically (`impl<B: Backend>
-/// Callback<B> for …`) to run on every backend through the neutral context traits, or for one backend to reach its own
-/// context types. Two callbacks run together as a pair `(a, b)`, `a` first.
+/// Every method does nothing by default, and [`Callback::events`] asks for every event. A callback only observes:
+/// what changes the search is a handler of its own kind ([`LazyHandler`](crate::LazyHandler),
+/// [`CutHandler`](crate::CutHandler), [`HeuristicHandler`](crate::HeuristicHandler), [`Pricer`](crate::Pricer)),
+/// so asking for every event costs a solver no reduction it would otherwise make. Implement it generically
+/// (`impl<B: Backend> Callback<B> for …`) to run on every backend through the neutral context traits, or for one
+/// backend to reach its own context types. Two callbacks run together as a pair `(a, b)`, `a` first.
 ///
 /// ```
-/// use culmen_core::{Backend, Callback, Events, PollContext};
+/// use culmen_core::{Backend, Callback, Context, Events, PollContext};
 /// use std::time::Duration;
 ///
 /// /// Stops any backend's solve after a fixed time.
@@ -161,14 +135,6 @@ pub trait Callback<B: Backend>: Send {
     fn events(&self) -> Events {
         Events::ALL
     }
-    /// Whether this callback prices, so that a backend declaring [`Backend::PRICES`] calls [`Callback::price`] at
-    /// every node LP; `false` by default.
-    ///
-    /// Pricing is not an [`Events`] member, so no set of events turns it on: a solver that prices gives up
-    /// reductions that need every column known up front, and some refuse programs they solve otherwise.
-    fn prices(&self) -> bool {
-        false
-    }
     /// A chunk of the solver's log.
     fn log(&mut self, ctx: &mut B::Log<'_>) {
         let _ = ctx;
@@ -189,22 +155,6 @@ pub trait Callback<B: Backend>: Send {
     fn incumbent(&mut self, ctx: &mut B::Solution<'_>) {
         let _ = ctx;
     }
-    /// A candidate solution, to be cut off by lazy constraints.
-    fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
-        let _ = ctx;
-    }
-    /// A node relaxation, to be cut off by user cuts.
-    fn cut(&mut self, ctx: &mut B::Cut<'_>) {
-        let _ = ctx;
-    }
-    /// A chance to hand the solver a heuristic solution.
-    fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
-        let _ = ctx;
-    }
-    /// A node LP's duals, to be answered with columns that improve it; called only when [`Callback::prices`].
-    fn price(&mut self, ctx: &mut B::Price<'_>) {
-        let _ = ctx;
-    }
     /// An event only this backend knows.
     fn native(&mut self, ctx: &mut B::Native<'_>) {
         let _ = ctx;
@@ -221,9 +171,6 @@ impl<B: Backend, C: Callback<B> + ?Sized> Callback<B> for &mut C {
     fn events(&self) -> Events {
         (**self).events()
     }
-    fn prices(&self) -> bool {
-        (**self).prices()
-    }
     fn log(&mut self, ctx: &mut B::Log<'_>) {
         (**self).log(ctx);
     }
@@ -239,18 +186,6 @@ impl<B: Backend, C: Callback<B> + ?Sized> Callback<B> for &mut C {
     fn incumbent(&mut self, ctx: &mut B::Solution<'_>) {
         (**self).incumbent(ctx);
     }
-    fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
-        (**self).lazy(ctx);
-    }
-    fn cut(&mut self, ctx: &mut B::Cut<'_>) {
-        (**self).cut(ctx);
-    }
-    fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
-        (**self).heuristic(ctx);
-    }
-    fn price(&mut self, ctx: &mut B::Price<'_>) {
-        (**self).price(ctx);
-    }
     fn native(&mut self, ctx: &mut B::Native<'_>) {
         (**self).native(ctx);
     }
@@ -260,9 +195,6 @@ impl<B: Backend, C: Callback<B> + ?Sized> Callback<B> for &mut C {
 impl<B: Backend, X: Callback<B>, Y: Callback<B>> Callback<B> for (X, Y) {
     fn events(&self) -> Events {
         self.0.events() | self.1.events()
-    }
-    fn prices(&self) -> bool {
-        self.0.prices() || self.1.prices()
     }
     fn log(&mut self, ctx: &mut B::Log<'_>) {
         if self.0.events().contains(Events::LOG) {
@@ -302,39 +234,6 @@ impl<B: Backend, X: Callback<B>, Y: Callback<B>> Callback<B> for (X, Y) {
         }
         if self.1.events().contains(Events::INCUMBENT) {
             self.1.incumbent(ctx);
-        }
-    }
-    fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
-        if self.0.events().contains(Events::LAZY) {
-            self.0.lazy(ctx);
-        }
-        if self.1.events().contains(Events::LAZY) {
-            self.1.lazy(ctx);
-        }
-    }
-    fn cut(&mut self, ctx: &mut B::Cut<'_>) {
-        if self.0.events().contains(Events::CUT) {
-            self.0.cut(ctx);
-        }
-        if self.1.events().contains(Events::CUT) {
-            self.1.cut(ctx);
-        }
-    }
-    fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
-        if self.0.events().contains(Events::HEURISTIC) {
-            self.0.heuristic(ctx);
-        }
-        if self.1.events().contains(Events::HEURISTIC) {
-            self.1.heuristic(ctx);
-        }
-    }
-    /// Both callbacks share one context, so the columns of the second follow those of the first.
-    fn price(&mut self, ctx: &mut B::Price<'_>) {
-        if self.0.prices() {
-            self.0.price(ctx);
-        }
-        if self.1.prices() {
-            self.1.price(ctx);
         }
     }
     fn native(&mut self, ctx: &mut B::Native<'_>) {

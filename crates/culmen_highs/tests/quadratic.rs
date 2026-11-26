@@ -14,9 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use culmen_core::{
-    Backend, Bounds, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, Outcome, Phase, PollContext, Program,
-    ProgramColumn, ProgramPlan, Progress, QuadExpr, Request, Sense, Solution, SolutionContext, SolveError, Solved,
-    Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
+    Backend, Bounds, Col, Context, Events, LinExpr, Linear, LoadError, Model, ModelClass, Outcome, Phase, PollContext,
+    Program, ProgramColumn, ProgramPlan, Progress, QuadExpr, Request, Sense, Solution, SolutionContext, SolveError,
+    Solved, Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
 };
 use culmen_highs::{Highs, HighsError, HighsOptions, LpSolver, PollSource};
 use culmen_testing::reference::close;
@@ -335,9 +335,8 @@ fn test_highs_itself_cannot_solve_a_miqp() {
     // The declaration matches HiGHS 1.16: loaded around the class check, a MIQP fails at the run.
     let mut highs = Highs::new();
     highs.load(&miqp()).unwrap();
-    let mut priced = culmen_core::Priced::new(&miqp(), Highs::CLASSES);
     let error = highs
-        .solve(&culmen_core::Settings::new(), &mut (), &mut priced)
+        .solve(&culmen_core::Settings::new(), culmen_core::Hooks::new())
         .unwrap_err();
     assert!(matches!(error, HighsError::Run { .. }), "{error:?}");
 }
@@ -361,9 +360,6 @@ impl culmen_core::Callback<Highs> for Kinds {
     fn incumbent(&mut self, _: &mut culmen_highs::HighsSolution<'_>) {
         self.0 |= Events::INCUMBENT;
     }
-    fn heuristic(&mut self, _: &mut culmen_highs::HighsHeuristic<'_>) {
-        self.0 |= Events::HEURISTIC;
-    }
     fn native(&mut self, _: &mut culmen_highs::HighsNative) {
         self.0 |= Events::NATIVE;
     }
@@ -383,7 +379,9 @@ fn projection() -> Program {
 fn test_a_qp_solve_reports_its_log_its_polls_and_its_first_feasible_point() {
     let mut solver = Solver::new(Highs::new(), projection()).unwrap();
     let mut kinds = Kinds(Events::NONE);
-    solver.solve_with(Request::new(), &mut kinds).unwrap();
+    solver
+        .solve_with(Request::new(), culmen_core::Hooks::new().register_callback(&mut kinds))
+        .unwrap();
     assert_eq!(kinds.0, Events::LOG | Events::POLL | Events::FEASIBLE);
 }
 
@@ -409,7 +407,12 @@ impl culmen_core::Callback<Highs> for Polls {
 fn test_a_qp_poll_reports_qp_iterations_and_interrupts_the_solve() {
     let mut solver = Solver::new(Highs::new(), projection()).unwrap();
     let mut watched = Polls::default();
-    let solved = solver.solve_with(Request::new(), &mut watched).unwrap();
+    let solved = solver
+        .solve_with(
+            Request::new(),
+            culmen_core::Hooks::new().register_callback(&mut watched),
+        )
+        .unwrap();
     assert!(matches!(solved.outcome, Outcome::Optimal(_)), "{solved:?}");
     // HiGHS polls once after the starting point, before the first iteration, then at every iteration.
     assert_eq!(watched.sources.first(), Some(&PollSource::Qp { iterations: 0 }));
@@ -424,7 +427,12 @@ fn test_a_qp_poll_reports_qp_iterations_and_interrupts_the_solve() {
         interrupt: true,
         ..Polls::default()
     };
-    let solved = solver.solve_with(Request::new(), &mut interrupting).unwrap();
+    let solved = solver
+        .solve_with(
+            Request::new(),
+            culmen_core::Hooks::new().register_callback(&mut interrupting),
+        )
+        .unwrap();
     assert_eq!(interrupting.sources, [PollSource::Qp { iterations: 0 }]);
     assert!(
         matches!(
@@ -481,7 +489,12 @@ fn test_the_first_feasible_point_of_a_qp_is_feasible_and_valued_on_the_program()
     let program = projection();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let mut feasible = Feasible::default();
-    solver.solve_with(Request::new(), &mut feasible).unwrap();
+    solver
+        .solve_with(
+            Request::new(),
+            culmen_core::Hooks::new().register_callback(&mut feasible),
+        )
+        .unwrap();
     let [(objective, values, mip, progress)] = feasible.0.as_slice() else {
         panic!("expected one feasible point, got {:?}", feasible.0)
     };
@@ -678,7 +691,7 @@ proptest! {
         let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
         let mut feasible = Feasible::default();
         // The time limit ends a solve HiGHS's QP solver does not; the point comes before its iterations.
-        let _ = solver.solve_with(Request::new().time_limit(Duration::from_secs(2)), &mut feasible);
+        let _ = solver.solve_with(Request::new().time_limit(Duration::from_secs(2)), culmen_core::Hooks::new().register_callback(&mut feasible));
         prop_assert!(feasible.0.len() <= 1, "{:?}", feasible.0);
         for (objective, values, mip, _) in &feasible.0 {
             let values = TiSlice::from_ref(values.as_slice());

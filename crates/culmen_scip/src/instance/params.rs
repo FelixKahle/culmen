@@ -66,6 +66,15 @@ impl Instance {
         RetCode::from_raw(code).is_none().then_some(value)
     }
 
+    /// The value of a `bool` parameter, `None` when SCIP knows no `bool` parameter of that name.
+    #[cfg(test)]
+    pub(crate) fn bool_param(&self, name: &core::ffi::CStr) -> Option<bool> {
+        let mut value: c_uint = 0;
+        // SAFETY: the instance is live, the name NUL-terminated, and `value` one SCIP boolean to write.
+        let code = unsafe { scip_sys::SCIPgetBoolParam(self.raw(), name.as_ptr(), &raw mut value) };
+        RetCode::from_raw(code).is_none().then_some(value != 0)
+    }
+
     /// Sets a parameter by SCIP's name.
     ///
     /// # Errors

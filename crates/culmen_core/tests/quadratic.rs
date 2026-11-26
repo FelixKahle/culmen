@@ -14,9 +14,9 @@ use core::time::Duration;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use culmen_core::{
-    Backend, Bounds, Callback, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, ModelClasses, ModelError,
-    ModelVar, Outcome, Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Script, Sense,
-    Settings, Solved, Solver, Term, TiSlice, TiVec, Unsupported, Var,
+    Backend, Bounds, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, ModelClasses, ModelError, ModelVar,
+    Outcome, Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Script, Sense, Settings,
+    Solved, Solver, Term, TiSlice, TiVec, Unsupported, Var,
 };
 use proptest::prelude::*;
 
@@ -528,10 +528,6 @@ impl Backend for LinearOnly {
     type Progress<'a> = Unsupported;
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = Unsupported;
-    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: Events = Events::NONE;
@@ -546,12 +542,7 @@ impl Backend for LinearOnly {
         }
     }
 
-    fn solve(
-        &mut self,
-        _: &Settings,
-        _: &mut dyn Callback<Self>,
-        _: &mut culmen_core::Priced,
-    ) -> Result<Solved<()>, NoColumns> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::Hooks<'_, Self>) -> Result<Solved<()>, NoColumns> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),

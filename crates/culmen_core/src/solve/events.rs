@@ -12,12 +12,13 @@ use itertools::Itertools;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// A set of callback event kinds: what a [`Backend`](crate::Backend) supports ([`Backend::EVENTS`]) and what a
-/// [`Callback`](crate::Callback) asks for ([`Callback::events`](crate::Callback::events)).
+/// A set of observational callback event kinds: what a [`Backend`](crate::Backend) supports ([`Backend::EVENTS`])
+/// and what a [`Callback`](crate::Callback) asks for ([`Callback::events`](crate::Callback::events)).
 ///
 /// A backend delivers an event only when it is in both sets, so a callback that asks for fewer events costs the
-/// solver less. Pricing is not an event of this set: a callback opts into it with
-/// [`Callback::prices`](crate::Callback::prices), so neither [`Events::ALL`] nor a complement can turn it on.
+/// solver less. The events that change the search (lazy constraints, user cuts, heuristic solutions, pricing) are not
+/// in this set: each is a handler registered on the [`Hooks`](crate::Hooks) of a solve, for a backend with its
+/// capability, so neither [`Events::ALL`] nor a complement can turn one on.
 ///
 /// [`Backend::EVENTS`]: crate::Backend::EVENTS
 ///
@@ -25,14 +26,14 @@ use serde::{Deserialize, Serialize};
 /// use culmen_core::Events;
 /// let wanted = Events::LOG | Events::POLL;
 /// assert!(wanted.contains(Events::POLL));
-/// assert!(!wanted.contains(Events::CUT));
+/// assert!(!wanted.contains(Events::NATIVE));
 /// assert_eq!(wanted & Events::POLL, Events::POLL);
 /// assert_eq!(wanted - Events::LOG, Events::POLL);
 /// assert_eq!(!wanted, Events::ALL - wanted);
 /// assert_eq!(wanted.iter().collect::<Events>(), wanted);
 /// assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
 /// assert_eq!(wanted.to_string(), "{LOG, POLL}");
-/// assert_eq!(Events::ALL.len(), 9);
+/// assert_eq!(Events::ALL.len(), 6);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Events(u16);
@@ -50,26 +51,17 @@ impl Events {
     pub const FEASIBLE: Self = Self(1 << 3);
     /// A new incumbent: a feasible solution better than every one before.
     pub const INCUMBENT: Self = Self(1 << 4);
-    /// A candidate solution a callback may cut off with lazy constraints.
-    pub const LAZY: Self = Self(1 << 5);
-    /// A node relaxation a callback may cut off with user cuts.
-    pub const CUT: Self = Self(1 << 6);
-    /// A point at which a callback may hand the solver a heuristic solution.
-    pub const HEURISTIC: Self = Self(1 << 7);
     /// An event only the backend knows, delivered with the backend's own context type.
-    pub const NATIVE: Self = Self(1 << 8);
+    pub const NATIVE: Self = Self(1 << 5);
     /// Every event.
-    pub const ALL: Self = Self((1 << 9) - 1);
+    pub const ALL: Self = Self((1 << 6) - 1);
 
-    const NAMES: [(Self, &'static str); 9] = [
+    const NAMES: [(Self, &'static str); 6] = [
         (Self::LOG, "LOG"),
         (Self::PROGRESS, "PROGRESS"),
         (Self::POLL, "POLL"),
         (Self::FEASIBLE, "FEASIBLE"),
         (Self::INCUMBENT, "INCUMBENT"),
-        (Self::LAZY, "LAZY"),
-        (Self::CUT, "CUT"),
-        (Self::HEURISTIC, "HEURISTIC"),
         (Self::NATIVE, "NATIVE"),
     ];
 

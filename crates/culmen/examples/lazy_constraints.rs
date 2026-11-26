@@ -3,9 +3,9 @@
 
 //! A travelling salesman's shortest round trip through eight towns, with subtours cut off by lazy constraints on
 //! SCIP. The model says only that every town has two roads; a round trip through all eight is one more condition, a
-//! constraint for every set of towns, too many to write down. The callback (`Events::LAZY`) receives every
-//! candidate SCIP would accept, finds its subtours, and adds for each one the constraint that some two roads leave
-//! it. SCIP keeps each constraint for the rest of the search, so the optimum it proves is a round trip.
+//! constraint for every set of towns, too many to write down. The lazy-constraint handler (`LazyHandler`, which
+//! exists only for a backend that takes lazy constraints) receives every candidate SCIP would accept, finds its
+//! subtours, and adds for each one the constraint that some two roads leave it. SCIP keeps each constraint for the rest of the search, so the optimum it proves is a round trip.
 //!
 //! `cargo run -p culmen --example lazy_constraints --features scip`
 
@@ -74,11 +74,7 @@ impl Subtours {
     }
 }
 
-impl<B: Backend> Callback<B> for Subtours {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
-
+impl<B: LazyConstraints> LazyHandler<B> for Subtours {
     fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
         self.candidates += 1;
         assert!(self.candidates <= MAX_CANDIDATES, "{} candidates", self.candidates);
@@ -132,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         candidates: 0,
         added: 0,
     };
-    let solved = solver.solve_with(request, &mut subtours)?;
+    let solved = solver.solve_with(request, Hooks::new().register_lazy(&mut subtours))?;
     let Outcome::Optimal(best) = solved.outcome else {
         return Err(format!("no optimum: {:?}", solved.outcome).into());
     };

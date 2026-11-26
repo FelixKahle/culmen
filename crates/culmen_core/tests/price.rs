@@ -14,10 +14,11 @@ use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use culmen_core::{
-    ActionError, Analysis, AnalysisError, Backend, Bounds, Callback, Col, Duals, Events, Found, Integrality,
-    LazyContext, Linear, ModelClass, ModelClasses, Outcome, Phase, PollContext, PriceContext, PriceMode, Priced,
-    Program, ProgramColumn, ProgramPlan, Progress, Request, Row, Script, ScriptError, ScriptPrice, Sense, Settings,
-    Solution, Solved, Solver, Step, StopReason, TiVec, Unsupported, bounds,
+    ActionError, Analysis, AnalysisError, Backend, Bounds, Callback, Col, Context, Duals, Events, Found, Hooks,
+    Integrality, LazyContext, LazyHandler, Linear, ModelClass, ModelClasses, NewCol, Outcome, Phase, PollContext,
+    PriceContext, PriceMode, Priced, Pricer, Prices, Program, ProgramColumn, ProgramPlan, Progress, Request, Row,
+    Script, ScriptError, ScriptPrice, Sense, Settings, Solution, Solved, Solver, Step, StopReason, TiSlice, TiVec,
+    Unsupported, bounds,
 };
 use culmen_testing::mirror::{Call, Mirror};
 
@@ -65,7 +66,7 @@ fn small() -> Program {
 
 /// Watches the reduced cost of every column in `watched` at each round and adds, from those `withheld`, every one
 /// not added yet that improves, or only the first when `first_only`.
-struct Pricer {
+struct Watching {
     watched: Vec<culmen_core::NewCol>,
     withheld: Vec<usize>,
     first_only: bool,
@@ -74,7 +75,7 @@ struct Pricer {
     rounds: Vec<(PriceMode, Vec<(f64, bool)>)>,
 }
 
-impl Pricer {
+impl Watching {
     fn new(watched: Vec<culmen_core::NewCol>, withheld: impl IntoIterator<Item = usize>, first_only: bool) -> Self {
         Self {
             watched,
@@ -95,13 +96,7 @@ impl Pricer {
     }
 }
 
-impl<B: Backend> Callback<B> for Pricer {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl<B: Prices> Pricer<B> for Watching {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         let seen = self
             .watched
@@ -188,8 +183,10 @@ fn test_fixture_one_prices_pattern_b_and_nothing_after_it() {
     ];
     let end = optimum(4.5, [1.0, 0.0, 1.5, 2.0]);
     let mut solver = Solver::new(Script::new(steps, end), program).unwrap();
-    let mut pricer = Pricer::new(patterns, 3..11, false);
-    let solved = solver.solve_with(Request::new(), &mut pricer).unwrap();
+    let mut pricer = Watching::new(patterns, 3..11, false);
+    let solved = solver
+        .solve_with(Request::new(), Hooks::new().register_pricer(&mut pricer))
+        .unwrap();
 
     // Round 1: the hand-worked reduced costs; only B improves, E sits on the boundary and does not.
     let first = [
@@ -277,8 +274,10 @@ fn test_fixture_two_prices_by_farkas_then_by_the_maximizing_sign() {
     ];
     let end = optimum(14.0, [0.0, 0.0, 2.0]);
     let mut solver = Solver::new(Script::new(steps, end), program).unwrap();
-    let mut pricer = Pricer::new(columns, [1, 2], true);
-    solver.solve_with(Request::new(), &mut pricer).unwrap();
+    let mut pricer = Watching::new(columns, [1, 2], true);
+    solver
+        .solve_with(Request::new(), Hooks::new().register_pricer(&mut pricer))
+        .unwrap();
 
     // Farkas: the cost counts as zero, so x2 prices at -f0 = 0.2 and does not help; x1 at -0.8 and x3 at -0.6 do.
     assert_eq!(pricer.rounds[0].0, PriceMode::Farkas);
@@ -327,13 +326,7 @@ impl Adds {
     }
 }
 
-impl<B: Backend> Callback<B> for Adds {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl<B: Prices> Pricer<B> for Adds {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         for column in &self.columns {
             self.results.push(ctx.add_col(column.clone()));
@@ -353,7 +346,9 @@ fn test_a_priced_column_continues_the_numbering_and_is_kept_as_checked() {
     let steps = vec![price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0])];
     let mut solver = Solver::new(Script::new(steps, optimum(1.0, [1.0, 0.0, 0.0])), program).unwrap();
     let mut adds = Adds::of([given.clone()]);
-    solver.solve_with(Request::new(), &mut adds).unwrap();
+    solver
+        .solve_with(Request::new(), Hooks::new().register_pricer(&mut adds))
+        .unwrap();
 
     assert_eq!(adds.results, [Ok(Col::new(n))]);
     let program = solver.program();
@@ -388,7 +383,9 @@ fn test_a_refused_column_names_its_fault_and_takes_no_id() {
     let steps = vec![price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0])];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
     let mut adds = Adds::of(columns);
-    solver.solve_with(Request::new(), &mut adds).unwrap();
+    solver
+        .solve_with(Request::new(), Hooks::new().register_pricer(&mut adds))
+        .unwrap();
     assert_eq!(
         adds.results,
         [
@@ -440,28 +437,26 @@ fn test_priced_refuses_a_class_the_backend_does_not_solve_and_reads_back_what_it
     assert_eq!(priced.push(integer), Ok(Col::new(n)));
 }
 
-/// Adds one column in each price step and then a lazy constraint on it and on the column after it.
+/// Adds one column in each price step.
 #[derive(Default)]
-struct PriceThenLazy {
-    added: Vec<Col>,
-    lazy: Vec<Result<(), ActionError>>,
+struct AddOne(Vec<Col>);
+
+impl<B: Prices> Pricer<B> for AddOne {
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        self.0.push(ctx.add_col(column(1.0, &[(Row::new(0), 1.0)])).unwrap());
+    }
 }
 
-impl Callback<Script> for PriceThenLazy {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
-    fn prices(&self) -> bool {
-        true
-    }
-    fn price(&mut self, ctx: &mut ScriptPrice<'_>) {
-        self.added
-            .push(ctx.add_col(column(1.0, &[(Row::new(0), 1.0)])).unwrap());
-    }
-    fn lazy(&mut self, ctx: &mut <Script as Backend>::Lazy<'_>) {
-        let col = self.added[0];
-        self.lazy.push(ctx.add_lazy(col.leq(1)));
-        self.lazy.push(ctx.add_lazy(Col::new(col.index() + 1).leq(1)));
+/// Adds a lazy constraint on `col` and on the column after it.
+struct LazyOn {
+    col: Col,
+    results: Vec<Result<(), ActionError>>,
+}
+
+impl LazyHandler<Script> for LazyOn {
+    fn lazy(&mut self, ctx: &mut <Script as culmen_core::LazyConstraints>::Lazy<'_>) {
+        self.results.push(ctx.add_lazy(self.col.leq(1)));
+        self.results.push(ctx.add_lazy(Col::new(self.col.index() + 1).leq(1)));
     }
 }
 
@@ -479,11 +474,16 @@ fn test_an_event_after_pricing_counts_the_priced_columns() {
         Step::Lazy(candidate),
     ];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
-    let mut callback = PriceThenLazy::default();
-    solver.solve_with(Request::new(), &mut callback).unwrap();
-    assert_eq!(callback.added, [Col::new(n)]);
+    let mut pricer = AddOne::default();
+    let mut lazy = LazyOn {
+        col: Col::new(n),
+        results: Vec::new(),
+    };
+    let hooks = Hooks::new().register_pricer(&mut pricer).register_lazy(&mut lazy);
+    solver.solve_with(Request::new(), hooks).unwrap();
+    assert_eq!(pricer.0, [Col::new(n)]);
     assert_eq!(
-        callback.lazy,
+        lazy.results,
         [Ok(()), Err(ActionError::UnknownColumn { col: Col::new(n + 1) })]
     );
 }
@@ -491,13 +491,7 @@ fn test_an_event_after_pricing_counts_the_priced_columns() {
 /// Adds a column, then panics.
 struct AddThenPanic;
 
-impl<B: Backend> Callback<B> for AddThenPanic {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl<B: Prices> Pricer<B> for AddThenPanic {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         ctx.add_col(column(1.0, &[(Row::new(0), 1.0)])).unwrap();
         panic!("pricer failed");
@@ -512,7 +506,7 @@ fn test_a_panic_after_pricing_keeps_the_column_and_the_next_solve_loads_it() {
     let script = Script::new(steps, optimum(1.0, [1.0, 0.0, 0.0]));
     let mut solver = Solver::new(Mirror::new(script), program).unwrap();
     let unwound = catch_unwind(AssertUnwindSafe(|| {
-        solver.solve_with(Request::new(), &mut AddThenPanic)
+        solver.solve_with(Request::new(), Hooks::new().register_pricer(&mut AddThenPanic))
     }));
     assert!(unwound.is_err());
     assert_eq!(solver.program().num_cols(), n + 1);
@@ -533,19 +527,12 @@ fn test_a_panic_after_pricing_keeps_the_column_and_the_next_solve_loads_it() {
     assert_eq!(solver.backend().held(), Some(solver.program()));
 }
 
-/// Adds a column at each price step and interrupts at each poll.
-#[derive(Default)]
-struct AddThenInterrupt(Vec<Col>);
+/// Interrupts at each poll.
+struct Interrupt;
 
-impl<B: Backend> Callback<B> for AddThenInterrupt {
+impl<B: Backend> Callback<B> for Interrupt {
     fn events(&self) -> Events {
         Events::POLL
-    }
-    fn prices(&self) -> bool {
-        true
-    }
-    fn price(&mut self, ctx: &mut B::Price<'_>) {
-        self.0.push(ctx.add_col(column(1.0, &[(Row::new(0), 1.0)])).unwrap());
     }
     fn poll(&mut self, ctx: &mut B::Poll<'_>) {
         ctx.interrupt();
@@ -562,8 +549,11 @@ fn test_an_interrupt_after_pricing_stops_the_solve_and_keeps_the_columns() {
         price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0]),
     ];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
-    let mut callback = AddThenInterrupt::default();
-    let solved = solver.solve_with(Request::new(), &mut callback).unwrap();
+    let (mut pricer, mut interrupt) = (AddOne::default(), Interrupt);
+    let hooks = Hooks::new()
+        .register_pricer(&mut pricer)
+        .register_callback(&mut interrupt);
+    let solved = solver.solve_with(Request::new(), hooks).unwrap();
     assert!(matches!(
         solved.outcome,
         Outcome::Stopped {
@@ -571,7 +561,7 @@ fn test_an_interrupt_after_pricing_stops_the_solve_and_keeps_the_columns() {
             ..
         }
     ));
-    assert_eq!(callback.0, [Col::new(n)]);
+    assert_eq!(pricer.0, [Col::new(n)]);
     assert_eq!(solver.program().num_cols(), n + 1);
 }
 
@@ -583,7 +573,9 @@ fn test_a_pair_prices_in_one_context_the_first_callback_first() {
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
     let mut a = Adds::of([column(1.0, &[(Row::new(0), 1.0)])]);
     let mut b = Adds::of([column(2.0, &[(Row::new(0), 1.0)])]);
-    solver.solve_with(Request::new(), &mut (&mut a, &mut b)).unwrap();
+    solver
+        .solve_with(Request::new(), Hooks::new().register_pricer(&mut (&mut a, &mut b)))
+        .unwrap();
     assert_eq!(a.results, [Ok(Col::new(n))]);
     assert_eq!(b.results, [Ok(Col::new(n + 1))]);
     let program = solver.program();
@@ -600,13 +592,7 @@ fn test_a_pair_prices_in_one_context_the_first_callback_first() {
 #[derive(Default)]
 struct Bounding(Vec<Result<(), ActionError>>);
 
-impl<B: Backend> Callback<B> for Bounding {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl<B: Prices> Pricer<B> for Bounding {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         match ctx.mode() {
             PriceMode::Farkas => self.0.push(ctx.report_bound(0.0)),
@@ -628,7 +614,9 @@ fn test_a_bound_and_an_early_stop_are_recorded_and_farkas_takes_no_bound() {
     ];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
     let mut bounding = Bounding::default();
-    solver.solve_with(Request::new(), &mut bounding).unwrap();
+    solver
+        .solve_with(Request::new(), Hooks::new().register_pricer(&mut bounding))
+        .unwrap();
     assert!(
         matches!(bounding.0[0], Err(ActionError::Refused(_))),
         "{:?}",
@@ -649,35 +637,80 @@ fn test_a_bound_and_an_early_stop_are_recorded_and_farkas_takes_no_bound() {
     assert_eq!(solver.program().num_cols(), 2, "nothing priced, nothing appended");
 }
 
-/// A callback that implements `price` but leaves `events` and `prices` at their defaults, so it asks for every event.
-struct DefaultEvents(usize);
+/// A callback that leaves `events` at its default, so it asks for every event, and counts them.
+struct EveryEvent(usize);
 
-impl<B: Backend> Callback<B> for DefaultEvents {
-    fn price(&mut self, _: &mut B::Price<'_>) {
+impl<B: Backend> Callback<B> for EveryEvent {
+    fn poll(&mut self, _: &mut B::Poll<'_>) {
         self.0 += 1;
     }
 }
 
 #[test]
-fn test_pricing_is_asked_for_by_name_and_never_by_every_event() {
-    let callback = DefaultEvents(0);
-    assert_eq!(Callback::<Script>::events(&callback), Events::ALL);
-    assert!(!Callback::<Script>::prices(&callback));
-    let steps = vec![price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0])];
+fn test_a_price_step_reaches_only_a_registered_pricer_and_never_a_callback_asking_for_every_event() {
+    let steps = vec![
+        price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0]),
+        Step::Poll(progress()),
+    ];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), small()).unwrap();
-    let mut callback = DefaultEvents(0);
-    solver.solve_with(Request::new(), &mut callback).unwrap();
-    assert_eq!(callback.0, 0);
+    let mut callback = EveryEvent(0);
+    assert_eq!(Callback::<Script>::events(&callback), Events::ALL);
+    solver
+        .solve_with(Request::new(), Hooks::new().register_callback(&mut callback))
+        .unwrap();
+    assert_eq!(callback.0, 1);
     assert!(solver.backend().record.priced.is_empty());
+    assert_eq!(solver.program().num_cols(), 2);
     assert_eq!(Script::EVENTS, Events::ALL);
-    const { assert!(Script::PRICES) };
 }
 
-/// A backend whose solve prices one column into the sink itself when `prices`, ends optimal, and answers duals with
-/// zeros.
+/// A price context no solve makes, for a backend whose pricing is its own.
+#[derive(Debug)]
+enum NoRound {}
+
+impl Context for NoRound {
+    fn progress(&self) -> Progress {
+        match *self {}
+    }
+}
+
+impl PriceContext for NoRound {
+    fn mode(&self) -> PriceMode {
+        match *self {}
+    }
+    fn sense(&self) -> Sense {
+        match *self {}
+    }
+    fn duals(&self) -> &TiSlice<Row, f64> {
+        match *self {}
+    }
+    fn tolerance(&self) -> f64 {
+        match *self {}
+    }
+    fn add_col(&mut self, _: NewCol) -> Result<Col, ActionError> {
+        match *self {}
+    }
+    fn branch_early(&mut self) {
+        match *self {}
+    }
+    fn report_bound(&mut self, _: f64) -> Result<(), ActionError> {
+        match *self {}
+    }
+}
+
+/// A pricer that is never asked.
+struct Idle;
+
+impl<B: Prices> Pricer<B> for Idle {
+    fn price(&mut self, _: &mut B::Price<'_>) {}
+}
+
+/// A backend that, in a solve with a pricer, prices one column into the sink itself when `prices`; it ends optimal,
+/// and answers duals with zeros.
 #[derive(Debug)]
 struct SelfPricing {
     prices: bool,
+    num_cols: usize,
 }
 
 impl Backend for SelfPricing {
@@ -687,35 +720,37 @@ impl Backend for SelfPricing {
     type Progress<'a> = Unsupported;
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = Unsupported;
-    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: Events = Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::ALL;
 
-    fn load(&mut self, _: &Program) -> Result<(), ScriptError> {
+    fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
+        self.num_cols = program.num_cols();
         Ok(())
     }
 
-    fn solve(
-        &mut self,
-        _: &Settings,
-        _: &mut dyn Callback<Self>,
-        priced: &mut Priced,
-    ) -> Result<Solved<()>, ScriptError> {
-        if self.prices {
-            priced.push(column(1.0, &[(Row::new(0), 1.0)])).unwrap();
-        }
-        let values: TiVec<Col, f64> = (0..priced.num_cols()).map(|_| 0.0).collect();
+    fn solve(&mut self, _: &Settings, mut hooks: Hooks<'_, Self>) -> Result<Solved<()>, ScriptError> {
+        let num_cols = match hooks.take_priced() {
+            Some(priced) => {
+                if self.prices {
+                    priced.push(column(1.0, &[(Row::new(0), 1.0)])).unwrap();
+                }
+                priced.num_cols()
+            }
+            None => self.num_cols,
+        };
+        let values: TiVec<Col, f64> = (0..num_cols).map(|_| 0.0).collect();
         Ok(Solved {
             outcome: Outcome::Optimal(Solution { objective: 0.0, values }),
             status: (),
             elapsed: Duration::ZERO,
         })
     }
+}
+
+impl Prices for SelfPricing {
+    type Price<'a> = NoRound;
 }
 
 impl culmen_core::DualAnalysis for SelfPricing {
@@ -729,11 +764,19 @@ impl culmen_core::DualAnalysis for SelfPricing {
 
 #[test]
 fn test_analyses_after_a_solve_that_priced_find_no_solve_to_read() {
-    let mut solver = Solver::new(SelfPricing { prices: false }, small()).unwrap();
-    solver.solve(Request::new()).unwrap();
+    let backend = SelfPricing {
+        prices: false,
+        num_cols: 0,
+    };
+    let mut solver = Solver::new(backend, small()).unwrap();
+    solver
+        .solve_with(Request::new(), Hooks::new().register_pricer(&mut Idle))
+        .unwrap();
     assert!(solver.duals().is_ok(), "a solve that priced nothing is read as before");
     solver.backend_mut().prices = true;
-    solver.solve(Request::new()).unwrap();
+    solver
+        .solve_with(Request::new(), Hooks::new().register_pricer(&mut Idle))
+        .unwrap();
     assert_eq!(solver.program().num_cols(), 3);
     assert_eq!(
         solver.duals(),
@@ -793,13 +836,7 @@ fn test_the_script_price_context_reads_back_its_step() {
     #[derive(Default)]
     struct Reads(Vec<(Progress, PriceMode, Sense, Vec<f64>, f64)>);
 
-    impl Callback<Script> for Reads {
-        fn events(&self) -> Events {
-            Events::NONE
-        }
-        fn prices(&self) -> bool {
-            true
-        }
+    impl Pricer<Script> for Reads {
         fn price(&mut self, ctx: &mut ScriptPrice<'_>) {
             let duals = ctx.duals().iter().copied().collect();
             self.0
@@ -811,7 +848,9 @@ fn test_the_script_price_context_reads_back_its_step() {
     let steps = vec![price(PriceMode::ReducedCost { objective: 12.0 }, [3.0, 0.0])];
     let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), program).unwrap();
     let mut reads = Reads::default();
-    solver.solve_with(Request::new(), &mut reads).unwrap();
+    solver
+        .solve_with(Request::new(), Hooks::new().register_pricer(&mut reads))
+        .unwrap();
     assert_eq!(
         reads.0,
         [(
@@ -830,13 +869,7 @@ fn test_improves_reads_the_reduced_cost_by_the_bounds_the_sense_and_the_mode() {
     /// Farkas mode; records whether each column improves.
     struct Judge(Vec<(f64, (f64, f64), bool)>, Vec<bool>);
 
-    impl Callback<Script> for Judge {
-        fn events(&self) -> Events {
-            Events::NONE
-        }
-        fn prices(&self) -> bool {
-            true
-        }
+    impl Pricer<Script> for Judge {
         fn price(&mut self, ctx: &mut ScriptPrice<'_>) {
             for &(cost, (lower, upper), _) in &self.0 {
                 let column = culmen_core::NewCol {
@@ -893,8 +926,34 @@ fn test_improves_reads_the_reduced_cost_by_the_bounds_the_sense_and_the_mode() {
         let steps = vec![price(mode, [2.0])];
         let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), plan.build().unwrap()).unwrap();
         let mut judge = Judge(cases.to_vec(), Vec::new());
-        solver.solve_with(Request::new(), &mut judge).unwrap();
+        solver
+            .solve_with(Request::new(), Hooks::new().register_pricer(&mut judge))
+            .unwrap();
         let want: Vec<bool> = cases.iter().map(|&(.., improves)| improves).collect();
         assert_eq!(judge.1, want, "{sense:?} {mode:?}");
     }
+}
+
+#[test]
+fn test_a_backend_driven_directly_prices_into_the_sink_it_is_given() {
+    let program = small();
+    let n = program.num_cols();
+    let steps = vec![price(PriceMode::ReducedCost { objective: 1.0 }, [1.0, 0.0])];
+    let mut script = Script::new(steps, Outcome::Infeasible);
+    script.load(&program).unwrap();
+    let mut priced = Priced::new(&program, Script::CLASSES);
+    let mut pricer = AddOne::default();
+    let hooks = Hooks::new().register_pricer(&mut pricer).sink(&mut priced);
+    script.solve(&Settings::new(), hooks).unwrap();
+    assert_eq!(pricer.0, [Col::new(n)]);
+    assert_eq!(priced.num_cols(), n + 1);
+}
+
+#[test]
+#[should_panic(expected = "a pricer is registered without a sink")]
+fn test_a_pricer_without_a_sink_panics_when_the_backend_takes_the_sink() {
+    let program = small();
+    let mut script = Script::new([], Outcome::Infeasible);
+    script.load(&program).unwrap();
+    let _ = script.solve(&Settings::new(), Hooks::new().register_pricer(&mut Idle));
 }

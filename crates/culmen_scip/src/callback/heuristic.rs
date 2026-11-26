@@ -8,7 +8,7 @@
 //! against the original problem, bounds and integrality included, and stores it if it is feasible and among the
 //! solutions SCIP keeps. Checking it in the original space keeps it independent of what presolve did to the variables.
 //!
-//! In a solve whose callback also [`prices`](culmen_core::Callback::prices), an original solution cannot hold the
+//! In a solve with a [`Pricer`](culmen_core::Pricer) too, an original solution cannot hold the
 //! columns priced so far, which have no original variable, so the solution is a transformed one (`SCIPcreateSol`)
 //! instead: each program column's value is set through its original variable into whatever presolve made of it, each
 //! priced column's on its own variable, and the solution is handed over only when SCIP reads back every program
@@ -16,15 +16,14 @@
 //! not read back so, and the solution is then refused; SCIP checks a transformed solution against its transformed
 //! problem, which presolve derived from the program, so a solution it stores is feasible in the program.
 //!
-//! In a solve that also asks for [`Events::LAZY`], the lazy-constraint callback must judge every solution SCIP
-//! stores, and it cannot while the heuristic callback runs; so there the supplied solutions are tried once the
-//! heuristic callback returns.
+//! In a solve with a lazy-constraint handler too, that handler must judge every solution SCIP stores, and it cannot
+//! while the heuristic handler runs; so there the supplied solutions are tried once the heuristic handler returns.
 
 use core::ffi::{c_char, c_uint};
 use core::ptr::{self, NonNull};
 
-use culmen_core::context::{check_entries, check_solution};
-use culmen_core::{ActionError, Col, Events, HeuristicContext, Progress, TiSlice};
+use culmen_core::context::check_solution;
+use culmen_core::{ActionError, Col, Context, HeuristicContext, Progress, TiSlice};
 use scip_sys::{
     SCIP, SCIP_HEUR, SCIP_HEURTIMING, SCIP_HEURTIMING_AFTERNODE, SCIP_HEURTIMING_BEFORENODE, SCIP_RESULT, SCIP_RETCODE,
     SCIP_Result_SCIP_DIDNOTFIND, SCIP_Result_SCIP_DIDNOTRUN, SCIP_Result_SCIP_FOUNDSOL, SCIP_Retcode_SCIP_OKAY,
@@ -41,7 +40,10 @@ use crate::error::check;
 /// Before SCIP's own heuristics at each point, whose priorities stay below `1_000_000`.
 const PRIORITY: i32 = 1_000_000;
 
-/// SCIP asks for a solution of the callback's own: the heuristic's `HEUREXEC`, before and after each node.
+/// SCIP asks for a solution of the handler's own: the heuristic's `HEUREXEC`, before and after each node.
+///
+/// SCIP takes full solutions only: it completes a partial solution only as a start, before a solve begins, and
+/// offers no completion during the search, so this context has no `supply_partial`.
 #[derive(Debug)]
 pub struct ScipHeuristic<'a> {
     scip: *mut SCIP,
@@ -59,17 +61,19 @@ pub struct ScipHeuristic<'a> {
     found: &'a mut bool,
 }
 
-impl HeuristicContext for ScipHeuristic<'_> {
+impl Context for ScipHeuristic<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
 
+impl HeuristicContext for ScipHeuristic<'_> {
     /// SCIP checks the solution against the program, bounds and integrality included, and stores it when it is feasible
     /// and among the solutions it keeps (`limits/maxsol` of them), so a stored solution need not be the new incumbent.
-    /// In a solve that also asks for [`Events::LAZY`], SCIP tries the solution once this callback returns, after the
-    /// lazy-constraint callback judged it, and `supply` returns `Ok` when it took it to try. In a solve whose callback
-    /// also [`prices`](culmen_core::Callback::prices), the solution is checked against SCIP's transformed problem, and
-    /// a solution presolve's fixings or aggregations cannot hold is refused.
+    /// In a solve with a lazy-constraint handler too, SCIP tries the solution once this handler returns, after the
+    /// lazy-constraint handler judged it, and `supply` returns `Ok` when it took it to try. In a solve with a
+    /// [`Pricer`](culmen_core::Pricer) too, the solution is checked against SCIP's transformed problem, and a
+    /// solution presolve's fixings or aggregations cannot hold is refused.
     ///
     /// # Errors
     ///
@@ -104,20 +108,6 @@ impl HeuristicContext for ScipHeuristic<'_> {
             Ok(Tried::Unfit(reason)) => Err(ActionError::Refused(reason)),
             Err(error) => Err(ActionError::Refused(error.to_string())),
         }
-    }
-
-    /// Always refused once the entries pass the core checks: SCIP completes a partial solution only as a start,
-    /// before a solve begins, and offers no completion during the search.
-    ///
-    /// # Errors
-    ///
-    /// The core errors, else [`ActionError::Refused`].
-    fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
-        check_entries(entries, self.cols.len() + self.priced.len())?;
-        Err(ActionError::Refused(
-            "SCIP completes a partial solution only as a start, before a solve begins; supply a value for every column"
-                .into(),
-        ))
     }
 }
 
@@ -281,12 +271,12 @@ unsafe fn fill(
     Ok(())
 }
 
-impl Run<'_> {
-    /// Asks the callback for solutions; the heuristic's result.
+impl Run<'_, '_> {
+    /// Asks the heuristic handler for solutions; the heuristic's result.
     ///
     /// # Errors
     ///
-    /// [`ScipError::Call`] when SCIP refuses a call trying a solution kept until the callback returned.
+    /// [`ScipError::Call`] when SCIP refuses a call trying a solution kept until the handler returned.
     ///
     /// # Safety
     ///
@@ -295,15 +285,15 @@ impl Run<'_> {
         let progress = self.progress(scip);
         let mut later = Vec::new();
         let mut found = false;
-        let defer = self.wanted.contains(Events::LAZY);
+        let defer = self.wants_lazy;
         let priced = self.priced_vars.borrow();
         let supplied = Supplied {
             cols: self.cols,
             priced: &priced,
             pricing: self.pricing,
         };
-        let delivered = self.deliver(scip, |callback| {
-            callback.heuristic(&mut ScipHeuristic {
+        let delivered = self.deliver(scip, |hooks| {
+            hooks.heuristic(&mut ScipHeuristic {
                 scip,
                 heur,
                 cols: supplied.cols,
@@ -383,7 +373,7 @@ unsafe extern "C" fn exec(
         // SAFETY: SCIP calls the heuristic during the solve the run is installed for.
         .and_then(|slot| unsafe { slot.run() })
         .inspect(|run| run.pass_stop(scip))
-        .filter(|run| run.wanted.contains(Events::HEURISTIC));
+        .filter(|run| run.wants_heuristic);
     let (verdict, code) = match run {
         // SAFETY: SCIP calls the heuristic while solving.
         Some(run) => match unsafe { run.heuristic(scip, heur) } {

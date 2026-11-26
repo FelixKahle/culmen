@@ -14,8 +14,8 @@ use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use culmen_core::{
-    Analysis, AnalysisError, Backend, Basis, BasisAnalysis, BasisStatus, Bound, Callback, Col, DualAnalysis, Duals,
-    Iis, IisAnalysis, InvalidPenalty, Limit, Line, Linear, Misfit, Model, ModelClass, ModelClasses, Outcome, Penalty,
+    Analysis, AnalysisError, Backend, Basis, BasisAnalysis, BasisStatus, Bound, Col, DualAnalysis, Duals, Iis,
+    IisAnalysis, InvalidPenalty, Limit, Line, Linear, Misfit, Model, ModelClass, ModelClasses, Outcome, Penalty,
     Program, ProgramPlan, Ranged, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Row, ScriptError,
     Settings, Solution, Solved, Solver, Table, TiVec, Unsupported, Var, Violation, Weights, penalty,
 };
@@ -51,10 +51,6 @@ impl Backend for Canned {
     type Progress<'a> = Unsupported;
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = Unsupported;
-    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: culmen_core::Events = culmen_core::Events::NONE;
@@ -64,12 +60,7 @@ impl Backend for Canned {
         Ok(())
     }
 
-    fn solve(
-        &mut self,
-        _: &Settings,
-        _: &mut dyn Callback<Self>,
-        _: &mut culmen_core::Priced,
-    ) -> Result<Solved<()>, ScriptError> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::Hooks<'_, Self>) -> Result<Solved<()>, ScriptError> {
         assert!(!self.panics, "Canned: a callback panicked");
         Ok(Solved {
             outcome: self.outcome.clone(),

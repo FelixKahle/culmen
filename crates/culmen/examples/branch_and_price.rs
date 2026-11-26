@@ -4,8 +4,8 @@
 //! Cutting stock by branch-and-price on SCIP: cut rolls of width 100 into pieces to meet each width's demand with as
 //! few whole rolls as possible, the instance of `column_generation`. The master holds one integer column per cutting
 //! pattern, at first one pattern per width. SCIP solves it by branch and bound and, at every node, hands the node LP's
-//! duals to the callback (whose `prices()` is true), which prices patterns in with a knapsack solved by a second
-//! solver, until no pattern improves the node LP. `column_generation` is the same model priced in an outer loop on
+//! duals to the pricer (a `Pricer`, which exists only for a backend that prices), which prices patterns in with a
+//! knapsack solved by a second solver, until no pattern improves the node LP. `column_generation` is the same model priced in an outer loop on
 //! HiGHS and made whole only at the end; here the patterns are priced inside the search, so the search is exact.
 //!
 //! Pricing on SCIP is column generation at every node, with SCIP's default branching on the master's columns. It is
@@ -109,14 +109,7 @@ impl Patterns {
     }
 }
 
-impl<B: Backend> Callback<B> for Patterns {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
-
+impl<B: Prices> Pricer<B> for Patterns {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         self.rounds += 1;
         assert!(self.rounds <= MAX_ROUNDS, "pricing ran {} rounds", self.rounds);
@@ -170,7 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .time_limit(Duration::from_secs(60));
     let mut patterns = Patterns::new(demand.clone())?;
-    let solved = master.solve_with(request, &mut patterns)?;
+    let solved = master.solve_with(request, Hooks::new().register_pricer(&mut patterns))?;
 
     let (rolls, bound) = match &solved.outcome {
         Outcome::Optimal(best) => (best, best.objective),

@@ -17,7 +17,7 @@ use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use culmen_core::{
-    Backend, Bounds, Callback, Col, Constraint, EditError, Events, Integrality, InvalidBounds, LinExpr, Linear, Model,
+    Backend, Bounds, Col, Constraint, EditError, Events, Integrality, InvalidBounds, LinExpr, Linear, Model,
     ModelClass, ModelClasses, NewCol, NewRow, Outcome, Program, ProgramColumn, ProgramFeature, ProgramFeatures,
     ProgramPlan, ProgramRow, Request, Row, Script, ScriptError, Sense, Settings, SolveError, Solved, Solver, Term,
     Unsupported, Var, bounds,
@@ -612,10 +612,6 @@ impl<const MILP: bool> Backend for Plain<MILP> {
     type Progress<'a> = Unsupported;
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = Unsupported;
-    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: Events = Events::NONE;
@@ -630,12 +626,7 @@ impl<const MILP: bool> Backend for Plain<MILP> {
         Ok(())
     }
 
-    fn solve(
-        &mut self,
-        _: &Settings,
-        _: &mut dyn Callback<Self>,
-        _: &mut culmen_core::Priced,
-    ) -> Result<Solved<()>, Never> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::Hooks<'_, Self>) -> Result<Solved<()>, Never> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),

@@ -14,16 +14,18 @@
 //! | `kHighsCallbackMipLogging` | [`Events::PROGRESS`] | [`HighsMipProgress`] |
 //! | `kHighsCallbackMipSolution` | [`Events::FEASIBLE`] | [`HighsSolution`] |
 //! | `kHighsCallbackMipImprovingSolution` | [`Events::INCUMBENT`] | [`HighsSolution`] |
-//! | `kHighsCallbackMipUserSolution` | [`Events::HEURISTIC`] | [`HighsHeuristic`] |
+//! | `kHighsCallbackMipUserSolution` | the heuristic handler ([`Heuristics`](culmen_core::Heuristics)) | [`HighsHeuristic`] |
 //! | `kHighsCallbackMipGetCutPool` | [`Events::NATIVE`] | [`HighsNative::CutPool`] |
 //! | `kHighsCallbackMipDefineLazyConstraints` | none | HiGHS 1.16 declares it and never calls it |
 //! | `kHighsCallbackQpFirstFeasiblePoint` | [`Events::FEASIBLE`] | [`HighsSolution`], no [`MipData`] |
 //! | `kHighsCallbackQpInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`PollSource::Qp`] |
 //!
-//! HiGHS has no user cuts and never calls its lazy-constraint callback, so [`Events::LAZY`] and [`Events::CUT`]
-//! take [`Unsupported`](culmen_core::Unsupported). An interrupt is honoured only at the four interrupt kinds, the
-//! only context with [`PollContext::interrupt`]; a solution is taken only at the user-solution kind, the only context
-//! with [`HeuristicContext::supply`].
+//! HiGHS has no user cuts and never calls its lazy-constraint callback, so the backend implements neither
+//! [`LazyConstraints`](culmen_core::LazyConstraints) nor [`UserCuts`](culmen_core::UserCuts), and a handler of either
+//! does not compile for it; HiGHS does not price either ([`Prices`](culmen_core::Prices)). An interrupt is honoured
+//! only at the four interrupt kinds, the only context with [`PollContext::interrupt`]; a solution is taken only at the
+//! user-solution kind, the only context with [`HeuristicContext::supply`], and started only for a solve with a
+//! heuristic handler.
 //!
 //! The QP solver's first feasible point is a feasible solution of the loaded program, so it is [`Events::FEASIBLE`].
 //! HiGHS's active-set QP solver works on the incumbent model itself, unpresolved and unscaled (`callSolveQp` in
@@ -72,7 +74,7 @@ use std::time::Instant;
 
 use culmen_core::context::{check_entries, check_solution};
 use culmen_core::{
-    ActionError, Callback, Col, Events, HeuristicContext, LogContext, LogLevel, Phase, PollContext, Progress,
+    ActionError, Col, Context, Events, HeuristicContext, Hooks, LogContext, LogLevel, Phase, PollContext, Progress,
     ProgressContext, SolutionContext, TiSlice,
 };
 use highs_sys::{
@@ -99,7 +101,7 @@ thread_local! {
 // The trampoline shares the hook between whatever threads HiGHS calls back on.
 const _: () = {
     const fn shared<T: Sync>() {}
-    shared::<Mutex<Hook<'static>>>();
+    shared::<Mutex<Hook<'static, 'static>>>();
 };
 
 /// A HiGHS callback kind the trampoline handles: every kind HiGHS 1.16 calls that the backend starts.
@@ -177,9 +179,10 @@ impl Kind {
     }
 }
 
-/// The HiGHS callback kinds to start for the events `wanted`: the interrupt polls always, so a panic anywhere can
-/// stop the run, and logging always, so a failed run can name HiGHS's last error.
-pub(crate) fn kinds(wanted: Events) -> Vec<c_int> {
+/// The HiGHS callback kinds to start for the events `wanted` and, when `heuristic`, the user-solution kind: the
+/// interrupt polls always, so a panic anywhere can stop the run, and logging always, so a failed run can name
+/// HiGHS's last error.
+pub(crate) fn kinds(wanted: Events, heuristic: bool) -> Vec<c_int> {
     let always = [
         Kind::Logging,
         Kind::Poll(Poller::Simplex),
@@ -192,20 +195,20 @@ pub(crate) fn kinds(wanted: Events) -> Vec<c_int> {
         (Events::FEASIBLE, Kind::MipSolution),
         (Events::FEASIBLE, Kind::QpFirstFeasiblePoint),
         (Events::INCUMBENT, Kind::MipImprovingSolution),
-        (Events::HEURISTIC, Kind::MipUserSolution),
         (Events::NATIVE, Kind::MipGetCutPool),
     ];
     let chosen = by_event
         .into_iter()
         .filter(|&(event, _)| wanted.contains(event))
         .map(|(_, kind)| kind);
-    always.into_iter().chain(chosen).map(Kind::raw).collect()
+    let user = heuristic.then_some(Kind::MipUserSolution);
+    always.into_iter().chain(chosen).chain(user).map(Kind::raw).collect()
 }
 
 /// What the trampoline reaches during one run, behind the run's `Mutex`.
-pub(crate) struct Hook<'a> {
-    /// The run's callback.
-    pub(crate) callback: &'a mut dyn Callback<Highs>,
+pub(crate) struct Hook<'a, 'h> {
+    /// The run's callback and heuristic handler.
+    pub(crate) hooks: Hooks<'h, Highs>,
     /// The events the callback asked for that HiGHS delivers.
     pub(crate) wanted: Events,
     /// When the run began.
@@ -222,7 +225,7 @@ pub(crate) struct Hook<'a> {
     pub(crate) incumbent: Option<f64>,
 }
 
-impl fmt::Debug for Hook<'_> {
+impl fmt::Debug for Hook<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Hook")
             .field("wanted", &self.wanted)
@@ -263,12 +266,12 @@ pub(crate) unsafe extern "C" fn trampoline(
     }
     let Some(kind) = Kind::from_raw(kind) else { return };
     debug_assert!(
-        user.cast::<Mutex<Hook<'_>>>().is_aligned(),
+        user.cast::<Mutex<Hook<'_, '_>>>().is_aligned(),
         "trampoline: the callback data is not a run's hook"
     );
     // SAFETY: `user` is not null, so it is the run's `Mutex<Hook>`, alive until the callback is uninstalled after
     // `Highs_run` returns; a shared reference to a `Mutex` is what any thread may hold.
-    let shared = unsafe { &*user.cast::<Mutex<Hook<'_>>>() };
+    let shared = unsafe { &*user.cast::<Mutex<Hook<'_, '_>>>() };
     // An instance the callback drops waits for the run to end: this may be the run's thread or a worker of its
     // scheduler, which destroying it now would shut down.
     let _callback = CallbackGuard::enter();
@@ -297,7 +300,7 @@ pub(crate) unsafe extern "C" fn trampoline(
 /// # Safety
 ///
 /// `call` is a call of the trampoline whose contract holds.
-unsafe fn guarded(hook: &mut Hook<'_>, call: &Call) -> bool {
+unsafe fn guarded(hook: &mut Hook<'_, '_>, call: &Call) -> bool {
     let mut interrupt = false;
     if hook.panic.is_none() {
         let caught = catch_unwind(AssertUnwindSafe(|| {
@@ -348,13 +351,13 @@ macro_rules! field {
 /// # Safety
 ///
 /// `call` is a call of the trampoline whose contract holds.
-unsafe fn dispatch(hook: &mut Hook<'_>, call: &Call, interrupt: &mut bool) {
+unsafe fn dispatch(hook: &mut Hook<'_, '_>, call: &Call, interrupt: &mut bool) {
     let elapsed = hook.start.elapsed();
     match call.kind {
         // SAFETY: the caller's contract holds for `call`, the logging kind.
         Kind::Logging => unsafe { log(hook, call, elapsed) },
         Kind::Poll(poller) => poll(hook, call, poller, elapsed, interrupt),
-        Kind::MipLogging => hook.callback.progress(&mut HighsMipProgress {
+        Kind::MipLogging => hook.hooks.progress(&mut HighsMipProgress {
             elapsed,
             mip: mip_data(call),
         }),
@@ -365,7 +368,7 @@ unsafe fn dispatch(hook: &mut Hook<'_>, call: &Call, interrupt: &mut bool) {
         Kind::MipGetCutPool => {
             // SAFETY: the caller's contract holds for `call`, the cut-pool kind.
             let pool = unsafe { cut_pool(call) };
-            hook.callback.native(&mut HighsNative::CutPool(pool));
+            hook.hooks.native(&mut HighsNative::CutPool(pool));
         }
         // SAFETY: the caller's contract holds for `call`, the QP's first-feasible-point kind.
         Kind::QpFirstFeasiblePoint => unsafe { qp_feasible(hook, call, elapsed) },
@@ -373,7 +376,7 @@ unsafe fn dispatch(hook: &mut Hook<'_>, call: &Call, interrupt: &mut bool) {
 }
 
 /// Hands an interrupt poll to the callback; a MIP poll first reports a supplied solution HiGHS took.
-fn poll(hook: &mut Hook<'_>, call: &Call, poller: Poller, elapsed: Duration, interrupt: &mut bool) {
+fn poll(hook: &mut Hook<'_, '_>, call: &Call, poller: Poller, elapsed: Duration, interrupt: &mut bool) {
     let source = match poller {
         Poller::Simplex => PollSource::Simplex {
             iterations: count(field!(call, simplex_iteration_count)),
@@ -390,7 +393,7 @@ fn poll(hook: &mut Hook<'_>, call: &Call, poller: Poller, elapsed: Duration, int
         },
     };
     if hook.wanted.contains(Events::POLL) {
-        hook.callback.poll(&mut HighsPoll {
+        hook.hooks.poll(&mut HighsPoll {
             elapsed,
             source,
             interrupt,
@@ -413,7 +416,7 @@ fn position(value: HighsInt) -> usize {
 /// # Safety
 ///
 /// `call` is the logging kind of a call whose contract holds.
-unsafe fn log(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
+unsafe fn log(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     // SAFETY: HiGHS passes the log line as a NUL-terminated string valid for the call.
     let text = unsafe { text(call.message) };
     let log_type = HighsLogType::from_raw(field!(call, log_type));
@@ -421,7 +424,7 @@ unsafe fn log(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
         hook.last_error = Some(text.trim_end().to_owned());
     }
     if hook.wanted.contains(Events::LOG) {
-        hook.callback.log(&mut HighsLog {
+        hook.hooks.log(&mut HighsLog {
             text: &text,
             log_type,
             elapsed,
@@ -434,7 +437,7 @@ unsafe fn log(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
 /// # Safety
 ///
 /// `call` is the user-solution kind of a call whose contract holds.
-unsafe fn heuristic(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
+unsafe fn heuristic(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     debug_assert!(
         !call.data_in.is_null() && call.data_in.is_aligned(),
         "heuristic: HiGHS passed no usable input record"
@@ -450,7 +453,7 @@ unsafe fn heuristic(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
         origin: QueryOrigin::from_raw(field!(call, external_solution_query_origin)),
         record,
     };
-    hook.callback.heuristic(&mut ctx);
+    hook.hooks.heuristic(&mut ctx);
 }
 
 /// Hands a feasible or improving solution to the callback; a record whose size is not the column count is
@@ -459,7 +462,7 @@ unsafe fn heuristic(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
 /// # Safety
 ///
 /// `call` is a solution kind of a call whose contract holds.
-unsafe fn solution(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
+unsafe fn solution(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     let (values, size) = (field!(call, mip_solution), position(field!(call, mip_solution_size)));
     // SAFETY: HiGHS's record holds `size` values at `mip_solution`, valid for the call, or a null pointer.
     let values = unsafe { slice(values, size) };
@@ -473,10 +476,10 @@ unsafe fn solution(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
         mip: Some(mip_data(call)),
     };
     if call.kind == Kind::MipSolution {
-        hook.callback.feasible(&mut ctx);
+        hook.hooks.feasible(&mut ctx);
     } else {
         hook.incumbent = Some(ctx.objective);
-        hook.callback.incumbent(&mut ctx);
+        hook.hooks.incumbent(&mut ctx);
     }
 }
 
@@ -486,14 +489,14 @@ unsafe fn solution(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
 /// # Safety
 ///
 /// `call` is the QP's first-feasible-point kind of a call whose contract holds.
-unsafe fn qp_feasible(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
+unsafe fn qp_feasible(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     let (values, size) = (field!(call, qp_solution), position(field!(call, qp_solution_size)));
     // SAFETY: HiGHS's record holds `size` values at `qp_solution`, valid for the call, or a null pointer.
     let values = unsafe { slice(values, size) };
     if values.len() != hook.program.num_cols() {
         return;
     }
-    hook.callback.feasible(&mut HighsSolution {
+    hook.hooks.feasible(&mut HighsSolution {
         elapsed,
         objective: hook.program.objective(values),
         values: TiSlice::from_ref(values),
@@ -503,7 +506,7 @@ unsafe fn qp_feasible(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
 
 /// Reports a supplied solution HiGHS took as its incumbent: HiGHS calls neither solution kind for a user solution,
 /// so the trampoline reports it at the first MIP poll whose best objective is the supplied solution's.
-fn report_offer(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
+fn report_offer(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     let Some(primal) = finite(field!(call, mip_primal_bound)) else {
         return;
     };
@@ -529,7 +532,7 @@ fn report_offer(hook: &mut Hook<'_>, call: &Call, elapsed: Duration) {
             values,
             mip: Some(mip_data(call)),
         };
-        hook.callback.incumbent(&mut ctx);
+        hook.hooks.incumbent(&mut ctx);
     }
 }
 
@@ -699,15 +702,18 @@ impl HighsLog<'_> {
     }
 }
 
+impl Context for HighsLog<'_> {
+    fn progress(&self) -> Progress {
+        Progress::at(self.elapsed, Phase::Other)
+    }
+}
+
 impl LogContext for HighsLog<'_> {
     fn text(&self) -> &str {
         self.text
     }
     fn level(&self) -> LogLevel {
         self.log_type.level()
-    }
-    fn progress(&self) -> Progress {
-        Progress::at(self.elapsed, Phase::Other)
     }
 }
 
@@ -759,11 +765,13 @@ impl HighsMipProgress {
     }
 }
 
-impl ProgressContext for HighsMipProgress {
+impl Context for HighsMipProgress {
     fn progress(&self) -> Progress {
         self.mip.progress(self.elapsed)
     }
 }
+
+impl ProgressContext for HighsMipProgress {}
 
 /// Which solver polls.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -805,7 +813,7 @@ impl HighsPoll<'_> {
     }
 }
 
-impl PollContext for HighsPoll<'_> {
+impl Context for HighsPoll<'_> {
     fn progress(&self) -> Progress {
         match self.source {
             PollSource::Simplex { iterations } => Progress {
@@ -823,6 +831,9 @@ impl PollContext for HighsPoll<'_> {
             },
         }
     }
+}
+
+impl PollContext for HighsPoll<'_> {
     fn interrupt(&mut self) {
         *self.interrupt = true;
     }
@@ -846,7 +857,7 @@ impl HighsSolution<'_> {
     }
 }
 
-impl SolutionContext for HighsSolution<'_> {
+impl Context for HighsSolution<'_> {
     fn progress(&self) -> Progress {
         match &self.mip {
             Some(mip) => mip.progress(self.elapsed),
@@ -856,6 +867,9 @@ impl SolutionContext for HighsSolution<'_> {
             },
         }
     }
+}
+
+impl SolutionContext for HighsSolution<'_> {
     fn objective(&self) -> f64 {
         self.objective
     }
@@ -947,11 +961,13 @@ impl HighsHeuristic<'_> {
     }
 }
 
-impl HeuristicContext for HighsHeuristic<'_> {
+impl Context for HighsHeuristic<'_> {
     fn progress(&self) -> Progress {
         self.mip.progress(self.elapsed)
     }
+}
 
+impl HeuristicContext for HighsHeuristic<'_> {
     fn supply(&mut self, values: &TiSlice<Col, f64>) -> Result<(), ActionError> {
         check_solution(values, self.program.num_cols())?;
         let buffer = self.record.buffer();
@@ -966,12 +982,22 @@ impl HeuristicContext for HighsHeuristic<'_> {
         self.offer(values.raw.to_vec());
         Ok(())
     }
+}
 
-    /// HiGHS completes the entries by solving the MIP with them fixed. It takes them only when they name at least one
-    /// column, each column once, with a value its column's bounds and integrality admit; otherwise the action is
-    /// refused, also after a partial solution supplied before at the same query was taken. A refused action leaves
-    /// the solution supplied before at the same query, full or completed, as HiGHS's to check.
-    fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
+impl HighsHeuristic<'_> {
+    /// Offers values for some columns, which HiGHS completes into a full solution by solving the MIP with them fixed,
+    /// and then checks and keeps as [`HeuristicContext::supply`] states.
+    ///
+    /// HiGHS takes the entries only when they name at least one column, each column once, with a value its column's
+    /// bounds and integrality admit; otherwise the action is refused, also after a partial solution supplied before at
+    /// the same query was taken. A refused action leaves the solution supplied before at the same query, full or
+    /// completed, as HiGHS's to check.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::UnknownColumn`] or [`ActionError::NotFinite`] for an entry at fault;
+    /// [`ActionError::Refused`] for no entry, a column named twice, or a completion HiGHS does not find.
+    pub fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
         let num_cols = self.program.num_cols();
         check_entries(entries, num_cols)?;
         check_once(entries, num_cols)?;
