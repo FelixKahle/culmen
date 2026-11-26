@@ -9,11 +9,11 @@
 //! that offers what HiGHS reports beyond the generic traits ([`callback`] maps every kind). Of the search
 //! capabilities it has [`Heuristics`]: a [`HeuristicHandler`](culmen_core::HeuristicHandler) supplies solutions at
 //! HiGHS's user-solution callback. HiGHS takes no lazy constraints and no user cuts and does not price, so a handler of
-//! those kinds does not compile for it. The generic path, a [`Request`](culmen_core::Request) with a stop and an
-//! observer, works unchanged.
+//! those kinds does not compile for it. The generic path, a [`Run`](culmen_core::Run) with a stop and an observer,
+//! works unchanged.
 //!
 //! ```
-//! use culmen_core::{Linear, LinExpr, Model, Outcome, Request, Solver, Var};
+//! use culmen_core::{Linear, LinExpr, Model, Outcome, Solver, Var};
 //! use culmen_highs::Highs;
 //!
 //! // A knapsack.
@@ -24,7 +24,7 @@
 //! m.maximize(LinExpr::sum((0..4).map(|i| value[i] * take[i])));
 //!
 //! let mut solver = Solver::new(Highs::new(), m.build()?)?;
-//! let solved = solver.solve(Request::new())?;
+//! let solved = solver.solve()?;
 //! let Outcome::Optimal(best) = solved.outcome else { panic!("expected an optimum, got {:?}", solved.outcome) };
 //! assert_eq!(best.objective, 21.0);
 //! assert_eq!(best.values[take[1]].round(), 1.0);

@@ -9,7 +9,7 @@
 //! in each instance.
 //!
 //! ```
-//! use culmen_core::{Linear, LinExpr, Model, Outcome, Request, Solver, Var};
+//! use culmen_core::{Linear, LinExpr, Model, Outcome, Solver, Var};
 //! use culmen_scip::Scip;
 //!
 //! // A knapsack.
@@ -20,7 +20,7 @@
 //! m.maximize(LinExpr::sum((0..4).map(|i| value[i] * take[i])));
 //!
 //! let mut solver = Solver::new(Scip::new(), m.build()?)?;
-//! let solved = solver.solve(Request::new())?;
+//! let solved = solver.solve()?;
 //! let Outcome::Optimal(best) = solved.outcome else { panic!("expected an optimum, got {:?}", solved.outcome) };
 //! assert_eq!(best.objective, 21.0);
 //! assert_eq!(best.values[take[1]].round(), 1.0);
@@ -111,7 +111,7 @@
 //! frees that problem, so the best solution has a value for each.
 //!
 //! ```
-//! use culmen_core::{Col, Hooks, LazyConstraints, LazyContext, LazyHandler, Linear, Model, Request, Solver, Var};
+//! use culmen_core::{Col, LazyConstraints, LazyContext, LazyHandler, Linear, Model, Solver, Var};
 //! use culmen_scip::Scip;
 //!
 //! /// Forbids taking both items, a conflict only the handler knows.
@@ -132,7 +132,7 @@
 //! m.maximize(3.0 * x + 2.0 * y);
 //! let mut solver = Solver::new(Scip::new(), m.build()?)?;
 //! let mut not_both = NotBoth(x, y);
-//! let solved = solver.solve_with(Request::new(), Hooks::new().register_lazy(&mut not_both))?;
+//! let solved = solver.run().lazy(&mut not_both).solve()?;
 //! assert_eq!(solved.outcome.objective(), Some(3.0));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -447,8 +447,7 @@ impl Backend for Scip {
     ///
     /// # Panics
     ///
-    /// When a callback or handler panics, once SCIP has stopped; when a pricer is registered without a sink, which only
-    /// code driving the backend directly can do ([`Hooks::take_priced`]).
+    /// When a callback or handler panics, once SCIP has stopped.
     fn solve(&mut self, settings: &Settings, mut hooks: Hooks<'_, Self>) -> Result<Solved<ScipStatus>, ScipError> {
         let instance = self.instance.as_mut().ok_or(ScipError::NotLoaded)?;
         let priced = hooks.take_priced();
@@ -674,7 +673,7 @@ mod tests {
                 hooks = hooks.register_callback(&mut watches);
             }
             if pricer {
-                hooks = hooks.register_pricer(&mut idle).sink(&mut priced);
+                hooks = hooks.register_pricer(&mut idle, &mut priced);
             }
             let solved = scip.solve(&limited(), hooks).unwrap();
             assert_eq!(solved.outcome.objective(), Some(1.0), "{callback} {pricer}");

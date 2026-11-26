@@ -423,8 +423,8 @@ mod tests {
     use core::time::Duration;
 
     use culmen_core::{
-        EditError, Found, LazyContext, LazyHandler, Linear, Model, Outcome, Phase, Progress, Request, Script, Solver,
-        Step, Var,
+        EditError, Found, LazyContext, LazyHandler, Linear, Model, Outcome, Phase, Progress, Script, Solver, Step,
+        Var,
     };
 
     use super::*;
@@ -458,7 +458,7 @@ mod tests {
     fn test_a_mirror_forwards_a_start_to_its_inner_backend() {
         let (before, _, y) = programs();
         let mut solver = Solver::new(Mirror::new(Script::optimal(0.0, vec![])), before).unwrap();
-        solver.solve_from(Request::new(), vec![(y, 1.0)]).unwrap();
+        solver.run().start(vec![(y, 1.0)]).solve().unwrap();
         assert_eq!(solver.backend().inner.record.starts, [Start::Sparse(vec![(y, 1.0)])]);
     }
 
@@ -493,13 +493,12 @@ mod tests {
         let script = Script::new([Step::Poll(at), Step::Lazy(candidate)], Outcome::Infeasible);
         let mut solver = Solver::new(Mirror::new(script), before).unwrap();
         let (mut polls, mut lazy) = (Polls(0), FirstAtZero(0));
-        let hooks = Hooks::new().register_callback(&mut polls).register_lazy(&mut lazy);
-        solver.solve_with(Request::new(), hooks).unwrap();
+        solver.run().callback(&mut polls).lazy(&mut lazy).solve().unwrap();
         assert_eq!((polls.0, lazy.0), (1, 1));
         assert_eq!(solver.backend().inner.record.lazy.len(), 1);
 
         // Without a handler, the inner backend sees none either.
-        solver.solve(Request::new()).unwrap();
+        solver.solve().unwrap();
         assert_eq!(solver.backend().inner.record.lazy.len(), 1);
     }
 
