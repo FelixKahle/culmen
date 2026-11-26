@@ -113,6 +113,17 @@ pub enum ScipError {
     /// A pricer ended pricing early at a node where SCIP has no integer variable left to branch on, as in a
     /// program without integer columns, so SCIP could not branch.
     BranchEarly,
+    /// The constraint handler's `check` rejected a node's point that its `enforce` left as it was, at a node where SCIP
+    /// has no integer variable left to branch on and cannot cut the node off, as the node has a continuous variable
+    /// (the epigraph of a quadratic objective counts) or a pricer is active; SCIP could not resolve the point either.
+    UnresolvedRejection,
+    /// The constraint handler was asked to enforce at one node more often than
+    /// [`ScipOptions::enforcement_rounds`](crate::ScipOptions::enforcement_rounds) allows, so the solve was ended rather
+    /// than left to run on.
+    EnforcementStalled {
+        /// The limit, enforcement rounds at one node.
+        rounds: u64,
+    },
     /// SCIP ended a solve with a best solution that its own check finds infeasible in the original problem
     /// (`SCIPcheckSolOrig`), as when presolve rewrote a constraint unsoundly; the solution is not reported.
     InfeasibleBest {
@@ -177,6 +188,15 @@ impl fmt::Display for ScipError {
                 f,
                 "SCIP: a pricer ended pricing early at a node with no integer variable left to branch on"
             ),
+            Self::UnresolvedRejection => write!(
+                f,
+                "SCIP: the constraint handler rejected a point without resolving it, at a node with no integer variable \
+                 left to branch on and a continuous variable or an active pricer"
+            ),
+            Self::EnforcementStalled { rounds } => write!(
+                f,
+                "SCIP: the constraint handler was asked to enforce more than {rounds} times at one node"
+            ),
             Self::InfeasibleBest { status, objective } => write!(
                 f,
                 "SCIP: the best solution, of objective {objective}, is infeasible in the original problem by SCIP's \
@@ -206,6 +226,8 @@ impl core::error::Error for ScipError {
             | Self::Failed { .. }
             | Self::PricingQuadratic
             | Self::BranchEarly
+            | Self::UnresolvedRejection
+            | Self::EnforcementStalled { .. }
             | Self::InfeasibleBest { .. } => None,
         }
     }

@@ -29,7 +29,7 @@ use scip_sys::{
     SCIPsolve,
 };
 
-use crate::callback::{self, Payload, Run, Slot};
+use crate::callback::{self, Payload, Run, Setup, Slot};
 use crate::columns::Columns;
 use crate::error::check;
 use crate::{Scip, ScipError, ScipStatus, Status};
@@ -254,6 +254,21 @@ impl Instance {
         &self.priced
     }
 
+    /// The variable of SCIP's transformed problem standing for the program's column `col`.
+    #[cfg(test)]
+    pub(crate) fn transformed_var(&self, col: Col) -> NonNull<SCIP_VAR> {
+        // SAFETY: the instance is live with a transformed problem, and the variable one of its own.
+        let var = unsafe { crate::columns::transformed(self.raw(), self.vars[col].as_ptr()) }.unwrap();
+        NonNull::new(var).unwrap()
+    }
+
+    /// Whether `var` is marked so presolve does not multi-aggregate it, or presolve multi-aggregates no variable.
+    #[cfg(test)]
+    pub(crate) fn kept_from_multi_aggregation(&self, var: NonNull<SCIP_VAR>) -> bool {
+        // SAFETY: `var` is a live variable of the instance; the call reads its mark and a parameter.
+        unsafe { scip_sys::SCIPdoNotMultaggrVar(self.raw(), var.as_ptr()) != 0 }
+    }
+
     /// The model locks SCIP holds on `var`, down and up.
     #[cfg(test)]
     pub(crate) fn model_locks(&self, var: NonNull<SCIP_VAR>) -> (i32, i32) {
@@ -267,10 +282,11 @@ impl Instance {
         }
     }
 
-    /// The locks the culmen plugins keep on `var`: the lazy-constraint handler's, down and up.
+    /// The locks the culmen plugins keep on `var`, down and up: the lazy-constraint handler's and the constraint
+    /// handler's.
     #[cfg(test)]
-    pub(crate) fn kept_locks(&self, var: NonNull<SCIP_VAR>) -> (i32, i32) {
-        self.slot().lazy_locks_on(var)
+    pub(crate) fn kept_locks(&self, var: NonNull<SCIP_VAR>) -> [(i32, i32); 2] {
+        self.slot().locks_on(var)
     }
 
     /// Whether the objective has a quadratic part, which SCIP holds as an epigraph.
@@ -341,12 +357,18 @@ impl Instance {
     }
 
     /// Solves the problem, delivering events to `hooks` and handing every column its pricer prices to `priced`, the
-    /// sink the hooks gave; a panic of a callback or handler is returned, not resumed. The instance holds the priced
+    /// sink the hooks gave, with what `setup` fixes for the constraint handler they hold; a panic of a callback or handler is returned, not resumed. The instance holds the priced
     /// columns' variables afterwards, so its best solution has a value for each.
     ///
     /// The run is installed in the slot for the call of `SCIPsolve` alone, and SCIP reads the columns through shared
     /// references during it.
-    pub(crate) fn solve<'h>(&mut self, hooks: Hooks<'h, Scip>, priced: Option<&'h mut Priced>, start: Instant) -> Ran {
+    pub(crate) fn solve<'h>(
+        &mut self,
+        hooks: Hooks<'h, Scip>,
+        priced: Option<&'h mut Priced>,
+        setup: Option<Setup>,
+        start: Instant,
+    ) -> Ran {
         let this: &Self = self;
         // SAFETY: the instance is live, holds the columns and rows, and is in its problem stage, as configuring left
         // it.
@@ -356,6 +378,7 @@ impl Instance {
                 this.slot(),
                 hooks,
                 priced,
+                setup,
                 start,
                 this.columns(),
                 &this.conss,

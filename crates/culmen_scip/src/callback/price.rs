@@ -431,10 +431,17 @@ impl Run<'_, '_> {
         })?;
         // A lazy-constraint handler may add a constraint on the column, so it holds the column both ways, as it holds
         // every column of the program; SCIP's lock of a handler without constraints never reaches a variable created
-        // while solving, so the lock is applied here, and the handler's unlock undoes it with the problem.
+        // while solving, so the lock is applied here, and the handler's unlock undoes it with the problem
+        // (`S/cons.c:4276-4313`, `S/var.c:3669-3670` of SCIP 10.0.2).
         if self.wants_lazy {
             // SAFETY: the instance is solving and `var` a variable of its transformed problem.
             unsafe { self.slot.lazy_locks.lock(scip, var, 1, 1) }?;
+        }
+        // A constraint handler's declaration cannot name a column that did not exist when the solve started, so the
+        // handler holds every priced column both ways, whatever it declared.
+        if self.constraint.is_some() {
+            // SAFETY: as above.
+            unsafe { self.slot.handler_locks.lock(scip, var, 1, 1) }?;
         }
         if kind == SCIP_Vartype_SCIP_VARTYPE_INTEGER {
             self.integral.set(true);

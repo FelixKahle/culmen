@@ -15,10 +15,12 @@ use core::cell::RefCell;
 use core::ffi::c_int;
 use core::ptr::NonNull;
 
-use scip_sys::{SCIP, SCIP_LockType_SCIP_LOCKTYPE_MODEL, SCIP_VAR, SCIPaddVarLocksType};
+use scip_sys::{
+    SCIP, SCIP_LockType_SCIP_LOCKTYPE_MODEL, SCIP_VAR, SCIPaddVarLocksType, SCIPgetNOrigVars, SCIPgetOrigVars,
+};
 
-use crate::ScipError;
 use crate::error::check;
+use crate::{RetCode, ScipError};
 
 /// The model locks a plugin applied to the variables of SCIP's transformed problem, in order: each variable with the
 /// number of locks down and up.
@@ -53,6 +55,38 @@ impl Applied {
             SCIPaddVarLocksType(scip, var.as_ptr(), SCIP_LockType_SCIP_LOCKTYPE_MODEL, down, up)
         })?;
         self.0.borrow_mut().push((var, down, up));
+        Ok(())
+    }
+
+    /// Locks every variable of the transformed problem `n` times both ways, through the original variables, which SCIP
+    /// keeps from the transforming stage until the transformed problem is freed, and keeps the locks.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP refuses a call; the locks applied before are kept, to be undone.
+    ///
+    /// # Safety
+    ///
+    /// As [`Applied::lock`], without a variable.
+    pub(super) unsafe fn lock_all(&self, scip: *mut SCIP, n: c_int) -> Result<(), ScipError> {
+        // SAFETY: the instance is live in a stage where it holds its original variables.
+        let (vars, len) = unsafe { (SCIPgetOrigVars(scip), SCIPgetNOrigVars(scip)) };
+        let len = usize::try_from(len).unwrap_or(0);
+        if vars.is_null() || len == 0 {
+            return Ok(());
+        }
+        // SAFETY: SCIP's array of original variables holds `len` of them, unchanged during this call.
+        let vars = unsafe { core::slice::from_raw_parts(vars, len) };
+        for &var in vars {
+            // SAFETY: the instance is live and transformed, and `var` one of its original variables.
+            let var = unsafe { crate::columns::transformed(scip, var) }?;
+            let var = NonNull::new(var).ok_or(ScipError::Call {
+                call: "SCIPgetTransformedVar",
+                code: RetCode::InvalidData,
+            })?;
+            // SAFETY: as above; `var` is a transformed variable of the instance.
+            unsafe { self.lock(scip, var, n, n) }?;
+        }
         Ok(())
     }
 

@@ -11,7 +11,8 @@
 //! | event handler | `PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED` | [`Events::POLL`], [`Events::PROGRESS`] | [`ScipPoll`], [`ScipProgress`] |
 //! | event handler | `POORSOLFOUND`, `BESTSOLFOUND` | [`Events::FEASIBLE`] | [`ScipSolution`] |
 //! | event handler | `BESTSOLFOUND` | [`Events::INCUMBENT`] | [`ScipSolution`] |
-//! | constraint handler | `CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX` | [`LazyHandler`](culmen_core::LazyHandler) | [`ScipLazy`] |
+//! | constraint handler `culmen-handler` | `CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`, `CONSLOCK` | [`ConstraintHandler`](culmen_core::ConstraintHandler) | [`ScipCheck`], [`ScipEnforce`] |
+//! | constraint handler `culmen` | `CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`, `CONSLOCK` | [`LazyHandler`](culmen_core::LazyHandler) | [`ScipLazy`] |
 //! | separator | `SEPAEXECLP` | [`CutHandler`](culmen_core::CutHandler) | [`ScipCut`] |
 //! | primal heuristic | `HEUREXEC` | [`HeuristicHandler`](culmen_core::HeuristicHandler) | [`ScipHeuristic`] |
 //! | variable pricer | `PRICERREDCOST`, `PRICERFARKAS` | [`Pricer`](culmen_core::Pricer) | [`ScipPrice`] |
@@ -43,6 +44,7 @@
 //! candidate and cuts off every node, the separator and the heuristic do not run), and the panic is resumed once
 //! `SCIPsolve` has returned.
 
+mod constraint;
 mod cut;
 mod events;
 mod heuristic;
@@ -61,6 +63,8 @@ use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 
+pub(crate) use constraint::Setup;
+pub use constraint::{ScipCheck, ScipEnforce, ScipExplain, ScipPresolve, ScipPropagate};
 use culmen_core::{Col, Events, Found, Hooks, LogLevel, Phase, Priced, Progress, Row, Sense, TiSlice, TiVec};
 pub use cut::ScipCut;
 pub use events::{ScipEvent, ScipPoll, ScipProgress, ScipSolution};
@@ -113,6 +117,8 @@ pub(crate) struct Slot {
     console: Cell<bool>,
     /// The locks the lazy-constraint handler applied to the transformed problem, which its unlock undoes.
     lazy_locks: locks::Applied,
+    /// The locks the constraint handler's plugin applied to the transformed problem, which its unlock undoes.
+    handler_locks: locks::Applied,
     /// The events the event handler caught on the transformed problem and their filter position; `None` when it
     /// caught none.
     caught: Cell<Option<(u64, c_int)>>,
@@ -126,14 +132,15 @@ impl Slot {
             run: Cell::new(ptr::null()),
             console: Cell::new(false),
             lazy_locks: locks::Applied::new(),
+            handler_locks: locks::Applied::new(),
             caught: Cell::new(None),
         }
     }
 
-    /// The locks the lazy-constraint handler keeps on `var`, down and up.
+    /// The locks the lazy-constraint handler and the constraint handler's plugin keep on `var`, each down and up.
     #[cfg(test)]
-    pub(crate) fn lazy_locks_on(&self, var: NonNull<SCIP_VAR>) -> (c_int, c_int) {
-        self.lazy_locks.on(var)
+    pub(crate) fn locks_on(&self, var: NonNull<SCIP_VAR>) -> [(c_int, c_int); 2] {
+        [self.lazy_locks.on(var), self.handler_locks.on(var)]
     }
 
     /// Whether SCIP's messages reach standard output and standard error.
@@ -172,6 +179,16 @@ impl Slot {
     unsafe fn lazy(&self) -> bool {
         // SAFETY: the caller's contract is `run`'s.
         unsafe { self.run() }.is_some_and(|run| run.wants_lazy)
+    }
+
+    /// Whether the run installed now has a constraint handler.
+    ///
+    /// # Safety
+    ///
+    /// As [`Slot::run`].
+    unsafe fn constraint(&self) -> bool {
+        // SAFETY: the caller's contract is `run`'s.
+        unsafe { self.run() }.is_some_and(|run| run.constraint.is_some())
     }
 
     /// Keeps `error` for the run installed now, if any, and returns the code a plugin returns to SCIP for it.
@@ -246,6 +263,8 @@ pub(crate) struct Run<'a, 'h> {
     /// bound on a MIP.
     integral: Cell<bool>,
     lazy: RefCell<lazy::Store>,
+    /// The constraint handler's state for the solve; `None` for a solve without one.
+    constraint: Option<constraint::Active>,
     /// What a nested call could not deliver while the callback was busy, in order.
     deferred: RefCell<Vec<Deferred>>,
     /// A panic a callback raised, held until `SCIPsolve` returns.
@@ -293,16 +312,22 @@ enum Delivered {
 
 impl<'a, 'h> Run<'a, 'h> {
     /// The run of a solve of `scip`, whose slot is `slot` and which holds the columns `cols` and the rows `rows`, for
-    /// `hooks`, handing every column its pricer prices to `priced`, the sink the hooks gave.
+    /// `hooks`, handing every column its pricer prices to `priced`, the sink the hooks gave, with what `setup` fixes for
+    /// a constraint handler the hooks hold.
     ///
     /// # Safety
     ///
     /// `scip` is the live instance holding `cols` and `rows`, in its problem stage.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is a part of the solve the run reads, and the one caller names them all"
+    )]
     pub(crate) unsafe fn new(
         scip: *mut SCIP,
         slot: &'a Slot,
         hooks: Hooks<'h, Scip>,
         priced: Option<&'h mut Priced>,
+        setup: Option<Setup>,
         start: Instant,
         cols: Columns<'a>,
         rows: &'a TiSlice<Row, NonNull<SCIP_CONS>>,
@@ -337,6 +362,7 @@ impl<'a, 'h> Run<'a, 'h> {
             infinity,
             integral: Cell::new(integers > 0),
             lazy: RefCell::default(),
+            constraint: setup.map(|setup| constraint::Active::new(setup, cols.len())),
             deferred: RefCell::default(),
             panic: RefCell::default(),
             error: RefCell::default(),
@@ -540,6 +566,7 @@ impl core::fmt::Debug for Run<'_, '_> {
             .field("wants_cut", &self.wants_cut)
             .field("wants_heuristic", &self.wants_heuristic)
             .field("pricing", &self.pricing)
+            .field("constraint", &self.constraint.is_some())
             .field("start", &self.start)
             .field("panicked", &self.panicked())
             .finish_non_exhaustive()
@@ -565,7 +592,8 @@ pub(crate) unsafe fn install_messages(scip: *mut SCIP, slot: NonNull<Slot>) -> R
     unsafe { log::install(scip, slot) }
 }
 
-/// Includes the constraint handler, the separator, the heuristic, the event handler and the pricer.
+/// Includes the constraint handler's and the lazy-constraint handler's plugins, the separator, the heuristic, the event
+/// handler and the pricer.
 ///
 /// # Errors
 ///
@@ -577,6 +605,7 @@ pub(crate) unsafe fn install_messages(scip: *mut SCIP, slot: NonNull<Slot>) -> R
 pub(crate) unsafe fn include(scip: *mut SCIP, slot: NonNull<Slot>) -> Result<(), ScipError> {
     // SAFETY: the caller's contract is each `include`'s.
     unsafe {
+        constraint::include(scip, slot)?;
         lazy::include(scip, slot)?;
         cut::include(scip, slot)?;
         heuristic::include(scip, slot)?;
