@@ -163,7 +163,8 @@ use std::panic::resume_unwind;
 use std::time::Instant;
 
 pub use callback::{
-    LazySource, ScipCut, ScipEvent, ScipHeuristic, ScipLazy, ScipLog, ScipPoll, ScipPrice, ScipProgress, ScipSolution,
+    CandidateSource, ScipCut, ScipEvent, ScipHeuristic, ScipLazy, ScipLog, ScipPoll, ScipPrice, ScipProgress,
+    ScipSolution,
 };
 use culmen_core::{
     Backend, Events, Heuristics, Hooks, LazyConstraints, ModelClasses, Outcome, Prices, Program, Settings, Solved,

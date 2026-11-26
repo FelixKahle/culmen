@@ -32,13 +32,13 @@ use culmen_core::{ActionError, AddedRow, Col, Constraint, Context, LazyContext, 
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_CONSHDLR, SCIP_LOCKTYPE, SCIP_RESULT, SCIP_RETCODE, SCIP_Result_SCIP_CONSADDED,
     SCIP_Result_SCIP_CUTOFF, SCIP_Result_SCIP_FEASIBLE, SCIP_Result_SCIP_INFEASIBLE, SCIP_Retcode_SCIP_OKAY, SCIP_SOL,
-    SCIP_VAR, SCIPaddCons, SCIPaddVarLocksType, SCIPconshdlrGetData, SCIPcreateConsBasicLinear, SCIPgetNOrigVars,
-    SCIPgetOrigVars, SCIPincludeConshdlrBasic, SCIPisFeasGT, SCIPisFeasLT, SCIPreleaseCons, SCIPsetConshdlrCopy,
+    SCIPconshdlrGetData, SCIPgetNOrigVars, SCIPgetOrigVars, SCIPincludeConshdlrBasic, SCIPsetConshdlrCopy,
     SCIPsetConshdlrEnforelax, SCIPsolIsOriginal,
 };
 
-use super::{Delivered, Run, Slot, checked, sides, slot};
-use crate::columns::Columns;
+use super::locks::Applied;
+use super::rows::{add_cons, checked, violates};
+use super::{CandidateSource, Delivered, Run, Slot, slot};
 use crate::error::check;
 use crate::{RetCode, ScipError};
 
@@ -97,31 +97,6 @@ impl Store {
     }
 }
 
-/// Whether `values` violates `row` beyond SCIP's feasibility tolerance, as SCIP's linear handler judges a row.
-fn violates(scip: *mut SCIP, row: &AddedRow, values: &TiSlice<Col, f64>) -> bool {
-    let activity: f64 = row.terms.iter().map(|&(col, a)| a * values[col]).sum();
-    let (lower, upper) = (row.bounds.lower(), row.bounds.upper());
-    // SAFETY: the instance is live; the comparisons read its tolerance.
-    unsafe {
-        (lower.is_finite() && SCIPisFeasLT(scip, activity, lower) != 0)
-            || (upper.is_finite() && SCIPisFeasGT(scip, activity, upper) != 0)
-    }
-}
-
-/// Where a lazy-constraint candidate comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum LazySource {
-    /// A solution SCIP checks before storing it: a heuristic's, a start, a sub-SCIP's, a supplied one (`CONSCHECK`).
-    Check,
-    /// The LP solution of a node, which every other constraint handler found feasible (`CONSENFOLP`).
-    Lp,
-    /// The pseudo solution of a node whose LP is not solved, every variable at its better bound (`CONSENFOPS`).
-    Pseudo,
-    /// A relaxator's solution (`CONSENFORELAX`).
-    Relaxation,
-}
-
 /// A candidate solution SCIP would accept, to be cut off with lazy constraints: the constraint handler's `CONSCHECK`
 /// or enforcement.
 ///
@@ -134,7 +109,7 @@ pub struct ScipLazy<'a> {
     progress: Progress,
     objective: f64,
     candidate: &'a TiSlice<Col, f64>,
-    source: LazySource,
+    source: CandidateSource,
     infinity: f64,
     added: &'a mut Vec<AddedRow>,
 }
@@ -142,7 +117,7 @@ pub struct ScipLazy<'a> {
 impl ScipLazy<'_> {
     /// Where the candidate comes from.
     #[must_use]
-    pub const fn source(&self) -> LazySource {
+    pub const fn source(&self) -> CandidateSource {
         self.source
     }
 }
@@ -180,7 +155,7 @@ impl Run<'_, '_> {
         scip: *mut SCIP,
         objective: f64,
         candidate: &TiSlice<Col, f64>,
-        source: LazySource,
+        source: CandidateSource,
     ) -> Option<Vec<AddedRow>> {
         let progress = self.progress(scip);
         let mut added = Vec::new();
@@ -218,7 +193,16 @@ impl Run<'_, '_> {
         for (i, row) in waiting {
             // The store is not borrowed while SCIP runs, which may write a message the callback is handed.
             // SAFETY: the caller's contract is `add_cons`'s.
-            unsafe { add_cons(scip, self.cols, &self.priced_vars.borrow(), &row, self.infinity) }?;
+            unsafe {
+                add_cons(
+                    scip,
+                    self.cols,
+                    &self.priced_vars.borrow(),
+                    &row,
+                    self.infinity,
+                    c"lazy",
+                )
+            }?;
             self.lazy.borrow_mut().rows[i].in_scip = true;
             violated |= violates(scip, &row, values);
         }
@@ -248,7 +232,7 @@ impl Run<'_, '_> {
         // A callback busy with an outer event cannot judge the candidate, so it is rejected; the heuristic context
         // keeps the solutions it is handed in a run asking for lazy constraints until its callback returns, so no
         // candidate meets a busy callback.
-        let Some(rows) = self.ask_lazy(scip, objective, &values, LazySource::Check) else {
+        let Some(rows) = self.ask_lazy(scip, objective, &values, CandidateSource::Check) else {
             return SCIP_Result_SCIP_INFEASIBLE;
         };
         let mut store = self.lazy.borrow_mut();
@@ -278,7 +262,7 @@ impl Run<'_, '_> {
         &self,
         scip: *mut SCIP,
         sol: *mut SCIP_SOL,
-        source: LazySource,
+        source: CandidateSource,
         infeasible: bool,
     ) -> Result<SCIP_RESULT, ScipError> {
         if self.panicked() {
@@ -312,62 +296,8 @@ impl Run<'_, '_> {
     }
 }
 
-/// Adds `row` to SCIP's transformed problem as a global linear constraint over the columns' transformed variables,
-/// the priced ones `priced` included.
-///
-/// # Errors
-///
-/// [`ScipError::Call`] when SCIP refuses a call.
-///
-/// # Safety
-///
-/// `scip` is the live instance holding `cols` and `priced`, solving.
-unsafe fn add_cons(
-    scip: *mut SCIP,
-    cols: Columns<'_>,
-    priced: &[NonNull<SCIP_VAR>],
-    row: &AddedRow,
-    infinity: f64,
-) -> Result<(), ScipError> {
-    let mut vars = Vec::with_capacity(row.terms.len());
-    let mut values = Vec::with_capacity(row.terms.len());
-    for &(col, value) in &row.terms {
-        // SAFETY: the caller vouches for the instance and its stage; the column's variable is one of its own.
-        vars.push(unsafe { cols.transformed(scip, col, priced) }?);
-        values.push(value);
-    }
-    let invalid = ScipError::Call {
-        call: "SCIPcreateConsBasicLinear",
-        code: RetCode::InvalidData,
-    };
-    let len = c_int::try_from(vars.len()).map_err(|_| invalid.clone())?;
-    let (lhs, rhs) = sides(row, infinity);
-    let mut cons: *mut SCIP_CONS = ptr::null_mut();
-    // SAFETY: the instance is live and solving, where a constraint over transformed variables is created; `vars` and
-    // `values` hold `len` entries SCIP copies, and the name is a NUL-terminated string SCIP copies.
-    check("SCIPcreateConsBasicLinear", unsafe {
-        SCIPcreateConsBasicLinear(
-            scip,
-            &raw mut cons,
-            c"lazy".as_ptr(),
-            len,
-            vars.as_mut_ptr(),
-            values.as_mut_ptr(),
-            lhs,
-            rhs,
-        )
-    })?;
-    let cons = NonNull::new(cons).ok_or(invalid)?.as_ptr();
-    // SAFETY: the instance is live and solving, where SCIP adds a constraint to its transformed problem globally.
-    let added = check("SCIPaddCons", unsafe { SCIPaddCons(scip, cons) });
-    let mut cons = cons;
-    // SAFETY: `cons` is the one reference this function holds, released once; the problem keeps its own.
-    let released = check("SCIPreleaseCons", unsafe { SCIPreleaseCons(scip, &raw mut cons) });
-    added.and(released)
-}
-
 /// Locks every variable of the transformed problem `n` times both ways, through the original variables, which SCIP
-/// keeps from the transforming stage until the transformed problem is freed; a negative `n` unlocks.
+/// keeps from the transforming stage until the transformed problem is freed, and keeps the locks in `applied`.
 ///
 /// # Errors
 ///
@@ -375,8 +305,9 @@ unsafe fn add_cons(
 ///
 /// # Safety
 ///
-/// `scip` is a live instance from its transforming stage until it frees its transformed problem.
-unsafe fn lock_all(scip: *mut SCIP, locktype: SCIP_LOCKTYPE, n: c_int) -> Result<(), ScipError> {
+/// `scip` is a live instance from its transforming stage until it frees its transformed problem, not in its solved
+/// stage.
+unsafe fn lock_all(scip: *mut SCIP, applied: &Applied, n: c_int) -> Result<(), ScipError> {
     // SAFETY: the instance is live in a stage where it holds its original variables.
     let (vars, len) = unsafe { (SCIPgetOrigVars(scip), SCIPgetNOrigVars(scip)) };
     let len = usize::try_from(len).unwrap_or(0);
@@ -388,10 +319,12 @@ unsafe fn lock_all(scip: *mut SCIP, locktype: SCIP_LOCKTYPE, n: c_int) -> Result
     for &var in vars {
         // SAFETY: the instance is live and transformed, and `var` one of its original variables.
         let var = unsafe { crate::columns::transformed(scip, var) }?;
-        // SAFETY: as above; `var` is a transformed variable of the instance.
-        check("SCIPaddVarLocksType", unsafe {
-            SCIPaddVarLocksType(scip, var, locktype, n, n)
+        let var = NonNull::new(var).ok_or(ScipError::Call {
+            call: "SCIPgetTransformedVar",
+            code: RetCode::InvalidData,
         })?;
+        // SAFETY: as above; `var` is a transformed variable of the instance.
+        unsafe { applied.lock(scip, var, n, n) }?;
     }
     Ok(())
 }
@@ -487,7 +420,7 @@ unsafe fn enforced(
     scip: *mut SCIP,
     conshdlr: *mut SCIP_CONSHDLR,
     sol: *mut SCIP_SOL,
-    source: LazySource,
+    source: CandidateSource,
     infeasible: bool,
     result: *mut SCIP_RESULT,
 ) -> SCIP_RETCODE {
@@ -517,7 +450,7 @@ unsafe extern "C" fn enfolp(
 ) -> SCIP_RETCODE {
     let infeasible = solinfeasible != 0;
     // SAFETY: SCIP calls the enforcement while solving; null is the current LP solution.
-    unsafe { enforced(scip, conshdlr, ptr::null_mut(), LazySource::Lp, infeasible, result) }
+    unsafe { enforced(scip, conshdlr, ptr::null_mut(), CandidateSource::Lp, infeasible, result) }
 }
 
 /// `CONSENFOPS`: the node's pseudo solution.
@@ -534,7 +467,16 @@ unsafe extern "C" fn enfops(
     // A pseudo solution worse than the incumbent ends its node whatever the handler says.
     let infeasible = solinfeasible != 0 || objinfeasible != 0;
     // SAFETY: SCIP calls the enforcement while solving; null is the current pseudo solution.
-    unsafe { enforced(scip, conshdlr, ptr::null_mut(), LazySource::Pseudo, infeasible, result) }
+    unsafe {
+        enforced(
+            scip,
+            conshdlr,
+            ptr::null_mut(),
+            CandidateSource::Pseudo,
+            infeasible,
+            result,
+        )
+    }
 }
 
 /// `CONSENFORELAX`: a relaxator's solution.
@@ -550,7 +492,7 @@ unsafe extern "C" fn enforelax(
 ) -> SCIP_RETCODE {
     let infeasible = solinfeasible != 0;
     // SAFETY: SCIP calls the enforcement while solving, with the relaxation's solution.
-    unsafe { enforced(scip, conshdlr, sol, LazySource::Relaxation, infeasible, result) }
+    unsafe { enforced(scip, conshdlr, sol, CandidateSource::Relaxation, infeasible, result) }
 }
 
 /// `CONSLOCK`: every variable both ways for a solve with a lazy-constraint handler, undone when SCIP unlocks.
@@ -558,7 +500,7 @@ unsafe extern "C" fn conslock(
     scip: *mut SCIP,
     conshdlr: *mut SCIP_CONSHDLR,
     _cons: *mut SCIP_CONS,
-    locktype: SCIP_LOCKTYPE,
+    _locktype: SCIP_LOCKTYPE,
     nlockspos: c_int,
     nlocksneg: c_int,
 ) -> SCIP_RETCODE {
@@ -568,21 +510,19 @@ unsafe extern "C" fn conslock(
     };
     let n = nlockspos.saturating_add(nlocksneg);
     // SCIP locks once a problem is transformed, with a run installed, and unlocks as it frees it, maybe with none.
-    let apply = if n > 0 {
+    let applied = if n > 0 {
         // SAFETY: SCIP calls the lock during the solve the run is installed for, or with none installed.
-        unsafe { slot.lazy() }
-    } else {
-        slot.locked.get()
-    };
-    if !apply {
-        return SCIP_Retcode_SCIP_OKAY;
-    }
-    // SAFETY: SCIP locks and unlocks a transformed problem it holds.
-    match unsafe { lock_all(scip, locktype, n) } {
-        Ok(()) => {
-            slot.locked.set(n > 0);
-            SCIP_Retcode_SCIP_OKAY
+        if !unsafe { slot.lazy() } {
+            return SCIP_Retcode_SCIP_OKAY;
         }
+        // SAFETY: SCIP locks a transformed problem it holds, in its transforming stage.
+        unsafe { lock_all(scip, &slot.lazy_locks, n) }
+    } else {
+        // SAFETY: SCIP unlocks a transformed problem it holds before it frees its variables.
+        unsafe { slot.lazy_locks.unlock(scip) }
+    };
+    match applied {
+        Ok(()) => SCIP_Retcode_SCIP_OKAY,
         // SAFETY: as above.
         Err(error) => unsafe { slot.fail(error) },
     }

@@ -339,7 +339,7 @@ instance:
 | `POLL` | an event handler on each presolve round, focused node, solved node LP and solved node (`PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED`); `interrupt` calls `SCIPinterruptSolve` | `ScipPoll` | `event()`: a `ScipEvent` |
 | `PROGRESS` | the same event handler, at each poll | `ScipProgress` | `event()` |
 | `FEASIBLE`, `INCUMBENT` | the event handler on each solution SCIP stores (`POORSOLFOUND`, `BESTSOLFOUND`), a new best one as the incumbent too; the starts and carried solutions SCIP stored before it, as it catches its events | `ScipSolution` | |
-| `LazyHandler` | a constraint handler without constraints, checked and enforced after every other (`CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`) | `ScipLazy` | `source()`: a `LazySource`, `Check`, `Lp`, `Pseudo` or `Relaxation` |
+| `LazyHandler` | a constraint handler without constraints, checked and enforced after every other (`CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`) | `ScipLazy` | `source()`: a `CandidateSource`, `Check`, `Lp`, `Pseudo` or `Relaxation` |
 | `CutHandler` | a separator on each node's LP solution (`SEPAEXECLP`) | `ScipCut` | |
 | `HeuristicHandler` | a primal heuristic before and after each node (`HEUREXEC`) | `ScipHeuristic` | |
 | `Pricer` | a variable pricer, delayed, on each optimal or infeasible node LP (`PRICERREDCOST`, `PRICERFARKAS`) | `ScipPrice` | `local_bounds(col)`: the node's bounds of a column |
@@ -367,7 +367,7 @@ every later delivery is skipped, and the panic resumes once SCIP has returned. T
 ## Lazy constraints
 
 A `LazyHandler<Scip>` sees every candidate SCIP would accept: each solution SCIP checks before storing it, from a
-heuristic, a start, a sub-SCIP or a supplied solution (`LazySource::Check`), and each node's LP solution (`Lp`), pseudo
+heuristic, a start, a sub-SCIP or a supplied solution (`CandidateSource::Check`), and each node's LP solution (`Lp`), pseudo
 solution (`Pseudo`) or relaxation (`Relaxation`) that every other constraint handler found feasible, so an integer
 one. `add_lazy` adds a constraint the candidate may violate:
 
@@ -389,7 +389,7 @@ solutions are checked by the main SCIP and so meet the handler.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::scip::{LazySource, ScipLazy};
+use culmen::scip::{CandidateSource, ScipLazy};
 
 /// Forbids taking both items, a conflict only the handler knows.
 struct NotBoth {
@@ -402,7 +402,7 @@ impl LazyHandler<Scip> for NotBoth {
     fn lazy(&mut self, ctx: &mut ScipLazy<'_>) {
         self.calls += 1;
         assert!(self.calls < 1000, "a lazy-constraint handler that never settles");
-        if ctx.source() == LazySource::Check {
+        if ctx.source() == CandidateSource::Check {
             self.checked += 1;
         }
         let (x, y) = self.pair;
