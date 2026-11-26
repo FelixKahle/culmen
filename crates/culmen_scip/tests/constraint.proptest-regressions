@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8d2053a05fec280cf2637d3db8ebde172bd2f5f97b0f276b0ae73fa4783a23ad # shrinks to (program, rule) = (Program { sense: Minimize, offset: 0.0, columns: {Col(0): ProgramColumn { cost: 0.0, bounds: Bounds { lower: 0.0, upper: 3.0 }, integrality: Integer, name: None }, Col(1): ProgramColumn { cost: 0.0, bounds: Bounds { lower: 0.0, upper: 3.0 }, integrality: Integer, name: None }}, row_bounds: {Row(0): Bounds { lower: -3.0, upper: -3.0 }}, row_names: {Row(0): None}, row_starts: [0, 1], entry_cols: [Col(0)], entry_values: [-3.0], quadratic: QuadObjective { entries: [] }, objectives: Single }, AllDifferent([0, 1])), style = Reject, only = false, propagate = false, explain = Never
