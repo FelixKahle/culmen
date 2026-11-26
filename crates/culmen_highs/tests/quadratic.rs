@@ -139,7 +139,7 @@ fn test_the_qp_iteration_limit_stops_the_active_set_solver() {
         ),
         "{solved:?}"
     );
-    solver.backend_mut().options_mut().qp_iteration_limit = None;
+    solver.options_mut().qp_iteration_limit = None;
     let solved = solver.solve().unwrap();
     // Each coordinate drops by (15 - 1) / 5 = 2.8 to (-1.8, -0.8, 0.2, 1.2, 2.2), at 5 · 2.8² = 39.2.
     let Outcome::Optimal(solution) = solved.outcome else {

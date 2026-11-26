@@ -529,9 +529,18 @@ impl Backend for LinearOnly {
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
     type Native<'a> = Unsupported;
+    type Options = ();
 
     const EVENTS: Events = Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]);
+
+    fn options(&self) -> &() {
+        &()
+    }
+
+    fn options_mut(&mut self) -> &mut () {
+        Box::leak(Box::new(()))
+    }
 
     fn load(&mut self, program: &Program) -> Result<(), NoColumns> {
         LOADS.fetch_add(1, Ordering::SeqCst);

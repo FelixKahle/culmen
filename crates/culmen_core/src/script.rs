@@ -355,10 +355,22 @@ impl Backend for Script {
     type Poll<'a> = ScriptPoll<'a>;
     type Solution<'a> = ScriptSolution<'a>;
     type Native<'a> = ScriptNote<'a>;
+    type Options = ();
 
     const EVENTS: Events = Events::ALL;
     const CLASSES: ModelClasses = ModelClasses::ALL;
     const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
+
+    /// A script has no options.
+    fn options(&self) -> &() {
+        &()
+    }
+
+    /// A script has no options.
+    fn options_mut(&mut self) -> &mut () {
+        // A box of a zero-sized value allocates nothing, so leaking it leaks nothing.
+        Box::leak(Box::new(()))
+    }
 
     fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
         self.sense = Some(program.sense());

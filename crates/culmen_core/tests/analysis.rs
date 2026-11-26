@@ -26,6 +26,7 @@ use proptest::prelude::*;
 #[derive(Debug)]
 struct Canned {
     outcome: Outcome,
+    /// Its one option: whether a solve panics, as one whose callback panicked would.
     panics: bool,
     asked: RefCell<Vec<Analysis>>,
 }
@@ -52,9 +53,18 @@ impl Backend for Canned {
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
     type Native<'a> = Unsupported;
+    type Options = bool;
 
     const EVENTS: culmen_core::Events = culmen_core::Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::ALL;
+
+    fn options(&self) -> &bool {
+        &self.panics
+    }
+
+    fn options_mut(&mut self) -> &mut bool {
+        &mut self.panics
+    }
 
     fn load(&mut self, _: &Program) -> Result<(), ScriptError> {
         Ok(())
@@ -310,7 +320,7 @@ fn test_a_solve_that_panics_leaves_no_solve_to_read() {
     let mut solver = canned(optimal(), false);
     solver.solve().unwrap();
     assert!(solver.duals().is_ok());
-    solver.backend_mut().panics = true;
+    *solver.options_mut() = true;
     let solved = catch_unwind(AssertUnwindSafe(|| solver.solve()));
     assert!(solved.is_err());
     assert_eq!(

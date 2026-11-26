@@ -350,9 +350,18 @@ impl Backend for Plain {
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
     type Native<'a> = Unsupported;
+    type Options = ();
 
     const EVENTS: Events = Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]);
+
+    fn options(&self) -> &() {
+        &()
+    }
+
+    fn options_mut(&mut self) -> &mut () {
+        Box::leak(Box::new(()))
+    }
 
     fn load(&mut self, _: &Program) -> Result<(), Never> {
         self.loads += 1;

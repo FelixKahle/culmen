@@ -188,9 +188,16 @@ impl<B: Backend> Solver<B> {
         &self.backend
     }
 
-    /// The backend, to change its own options between solves.
-    pub const fn backend_mut(&mut self) -> &mut B {
-        &mut self.backend
+    /// The backend's own options, which every solve applies before its settings.
+    #[must_use]
+    pub fn options(&self) -> &B::Options {
+        self.backend.options()
+    }
+
+    /// The backend's own options, to change between solves. The backend is reachable only through them, so the
+    /// program it holds stays the solver's.
+    pub fn options_mut(&mut self) -> &mut B::Options {
+        self.backend.options_mut()
     }
 
     /// The backend and the program, taken apart. The backend holds the program unless an edit failed and so did the

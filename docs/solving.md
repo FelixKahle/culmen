@@ -18,7 +18,8 @@ each solve configured on its own.
 | `solve()` | Solves under the backend's defaults, with no stop, observer, callback, start or handler. |
 | `run()` | A [`Run`](#run) to configure one solve: settings, a stop, an observer, a [`Callback`](callbacks.md#callback), a [start](#starts) and the [search handlers](callbacks.md#search-handlers), ended by `.solve()`. |
 | `program()` | The loaded program, grown by every column a solve priced. |
-| `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
+| `backend()` | The backend, to read its own state. |
+| `options()`, `options_mut()` | The backend's own options (`Backend::Options`: `HighsOptions`, `ScipOptions`, `()` for the `Script`), to read or to change between solves; the backend itself is not reachable mutably, so the program it holds stays the solver's. |
 | `into_parts()` | The backend and the program, taken apart; the backend may be behind the program after a failed edit or a solve that priced. |
 | `set_col_bounds(..)`, `set_col_costs(..)`, `set_col_integrality(..)`, `set_row_bounds(..)`, `add_row(..)`, `add_rows(..)`, `add_col(..)`, `add_cols(..)` | Edit the loaded program, to solve it again warm ([Editing a loaded program](#editing-a-loaded-program)). |
 | `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome, each for a backend that implements its analysis trait ([Analysis](analysis.md)). |

@@ -17,7 +17,7 @@ known only to a handler, cuts of your own, and column generation at every node o
 |---|---|
 | `Scip::new()` | A backend with SCIP's default parameters. |
 | `Scip::with_options(options)` | A backend with the given `ScipOptions`. |
-| `scip.options()`, `scip.options_mut()` | The options, to read or to change between solves. |
+| `options()`, `options_mut()` (`Backend`, `Options = ScipOptions`) | The options, to read or to change between solves; `solver.options_mut()` reaches them through a `Solver`. |
 | `Scip::EVENTS` | Every observational event but `NATIVE`: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE` and `INCUMBENT`. |
 | Search capabilities | All four: `LazyConstraints`, `UserCuts`, `Heuristics` and `Prices` ([Callback events](#callback-events)). |
 | `Scip::CLASSES` | `Lp`, `Milp`, `Qp` and `Miqp`; see [Quadratic programs](#quadratic-programs). |
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let first = solver.solve()?;
 
     // The options belong to the backend; change them between solves.
-    solver.backend_mut().options_mut().separating = Some(Emphasis::Off);
+    solver.options_mut().separating = Some(Emphasis::Off);
     let second = solver.solve()?;
     assert_eq!(first.outcome.objective(), Some(21.0));
     assert_eq!(second.outcome.objective(), Some(21.0));

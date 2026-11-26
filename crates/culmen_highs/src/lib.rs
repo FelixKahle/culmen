@@ -245,17 +245,6 @@ impl Highs {
         }
     }
 
-    /// The options every solve applies.
-    #[must_use]
-    pub const fn options(&self) -> &HighsOptions {
-        &self.options
-    }
-
-    /// The options every solve applies, to change between solves.
-    pub const fn options_mut(&mut self) -> &mut HighsOptions {
-        &mut self.options
-    }
-
     /// Changes HiGHS's model, which is the program before `edit`, into `program`.
     ///
     /// Bounds, costs, integrality and row bounds change through HiGHS's `BySet` calls, rows and columns are appended
@@ -651,6 +640,7 @@ impl Backend for Highs {
     type Poll<'a> = HighsPoll<'a>;
     type Solution<'a> = HighsSolution<'a>;
     type Native<'a> = HighsNative;
+    type Options = HighsOptions;
 
     /// Every observational event.
     const EVENTS: Events = Events::ALL;
@@ -662,6 +652,14 @@ impl Backend for Highs {
     /// HiGHS 1.16 takes semi-continuous and semi-integer columns (up to [`Highs::SEMI_UPPER_LIMIT`]) and multiple
     /// linear objectives.
     const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
+
+    fn options(&self) -> &HighsOptions {
+        &self.options
+    }
+
+    fn options_mut(&mut self) -> &mut HighsOptions {
+        &mut self.options
+    }
 
     fn load(&mut self, program: &Program) -> Result<(), HighsError> {
         self.loaded = None;

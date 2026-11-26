@@ -251,7 +251,7 @@ fn test_a_highs_edit_failing_after_it_applied_is_undone_by_a_reload() {
     let mut solver = Solver::new(Mirror::new(Highs::new()), program.clone()).unwrap();
     assert!(close(optimum(&mut solver), 2.0, 1e-9));
 
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         ..Faults::default()
     };
@@ -405,9 +405,9 @@ proptest! {
         for (op, &refuse) in ops.iter().zip(&faults) {
             let before = solver.program().clone();
             let want = edit_plan(&before, op, Highs::CLASSES, Highs::FEATURES);
-            solver.backend_mut().faults.refuse_edits = usize::from(refuse);
+            solver.options_mut().refuse_edits = usize::from(refuse);
             let got = op.apply(&mut solver);
-            solver.backend_mut().faults = Faults::default();
+            *solver.options_mut() = Faults::default();
             match (&got, want) {
                 (Ok(_), Ok(want)) => prop_assert_eq!(solver.program(), &want),
                 (Err(EditError::Backend(MirrorError::Injected)), Ok(_)) if refuse => {

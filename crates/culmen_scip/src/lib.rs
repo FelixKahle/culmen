@@ -208,17 +208,6 @@ impl Scip {
             instance: None,
         }
     }
-
-    /// The options every solve applies.
-    #[must_use]
-    pub const fn options(&self) -> &ScipOptions {
-        &self.options
-    }
-
-    /// The options every solve applies, to change between solves.
-    pub const fn options_mut(&mut self) -> &mut ScipOptions {
-        &mut self.options
-    }
 }
 
 /// Refuses a program of a class or with a feature this backend does not declare, which a
@@ -397,6 +386,7 @@ impl Backend for Scip {
     type Poll<'a> = ScipPoll<'a>;
     type Solution<'a> = ScipSolution<'a>;
     type Native<'a> = Unsupported;
+    type Options = ScipOptions;
 
     /// Every observational event, each from a plugin the instance includes (the module documentation lists them); no
     /// native event.
@@ -424,6 +414,14 @@ impl Backend for Scip {
     /// [`ScipError::BeyondInfinity`] for a finite number SCIP would read as infinite; [`ScipError::ColName`] or
     /// [`ScipError::RowName`] for a name holding a NUL byte; [`ScipError::Call`] when SCIP refuses a call. The
     /// backend then holds no program.
+    fn options(&self) -> &ScipOptions {
+        &self.options
+    }
+
+    fn options_mut(&mut self) -> &mut ScipOptions {
+        &mut self.options
+    }
+
     fn load(&mut self, program: &Program) -> Result<(), ScipError> {
         self.instance = None;
         refuse_unsupported(program)?;

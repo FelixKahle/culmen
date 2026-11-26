@@ -19,10 +19,13 @@ pub trait Backend: Sized {
     type Poll<'a>: PollContext;           // Events::POLL
     type Solution<'a>: SolutionContext;   // Events::FEASIBLE and Events::INCUMBENT
     type Native<'a>: Debug;               // Events::NATIVE: whatever only this solver reports
+    type Options: Debug;                  // the backend's own options, () for none
     const EVENTS: Events;                 // the observational events this backend delivers
     const CLASSES: ModelClasses;          // the model classes this backend solves
     const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // the semi columns and objectives it takes
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
+    fn options(&self) -> &Self::Options;
+    fn options_mut(&mut self) -> &mut Self::Options; // what Solver::options_mut reaches, never the backend itself
     fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), Self::Error> { self.load(program) }
     fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<Self::Status>, Self::Error>;
 }

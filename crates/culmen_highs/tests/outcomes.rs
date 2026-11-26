@@ -136,7 +136,7 @@ fn test_options_are_applied_and_refused_by_name() {
     let mut solver = Solver::new(Highs::with_options(options), program.clone()).unwrap();
     assert!(matches!(solver.solve().unwrap().outcome, Outcome::Optimal(_)));
 
-    solver.backend_mut().options_mut().raw.push(RawOption {
+    solver.options_mut().raw.push(RawOption {
         name: "no_such_option".to_owned(),
         value: OptionValue::Int(1),
     });

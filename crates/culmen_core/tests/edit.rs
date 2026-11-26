@@ -613,6 +613,7 @@ impl<const MILP: bool> Backend for Plain<MILP> {
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
     type Native<'a> = Unsupported;
+    type Options = ();
 
     const EVENTS: Events = Events::NONE;
     const CLASSES: ModelClasses = if MILP {
@@ -620,6 +621,14 @@ impl<const MILP: bool> Backend for Plain<MILP> {
     } else {
         ModelClasses::of(&[ModelClass::Lp])
     };
+
+    fn options(&self) -> &() {
+        &()
+    }
+
+    fn options_mut(&mut self) -> &mut () {
+        Box::leak(Box::new(()))
+    }
 
     fn load(&mut self, _: &Program) -> Result<(), Never> {
         self.loads += 1;
@@ -686,7 +695,7 @@ fn test_a_backend_without_semi_columns_refuses_one_before_it_sees_the_edit() {
 fn test_a_refused_edit_restores_the_program_and_reloads_it() {
     let (program, x, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults.refuse_edits = 1;
+    solver.options_mut().refuse_edits = 1;
     assert_eq!(
         solver.set_col_costs([(x, 9.0)]),
         Err(EditError::Backend(MirrorError::Injected))
@@ -709,7 +718,7 @@ fn test_a_refused_edit_restores_the_program_and_reloads_it() {
 fn test_a_refused_add_row_hands_out_no_row() {
     let (_, x, y, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults.refuse_edits = 1;
+    solver.options_mut().refuse_edits = 1;
     assert!(solver.add_row(x.leq(1)).is_err());
     assert_eq!(solver.add_row(y.leq(2)), Ok(Row::new(2)));
     assert_eq!(solver.program().num_rows(), 3);
@@ -724,7 +733,7 @@ fn test_a_refused_add_row_hands_out_no_row() {
 fn test_a_failed_restore_is_made_good_before_the_next_solve() {
     let (program, x, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         refuse_loads: 1,
         ..Faults::default()
@@ -744,7 +753,7 @@ fn test_a_failed_restore_is_made_good_before_the_next_solve() {
 fn test_a_reload_that_fails_again_fails_the_next_solve_and_a_later_one_reloads() {
     let (program, x, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         refuse_loads: 2,
         ..Faults::default()
@@ -763,7 +772,7 @@ fn test_a_reload_that_fails_again_fails_the_next_solve_and_a_later_one_reloads()
 fn test_an_edit_on_a_solver_out_of_sync_reloads_first() {
     let (program, x, y, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         refuse_loads: 1,
         ..Faults::default()
@@ -787,7 +796,7 @@ fn test_an_edit_on_a_solver_out_of_sync_reloads_first() {
 fn test_an_edit_on_a_solver_whose_reload_fails_is_refused_unchanged() {
     let (program, x, y, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         refuse_loads: 2,
         ..Faults::default()
@@ -805,7 +814,7 @@ fn test_an_edit_on_a_solver_whose_reload_fails_is_refused_unchanged() {
 fn test_a_panicking_edit_leaves_the_solver_to_reload_before_its_next_solve() {
     let (_, x, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults.panic_edits = 1;
+    solver.options_mut().panic_edits = 1;
     let edited = catch_unwind(AssertUnwindSafe(|| solver.set_col_costs([(x, 9.0)])));
     assert!(edited.is_err());
     let mut tried = base_plan();
@@ -912,7 +921,7 @@ proptest! {
         for (op, &(refuse_edit, refuse_load)) in ops.iter().zip(&faults) {
             let before = solver.program().clone();
             let want = edit_plan(&before, op, ModelClasses::ALL, ProgramFeatures::ALL);
-            solver.backend_mut().faults = Faults {
+            *solver.options_mut() = Faults {
                 refuse_edits: usize::from(refuse_edit),
                 refuse_loads: usize::from(refuse_load),
                 ..Faults::default()
@@ -934,7 +943,7 @@ proptest! {
             }
             solver.solve().unwrap();
             prop_assert_eq!(solver.backend().held(), Some(solver.program()));
-            solver.backend_mut().faults = Faults::default();
+            *solver.options_mut() = Faults::default();
         }
     }
 }

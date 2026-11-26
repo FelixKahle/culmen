@@ -34,7 +34,7 @@ use crate::{Edit, Events, Hooks, ModelClasses, Program, ProgramFeatures, Setting
 ///   and only while `solve` runs; it never calls two callback or handler methods at once.
 /// - A panic in a callback or handler stops the solve as soon as the solver allows and then continues unwinding out
 ///   of `solve`; it never aborts the process and never leaves the backend unusable.
-/// - [`Settings`] apply to this one solve and take precedence over the backend's own options.
+/// - [`Settings`] apply to this one solve and take precedence over the backend's own [`Backend::Options`].
 pub trait Backend: Sized {
     /// Why loading or solving failed.
     type Error: core::error::Error + Send + Sync + 'static;
@@ -50,6 +50,8 @@ pub trait Backend: Sized {
     type Solution<'a>: SolutionContext;
     /// The context of a [`Events::NATIVE`] event: whatever only this solver reports.
     type Native<'a>: fmt::Debug;
+    /// The backend's own options, applied by every solve before its [`Settings`]; `()` for a backend without any.
+    type Options: fmt::Debug;
 
     /// The observational events this backend delivers.
     const EVENTS: Events;
@@ -70,6 +72,12 @@ pub trait Backend: Sized {
     ///
     /// When the solver refuses the program.
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
+
+    /// The options every solve applies.
+    fn options(&self) -> &Self::Options;
+
+    /// The options every solve applies, to change between solves; changing them never changes the loaded program.
+    fn options_mut(&mut self) -> &mut Self::Options;
 
     /// Changes the loaded program into `program`, which is the loaded program changed as `edit` names.
     ///

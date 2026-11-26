@@ -12,7 +12,7 @@ it is `culmen::highs`, and its backend type is also `culmen::Highs` and in the p
 |---|---|
 | `Highs::new()` | A backend with HiGHS's default options. |
 | `Highs::with_options(options)` | A backend with the given `HighsOptions`. |
-| `highs.options()`, `highs.options_mut()` | The options, to read or to change between solves. |
+| `options()`, `options_mut()` (`Backend`, `Options = HighsOptions`) | The options, to read or to change between solves; `solver.options_mut()` reaches them through a `Solver`. |
 | `Highs::EVENTS` | Every observational event: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT` and `NATIVE`. |
 | Search capabilities | `Heuristics` alone ([Heuristic solutions](#heuristic-solutions)); no `LazyConstraints`, `UserCuts` or `Prices` ([Limitations](#limitations)). |
 | `Highs::CLASSES` | `Lp`, `Milp` and `Qp`; see [Quadratic programs](#quadratic-programs). |
@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let first = solver.solve()?;
 
     // The options belong to the backend; change them between solves.
-    solver.backend_mut().options_mut().solver = Some(LpSolver::Simplex);
+    solver.options_mut().solver = Some(LpSolver::Simplex);
     let second = solver.solve()?;
     assert_eq!(first.outcome.objective().map(f64::round), Some(13.0));
     assert_eq!(second.outcome.objective().map(f64::round), Some(13.0));

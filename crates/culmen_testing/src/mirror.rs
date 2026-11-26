@@ -17,7 +17,8 @@ use culmen_core::{
 ///
 /// [`Mirror::held`] is the program the mirror holds: the last one a load or an edit accepted, `None` before any and
 /// after a failure, injected or not. A test asserts `held() == Some(solver.program())` to check that the solver and
-/// its backend agree.
+/// its backend agree. Its [`Options`](Backend::Options) are its [`Faults`], so a test sets the failures to inject
+/// between calls with `solver.options_mut()`; the inner backend's own options are set before the mirror wraps it.
 #[derive(Debug)]
 pub struct Mirror<B> {
     /// The wrapped backend.
@@ -289,10 +290,19 @@ impl<B: Backend> Backend for Mirror<B> {
     type Poll<'a> = B::Poll<'a>;
     type Solution<'a> = B::Solution<'a>;
     type Native<'a> = B::Native<'a>;
+    type Options = Faults;
 
     const EVENTS: Events = B::EVENTS;
     const CLASSES: ModelClasses = B::CLASSES;
     const FEATURES: ProgramFeatures = B::FEATURES;
+
+    fn options(&self) -> &Faults {
+        &self.faults
+    }
+
+    fn options_mut(&mut self) -> &mut Faults {
+        &mut self.faults
+    }
 
     fn load(&mut self, program: &Program) -> Result<(), Self::Error> {
         self.calls.push(Call::Load(program.clone()));
@@ -521,7 +531,7 @@ mod tests {
         assert_eq!(mirror.load(&before), Err(MirrorError::Injected));
         assert_eq!(mirror.held(), None);
         let mut solver = Solver::new(mirror, before.clone()).unwrap();
-        solver.backend_mut().faults = Faults {
+        *solver.options_mut() = Faults {
             refuse_edits: 1,
             refuse_loads: 1,
             ..Faults::default()

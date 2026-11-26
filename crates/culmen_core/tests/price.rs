@@ -694,6 +694,7 @@ impl<B: Prices> Pricer<B> for Idle {
 /// and answers duals with zeros.
 #[derive(Debug)]
 struct SelfPricing {
+    /// Its one option: whether a solve with a pricer prices a column.
     prices: bool,
     num_cols: usize,
 }
@@ -706,9 +707,18 @@ impl Backend for SelfPricing {
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
     type Native<'a> = Unsupported;
+    type Options = bool;
 
     const EVENTS: Events = Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::ALL;
+
+    fn options(&self) -> &bool {
+        &self.prices
+    }
+
+    fn options_mut(&mut self) -> &mut bool {
+        &mut self.prices
+    }
 
     fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
         self.num_cols = program.num_cols();
@@ -756,7 +766,7 @@ fn test_analyses_after_a_solve_that_priced_find_no_solve_to_read() {
     let mut solver = Solver::new(backend, small()).unwrap();
     solver.run().pricer(&mut Idle).solve().unwrap();
     assert!(solver.duals().is_ok(), "a solve that priced nothing is read as before");
-    solver.backend_mut().prices = true;
+    *solver.options_mut() = true;
     solver.run().pricer(&mut Idle).solve().unwrap();
     assert_eq!(solver.program().num_cols(), 3);
     assert_eq!(
@@ -765,7 +775,7 @@ fn test_analyses_after_a_solve_that_priced_find_no_solve_to_read() {
             analysis: Analysis::Duals
         })
     );
-    solver.backend_mut().prices = false;
+    *solver.options_mut() = false;
     solver.solve().unwrap();
     assert!(
         solver.duals().is_ok(),
