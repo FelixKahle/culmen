@@ -9,8 +9,7 @@ use std::collections::BTreeMap;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use super::Bound;
-use crate::{Col, Row};
+use crate::{Bound, Col, Row};
 
 /// Which of a line's bounds belong to a subsystem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

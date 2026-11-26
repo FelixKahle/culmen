@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! A column or a row, and an end of its bounds: what the analyses name.
+//! A column or a row: what the analyses name.
 
 use core::fmt;
 
@@ -63,36 +63,5 @@ impl fmt::Display for Line {
             Self::Col(col) => write!(f, "column {}", col.index()),
             Self::Row(row) => write!(f, "row {}", row.index()),
         }
-    }
-}
-
-/// One end of a line's bounds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum Bound {
-    /// The lower end.
-    Lower,
-    /// The upper end.
-    Upper,
-}
-
-impl Bound {
-    /// This end of `bounds`, infinite when the interval is open there.
-    #[must_use]
-    pub const fn of(self, bounds: Bounds) -> f64 {
-        match self {
-            Self::Lower => bounds.lower(),
-            Self::Upper => bounds.upper(),
-        }
-    }
-}
-
-/// `lower` or `upper`.
-impl fmt::Display for Bound {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Lower => "lower",
-            Self::Upper => "upper",
-        })
     }
 }

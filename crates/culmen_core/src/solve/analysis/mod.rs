@@ -24,7 +24,7 @@ pub use duals::Duals;
 pub use error::{AnalysisError, Misfit, Table};
 pub use iis::{Iis, Side};
 pub use kind::Analysis;
-pub use line::{Bound, Line};
+pub use line::Line;
 pub use ranging::{Limit, Ranged, Ranging};
 pub use relax::{InvalidPenalty, Penalty, Relaxed, Violation, Violations, Weights};
 pub(crate) use solver::Ended;

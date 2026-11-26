@@ -10,8 +10,8 @@ use core::iter::FusedIterator;
 use serde::{Deserialize, Serialize};
 use typed_index_collections::{TiSlice, TiVec};
 
-use super::{Bound, Line, Table};
-use crate::{Col, Misfit, Program, Row};
+use super::{Line, Table};
+use crate::{Bound, Col, Misfit, Program, Row};
 
 /// The price of one unit of violation of a bound or row: a finite number, zero or above.
 ///
