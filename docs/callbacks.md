@@ -1,8 +1,8 @@
 # Callbacks
 
 While a solver runs, it reports what it does: log text, progress, polls at which it may be interrupted, and solutions
-it finds. A solver that can also takes part in its search: it accepts constraints and cuts, solutions of yours, and
-columns. culmen delivers the first kind as typed observational events and the second to search handlers, one trait
+it finds. A solver that can also takes part in its search: it accepts constraints and cuts, solutions of yours,
+columns, and rules of your own that it enforces as constraints. culmen delivers the first kind as typed observational events and the second to search handlers, one trait
 per kind. This page covers the convenient way to watch a solve, a stop and an observer set on the
 [`Run`](solving.md#run), the complete one, a `Callback` with a typed context per event, and the handlers.
 
@@ -12,7 +12,7 @@ per kind. This page covers the convenient way to watch a solve, a stop and an ob
 |---|---|---|---|
 | Convenient | a [`Stop`](#stop) and an [`Observer`](#observer), passed with `Run::stop` and `Run::observer` | progress at a steady pace, every new best solution, whole log lines, a cooperative stop | every backend, unchanged |
 | Complete | a [`Callback<B>`](#callback), passed with `Run::callback` | every observational event the backend delivers, each with its context | every backend through the neutral traits, or one backend through its own context types |
-| Search | a [search handler](#search-handlers) (`LazyHandler`, `CutHandler`, `HeuristicHandler`, `Pricer`), passed with `Run::lazy`, `Run::cut`, `Run::heuristic` or `Run::pricer` | candidates to cut off, relaxations to cut, chances to supply solutions, node LPs to price | only a backend with the capability; on any other the method does not compile |
+| Search | a [search handler](#search-handlers) (`LazyHandler`, `CutHandler`, `HeuristicHandler`, `Pricer`, `ConstraintHandler`), passed with `Run::lazy`, `Run::cut`, `Run::heuristic`, `Run::pricer` or `Run::constraint` | candidates to cut off, relaxations to cut, chances to supply solutions, node LPs to price, points and nodes to judge, enforce and narrow | only a backend with the capability; on any other the method does not compile |
 
 All run in the same solve: `solver.run()...solve()` runs the stop and the observer first and the callback after them,
 for every event, and the handlers at their own points of the search.
@@ -230,10 +230,12 @@ takes one kind of handler:
 | `UserCuts` | `CutHandler<B>`: `cut` | `B::Cut<'_>`: `CutContext` | no | yes | yes |
 | `Heuristics` | `HeuristicHandler<B>`: `heuristic` | `B::Heuristic<'_>`: `HeuristicContext` | yes | yes | yes |
 | `Prices` | `Pricer<B>`: `price` | `B::Price<'_>`: `PriceContext` | no | yes | yes |
+| `CustomConstraints` | [`ConstraintHandler<B>`](#constraint-handlers): `check`, and `declaration`, `enforce`, `propagate`, `explain`, `presolve` with sound defaults | `B::Check<'_>`, `B::Enforce<'_>`, `B::Propagate<'_>`, `B::Explain<'_>`, `B::Presolve<'_>`: `CheckContext`, `EnforceContext`, `PropagateContext`, `ExplainContext`, `PresolveContext` | no | no | yes |
 
-A handler is registered on the `Run` of one solve, beside the callback: `.lazy(..)`, `.cut(..)`, `.heuristic(..)`
-and `.pricer(..)`, each replacing the handler of its kind registered before, and `.lazy_and_cut(..)` for one value in
-both roles, a separator that cuts off integer and fractional points alike. Each of these methods exists only for a
+A handler is registered on the `Run` of one solve, beside the callback: `.lazy(..)`, `.cut(..)`, `.heuristic(..)`,
+`.pricer(..)` and `.constraint(..)`, each replacing the handler of its kind registered before, `.lazy_and_cut(..)` for
+one value in both roles, a separator that cuts off integer and fractional points alike, and `.constraint_and_cut(..)`
+for a constraint handler that also cuts off fractional points. Each of these methods exists only for a
 backend with the capability, so a handler the backend would ignore does not compile: a lazy-constraint handler for
 HiGHS, whose answer would be the optimum of the relaxation without the constraints, is an error at the call site, not
 a wrong optimum. Generic code states what it needs,
@@ -314,6 +316,12 @@ as a deadline check, takes any context as `&impl Context`.
 | `CutContext` | `relaxation()` | `add_cut(cut)`: a constraint every integer-feasible point satisfies |
 | `HeuristicContext` | the progress | `supply(values)`: a full solution |
 | `PriceContext` | `mode()`, `sense()`, `duals()`, `tolerance()`; `reduced_cost(column)` and `improves(column)` computed from them | `add_col(column)`: a column to add to the search, returning its id; `branch_early()`: stop pricing at this node; `report_bound(bound)`: a bound on this node's subtree |
+| `CheckContext` | `objective()`, `candidate()` | nothing: `check` answers with a `Verdict` |
+| `NodeContext` | `bounds(col)` at the node when the call began | `tighten(col, bounds, reason)`; `cut_off()`; `cut_off_because(reasons)`: close the node, naming the bounds that make it infeasible |
+| `EnforceContext` | a `CheckContext` and a `NodeContext` | the node's actions, and `add_constraint(constraint)`, kept for the rest of the solve; `branch(children)` |
+| `PropagateContext` | a `NodeContext` | the node's actions |
+| `ExplainContext` | `inferred()`, `reason()`, `bounds_before(col)` | `because(col, end)`: name a bound the tightening rested on |
+| `PresolveContext` | `bounds(col)`, the global bounds | `tighten(col, bounds)`, `add_constraint(constraint)`, `infeasible()` |
 
 A solver that completes a partial solution offers that on its own heuristic context, as an inherent method, since
 not every solver honours one: `HighsHeuristic::supply_partial` and the `Script`'s `supply_partial`. SCIP completes a
@@ -338,6 +346,10 @@ An action returns `Err(ActionError)` when it is refused:
 | `ExcludesZero { col, bounds }` | A priced column's bounds do not hold zero. |
 | `Integrality { col, integrality }` | A priced column is semi, or of an integrality the backend's classes do not allow beside the program's. |
 | `NotFiniteBound { bound }` | A reported bound is NaN or infinite. |
+| `NotInvolved { col }` | A tightening or a child's bound names a column the constraint handler's declaration does not involve. |
+| `Exclusive { action, after }` | An action the actions recorded before it in the same call exclude: reducing, branching and cutting off exclude each other, a branching is one call, a cutoff ends the call. |
+| `NoChildren` | A branching without children. |
+| `NoProgress { child }` | A child of a branching that narrows no bound of the node and adds no constraint. |
 | `Refused(reason)` | The solver refused the action, for the reason given. |
 
 ## Pricing
@@ -459,15 +471,211 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Constraint handlers
+
+A `ConstraintHandler<B>` is a rule over the program's columns that only the handler knows, which the solver enforces
+as a constraint: a rule no linear inequality states, such as "no two of these columns take the same value", with the
+handler's own propagation, branching and presolve. It is registered with `Run::constraint`, only for a backend that
+implements `CustomConstraints`. Today the `Script` backend implements it, so a handler can be written and tested
+against scripted points and nodes; HiGHS and SCIP do not implement it.
+
+`check` is the one method a handler must write; each of the others has a default that is always sound.
+
+| Method | Called with | Answers | Default |
+|---|---|---|---|
+| `declaration()` | nothing, once when a solve starts | a `Declaration`: the `Locks` of the columns the rule involves, and the `Candidates` to enforce | `Locks::All`, `Candidates::Integral` |
+| `check(ctx)` | every point the solver would accept | `Verdict::Accept` or `Verdict::Reject` | none: required |
+| `enforce(ctx)` | a point at a node that `check` rejected | actions on the context | nothing, which leaves the point to the solver's branching |
+| `propagate(ctx)` | a node's domain | actions on the context | nothing |
+| `explain(ctx)` | a bound the handler tightened with a `Reason` | `Explained::Complete` after naming its reasons with `because`, or `Explained::Unknown` | `Unknown` |
+| `presolve(ctx)` | the program's global domain before the search | actions on the context | nothing |
+
+What a handler promises, and what each call may do:
+
+- **`check` is the rule.** The solver calls it on every point it would accept: solutions found by heuristics, starts,
+  the solutions of earlier solves, and each node's relaxation point. A point it accepts satisfies the rule, one it
+  rejects does not. It may be called any number of times on the same point and must answer the same way.
+- **`enforce` resolves a rejected point.** At a node whose point `check` rejects, the solver calls `enforce`, and only
+  then. It resolves the point by any one of: adding constraints (each must hold for every point the program and the
+  rule accept) and tightening bounds; branching into `Child`ren (whose union must hold every accepted point of the
+  node, and each of which narrows the node); or cutting the node off (when it holds no accepted point). Doing nothing
+  leaves the point to the solver's branching on integer columns: that ends while the integer columns are bounded, and
+  once every integer column is fixed a rejected point ends the solve with an error if the program has continuous
+  columns. So a rule that depends on continuous columns, or a program with a quadratic objective, must resolve every
+  rejected point itself.
+- **`propagate` narrows a node.** It may tighten the bounds of a node, which must keep every accepted point of the
+  node, or cut it off.
+- **`explain` answers for a tightening.** A tightening with a `Reason`, the handler's own tag, may later be explained:
+  `explain` names, with `because`, bounds as they were before the tightening that imply it, and returns
+  `Explained::Complete`. An explanation that names too few bounds makes the solver learn a false conflict and lose
+  solutions; when in doubt, return `Explained::Unknown`, which is always sound. `cut_off_because` names the bounds
+  that make a node infeasible on the same terms.
+- **`presolve` narrows the program.** It may tighten the global bounds, add constraints and declare the program
+  infeasible, each valid for every point the program and the rule accept: never a reduction that only keeps one
+  optimum.
+- **`declaration` is a promise.** It is read once when a solve starts. `Locks::Only(vec![(col, Lock::Up), ..])`
+  promises: for each column, moving an accepted point in a direction its lock does not name keeps it accepted. The
+  solver then keeps reductions that rest on that promise (dual fixing among them); a broken promise makes it fix
+  columns wrongly and report a wrong optimum or infeasibility as proven. `Locks::All`, the default, promises nothing
+  and gives those reductions up. Only columns the declaration involves may be tightened or branched on
+  (`ActionError::NotInvolved`), and columns priced during the solve are always involved. `Candidates::Fractional`
+  asks for relaxation points whose integer columns are fractional too, before the solver branches on them.
+- **Actions take effect after the method returns.** Bounds a context reports are those when the call began. Reducing,
+  branching and cutting off exclude each other within one call, and a cutoff ends the call: an action they exclude is
+  refused with `ActionError::Exclusive` and changes nothing.
+
+The handler never reports a solver's result code: `check` answers with a `Verdict`, `explain` with an `Explained`,
+and every other method acts through its context. The backend records the actions with `NodeActions`, which every
+backend shares, and derives what it tells the solver from what was recorded, so a branching without children, a
+branching together with a reduction, or an acceptance of a point `check` rejected cannot be expressed. What no type
+can check stays the handler's: that `check` is the rule, that a reduction, a cutoff or children keep every accepted
+point, that a `Complete` explanation implies its bound, that the locks name every direction that matters, and that
+enforcement makes progress.
+
+One constraint handler runs per solve; a later registration replaces the earlier. Two rules are composed as one
+handler whose methods call each part, so the author decides the order of their actions and the meaning of each
+`Reason`. A `LazyHandler` may run beside it: a lazy constraint is a constraint handler whose `enforce` only adds
+constraints, and the lazy handler sees only the points every other rule accepted.
+
+```rust
+use std::time::Duration;
+
+use culmen::prelude::*;
+use culmen::{Found, Phase, Script, Step, TiSlice};
+
+/// No two of `cols` take the same value: a rule no single linear inequality states.
+struct AllDifferent {
+    cols: Vec<Col>,
+    calls: u32,
+}
+
+impl AllDifferent {
+    /// The first two positions in `cols` whose columns share a value, and the value.
+    fn clash(&self, x: &TiSlice<Col, f64>) -> Option<(usize, usize, f64)> {
+        for (i, &a) in self.cols.iter().enumerate() {
+            for (j, &b) in self.cols.iter().enumerate().skip(i + 1) {
+                if (x[a] - x[b]).abs() < 0.5 {
+                    return Some((i, j, x[a].round()));
+                }
+            }
+        }
+        None
+    }
+
+    fn count(&mut self) {
+        self.calls += 1;
+        assert!(self.calls < 1_000_000, "AllDifferent: the handler ran without end");
+    }
+}
+
+impl<B: CustomConstraints> ConstraintHandler<B> for AllDifferent {
+    fn declaration(&self) -> Declaration {
+        // Moving any of the columns either way can create or remove a clash; the other columns are free.
+        let locks = self.cols.iter().map(|&col| (col, Lock::Both)).collect();
+        Declaration { locks: Locks::Only(locks), ..Declaration::default() }
+    }
+
+    fn check(&mut self, ctx: &mut B::Check<'_>) -> Verdict {
+        self.count();
+        if self.clash(ctx.candidate()).is_some() { Verdict::Reject } else { Verdict::Accept }
+    }
+
+    fn enforce(&mut self, ctx: &mut B::Enforce<'_>) {
+        self.count();
+        let Some((i, j, v)) = self.clash(ctx.candidate()) else { return };
+        let (a, b) = (self.cols[i], self.cols[j]);
+        // a ≠ v, or a = v and b ≠ v: four children, each excluding the clash, together every other point.
+        let ends = (Bounds::at_most(v - 1.0), Bounds::at_least(v + 1.0), Bounds::fixed(v));
+        let (Ok(below), Ok(above), Ok(fixed)) = ends else { return };
+        let children = vec![
+            Child { bounds: vec![(a, below)], ..Child::default() },
+            Child { bounds: vec![(a, above)], ..Child::default() },
+            Child { bounds: vec![(a, fixed), (b, below)], ..Child::default() },
+            Child { bounds: vec![(a, fixed), (b, above)], ..Child::default() },
+        ];
+        ctx.branch(children).expect("children that each narrow the node");
+    }
+
+    fn propagate(&mut self, ctx: &mut B::Propagate<'_>) {
+        self.count();
+        // A column fixed at v takes v from the ends of every other column's domain.
+        for (i, &a) in self.cols.iter().enumerate() {
+            let Some(domain) = ctx.bounds(a) else { continue };
+            if domain.lower() != domain.upper() {
+                continue;
+            }
+            let v = domain.lower();
+            let reason = Reason(u32::try_from(i).expect("fewer than 2³² columns"));
+            for &b in self.cols.iter().filter(|&&b| b != a) {
+                let Some(other) = ctx.bounds(b) else { continue };
+                let narrowed = if other.lower() == v {
+                    Bounds::new(v + 1.0, other.upper())
+                } else if other.upper() == v {
+                    Bounds::new(other.lower(), v - 1.0)
+                } else {
+                    continue;
+                };
+                match narrowed {
+                    Ok(narrowed) => ctx.tighten(b, narrowed, Some(reason)).expect("an involved column"),
+                    Err(_) => ctx.cut_off(),
+                }
+            }
+        }
+    }
+
+    fn explain(&mut self, ctx: &mut B::Explain<'_>) -> Explained {
+        // The tightening rested on the column at position `reason` being fixed: both its bounds.
+        let Some(&a) = usize::try_from(ctx.reason().0).ok().and_then(|i| self.cols.get(i)) else {
+            return Explained::Unknown;
+        };
+        let named = ctx.because(a, Bound::Lower).and_then(|()| ctx.because(a, Bound::Upper));
+        if named.is_ok() { Explained::Complete } else { Explained::Unknown }
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Three columns in {0, 1, 2}, pairwise different.
+    let mut m = Model::new();
+    let x = m.add_vars(3, |i| Var::integer().bounds(0.0, 2.0).name(format!("x[{i}]")));
+    m.maximize(x[0] + 2.0 * x[1] + 3.0 * x[2]);
+
+    // A scripted backend offers what a solver would: a node point where x0 and x2 clash, then a node with x1 fixed.
+    let at = Progress::at(Duration::ZERO, Phase::Mip);
+    let clash = Found { progress: at, objective: 8.0, values: vec![2.0, 0.0, 2.0].into() };
+    let node = vec![bounds!(0.0, 2.0); 3];
+    let mut fixed = node.clone();
+    fixed[1] = bounds!(0.0, 0.0);
+    let steps = [
+        Step::Enforce { found: clash, bounds: node.into() },
+        Step::Propagate { progress: at, bounds: fixed.into() },
+    ];
+    let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build()?)?;
+    let mut rule = AllDifferent { cols: x.to_vec(), calls: 0 };
+    solver.run().constraint(&mut rule).solve()?;
+
+    let record = &solver.backend().record;
+    assert_eq!(record.verdicts, [Verdict::Reject]);
+    // Two of the four children leave the node's bounds, x0 in [0, 2]: they are empty, and left out.
+    assert_eq!(record.enforced[0].children().map(<[_]>::len), Some(2));
+    // x1 = 0 raises the lower ends of x0 and x2 to 1, each tagged with x1's position.
+    let raised = bounds!(1.0, 2.0);
+    let expected = [(x[0], raised, Some(Reason(1))), (x[2], raised, Some(Reason(1)))];
+    assert_eq!(record.propagated[0].tightenings(), expected);
+    Ok(())
+}
+```
+
 ## Pairing callbacks
 
-Two callbacks run together as a pair `(a, b)`: each runs only for the events it asked for, `a` first, and the pair
-asks for the union. `&mut C` is a callback wherever `C` is, so a pair can borrow both and leave them readable
-afterwards. `()` is the callback that asks for nothing. Handlers pair the same way: `(a, b)` is a handler of a kind
-wherever both are, both run, `a` first, on one context, so at a price step the columns `b` adds follow those `a`
-added. One value in two roles that the backend calls apart is registered once in each, or, for lazy constraints and
-cuts, with `Run::lazy_and_cut`; two handlers that share state hold it behind a `&Mutex`, since a backend never
-calls two of them at once.
+Two callbacks run together as a pair `(a, b)`: each runs only for the events it asked for, `a` first, and the pair asks
+for the union. `&mut C` is a callback wherever `C` is, so a pair can borrow both and leave them readable afterwards.
+`()` is the callback that asks for nothing. Handlers pair the same way: `(a, b)` is a handler of a kind wherever both
+are, both run, `a` first, on one context, so at a price step the columns `b` adds follow those `a` added. A constraint
+handler does not pair: its explanations need the whole of a `Reason`, so two rules are one handler that calls both
+([Constraint handlers](#constraint-handlers)). One value in two roles that the backend calls apart is registered once in
+each, or, for lazy constraints and cuts, with `Run::lazy_and_cut`, and for a constraint handler and cuts, with
+`Run::constraint_and_cut`; two handlers that share state hold it behind a `&Mutex`, since a backend never calls two of
+them at once.
 
 ```rust
 use std::time::Duration;
@@ -540,7 +748,7 @@ takes_lazy::<culmen::Script>();
 
 HiGHS 1.16 offers no lazy constraints, user cuts or pricing; see [Limitations](highs.md#limitations).
 [SCIP](scip.md#callback-events), with the `scip` feature, delivers every observational event but a native one and
-has every search capability, through plugins it includes in each instance; it refuses pricing on a program with a
+takes lazy constraints, user cuts, heuristic solutions and pricing, through plugins it includes in each instance; it refuses pricing on a program with a
 quadratic objective with a typed error before it solves.
 
 ## Panics and threads
@@ -559,6 +767,7 @@ quadratic objective with a typed error before it solves.
 - [HiGHS](highs.md#callback-contexts): what each HiGHS context offers beyond the traits.
 - [SCIP](scip.md#callback-events): the SCIP plugin behind each event, lazy constraints, cuts, heuristic solutions and
   pricing.
-- [Testing](testing.md#testing-callbacks): driving callbacks and handlers with the `Script` backend.
+- [Testing](testing.md#testing-callbacks): driving callbacks and handlers, constraint handlers included, with the
+  `Script` backend.
 - [Backends](backends.md): how events map onto HiGHS, Gurobi and SCIP.
 - [Documentation index](README.md).

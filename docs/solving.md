@@ -114,6 +114,7 @@ sets, so the last call of a method is the one that counts:
 | `.callback(&mut callback)` | The [`Callback`](callbacks.md#callback), run after the stop and the observer, with the backend's full context types. | every backend |
 | `.start(start)` | The [start](#starts) the search begins from. | `B: Starts` |
 | `.lazy(&mut h)`, `.cut(&mut h)`, `.lazy_and_cut(&mut h)`, `.heuristic(&mut h)`, `.pricer(&mut p)` | The [search handlers](callbacks.md#search-handlers). | `B: LazyConstraints`, `UserCuts`, both, `Heuristics`, `Prices` |
+| `.constraint(&mut h)`, `.constraint_and_cut(&mut h)` | A [constraint handler](callbacks.md#constraint-handlers), alone or also cutting. | `B: CustomConstraints`, and `UserCuts` for both |
 
 A method of the last two rows exists only for a backend with the capability, so a start or a handler the backend
 would ignore does not compile. The run borrows its stop, observer, callback and handlers, so all of them outlive the

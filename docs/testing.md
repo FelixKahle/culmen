@@ -9,8 +9,8 @@ of the plain data.
 
 `culmen::Script` is an in-memory [backend](backends.md) that delivers a fixed list of `Step`s to the callback and the
 [search handlers](callbacks.md#search-handlers) and then ends with a fixed `Outcome`. It supports every event and has
-every search capability (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`), so it drives the whole callback
-layer, and it needs no native code; it runs under Miri.
+every search capability (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`, `CustomConstraints`), so it drives the
+whole callback layer, and it needs no native code; it runs under Miri.
 
 | Constructor | Script |
 |---|---|
@@ -30,10 +30,15 @@ Each step is one event, in the generic terms of [`Callback`](callbacks.md#callba
 | `Step::Cut { progress, relaxation }` | `CutHandler` | the relaxation; `add_cut` |
 | `Step::Heuristic(progress)` | `HeuristicHandler` | `supply`, and `supply_partial` as an inherent method of `ScriptHeuristic` |
 | `Step::Price { progress, mode, duals }` | `Pricer` | a `ScriptPrice`: the mode, the program's sense, the duals, `tolerance()` of `ScriptPrice::TOLERANCE`; `add_col`, `branch_early`, `report_bound` |
+| `Step::Check(found)` | `ConstraintHandler::check` | the point |
+| `Step::Enforce { found, bounds }` | `ConstraintHandler::check`, then `enforce` if it rejects | the point and the node's `bounds`; `add_constraint`, `tighten`, `branch`, `cut_off`, `cut_off_because` |
+| `Step::Propagate { progress, bounds }` | `ConstraintHandler::propagate` | the node's `bounds`; `tighten`, `cut_off`, `cut_off_because` |
+| `Step::Explain { progress, inferred, reason, before }` | `ConstraintHandler::explain` | the bound, the reason, the bounds `before` the tightening; `because` |
+| `Step::Presolve { progress, bounds }` | `ConstraintHandler::presolve` | the global `bounds`; `tighten`, `add_constraint`, `infeasible` |
 | `Step::Note(text)` | `NATIVE` | a `ScriptNote` with `text()` |
 
 A `Found` is `{ progress, objective, values }`. `step.event()` names a step's observational event kind, `None` for
-the four search steps.
+the search steps.
 
 The script behaves as a solver would:
 
@@ -44,7 +49,12 @@ The script behaves as a solver would:
   incumbent delivered before as `best` and the last bound reported as `bound`.
 - Actions are checked as a solver's would be ([`ActionError`](callbacks.md#contexts)) and recorded in
   `script.record`: the `settings` of each solve, the `lazy` constraints and `cuts` added, the solutions
-  `supplied`, the `starts` handed over, and one `PriceRound` per price step in `priced`, across every solve.
+  `supplied`, the `starts` handed over, and one `PriceRound` per price step in `priced`, across every solve. For a
+  constraint handler it records the `declarations` read, one per solve, every verdict of `check` in `verdicts`, the
+  actions of each enforcement and propagation in `enforced` and `propagated` (each a `NodeActions`, which checks them
+  as every backend does), each explanation's answer with the bounds it named in `explained`, and one
+  `PresolveRound` per presolve step in `presolved`. An enforce step asks `check` first and calls `enforce` only when
+  it rejects the point, as a solver does.
 - A priced column is checked and numbered by the solve's `Priced`, so every later step of the solve counts it: a
   lazy constraint may name it, and a supplied solution holds a value for it. A `PriceRound` holds the ids it `added`,
   the last `bound` reported, and whether the round ended `early`; the columns themselves are the program's
