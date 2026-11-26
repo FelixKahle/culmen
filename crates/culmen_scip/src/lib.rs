@@ -162,8 +162,7 @@ pub use callback::{
     LazySource, ScipCut, ScipEvent, ScipHeuristic, ScipLazy, ScipLog, ScipPoll, ScipPrice, ScipProgress, ScipSolution,
 };
 use culmen_core::{
-    Backend, Callback, Events, ModelClasses, Outcome, Priced, Program, ProgramFeature, ProgramFeatures, Settings,
-    Solved, Start, Unsupported,
+    Backend, Callback, Events, ModelClasses, Outcome, Priced, Program, Settings, Solved, Start, Starts, Unsupported,
 };
 pub use error::{Number, RetCode, ScipError};
 pub use options::{Emphasis, ParamValue, ScipOptions, ScipParam};
@@ -414,9 +413,6 @@ impl Backend for Scip {
     /// objective is flat, less close to the optimal point.
     const CLASSES: ModelClasses = ModelClasses::ALL;
 
-    /// Starts: a full start as a SCIP solution, a sparse one as a partial solution SCIP completes.
-    const FEATURES: ProgramFeatures = ProgramFeatures::of(&[ProgramFeature::StartSolution]);
-
     /// Builds the program into a new SCIP instance, one variable per column and one linear constraint per row (a
     /// ranged row has both sides, a free row neither), and a quadratic objective's epigraph, replacing the instance
     /// before.
@@ -432,19 +428,6 @@ impl Backend for Scip {
         refuse_unsupported(program)?;
         self.instance = Some(Instance::load(program)?);
         Ok(())
-    }
-
-    /// Hands SCIP the start for the next solve, which SCIP checks, and completes when it is sparse, as that solve
-    /// starts. An infeasible start, or a sparse one SCIP cannot complete, is dropped then, as SCIP drops any.
-    ///
-    /// # Errors
-    ///
-    /// [`ScipError::NotLoaded`] before a load, [`ScipError::Start`] for a start that does not fit the program,
-    /// [`ScipError::Call`] when SCIP refuses a call.
-    fn set_start(&mut self, start: &Start) -> Result<(), ScipError> {
-        let instance = self.instance.as_mut().ok_or(ScipError::NotLoaded)?;
-        start.check(instance.num_cols()).map_err(|_| ScipError::Start)?;
-        instance.add_start(start)
     }
 
     /// Solves the loaded program under the backend's options and `settings`, from its start and the last solve's best
@@ -501,6 +484,22 @@ impl Backend for Scip {
             status,
             elapsed,
         })
+    }
+}
+
+/// Starts: a full start as a SCIP solution, a sparse one as a partial solution SCIP completes.
+impl Starts for Scip {
+    /// Hands SCIP the start for the next solve, which SCIP checks, and completes when it is sparse, as that solve
+    /// starts. An infeasible start, or a sparse one SCIP cannot complete, is dropped then, as SCIP drops any.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::NotLoaded`] before a load, [`ScipError::Start`] for a start that does not fit the program,
+    /// [`ScipError::Call`] when SCIP refuses a call.
+    fn set_start(&mut self, start: &Start) -> Result<(), ScipError> {
+        let instance = self.instance.as_mut().ok_or(ScipError::NotLoaded)?;
+        start.check(instance.num_cols()).map_err(|_| ScipError::Start)?;
+        instance.add_start(start)
     }
 }
 

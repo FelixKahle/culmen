@@ -110,9 +110,10 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
   `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the program, the
   same way for every backend. A class is a property of the program, which edits change, so it stays a run-time check.
-- **Capabilities of the backend are traits.** Each analysis after a solve is a trait a backend implements or leaves
-  out (`DualAnalysis`, …), and the `Solver` methods of an analysis exist only for a backend that has it:
-  `solver.duals()` on a backend without duals does not compile.
+- **Capabilities of the backend are traits.** Taking a start and each analysis after a solve are traits a backend
+  implements or leaves out (`Starts`, `DualAnalysis`, …), and the `Solver` methods that need one exist only for a
+  backend that has it: `solver.duals()` on a backend without duals, or a start handed to a backend that takes none,
+  does not compile.
 - **Actions live where the solver honours them.** Only a poll context can interrupt, only a lazy context can add a
   lazy constraint, only a heuristic context can supply a solution, only a price context can add a column. Calling an action at a point where the solver
   would ignore it does not compile.

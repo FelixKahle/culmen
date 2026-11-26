@@ -12,14 +12,14 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use typed_index_collections::TiVec;
 
-use crate::{Col, ProgramFeature, ProgramFeatures};
+use crate::Col;
 
 /// A starting solution for one solve: a value for every column, or for some.
 ///
 /// The solver may start its search from it: a MIP solver takes a feasible start as its first incumbent and may
 /// complete a partial or infeasible one, an LP solver may start from it. A start need not be feasible, but every value
 /// must be finite and name a column of the program; [`Start::check`] states it, and
-/// [`Solver::solve`](crate::Solver::solve) checks it before the backend sees the start.
+/// [`Solver::solve_from`](crate::Solver::solve_from) checks it before the backend sees the start.
 ///
 /// ```
 /// use culmen_core::{Col, Start, StartError, TiVec};
@@ -187,31 +187,21 @@ impl fmt::Display for StartError {
 
 impl core::error::Error for StartError {}
 
-/// Why [`Solver::solve`](crate::Solver::solve) failed: the request uses a feature the backend lacks, its start does
-/// not fit the program, or the backend failed with its own error `E`.
+/// Why [`Solver::solve`](crate::Solver::solve) failed: the start does not fit the program, or the backend failed
+/// with its own error `E`.
 ///
-/// The first two are the same for every backend: they are decided before the backend sees the request.
+/// The first is the same for every backend: it is decided before the backend sees the start.
 ///
 /// ```
-/// use culmen_core::{ProgramFeature, ProgramFeatures, SolveError};
+/// use culmen_core::{Col, SolveError, StartError};
 ///
-/// let error = SolveError::<std::io::Error>::UnsupportedFeature {
-///     feature: ProgramFeature::StartSolution,
-///     supported: ProgramFeatures::NONE,
-/// };
-/// assert_eq!(error.to_string(), "Solver: the backend takes {}, not a start solution");
+/// let error = SolveError::<std::io::Error>::Start(StartError::RepeatedColumn { col: Col::new(1) });
+/// assert_eq!(error.to_string(), "Solver: the start is refused: Start: Col(1) is given twice");
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum SolveError<E> {
-    /// The request uses a feature not in [`Backend::FEATURES`](crate::Backend::FEATURES).
-    UnsupportedFeature {
-        /// The feature the request uses.
-        feature: ProgramFeature,
-        /// The features the backend takes.
-        supported: ProgramFeatures,
-    },
-    /// The request's start does not fit the program.
+    /// The start does not fit the program.
     Start(StartError),
     /// The backend failed.
     Backend(E),
@@ -220,10 +210,7 @@ pub enum SolveError<E> {
 impl<E: fmt::Display> fmt::Display for SolveError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedFeature { feature, supported } => {
-                write!(f, "Solver: the backend takes {supported}, not {feature}")
-            }
-            Self::Start(error) => write!(f, "Solver: the request's start is refused: {error}"),
+            Self::Start(error) => write!(f, "Solver: the start is refused: {error}"),
             Self::Backend(error) => write!(f, "Solver: the backend failed: {error}"),
         }
     }
@@ -232,7 +219,6 @@ impl<E: fmt::Display> fmt::Display for SolveError<E> {
 impl<E: core::error::Error + 'static> core::error::Error for SolveError<E> {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::UnsupportedFeature { .. } => None,
             Self::Start(error) => Some(error),
             Self::Backend(error) => Some(error),
         }

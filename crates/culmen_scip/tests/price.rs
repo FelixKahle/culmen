@@ -826,8 +826,9 @@ fn test_a_pricing_solve_starts_from_a_start_over_the_programs_columns() {
     let mut solver = Solver::new(Scip::new(), program).unwrap();
     let mut pricer = Pricer::new(patterns, 3..11, Pick::Every);
     // A = 3, D = 1, F = 2: six rolls, feasible.
-    let request = limited(true).start(vec![3.0, 1.0, 2.0]);
-    let solved = solver.solve_with(request, &mut pricer).unwrap();
+    let solved = solver
+        .solve_with_from(limited(true), vec![3.0, 1.0, 2.0], &mut pricer)
+        .unwrap();
     assert!(close(optimal(solved.outcome).objective, 5.0, 1e-9));
 }
 

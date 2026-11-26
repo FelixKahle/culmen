@@ -284,10 +284,10 @@ and `contains_all` (a set), `union`, `intersection`, `difference` and `complemen
 ## Features
 
 `program.features()` is a `ProgramFeatures` set of what the program uses beyond its class, each a `ProgramFeature`:
-`SemiContinuous` and `SemiInteger` for a column of that kind, `MultipleObjectives` for a further objective. A fourth,
-`StartSolution`, belongs to a solve's [start](solving.md#starts), never to a program. A backend declares the features
-it takes in `Backend::FEATURES`, and [`Solver::new`](solving.md#model-classes-and-refusal) refuses a program using
-any other. `ProgramFeature` is non-exhaustive; `ProgramFeatures` is a set like `ModelClasses`, with the same methods.
+`SemiContinuous` and `SemiInteger` for a column of that kind, `MultipleObjectives` for a further objective. A
+[start](solving.md#starts) is no feature: it belongs to a solve, and a backend takes one by implementing `Starts`. A
+backend declares the features it takes in `Backend::FEATURES`, and
+[`Solver::new`](solving.md#model-classes-and-refusal) refuses a program using any other. `ProgramFeature` is non-exhaustive; `ProgramFeatures` is a set like `ModelClasses`, with the same methods.
 
 ```rust
 use culmen::prelude::*;
@@ -301,7 +301,7 @@ fn main() -> Result<(), culmen::ModelError> {
     let features = m.build()?.features();
     assert_eq!(features, ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::MultipleObjectives]));
     assert_eq!(features.to_string(), "{semi-continuous columns, multiple objectives}");
-    assert!(!features.contains(ProgramFeature::StartSolution));
+    assert!(!features.contains(ProgramFeature::SemiInteger));
     Ok(())
 }
 ```

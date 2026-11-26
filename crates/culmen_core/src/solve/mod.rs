@@ -21,7 +21,9 @@ pub use analysis::{
     Ranged, Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
 };
 pub use backend::{Backend, Callback};
-pub use capability::{BasisAnalysis, DualAnalysis, IisAnalysis, RangingAnalysis, RayAnalysis, RelaxationAnalysis};
+pub use capability::{
+    BasisAnalysis, DualAnalysis, IisAnalysis, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Starts,
+};
 pub use context::{
     ActionError, AddedRow, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, PriceMode,
     ProgressContext, SolutionContext, Unsupported,
@@ -191,7 +193,7 @@ impl<B: Backend> Solver<B> {
         (self.backend, self.program)
     }
 
-    /// Solves under the request's settings, from its start, polling its stop and reporting to its observer.
+    /// Solves under the request's settings, polling its stop and reporting to its observer.
     ///
     /// A solve whose callback priced columns ([`Callback::prices`](crate::Callback::prices)) appends them to the
     /// program, in the order of their ids, however it ends: returning, failing or unwinding from a panic. The backend
@@ -200,11 +202,8 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Errors
     ///
-    /// [`SolveError::Backend`] when the backend refuses the program it reloads after an edit whose reload failed;
-    /// [`SolveError::UnsupportedFeature`] for a start when [`Backend::FEATURES`] lacks
-    /// [`ProgramFeature::StartSolution`], else [`SolveError::Start`] for a start [`Start::check`] refuses, both before
-    /// the backend sees the request; [`SolveError::Backend`] when the backend refuses the start, a setting cannot be
-    /// applied or the solver fails.
+    /// [`SolveError::Backend`] when the backend refuses the program it reloads after an edit whose reload failed, a
+    /// setting cannot be applied or the solver fails.
     ///
     /// # Panics
     ///
@@ -227,11 +226,27 @@ impl<B: Backend> Solver<B> {
         request: Request<'_>,
         callback: &mut impl Callback<B>,
     ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
-        let (watch, settings, start) = request.into_watch();
+        self.run(request, callback, |_| Ok(()))
+    }
+
+    /// Syncs the backend, calls `before`, and solves under `request` with `callback`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::solve`], and whatever `before` returns.
+    ///
+    /// # Panics
+    ///
+    /// When the observer or `callback` panics: the panic continues once the solver has stopped.
+    fn run(
+        &mut self,
+        request: Request<'_>,
+        callback: &mut impl Callback<B>,
+        before: impl FnOnce(&mut Self) -> Result<(), SolveError<B::Error>>,
+    ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
+        let (watch, settings) = request.into_watch();
         self.sync().map_err(SolveError::Backend)?;
-        if let Some(start) = &start {
-            self.hand_start(start)?;
-        }
+        before(self)?;
         // The backend's result is replaced from here on, so the last solve is read no longer even when the backend
         // fails or a panic unwinds out of it.
         self.ended = None;
@@ -263,19 +278,68 @@ impl<B: Backend> Solver<B> {
         }
         Ok(())
     }
+}
 
-    /// Checks a start against the backend's features and the program, and hands it to the backend.
+impl<B: Starts> Solver<B> {
+    /// Solves as [`Solver::solve`] does, from `start`: a full [`TiVec<Col, f64>`](crate::TiVec) or `Vec<f64>`, or a
+    /// sparse `Vec<(Col, f64)>`.
+    ///
+    /// The start is checked against the program with [`Start::check`] before the backend sees it; a start the check
+    /// refuses leaves the last solve readable.
+    ///
+    /// ```
+    /// use culmen_core::{Model, Request, Script, Solver, Start, Var};
+    ///
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::binary());
+    /// m.maximize(x);
+    /// let mut solver = Solver::new(Script::optimal(1.0, vec![1.0]), m.build()?)?;
+    /// solver.solve_from(Request::new(), vec![(x, 1.0)])?;
+    /// assert_eq!(solver.backend().record.starts, [Start::Sparse(vec![(x, 1.0)])]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///
-    /// As [`Solver::solve`] states for a start.
+    /// [`SolveError::Start`] for a start [`Start::check`] refuses, before the backend sees it;
+    /// [`SolveError::Backend`] as for [`Solver::solve`], and when the backend refuses the start.
+    ///
+    /// # Panics
+    ///
+    /// When the observer panics: the panic continues once the solver has stopped.
+    pub fn solve_from(
+        &mut self,
+        request: Request<'_>,
+        start: impl Into<Start>,
+    ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
+        self.solve_with_from(request, start, &mut ())
+    }
+
+    /// Solves as [`Solver::solve_with`] does, from `start` as [`Solver::solve_from`] takes it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::solve_from`].
+    ///
+    /// # Panics
+    ///
+    /// When the observer or `callback` panics: the panic continues once the solver has stopped.
+    pub fn solve_with_from(
+        &mut self,
+        request: Request<'_>,
+        start: impl Into<Start>,
+        callback: &mut impl Callback<B>,
+    ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
+        let start = start.into();
+        self.run(request, callback, |solver| solver.hand_start(&start))
+    }
+
+    /// Checks a start against the program, and hands it to the backend.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::solve_from`] states for a start.
     fn hand_start(&mut self, start: &Start) -> Result<(), SolveError<B::Error>> {
-        if !B::FEATURES.contains(ProgramFeature::StartSolution) {
-            return Err(SolveError::UnsupportedFeature {
-                feature: ProgramFeature::StartSolution,
-                supported: B::FEATURES,
-            });
-        }
         start.check(self.program.num_cols()).map_err(SolveError::Start)?;
         self.ended = None;
         self.backend.set_start(start).map_err(SolveError::Backend)

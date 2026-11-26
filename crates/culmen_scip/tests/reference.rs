@@ -102,7 +102,7 @@ proptest! {
         let first = solver.solve(exact()).unwrap().outcome;
         agrees(&program, &expected, &first)?;
         if let Some(best) = first.solution() {
-            let again = solver.solve(exact().start(best.values.clone())).unwrap();
+            let again = solver.solve_from(exact(), best.values.clone()).unwrap();
             agrees(&program, &expected, &again.outcome)?;
         }
         let mut sparse: Vec<(Col, f64)> = Vec::new();
@@ -111,7 +111,7 @@ proptest! {
                 sparse.push((Col::new(j), f64::from(value)));
             }
         }
-        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve(exact().start(sparse)).unwrap();
+        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve_from(exact(), sparse).unwrap();
         agrees(&program, &expected, &solved.outcome)?;
     }
 

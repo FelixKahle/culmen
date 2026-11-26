@@ -20,7 +20,8 @@ known only to a callback, cuts of your own, and column generation at every node 
 | `Scip::EVENTS` | Every event but `NATIVE`: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `LAZY`, `CUT` and `HEURISTIC`. |
 | `Scip::PRICES` | `true`: SCIP prices for a callback whose `prices()` is true ([Pricing](#pricing)). |
 | `Scip::CLASSES` | `Lp`, `Milp`, `Qp` and `Miqp`; see [Quadratic programs](#quadratic-programs). |
-| `Scip::FEATURES` | `StartSolution` only; see [Starts](#starts). |
+| `Scip::FEATURES` | None: no semi columns and no several objectives; see [Limitations](#limitations). |
+| `Starts` | Implemented; see [Starts](#starts). |
 | Analysis traits | None implemented; see [Limitations](#limitations). |
 | `culmen_scip::version()` | The version of the linked SCIP; it displays as `10.0.x`. |
 
@@ -284,9 +285,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Starts
 
-`Scip::FEATURES` is `StartSolution` alone. A [start](solving.md#starts) reaches SCIP before the solve: a full start as
-a SCIP solution (`SCIPcreateSol`, `SCIPaddSolFree`), a sparse one as a partial solution (`SCIPcreatePartialSol`) that
-SCIP completes when the solve begins. SCIP checks a start as it begins; an infeasible start, or a sparse one it cannot
+`Scip` implements `Starts`, so `solve_from` takes a start. A [start](solving.md#starts) reaches SCIP before the
+solve: a full start as a SCIP solution (`SCIPcreateSol`, `SCIPaddSolFree`), a sparse one as a partial solution
+(`SCIPcreatePartialSol`) that SCIP completes when the solve begins. SCIP checks a start as it begins; an infeasible start, or a sparse one it cannot
 complete, is dropped then, without an error, as SCIP drops any. A feasible start is the solve's first incumbent. SCIP
 completes a sparse start with its `completesol` heuristic, a sub-SCIP over the columns left open, so a `heuristics`
 emphasis of `Off` keeps a sparse start from being completed, and it is dropped.
@@ -312,7 +313,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // A start taking the last two items, worth 2.1, is the best one node holds.
     let last_two = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0];
-    let started = solver.solve(Request::new().settings_from(one_node.clone()).start(last_two))?;
+    let started = solver.solve_from(Request::new().settings_from(one_node.clone()), last_two)?;
     let Outcome::Stopped { best: Some(best), .. } = started.outcome else { return Err("no start".into()) };
     assert!((best.objective - 2.1).abs() < 1e-9);
 
@@ -734,8 +735,8 @@ the call or parameter and SCIP's return code, and the message is on standard err
 
 ## Limitations
 
-- **No semi columns and no several objectives.** `Scip::FEATURES` is `StartSolution` alone, so `Solver::new` refuses a
-  program with a semi-continuous or semi-integer column or with further objectives ([Starts](#starts)).
+- **No semi columns and no several objectives.** `Scip::FEATURES` is empty, so `Solver::new` refuses a program with a
+  semi-continuous or semi-integer column or with further objectives ([Starts](#starts)).
 - **No analyses.** `Scip` implements none of the analysis traits, so `Solver<Scip>` has no `duals`, `basis`,
   `ranging`, rays, `iis` or `feasibility_relaxation` method ([Analysis](analysis.md)).
 - **No partial heuristic solutions.** `supply_partial` is always refused; a partial solution is a sparse start

@@ -16,6 +16,7 @@ each time with its own request.
 |---|---|
 | `solve(request)` | Solves under the request's settings, polling its stop and reporting to its observer. |
 | `solve_with(request, &mut callback)` | The same, and also runs a [`Callback`](callbacks.md#callback) with the backend's full context types. |
+| `solve_from(request, start)`, `solve_with_from(request, start, &mut callback)` | The same two from a [start](#starts), for a backend that implements `Starts`. |
 | `program()` | The loaded program, grown by every column a solve priced. |
 | `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
 | `into_parts()` | The backend and the program, taken apart; the backend may be behind the program after a failed edit or a solve that priced. |
@@ -61,8 +62,8 @@ sees a class it did not declare.
 
 The same holds for [features](program.md#features): every backend declares the features it takes as
 `Backend::FEATURES`, a `ProgramFeatures` set (none unless declared), and `Solver::new` refuses a program using any
-other before `load`. `Highs` takes every feature; `Scip` takes starts only, so it refuses semi columns and further
-objectives; `Script` takes every feature and records each start.
+other before `load`. `Highs` takes every feature; `Scip` takes none, so it refuses semi columns and further
+objectives; `Script` takes every feature.
 
 The refusal is typed: `LoadError<E>` is `Unsupported { class, supported }`, naming the program's class and the backend's
 set, `UnsupportedFeature { feature, supported }`, naming the first feature the backend lacks and its set, or
@@ -102,32 +103,35 @@ A `Request` is built by chaining. Each method replaces what it sets:
 
 | Method | Sets |
 |---|---|
-| `Request::new()` | The solver's defaults, no stop, no observer, no start. |
+| `Request::new()` | The solver's defaults, no stop, no observer. |
 | `.time_limit(duration)` | The wall-clock time the solve may take. |
 | `.settings_from(settings)` | Every setting at once, from a [`Settings`](#settings); it replaces a time limit set before. |
 | `.stop(&stop)` | The [`Stop`](callbacks.md#stop) polled while the solve runs. |
 | `.observer(&mut observer)` | The [`Observer`](callbacks.md#observer) of progress, improving solutions and log lines. |
 | `.progress_interval(duration)` | The least time between two progress reports; `Request::DEFAULT_PROGRESS_INTERVAL`, one second, unless set. |
-| `.start(start)` | A [start](#starts) handed to the solver before the solve: a full `TiVec<Col, f64>` or `Vec<f64>`, or a sparse `Vec<(Col, f64)>`. |
 
-`request.settings()` and `request.start_solution()` read the settings and the start back. The request borrows its
-stop and observer, so both outlive the solve and can be read afterwards.
+`request.settings()` reads the settings back. The request borrows its stop and observer, so both outlive the solve
+and can be read afterwards. A [start](#starts) goes beside the request, to `solve_from`.
 
 ## Starts
 
 A `Start` is a solution the solver may start from: `Start::Full(values)`, one value per column, or
 `Start::Sparse(entries)`, values for some columns, the solver choosing the rest. A MIP solver takes a feasible start
 as its first incumbent and may complete a partial or infeasible one; an LP solver may start from it. A start need not
-be feasible, but it must fit the program: `start.check(num_cols)` states it, and `solve` checks it before the backend
-sees it. A start applies to its one solve; a backend may also start a solve from the last solve's best solution, as
-HiGHS ([HiGHS](highs.md#semi-columns-several-objectives-and-starts)) and SCIP
-([SCIP](scip.md#how-options-and-settings-layer)) do until an edit.
+be feasible, but it must fit the program: `start.check(num_cols)` states it.
 
-`solve` refuses a start typed, as `SolveError`:
+A backend that takes a start implements `Starts`, as HiGHS, SCIP and the `Script` do, and only for such a backend
+does the `Solver` have `solve_from(request, start)` and `solve_with_from(request, start, &mut callback)`, the
+counterparts of `solve` and `solve_with`. A start is a full `TiVec<Col, f64>` or `Vec<f64>`, or a sparse
+`Vec<(Col, f64)>`, and `solve_from` checks it before the backend sees it. A start applies to its one solve; a backend
+may also start a solve from the last solve's best solution, as HiGHS
+([HiGHS](highs.md#semi-columns-several-objectives-and-starts)) and SCIP ([SCIP](scip.md#how-options-and-settings-layer))
+do until an edit.
+
+`solve_from` refuses a start typed, as `SolveError`:
 
 | Variant | When |
 |---|---|
-| `UnsupportedFeature { feature: StartSolution, supported }` | The backend's `FEATURES` lacks `StartSolution`. |
 | `Start(StartError::Length { expected, found })` | A full start holds another number of values than the program has columns. |
 | `Start(StartError::UnknownColumn { col })` | A sparse start names a column the program does not have. |
 | `Start(StartError::RepeatedColumn { col })` | A sparse start names a column twice. |
@@ -157,10 +161,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Items 1 and 3, worth 21, are the optimum: HiGHS takes them as its first incumbent.
     let mut first = First::default();
     let start = vec![(take[0], 0.0), (take[1], 1.0), (take[2], 0.0), (take[3], 1.0)];
-    solver.solve(Request::new().observer(&mut first).start(start))?;
+    solver.solve_from(Request::new().observer(&mut first), start)?;
     assert_eq!(first.0, Some(21.0));
 
-    let error = solver.solve(Request::new().start(vec![(take[1], 1.0), (take[1], 0.0)])).unwrap_err();
+    let error = solver.solve_from(Request::new(), vec![(take[1], 1.0), (take[1], 0.0)]).unwrap_err();
     assert_eq!(error, SolveError::Start(StartError::RepeatedColumn { col: take[1] }));
     Ok(())
 }
@@ -488,9 +492,9 @@ The `branch_and_price` example of the `culmen` crate prices cutting patterns at 
 ## Errors
 
 `Solver::new` fails with a [`LoadError<B::Error>`](#model-classes-and-refusal): a class the backend does not solve, a
-feature it does not take, or the backend's own error when it refuses the program. `solve` and `solve_with` fail with a
-`SolveError<B::Error>`: a [start](#starts) the backend does not take or that does not fit the program, both decided
-before the backend sees the request, or `SolveError::Backend` with the backend's own error, a setting it cannot
+feature it does not take, or the backend's own error when it refuses the program. A solve fails with a
+`SolveError<B::Error>`: a [start](#starts) that does not fit the program, decided before the backend sees it, or
+`SolveError::Backend` with the backend's own error, a setting it cannot
 apply, or a failed run. An edit fails with an [`EditError<B::Error>`](#editing-a-loaded-program): an id the program does
 not have, a number that is not finite, invalid bounds, a class or feature the backend lacks, all decided before the
 backend sees the edit, or `EditError::Backend` when the backend refuses it. For HiGHS the backend's error is

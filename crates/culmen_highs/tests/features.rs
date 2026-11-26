@@ -220,7 +220,7 @@ fn test_a_full_start_is_the_first_incumbent() {
     let mut fresh = Solver::new(Highs::new(), program).unwrap();
     let mut seen = Improvements::default();
     let solved = fresh
-        .solve(Request::new().observer(&mut seen).start(best.values.clone()))
+        .solve_from(Request::new().observer(&mut seen), best.values.clone())
         .unwrap();
     assert_eq!(seen.0.first(), Some(&best.objective), "{:?}", seen.0);
     assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(best.objective));
@@ -238,7 +238,7 @@ fn test_a_sparse_start_is_completed_by_highs() {
         .collect();
     let mut fresh = Solver::new(Highs::new(), program).unwrap();
     let mut seen = Improvements::default();
-    fresh.solve(Request::new().observer(&mut seen).start(chosen)).unwrap();
+    fresh.solve_from(Request::new().observer(&mut seen), chosen).unwrap();
     assert_eq!(seen.0.first(), Some(&best.objective), "{:?}", seen.0);
 }
 
@@ -267,7 +267,7 @@ fn test_a_sparse_starts_unset_columns_are_completed_by_highs() {
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
     let mut seen = ImprovedValues::default();
     let best = solver
-        .solve(Request::new().observer(&mut seen).start(vec![(x, 3.0)]))
+        .solve_from(Request::new().observer(&mut seen), vec![(x, 3.0)])
         .unwrap()
         .outcome
         .into_solution()
@@ -287,7 +287,7 @@ fn test_a_start_of_an_lp_leaves_its_optimum() {
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
     for start in [Start::Full(vec![1.0, 1.0].into()), Start::Sparse(vec![(y, 3.0)])] {
         let best = solver
-            .solve(Request::new().start(start))
+            .solve_from(Request::new(), start)
             .unwrap()
             .outcome
             .into_solution()
@@ -308,7 +308,7 @@ fn test_a_sparse_start_may_hold_a_semi_columns_zero() {
     m.minimize(x + 2 * y);
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
     let best = solver
-        .solve(Request::new().start(vec![(x, 0.0), (y, 1.0)]))
+        .solve_from(Request::new(), vec![(x, 0.0), (y, 1.0)])
         .unwrap()
         .outcome
         .into_solution()
@@ -320,7 +320,7 @@ fn test_a_sparse_start_may_hold_a_semi_columns_zero() {
 fn test_a_start_that_does_not_fit_is_refused_typed() {
     let program = knapsack();
     let mut solver = Solver::new(Highs::new(), program).unwrap();
-    let refused = |solver: &mut Solver<Highs>, start: Start| match solver.solve(Request::new().start(start)) {
+    let refused = |solver: &mut Solver<Highs>, start: Start| match solver.solve_from(Request::new(), start) {
         Err(SolveError::Start(error)) => error,
         other => panic!("{other:?}"),
     };

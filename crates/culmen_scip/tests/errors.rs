@@ -13,7 +13,7 @@ use core::num::NonZeroU64;
 
 use culmen_core::{
     Backend, Bounds, Col, Linear, LoadError, Model, Priced, Program, ProgramColumn, ProgramFeature, ProgramPlan,
-    Request, Row, Settings, SolveError, Solver, Start, Var, bounds,
+    Request, Row, Settings, SolveError, Solver, Start, Starts, Var, bounds,
 };
 use culmen_scip::{Number, ParamValue, RetCode, Scip, ScipError, ScipOptions};
 

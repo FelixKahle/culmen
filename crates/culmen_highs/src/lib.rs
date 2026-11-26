@@ -71,7 +71,7 @@ use culmen_core::{
 };
 use culmen_core::{
     Basis, BasisAnalysis, Col, DualAnalysis, Duals, Iis, IisAnalysis, Ranging, RangingAnalysis, RayAnalysis,
-    RelaxationAnalysis, Relaxed, Row, TiVec, Weights,
+    RelaxationAnalysis, Relaxed, Row, Starts, TiVec, Weights,
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
 pub use options::{
@@ -666,8 +666,8 @@ impl Backend for Highs {
     /// MIQP problems with HiGHS").
     const CLASSES: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp, ModelClass::Qp]);
 
-    /// HiGHS 1.16 takes semi-continuous and semi-integer columns (up to [`Highs::SEMI_UPPER_LIMIT`]), multiple
-    /// linear objectives, and starts.
+    /// HiGHS 1.16 takes semi-continuous and semi-integer columns (up to [`Highs::SEMI_UPPER_LIMIT`]) and multiple
+    /// linear objectives.
     const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
 
     fn load(&mut self, program: &Program) -> Result<(), HighsError> {
@@ -694,16 +694,6 @@ impl Backend for Highs {
         Ok(())
     }
 
-    /// Hands HiGHS the start as its solution, which the next run starts from, through `Highs_setSparseSolution`.
-    ///
-    /// HiGHS chooses the columns a sparse start leaves out, and for a MIP completes them by a sub-MIP. A sparse start
-    /// without entries leaves HiGHS starting from its last solution, as a request without a start does.
-    fn set_start(&mut self, start: &Start) -> Result<(), HighsError> {
-        let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
-        start.check(loaded.num_cols()).map_err(|_| HighsError::Start)?;
-        self.instance.set_solution(start.entries())
-    }
-
     /// Runs HiGHS on the loaded model; HiGHS prices nothing, so `priced` stays as it was handed over.
     fn solve(
         &mut self,
@@ -728,6 +718,18 @@ impl Backend for Highs {
             status,
             elapsed: ran.elapsed,
         })
+    }
+}
+
+impl Starts for Highs {
+    /// Hands HiGHS the start as its solution, which the next run starts from, through `Highs_setSparseSolution`.
+    ///
+    /// HiGHS chooses the columns a sparse start leaves out, and for a MIP completes them by a sub-MIP. A sparse start
+    /// without entries leaves HiGHS starting from its last solution, as a solve without a start does.
+    fn set_start(&mut self, start: &Start) -> Result<(), HighsError> {
+        let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
+        start.check(loaded.num_cols()).map_err(|_| HighsError::Start)?;
+        self.instance.set_solution(start.entries())
     }
 }
 

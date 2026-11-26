@@ -8,7 +8,7 @@ use core::fmt;
 use super::context::{
     CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext, SolutionContext,
 };
-use crate::{Edit, Events, ModelClasses, Priced, Program, ProgramFeatures, Settings, Solved, Start};
+use crate::{Edit, Events, ModelClasses, Priced, Program, ProgramFeatures, Settings, Solved};
 
 /// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls a [`Callback`] as the
 /// search goes.
@@ -44,7 +44,7 @@ use crate::{Edit, Events, ModelClasses, Priced, Program, ProgramFeatures, Settin
 ///   `solve`; it never aborts the process and never leaves the backend unusable.
 /// - [`Settings`] apply to this one solve and take precedence over the backend's own options.
 ///
-/// A backend's further capabilities, the analyses after a solve, are the traits of
+/// A backend's further capabilities, taking a start and the analyses after a solve, are the traits of
 /// [`capability`](crate::capability), each with its own contract.
 pub trait Backend: Sized {
     /// Why loading or solving failed.
@@ -81,8 +81,8 @@ pub trait Backend: Sized {
     /// The classes of program this backend solves; [`Solver::new`](crate::Solver::new) refuses any other.
     const CLASSES: ModelClasses;
 
-    /// The features this backend takes; [`Solver::new`](crate::Solver::new) refuses a program using any other, and
-    /// [`Solver::solve`](crate::Solver::solve) a request using any other. None unless declared.
+    /// The features of a program this backend takes; [`Solver::new`](crate::Solver::new) and the edits refuse a
+    /// program using any other. None unless declared.
     const FEATURES: ProgramFeatures = ProgramFeatures::NONE;
 
     /// Loads a program, replacing the one before.
@@ -94,21 +94,6 @@ pub trait Backend: Sized {
     ///
     /// When the solver refuses the program.
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
-
-    /// Hands the solver a start for the next solve of the loaded program.
-    ///
-    /// Called by [`Solver::solve`](crate::Solver::solve) right before [`Backend::solve`], only when
-    /// [`Backend::FEATURES`] holds [`ProgramFeature::StartSolution`](crate::ProgramFeature::StartSolution) and with a
-    /// start [`Start::check`] accepts for the loaded program. The default does nothing, as befits a backend that does
-    /// not declare the feature.
-    ///
-    /// # Errors
-    ///
-    /// When the solver refuses the start.
-    fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> {
-        let _ = start;
-        Ok(())
-    }
 
     /// Changes the loaded program into `program`, which is the loaded program changed as `edit` names.
     ///

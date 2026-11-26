@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a backend can do beyond [`Backend`]: the analyses after a solve.
+//! What a backend can do beyond [`Backend`]: take a start, and the analyses after a solve.
 //!
 //! Each capability is a trait a backend implements or does not, and each [`Solver`](crate::Solver) method that needs
 //! one exists only for a backend that has it, so asking a backend for what it cannot do does not compile. What
@@ -18,7 +18,23 @@
 //! [`BasisAnalysis::basis`] after a solve, the rays after a solve that ended as they prove, a basis or weights that fit
 //! the program. Called otherwise, it may fail or give an unspecified result, never undefined behaviour.
 
-use crate::{Backend, Basis, Col, Duals, Iis, Program, Ranging, Relaxed, Row, TiVec, Weights};
+use crate::{Backend, Basis, Col, Duals, Iis, Program, Ranging, Relaxed, Row, Start, TiVec, Weights};
+
+/// The backend takes a start: a solution, full or partial, the next solve may begin its search from.
+///
+/// [`Solver::solve_from`](crate::Solver::solve_from) exists only for a backend with this capability.
+#[diagnostic::on_unimplemented(message = "`{Self}` does not take a start solution")]
+pub trait Starts: Backend {
+    /// Hands the solver a start for the next solve of the loaded program.
+    ///
+    /// Called by [`Solver::solve_from`](crate::Solver::solve_from) right before [`Backend::solve`], with a start
+    /// [`Start::check`] accepts for the loaded program.
+    ///
+    /// # Errors
+    ///
+    /// When the solver refuses the start.
+    fn set_start(&mut self, start: &Start) -> Result<(), Self::Error>;
+}
 
 /// The backend reports the row duals and reduced costs of an optimal continuous solve.
 ///

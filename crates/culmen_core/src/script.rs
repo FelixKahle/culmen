@@ -12,7 +12,7 @@ use crate::solve::context::{check_constraint, check_entries, check_solution};
 use crate::{
     ActionError, AddedRow, Backend, Callback, Col, Cols, Constraint, CutContext, Events, HeuristicContext, LazyContext,
     LogContext, LogLevel, ModelClasses, NewCol, Outcome, Phase, PollContext, PriceContext, PriceMode, Priced, Program,
-    ProgramFeatures, Progress, ProgressContext, Row, Sense, Settings, Solution, SolutionContext, Solved, Start,
+    ProgramFeatures, Progress, ProgressContext, Row, Sense, Settings, Solution, SolutionContext, Solved, Start, Starts,
     StopReason,
 };
 
@@ -129,8 +129,8 @@ pub struct PriceRound {
 /// A backend that delivers a fixed list of [`Step`]s to the callback and then ends with a fixed [`Outcome`].
 ///
 /// It supports every generic event and prices, loads every [`ModelClass`](crate::ModelClass) and takes every
-/// [`ProgramFeature`](crate::ProgramFeature), recording each start in [`Record::starts`], since it replays rather
-/// than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
+/// [`ProgramFeature`](crate::ProgramFeature) and start, recording each start in [`Record::starts`], since it replays
+/// rather than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
 /// interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent and the last bound
 /// reported before. The outcome and the elapsed time count every step, whichever events the
 /// callback asks for. A price step's columns are checked and numbered by the solve's [`Priced`], and every later step
@@ -325,8 +325,6 @@ impl fmt::Display for ScriptError {
 
 impl core::error::Error for ScriptError {}
 
-/// A script implements no analysis trait: it replays events and an outcome, and has no duals, basis or other analysis
-/// to report honestly.
 impl Backend for Script {
     type Error = ScriptError;
     type Status = ScriptStatus;
@@ -347,14 +345,6 @@ impl Backend for Script {
 
     fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
         self.sense = Some(program.sense());
-        Ok(())
-    }
-
-    fn set_start(&mut self, start: &Start) -> Result<(), ScriptError> {
-        if self.sense.is_none() {
-            return Err(ScriptError::NotLoaded);
-        }
-        self.record.starts.push(start.clone());
         Ok(())
     }
 
@@ -391,6 +381,18 @@ impl Backend for Script {
             status: ScriptStatus::Finished,
             elapsed: run.elapsed,
         })
+    }
+}
+
+/// A script records every start in [`Record::starts`]. It implements no analysis trait: it replays events and an
+/// outcome, and has no duals, basis or other analysis to report honestly.
+impl Starts for Script {
+    fn set_start(&mut self, start: &Start) -> Result<(), ScriptError> {
+        if self.sense.is_none() {
+            return Err(ScriptError::NotLoaded);
+        }
+        self.record.starts.push(start.clone());
+        Ok(())
     }
 }
 

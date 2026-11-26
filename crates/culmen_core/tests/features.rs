@@ -296,24 +296,31 @@ fn test_the_lp_file_lists_semi_columns_and_refuses_several_objectives() {
 fn test_feature_sets_are_sets() {
     let semi = ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::SemiInteger]);
     let mut all = semi;
-    all |= ProgramFeature::MultipleObjectives.into();
-    all.extend([ProgramFeature::StartSolution]);
+    all.extend([ProgramFeature::MultipleObjectives]);
     assert_eq!(all, ProgramFeatures::ALL);
-    assert_eq!(all.len(), 4);
+    assert_eq!(all.len(), 3);
     assert!(all.contains_all(semi) && !semi.contains_all(all));
     assert_eq!(all & semi, semi);
     assert_eq!(
-        all.difference(semi).iter().rev().collect::<Vec<_>>(),
-        [ProgramFeature::StartSolution, ProgramFeature::MultipleObjectives]
+        all.iter().rev().collect::<Vec<_>>(),
+        [
+            ProgramFeature::MultipleObjectives,
+            ProgramFeature::SemiInteger,
+            ProgramFeature::SemiContinuous
+        ]
     );
-    assert_eq!(all.iter().len(), 4);
+    assert_eq!(
+        all.difference(semi).iter().collect::<Vec<_>>(),
+        [ProgramFeature::MultipleObjectives]
+    );
+    assert_eq!(all.iter().len(), 3);
     assert!(ProgramFeatures::NONE.is_empty());
     assert_eq!(ProgramFeatures::default(), ProgramFeatures::NONE);
     assert_eq!(format!("{:?}", ProgramFeatures::NONE), "ProgramFeatures()");
     assert_eq!(ProgramFeatures::NONE.to_string(), "{}");
     assert_eq!(
         all.to_string(),
-        "{semi-continuous columns, semi-integer columns, multiple objectives, a start solution}"
+        "{semi-continuous columns, semi-integer columns, multiple objectives}"
     );
 }
 
@@ -398,14 +405,10 @@ fn test_a_backend_without_a_feature_refuses_it_before_it_sees_it() {
     plain.maximize(z);
     let mut solver = Solver::new(Plain::default(), plain.build().unwrap()).unwrap();
     assert_eq!(solver.backend().loads, 1);
-    assert_eq!(
-        solver.solve(Request::new().start(vec![(z, 1.0)])).unwrap_err(),
-        SolveError::UnsupportedFeature {
-            feature: ProgramFeature::StartSolution,
-            supported: ProgramFeatures::NONE
-        }
+    assert!(
+        solver.solve(Request::new()).is_ok(),
+        "a backend without `Starts` solves, and takes no start"
     );
-    assert!(solver.solve(Request::new()).is_ok());
 }
 
 #[test]
@@ -413,15 +416,15 @@ fn test_a_start_is_checked_against_the_program_and_handed_over() {
     let (m, x, y) = semi();
     let mut solver = Solver::new(Script::optimal(2.0, vec![2.0, 0.0]), m.build().unwrap()).unwrap();
     let full = TiVec::<Col, f64>::from(vec![2.0, 0.0]);
-    solver.solve(Request::new().start(full.clone())).unwrap();
-    solver.solve(Request::new().start(vec![(y, 2.0)])).unwrap();
+    solver.solve_from(Request::new(), full.clone()).unwrap();
+    solver.solve_from(Request::new(), vec![(y, 2.0)]).unwrap();
     solver.solve(Request::new()).unwrap();
     assert_eq!(
         solver.backend().record.starts,
         [Start::Full(full), Start::Sparse(vec![(y, 2.0)])]
     );
 
-    let refused = |solver: &mut Solver<Script>, start: Start| match solver.solve(Request::new().start(start)) {
+    let refused = |solver: &mut Solver<Script>, start: Start| match solver.solve_from(Request::new(), start) {
         Err(SolveError::Start(error)) => error,
         other => panic!("{other:?}"),
     };
@@ -591,7 +594,7 @@ mod serde_round_trips {
     fn test_the_new_plain_data_round_trips() {
         round_trip(&Integrality::SemiContinuous);
         round_trip(&Integrality::SemiInteger);
-        round_trip(&ProgramFeature::StartSolution);
+        round_trip(&ProgramFeature::MultipleObjectives);
         round_trip(&ProgramFeatures::of(&[
             ProgramFeature::SemiInteger,
             ProgramFeature::MultipleObjectives,

@@ -172,8 +172,7 @@ impl Program {
         &self.objectives
     }
 
-    /// What the program uses beyond its [`class`](Program::class): semi columns and multiple objectives; never
-    /// [`ProgramFeature::StartSolution`], which belongs to a solve.
+    /// What the program uses beyond its [`class`](Program::class): semi columns and multiple objectives.
     ///
     /// ```
     /// use culmen_core::{Model, Objective, ProgramFeature, ProgramFeatures, Var};

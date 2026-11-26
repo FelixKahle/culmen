@@ -260,7 +260,7 @@ trusted:
 
 ## Semi columns, several objectives and starts
 
-`Highs::FEATURES` is every [feature](program.md#features):
+`Highs::FEATURES` is every [feature](program.md#features), and `Highs` implements `Starts`:
 
 - **Semi columns** reach HiGHS as `kHighsVarTypeSemiContinuous` and `kHighsVarTypeSemiInteger`. HiGHS 1.16 lowers a
   semi column's upper bound above `1e5` to `1e5`, or refuses the model when its lower bound is above a tenth of that,
@@ -280,11 +280,11 @@ trusted:
   stage or the blend: the backend reports the program's own objective, computed from the solution, and no bound, so a
   MIP's outcome is `Optimal` or `Stopped`. Objective values HiGHS reports to callbacks during such a solve are those
   of the stage it is solving or of the blend.
-- **A start** reaches HiGHS through `Highs_setSparseSolution` before the run, a full one with every column. HiGHS
-  refuses no value for lying outside its column's bounds (`Highs::setSolution` in `Highs.cpp`), so a semi column's
-  zero is kept, and leaves the other columns of a sparse start open; for a MIP it completes them by a sub-MIP over
-  the columns left open. A feasible start of a MIP is the first incumbent HiGHS reports. HiGHS also starts from the
-  last solve's solution when a request gives none, or a sparse start without entries.
+- **A start**, given to `solve_from`, reaches HiGHS through `Highs_setSparseSolution` before the run, a full one with
+  every column. HiGHS refuses no value for lying outside its column's bounds (`Highs::setSolution` in `Highs.cpp`), so
+  a semi column's zero is kept, and leaves the other columns of a sparse start open; for a MIP it completes them by a
+  sub-MIP over the columns left open. A feasible start of a MIP is the first incumbent HiGHS reports. HiGHS also starts from the
+  last solve's solution when a solve gives none, or a sparse start without entries.
 
 ## Model files
 

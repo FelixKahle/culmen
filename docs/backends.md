@@ -26,15 +26,17 @@ pub trait Backend: Sized {
     const EVENTS: Events;                 // what this backend delivers
     const PRICES: bool = false;           // whether it prices
     const CLASSES: ModelClasses;          // the model classes this backend solves
-    const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // semi columns, objectives, starts it takes
+    const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // the semi columns and objectives it takes
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
     fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), Self::Error> { self.load(program) }
-    fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> { Ok(()) } // only with StartSolution
     fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>, priced: &mut Priced)
         -> Result<Solved<Self::Status>, Self::Error>;
 }
 
-// Analyses beyond the seam, each a trait the backend implements or leaves out (culmen_core::capability).
+// Capabilities beyond the seam, each a trait the backend implements or leaves out (culmen_core::capability).
+pub trait Starts: Backend {
+    fn set_start(&mut self, start: &Start) -> Result<(), Self::Error>;
+}
 pub trait DualAnalysis: Backend { fn duals(&self, program: &Program) -> Result<Duals, Self::Error>; }
 pub trait BasisAnalysis: Backend {
     fn basis(&self, program: &Program) -> Result<Option<Basis>, Self::Error>;
@@ -58,14 +60,16 @@ pub trait RelaxationAnalysis: Backend {
 - **Model classes are declared.** A backend lists the classes it solves (`ModelClass::Lp`, `Milp`, `Qp`, `Miqp`)
   in `Backend::CLASSES`. `Solver::new` reads it before `load`, for every backend alike, and refuses any other class
   with `LoadError::Unsupported { class, supported }`, so `load` never re-checks the class. Features beyond the class
-  (semi columns, multiple objectives, starts) are declared alike in `Backend::FEATURES` and refused with
-  `LoadError::UnsupportedFeature` or, for a start, `SolveError::UnsupportedFeature`.
-- **Analyses are capability traits.** A backend that reports an analysis after a solve implements its trait
-  (`DualAnalysis`, `BasisAnalysis`, `RangingAnalysis`, `RayAnalysis`, `IisAnalysis`, `RelaxationAnalysis`), and the
-  `Solver` methods of that analysis exist only for such a backend. Each method returns the backend's own error; the
-  `Solver` checks the program's class and features, the fit of a basis or weights and the solve read before it asks,
-  for every backend alike ([Analysis](analysis.md)), and a wrapper backend forwards each trait with a conditional impl
-  (`impl<B: DualAnalysis> DualAnalysis for Wrapper<B>`).
+  (semi columns, multiple objectives) are declared alike in `Backend::FEATURES` and refused with
+  `LoadError::UnsupportedFeature`. Classes and features are properties of a program, which edits change, so they
+  stay run-time refusals.
+- **Starts and analyses are capability traits.** A backend that takes a start implements `Starts`, and
+  `Solver::solve_from` exists only for such a backend, so a start is never handed to one that would drop it. A backend
+  that reports an analysis after a solve implements its trait (`DualAnalysis`, `BasisAnalysis`, `RangingAnalysis`,
+  `RayAnalysis`, `IisAnalysis`, `RelaxationAnalysis`), and the `Solver` methods of that analysis exist only for such a
+  backend. Each method returns the backend's own error; the `Solver` checks the program's class and features, the fit
+  of a basis or weights and the solve read before it asks, for every backend alike ([Analysis](analysis.md)), and a
+  wrapper backend forwards each trait with a conditional impl (`impl<B: DualAnalysis> DualAnalysis for Wrapper<B>`).
 - **Actions are typed per event.** Only `PollContext` has `interrupt`, only `LazyContext` has `add_lazy`, only
   `CutContext` has `add_cut`, only `HeuristicContext` has `supply` and `supply_partial`, only `PriceContext` has
   `add_col`, `branch_early` and `report_bound`. An action that a solver honours only at certain points exists only on
@@ -131,14 +135,14 @@ backend declares or leaves out.
 | `SemiContinuous` | yes: `kHighsVarTypeSemiContinuous`, upper bound at most `1e5` (`Highs::SEMI_UPPER_LIMIT`) | yes: `GRB_SEMICONT` | no: SCIP has no semi variable type, and `culmen_scip` does not model one (a binary indicator and two rows would) |
 | `SemiInteger` | yes: `kHighsVarTypeSemiInteger`, alike | yes: `GRB_SEMIINT` | no, alike |
 | `MultipleObjectives` | yes: `Highs_passLinearObjectives`, lexicographic by priority or blended by `blend_multi_objectives`; linear only | yes: `GRBsetobjectiven`, priorities, weights and tolerances | no: SCIP has one objective |
-| `StartSolution` | yes: `Highs_setSparseSolution`, HiGHS completing the columns a sparse start leaves out | yes: the `Start` attribute, `GRB_UNDEFINED` for a partial one | yes: `SCIPcreateSol` and `SCIPaddSolFree`; a sparse start `SCIPcreatePartialSol`, completed by SCIP's `completesol` heuristic |
 
-`Script` declares every feature and records each start in `record.starts`.
+`Script` declares every feature.
 
-## Analyses
+## Starts and analyses
 
 | Capability | HiGHS 1.16 (`culmen_highs`) | Gurobi 12 | SCIP 10 (`culmen_scip`) |
 |---|---|---|---|
+| `Starts` | yes: `Highs_setSparseSolution`, HiGHS completing the columns a sparse start leaves out | yes: the `Start` attribute, `GRB_UNDEFINED` for a partial one | yes: `SCIPcreateSol` and `SCIPaddSolFree`; a sparse start `SCIPcreatePartialSol`, completed by SCIP's `completesol` heuristic |
 | `DualAnalysis` | yes: `Highs_getSolution` | yes: `Pi`, `RC` | no (SCIP has LP duals, which a later version may read) |
 | `BasisAnalysis` | yes: `Highs_getBasis`, `Highs_setBasis` | yes: `VBasis`, `CBasis` | no |
 | `RangingAnalysis` | yes: `Highs_getRanging` | yes: `SAObjLow`, `SAObjUp`, `SALBLow`, … | no |
@@ -146,7 +150,7 @@ backend declares or leaves out.
 | `IisAnalysis` | yes: `Highs_getIis` | yes: `GRBcomputeIIS` | no |
 | `RelaxationAnalysis` | yes: `Highs_feasibilityRelaxation` | yes: `GRBfeasrelax` | no |
 
-`Script` implements no analysis.
+`Script` implements `Starts`, recording each start in `record.starts`, and no analysis.
 
 ## Events
 

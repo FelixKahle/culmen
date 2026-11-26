@@ -106,7 +106,7 @@ pub use solve::{
 pub use solve::{
     Analysis, AnalysisError, Basis, BasisAnalysis, BasisStatus, Bound, DualAnalysis, Duals, Iis, IisAnalysis,
     InvalidPenalty, Limit, Line, Misfit, Penalty, Ranged, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis,
-    Relaxed, Side, Table, Violation, Violations, Weights,
+    Relaxed, Side, Starts, Table, Violation, Violations, Weights,
 };
 pub use solve::{capability, context};
 pub use typed_index_collections::{TiSlice, TiVec};

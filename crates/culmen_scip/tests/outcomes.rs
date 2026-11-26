@@ -25,6 +25,16 @@ fn solve_with(scip: Scip, program: Program, request: Request<'_>) -> Solved<Scip
     Solver::new(scip, program).unwrap().solve(request).unwrap()
 }
 
+/// Solves from `start` when one is given.
+fn solve_from(scip: Scip, program: Program, request: Request<'_>, start: Option<Vec<f64>>) -> Solved<ScipStatus> {
+    let mut solver = Solver::new(scip, program).unwrap();
+    match start {
+        Some(start) => solver.solve_from(request, start),
+        None => solver.solve(request),
+    }
+    .unwrap()
+}
+
 fn optimum(solved: &Solved<ScipStatus>) -> &Solution {
     match &solved.outcome {
         Outcome::Optimal(solution) => solution,
@@ -260,16 +270,12 @@ fn plain() -> Scip {
     })
 }
 
-/// A request without presolving under `settings`, from `start` when one is given.
-fn plain_request(settings: Settings, start: Option<Vec<f64>>) -> Request<'static> {
-    let request = Request::new().settings_from(Settings {
+/// A request without presolving under `settings`.
+fn plain_request(settings: Settings) -> Request<'static> {
+    Request::new().settings_from(Settings {
         presolve: Some(false),
         ..settings
-    });
-    match start {
-        Some(start) => request.start(start),
-        None => request,
-    }
+    })
 }
 
 #[test]
@@ -279,7 +285,7 @@ fn test_a_node_limit_stops_with_the_root_bound_and_without_a_solution() {
         node_limit: Some(1),
         ..Settings::new()
     };
-    let solved = solve_with(plain(), program, plain_request(settings, None));
+    let solved = solve_with(plain(), program, plain_request(settings));
     assert_eq!(solved.status.status, Status::NodeLimit, "{solved:?}");
     let Outcome::Stopped { reason, best, bound } = solved.outcome else {
         panic!("{solved:?}")
@@ -295,7 +301,7 @@ fn test_a_node_limit_stops_with_the_start_as_its_best_solution() {
         node_limit: Some(1),
         ..Settings::new()
     };
-    let solved = solve_with(plain(), program, plain_request(settings, last_two()));
+    let solved = solve_from(plain(), program, plain_request(settings), last_two());
     let Outcome::Stopped { reason, best, bound } = solved.outcome else {
         panic!("{solved:?}")
     };
@@ -313,7 +319,7 @@ fn test_a_time_limit_of_zero_stops_with_and_without_a_solution() {
         time_limit: Some(Duration::ZERO),
         ..Settings::new()
     };
-    let without = solve_with(plain(), program.clone(), plain_request(settings.clone(), None));
+    let without = solve_with(plain(), program.clone(), plain_request(settings.clone()));
     assert_eq!(without.status.status, Status::TimeLimit, "{without:?}");
     assert!(
         matches!(
@@ -326,7 +332,7 @@ fn test_a_time_limit_of_zero_stops_with_and_without_a_solution() {
         ),
         "{without:?}"
     );
-    let with = solve_with(plain(), program, plain_request(settings, last_two()));
+    let with = solve_from(plain(), program, plain_request(settings), last_two());
     let Outcome::Stopped { reason, best, .. } = with.outcome else {
         panic!("{with:?}")
     };
@@ -370,7 +376,7 @@ fn test_a_solution_limit_reached_by_the_start_stops_at_the_start() {
         solution_limit: Some(solutions!(1)),
         ..Settings::new()
     };
-    let solved = solve_with(plain(), program, plain_request(settings, last_two()));
+    let solved = solve_from(plain(), program, plain_request(settings), last_two());
     assert_eq!(solved.status.status, Status::BestSolutionLimit, "{solved:?}");
     let Outcome::Stopped { reason, best, .. } = solved.outcome else {
         panic!("{solved:?}")
@@ -389,7 +395,7 @@ fn test_a_wide_relative_gap_is_reached_at_the_root() {
         ..Settings::new()
     };
     let start = Some(vec![1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
-    let solved = solve_with(plain(), program, plain_request(settings, start));
+    let solved = solve_from(plain(), program, plain_request(settings), start);
     assert_eq!(solved.status.status, Status::GapLimit, "{solved:?}");
     let Outcome::GapReached { solution, bound } = solved.outcome else {
         panic!("{solved:?}")
@@ -401,7 +407,10 @@ fn test_a_wide_relative_gap_is_reached_at_the_root() {
 #[test]
 fn test_a_sparse_start_is_taken_and_the_solve_still_proves_the_optimum() {
     let (program, take) = branching();
-    let solved = solve_with(Scip::new(), program, Request::new().start(vec![(take[5], 1.0)]));
+    let solved = Solver::new(Scip::new(), program)
+        .unwrap()
+        .solve_from(Request::new(), vec![(take[5], 1.0)])
+        .unwrap();
     let best = optimum(&solved);
     assert_close(best.objective, 2.9);
     assert_close(best.values[take[0]] + best.values[take[1]], 2.0);
@@ -415,9 +424,9 @@ fn test_a_second_solve_takes_its_own_settings() {
         node_limit: Some(1),
         ..Settings::new()
     };
-    let first = solver.solve(plain_request(limited, None)).unwrap();
+    let first = solver.solve(plain_request(limited)).unwrap();
     assert_eq!(first.status.status, Status::NodeLimit);
-    let second = solver.solve(plain_request(Settings::new(), None)).unwrap();
+    let second = solver.solve(plain_request(Settings::new())).unwrap();
     assert_close(optimum(&second).objective, 2.9);
     let third = solver.solve(Request::new()).unwrap();
     assert_close(optimum(&third).objective, 2.9);
@@ -432,15 +441,12 @@ fn test_a_second_solve_starts_from_the_last_solves_best_solution_until_an_edit()
     let (program, take) = branching();
     let mut solver = Solver::new(plain(), program).unwrap();
     let one_node = || {
-        plain_request(
-            Settings {
-                node_limit: Some(1),
-                ..Settings::new()
-            },
-            None,
-        )
+        plain_request(Settings {
+            node_limit: Some(1),
+            ..Settings::new()
+        })
     };
-    let first = solver.solve(plain_request(Settings::new(), None)).unwrap();
+    let first = solver.solve(plain_request(Settings::new())).unwrap();
     assert_close(optimum(&first).objective, 2.9);
     let again = solver.solve(one_node()).unwrap();
     let Outcome::Stopped { reason, best, .. } = again.outcome else {

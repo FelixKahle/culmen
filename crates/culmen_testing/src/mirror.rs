@@ -9,7 +9,7 @@ use core::fmt;
 use culmen_core::{
     Backend, Basis, BasisAnalysis, Callback, Col, DualAnalysis, Duals, Edit, Events, Iis, IisAnalysis, ModelClasses,
     Priced, Program, ProgramFeatures, ProgramPlan, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed,
-    Row, Settings, Solved, Start, TiVec, Weights,
+    Row, Settings, Solved, Start, Starts, TiVec, Weights,
 };
 
 /// A backend that forwards to `inner`, recording what it is asked to hold and failing as [`Faults`] say.
@@ -306,10 +306,6 @@ impl<B: Backend> Backend for Mirror<B> {
         Ok(())
     }
 
-    fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> {
-        self.inner.set_start(start).map_err(MirrorError::Inner)
-    }
-
     fn solve(
         &mut self,
         settings: &Settings,
@@ -323,6 +319,12 @@ impl<B: Backend> Backend for Mirror<B> {
 }
 
 /// Every capability is the inner backend's, forwarded with its errors as [`MirrorError::Inner`].
+impl<B: Starts> Starts for Mirror<B> {
+    fn set_start(&mut self, start: &Start) -> Result<(), Self::Error> {
+        self.inner.set_start(start).map_err(MirrorError::Inner)
+    }
+}
+
 impl<B: DualAnalysis> DualAnalysis for Mirror<B> {
     fn duals(&self, program: &Program) -> Result<Duals, Self::Error> {
         self.inner.duals(program).map_err(MirrorError::Inner)
@@ -369,7 +371,7 @@ impl<B: RelaxationAnalysis> RelaxationAnalysis for Mirror<B> {
 
 #[cfg(test)]
 mod tests {
-    use culmen_core::{EditError, Linear, Model, Script, Solver, Var};
+    use culmen_core::{EditError, Linear, Model, Request, Script, Solver, Var};
 
     use super::*;
 
@@ -396,6 +398,14 @@ mod tests {
             solver.backend().calls,
             [Call::Load(before), Call::Edit(Edited::ColCosts(vec![y]), after)]
         );
+    }
+
+    #[test]
+    fn test_a_mirror_forwards_a_start_to_its_inner_backend() {
+        let (before, _, y) = programs();
+        let mut solver = Solver::new(Mirror::new(Script::optimal(0.0, vec![])), before).unwrap();
+        solver.solve_from(Request::new(), vec![(y, 1.0)]).unwrap();
+        assert_eq!(solver.backend().inner.record.starts, [Start::Sparse(vec![(y, 1.0)])]);
     }
 
     #[test]
