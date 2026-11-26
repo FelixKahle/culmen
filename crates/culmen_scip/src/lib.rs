@@ -5,8 +5,8 @@
 //!
 //! [`Scip`] implements [`Backend`]: load a [`Program`], solve it under [`Settings`], and read the generic
 //! [`Outcome`] with SCIP's own [`ScipStatus`] beside it. It solves LPs, MILPs, convex QPs and MIQPs, takes a start,
-//! and delivers every generic callback event, lazy constraints and user cuts included, through plugins it includes
-//! in each instance.
+//! and delivers every generic callback event, lazy constraints, user cuts and constraint handlers included, through
+//! plugins it includes in each instance.
 //!
 //! ```
 //! use culmen_core::{Linear, LinExpr, Model, Outcome, Solver, Var};
@@ -74,13 +74,15 @@
 //! # Callbacks
 //!
 //! [`Scip::EVENTS`] is every observational event but the native one, each from a SCIP plugin, with a context of this
-//! crate's, and SCIP has every search capability ([`LazyConstraints`], [`UserCuts`], [`Heuristics`], [`Prices`]):
+//! crate's, and SCIP has every search capability ([`LazyConstraints`], [`UserCuts`], [`Heuristics`], [`Prices`],
+//! [`CustomConstraints`]):
 //!
 //! | Event or handler | SCIP plugin | Context |
 //! |---|---|---|
 //! | `LOG` | the instance's message handler: each info message and warning, a whole line | [`ScipLog`] |
 //! | `POLL`, `PROGRESS` | an event handler: each presolve round, focused node, solved node LP and solved node | [`ScipPoll`], [`ScipProgress`] |
 //! | `FEASIBLE`, `INCUMBENT` | an event handler: each solution SCIP stores, a new best one as the incumbent too | [`ScipSolution`] |
+//! | [`ConstraintHandler`](culmen_core::ConstraintHandler) | a constraint handler without constraints, checked and enforced after every SCIP handler | [`ScipCheck`], [`ScipEnforce`] |
 //! | [`LazyHandler`](culmen_core::LazyHandler) | a constraint handler without constraints, checked and enforced after every other | [`ScipLazy`] |
 //! | [`CutHandler`](culmen_core::CutHandler) | a separator on each node's LP solution | [`ScipCut`] |
 //! | [`HeuristicHandler`](culmen_core::HeuristicHandler) | a primal heuristic before and after each node | [`ScipHeuristic`] |
@@ -97,6 +99,20 @@
 //! `misc/allowweakdualreds`, which reason about the constraints SCIP holds rather than those a handler adds later. A
 //! solve with a cut or a heuristic handler calls its separator or heuristic at every node, also when an emphasis
 //! turned SCIP's own off.
+//!
+//! A [`ConstraintHandler`](culmen_core::ConstraintHandler) is checked on every solution SCIP checks and asked to
+//! enforce every node's point SCIP's own handlers accept, `check` first and `enforce` only on a point it rejects. Of
+//! what [`CustomConstraints`] offers, SCIP honours in this release: `check`; `enforce` adding constraints and cutting
+//! the node off, or doing nothing, which leaves the point to SCIP's branching; the declaration's locks, every column
+//! both ways for [`Locks::All`] and the listed directions for [`Locks::Only`], every priced column both ways. It
+//! refuses tightening, branching of the handler's own and cutting off with a conflict with
+//! [`ActionError::Refused`](culmen_core::ActionError::Refused), does not call `propagate`, `explain` or `presolve`,
+//! and enforces [`Candidates::Fractional`](culmen_core::Candidates::Fractional) as
+//! [`Candidates::Integral`](culmen_core::Candidates::Integral). A solve with a constraint handler turns off symmetry
+//! handling, SCIP's dual reductions (for either kind of locks, in this release) and the components presolver, and for
+//! [`Locks::All`] multi-aggregation. A point rejected without action where SCIP cannot branch fails the solve with
+//! [`ScipError::UnresolvedRejection`], and a handler asked to enforce at one node more than
+//! [`ScipOptions::enforcement_rounds`] times with [`ScipError::EnforcementStalled`].
 //!
 //! Only a solve with a pricer activates SCIP's pricer and marks every program row
 //! modifiable, as SCIP requires of a row a pricer adds variables to; any other solve leaves the pricer inactive and
