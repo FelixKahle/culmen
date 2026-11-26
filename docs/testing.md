@@ -1,42 +1,45 @@
 # Testing
 
-Code that drives a solve (a service that stops a solve on request, an observer that streams progress, a callback that
+Code that drives a solve (a service that stops a solve on request, an observer that streams progress, a handler that
 adds lazy constraints) is tested best without a solver: deterministically, fast, and with every event a real solver
 might send. culmen offers three things for this: the `Script` backend, the `culmen_testing` crate, and serialization
 of the plain data.
 
 ## The `Script` backend
 
-`culmen::Script` is an in-memory [backend](backends.md) that delivers a fixed list of `Step`s to the callback and
-then ends with a fixed `Outcome`. It supports every event, so it drives the whole callback layer, and it needs no
-native code; it runs under Miri.
+`culmen::Script` is an in-memory [backend](backends.md) that delivers a fixed list of `Step`s to the callback and the
+[search handlers](callbacks.md#search-handlers) and then ends with a fixed `Outcome`. It supports every event and has
+every search capability (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`), so it drives the whole callback
+layer, and it needs no native code; it runs under Miri.
 
 | Constructor | Script |
 |---|---|
 | `Script::new(steps, end)` | Delivers `steps` in order, then ends with the outcome `end`. |
 | `Script::optimal(objective, values)` | No steps; ends optimal with the given solution. |
 
-Each step is one event, in the generic terms of [`Callback`](callbacks.md#callback):
+Each step is one event, in the generic terms of [`Callback`](callbacks.md#callback) and the handlers:
 
-| Step | Event | Context offers |
+| Step | Event or handler | Context offers |
 |---|---|---|
 | `Step::Log { elapsed, level, text }` | `LOG` | the chunk; line breaks in `text` end lines |
 | `Step::Progress(progress)` | `PROGRESS` | the progress |
 | `Step::Poll(progress)` | `POLL` | `interrupt()` |
 | `Step::Feasible(found)` | `FEASIBLE` | the solution |
 | `Step::Incumbent(found)` | `INCUMBENT` | the solution |
-| `Step::Lazy(found)` | `LAZY` | the candidate; `add_lazy` |
-| `Step::Cut { progress, relaxation }` | `CUT` | the relaxation; `add_cut` |
-| `Step::Heuristic(progress)` | `HEURISTIC` | `supply`, `supply_partial` |
-| `Step::Price { progress, mode, duals }` | none: delivered when the callback's `prices()` is true | a `ScriptPrice`: the mode, the program's sense, the duals, `tolerance()` of `ScriptPrice::TOLERANCE`; `add_col`, `branch_early`, `report_bound` |
+| `Step::Lazy(found)` | `LazyHandler` | the candidate; `add_lazy` |
+| `Step::Cut { progress, relaxation }` | `CutHandler` | the relaxation; `add_cut` |
+| `Step::Heuristic(progress)` | `HeuristicHandler` | `supply`, and `supply_partial` as an inherent method of `ScriptHeuristic` |
+| `Step::Price { progress, mode, duals }` | `Pricer` | a `ScriptPrice`: the mode, the program's sense, the duals, `tolerance()` of `ScriptPrice::TOLERANCE`; `add_col`, `branch_early`, `report_bound` |
 | `Step::Note(text)` | `NATIVE` | a `ScriptNote` with `text()` |
 
-A `Found` is `{ progress, objective, values }`. `step.event()` names a step's event kind.
+A `Found` is `{ progress, objective, values }`. `step.event()` names a step's observational event kind, `None` for
+the four search steps.
 
 The script behaves as a solver would:
 
-- A step reaches the callback only when the callback asks for its kind, as with any backend. The outcome and the
-  elapsed time count every step, whatever the callback asks for.
+- An observational step reaches the callback only when the callback asks for its kind, and a search step reaches
+  only a handler of its kind registered on the solve's `Hooks`, as with any backend. The outcome and the elapsed time
+  count every step, whatever the callback asks for and whichever handlers are registered.
 - A poll that interrupts ends the solve at once as `Outcome::Stopped` with `StopReason::Interrupted`, the last
   incumbent delivered before as `best` and the last bound reported as `bound`.
 - Actions are checked as a solver's would be ([`ActionError`](callbacks.md#contexts)) and recorded in
@@ -95,9 +98,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Testing callbacks
 
-A callback written generically, `impl<B: Backend> Callback<B>`, runs on the `Script` exactly as on a solver, so its
-reactions to each event can be checked against the record. Here a lazy-constraint callback forbids taking both of
-two items:
+A callback written generically, `impl<B: Backend> Callback<B>`, and a handler written generically,
+`impl<B: LazyConstraints> LazyHandler<B>` and so on, run on the `Script` exactly as on a solver, so their reactions to
+each event can be checked against the record. Here a lazy-constraint handler forbids taking both of two items:
 
 ```rust
 use std::time::Duration;
@@ -111,10 +114,7 @@ struct NotBoth {
     refused: Vec<ActionError>,
 }
 
-impl<B: Backend> Callback<B> for NotBoth {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
+impl<B: LazyConstraints> LazyHandler<B> for NotBoth {
     fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
         let candidate = ctx.candidate();
         if candidate[self.x] + candidate[self.y] > 1.5
@@ -138,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(script, m.build()?)?;
 
     let mut not_both = NotBoth { x, y, refused: Vec::new() };
-    solver.solve_with(Request::new(), &mut not_both)?;
+    solver.solve_with(Request::new(), Hooks::new().register_lazy(&mut not_both))?;
     assert!(not_both.refused.is_empty());
     assert_eq!(
         solver.backend().record.lazy,
@@ -149,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 An `AddedRow` is a constraint as the backend received it: its terms as given and its bounds with the constraint's
-constant moved into them. Observers, stops, pairs of callbacks and panics are tested the same way.
+constant moved into them. Observers, stops, pairs of callbacks and handlers, and panics are tested the same way.
 
 A pricer is tested with price steps that hand it the duals a solver would: the record shows each round, and the
 program the columns it added.
@@ -163,13 +163,7 @@ use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
 /// Adds the pattern when it improves, else reports a bound and stops pricing.
 struct Pattern(NewCol);
 
-impl<B: Backend> Callback<B> for Pattern {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl<B: Prices> Pricer<B> for Pattern {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         if ctx.improves(&self.0) {
             let _ = ctx.add_col(self.0.clone());
@@ -197,7 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // At the dual 3 the pattern prices at 1 - 3 = -2 and is added; at the dual 1 it prices at 0.
     let script = Script::new([round(3.0, 3.0), round(1.0, 1.0)], Outcome::Infeasible);
     let mut solver = Solver::new(script, m.build()?)?;
-    solver.solve_with(Request::new(), &mut Pattern(pattern))?;
+    solver.solve_with(Request::new(), Hooks::new().register_pricer(&mut Pattern(pattern)))?;
 
     let rounds = &solver.backend().record.priced;
     assert_eq!(rounds[0].added.clone().collect::<Vec<_>>(), [Col::new(1)]);
@@ -218,7 +212,7 @@ published (`publish = false`); outside this workspace, depend on it by path unde
 | `strategy` | `proptest` strategies: `small_lp()` and `small_semi()`, tiny bounded LPs and MILPs (the second with semi columns) that `reference::solve` can enumerate; `small_qp()`, small convex QPs; `priced_split()`, a program split into the columns a solve starts with and those a pricer may add; `edits(&program)` and `with_edits(programs)`, edits of a program as data. |
 | `tolerance` | `Tolerances`, a solver's feasibility, integrality, dual and gap tolerances as it defines them (`Tolerances::SCIP`, `Tolerances::HIGHS`); `loosened(&program)`, the program every point it may call feasible rounds into; `window(&program, &reference)`, the objective values its optimum may take: from the exact optimum of the loosened program on the better side to the exact optimum less its dual tolerance and gap on the worse; `stray(&program, &values)`, the first row or column a point passes by more than the tolerances allow. A property test compares a backend's optimum with this window rather than with the exact optimum at a fixed tolerance, since how far a tolerance moves the objective depends on the instance. |
 | `op` | `EditOp`, one edit of a `Solver`'s program as data, which `apply` replays. |
-| `mirror` | `Mirror<B>`, a backend that wraps another, records every load and edit, checks the edit contract, and fails or panics on demand. |
+| `mirror` | `Mirror<B>`, a backend that wraps another, records every load and edit, checks the edit contract, and fails or panics on demand; it has each capability its inner backend has, and relays the callback and the handlers to it through `Hooks::relay`. |
 | `instances` | `assignment(products, locations, seed, offset)`, a generalized assignment hard enough that a solver searches for seconds; it returns the `program` and its variables `x`. |
 
 `reference::solve` enumerates every integer point of the integer columns' box and every vertex of the continuous

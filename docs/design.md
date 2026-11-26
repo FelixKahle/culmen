@@ -103,10 +103,16 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
 
 `culmen_core` knows no solver. A solver plugs in by implementing [`Backend`](backends.md#the-seam), an open trait:
 
-- **Events are typed and declared.** A backend names one context type per event kind and lists what it delivers
-  in `Backend::EVENTS`. An event it cannot deliver takes `Unsupported`, an enum with no values, so a callback for it
-  compiles everywhere and never runs on that backend. Pricing, which changes how a solver searches, is declared
-  apart, `Backend::PRICES`, and asked for apart, `Callback::prices`, so no set of events turns it on.
+- **Observational events are typed and declared.** A backend names one context type per observational event kind
+  and lists what it delivers in `Backend::EVENTS`. An event it cannot deliver takes `Unsupported`, an enum with no
+  values, so a callback for it compiles everywhere and never runs on that backend. A callback only watches, so asking
+  for every event costs a solver no reduction.
+- **What changes the search is a capability.** Lazy constraints, user cuts, heuristic solutions and pricing are traits
+  a backend implements or leaves out (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`), each naming the context
+  of its handler (`LazyHandler`, `CutHandler`, `HeuristicHandler`, `Pricer`). A handler is registered on the `Hooks`
+  of a solve only for a backend that has the capability, so a lazy constraint a solver would ignore, which would turn
+  a relaxation's optimum into a wrong answer, does not compile, and a backend gives up a reduction for a handler only
+  when one is registered.
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
   `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the program, the
   same way for every backend. A class is a property of the program, which edits change, so it stays a run-time check.
@@ -115,13 +121,14 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
   backend that has it: `solver.duals()` on a backend without duals, or a start handed to a backend that takes none,
   does not compile.
 - **Actions live where the solver honours them.** Only a poll context can interrupt, only a lazy context can add a
-  lazy constraint, only a heuristic context can supply a solution, only a price context can add a column. Calling an action at a point where the solver
-  would ignore it does not compile.
+  lazy constraint, only a heuristic context can supply a solution, only a price context can add a column. Calling an
+  action at a point where the solver would ignore it does not compile, and an action only some solvers honour, as
+  completing a partial heuristic solution, is an inherent method of their contexts.
 - **Extras stay with their backend.** Each context type is the backend's own; what one solver reports beyond the
   neutral traits is an inherent method or a native event. Generic code sees the traits; code for one backend sees
   everything.
 - **The convenient path is built on the seam, not beside it.** The request's stop and observer run as `Watch`, an
-  ordinary generic callback, so they work on every backend unchanged.
+  ordinary generic callback that the `Solver` runs before yours, so they work on every backend unchanged.
 - **Settings are neutral, options are the backend's.** `Settings` holds what every solver understands; a backend's
   own options hold the rest; settings apply after options, per solve.
 - **Outcomes are neutral, statuses are kept.** Each solve maps the solver's status onto `Outcome`, which holds
@@ -132,7 +139,7 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
 ## A solve never aborts
 
 A solve is something an application runs inside a service, so a defect in user code during a solve must not take
-the process down. A panic in an observer, a stop or a callback stops the solve as soon as the solver allows, and
+the process down. A panic in an observer, a stop, a callback or a handler stops the solve as soon as the solver allows, and
 then continues unwinding out of `solve` on the caller's thread, where it can be caught. The backend stays usable.
 No profile sets `panic = "abort"`.
 
@@ -169,8 +176,8 @@ plugins in place of a trampoline:
   that outlives the instance; a solve installs its run, which lives on the stack of `solve`, in that slot for the call
   of `SCIPsolve` alone, and a guard clears it on every path before the run is dropped.
 - **Calls never overlap.** SCIP calls every plugin on the solving thread, one at a time; a plugin called inside
-  another's call finds the callback borrowed and does not deliver, and every change a context asks of SCIP is applied
-  after the callback returns, outside any borrow.
+  another's call finds the hooks borrowed and does not deliver, and every change a context asks of SCIP is applied
+  after the handler returns, outside any borrow.
 - **Panics never cross the C boundary.** A panic in a callback is caught in the plugin, which asks SCIP to stop and
   returns a result its callback allows; the panic resumes once `SCIPsolve` has returned.
 

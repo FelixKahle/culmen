@@ -107,10 +107,10 @@ pub enum ScipError {
         /// SCIP's status at the end of the solve.
         status: Status,
     },
-    /// A callback that [`prices`](culmen_core::Callback::prices) was given a program with a quadratic objective,
-    /// which this backend does not price; refused before SCIP is called.
+    /// A solve with a [`Pricer`](culmen_core::Pricer) was given a program with a quadratic objective, which this
+    /// backend does not price; refused before SCIP is called.
     PricingQuadratic,
-    /// A pricing callback ended pricing early at a node where SCIP has no integer variable left to branch on, as in a
+    /// A pricer ended pricing early at a node where SCIP has no integer variable left to branch on, as in a
     /// program without integer columns, so SCIP could not branch.
     BranchEarly,
     /// SCIP ended a solve with a best solution that its own check finds infeasible in the original problem
@@ -175,7 +175,7 @@ impl fmt::Display for ScipError {
             ),
             Self::BranchEarly => write!(
                 f,
-                "SCIP: a pricing callback ended pricing early at a node with no integer variable left to branch on"
+                "SCIP: a pricer ended pricing early at a node with no integer variable left to branch on"
             ),
             Self::InfeasibleBest { status, objective } => write!(
                 f,

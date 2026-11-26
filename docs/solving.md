@@ -15,8 +15,8 @@ each time with its own request.
 | Method | Does |
 |---|---|
 | `solve(request)` | Solves under the request's settings, polling its stop and reporting to its observer. |
-| `solve_with(request, &mut callback)` | The same, and also runs a [`Callback`](callbacks.md#callback) with the backend's full context types. |
-| `solve_from(request, start)`, `solve_with_from(request, start, &mut callback)` | The same two from a [start](#starts), for a backend that implements `Starts`. |
+| `solve_with(request, hooks)` | The same, and also runs the [`Callback`](callbacks.md#callback) and the [search handlers](callbacks.md#search-handlers) registered on `hooks`, with the backend's full context types: `Hooks::new().register_callback(&mut callback)`, `.register_lazy(&mut handler)` and so on. |
+| `solve_from(request, start)`, `solve_with_from(request, start, hooks)` | The same two from a [start](#starts), for a backend that implements `Starts`. |
 | `program()` | The loaded program, grown by every column a solve priced. |
 | `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
 | `into_parts()` | The backend and the program, taken apart; the backend may be behind the program after a failed edit or a solve that priced. |
@@ -121,7 +121,7 @@ as its first incumbent and may complete a partial or infeasible one; an LP solve
 be feasible, but it must fit the program: `start.check(num_cols)` states it.
 
 A backend that takes a start implements `Starts`, as HiGHS, SCIP and the `Script` do, and only for such a backend
-does the `Solver` have `solve_from(request, start)` and `solve_with_from(request, start, &mut callback)`, the
+does the `Solver` have `solve_from(request, start)` and `solve_with_from(request, start, hooks)`, the
 counterparts of `solve` and `solve_with`. A start is a full `TiVec<Col, f64>` or `Vec<f64>`, or a sparse
 `Vec<(Col, f64)>`, and `solve_from` checks it before the backend sees it. A start applies to its one solve; a backend
 may also start a solve from the last solve's best solution, as HiGHS
@@ -427,8 +427,8 @@ The examples `cutting_planes` and `column_generation` of the `culmen` crate edit
 
 ## A solve that prices
 
-A callback that [prices](callbacks.md#pricing) (`prices()` returns `true`) adds columns during the solve, column
-generation at every node of the search, on a backend that prices: [SCIP](scip.md#pricing). Those columns are the
+A [pricer](callbacks.md#pricing), registered with `Hooks::register_pricer` on a backend that implements `Prices`
+([SCIP](scip.md#pricing)), adds columns during the solve, column generation at every node of the search. Those columns are the
 program's from then on:
 
 - **The program grows.** Each priced column continues the program's numbering: the first is `Col(n)` for a program
@@ -452,13 +452,7 @@ use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
 /// Prices one column in at every price step.
 struct OneMore;
 
-impl<B: Backend> Callback<B> for OneMore {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl<B: Prices> Pricer<B> for OneMore {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         let row = Row::new(0);
         let column = NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries: vec![(row, 1.0)] };
@@ -479,7 +473,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let end = Outcome::Optimal(Solution { objective: 1.0, values: vec![0.0, 1.0].into() });
     let mut solver = Solver::new(Script::new([step], end), m.build()?)?;
-    let solved = solver.solve_with(Request::new(), &mut OneMore)?;
+    let solved = solver.solve_with(Request::new(), Hooks::new().register_pricer(&mut OneMore))?;
 
     assert_eq!(solver.program().num_cols(), 2);
     assert_eq!(solved.outcome.solution().map(|s| s.values.len()), Some(2));
@@ -501,12 +495,12 @@ backend sees the edit, or `EditError::Backend` when the backend refuses it. For 
 [`HighsError`](highs.md#errors), for SCIP [`ScipError`](scip.md#errors). A solve that ends without a solution is not
 an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
 
-`solve` and `solve_with` panic when an observer or callback panics: the panic continues out of the call once the
+`solve` and `solve_with` panic when an observer, a callback or a handler panics: the panic continues out of the call once the
 solver has stopped ([Panics and threads](callbacks.md#panics-and-threads)).
 
 ## See also
 
-- [Callbacks](callbacks.md): stops, observers and callbacks.
+- [Callbacks](callbacks.md): stops, observers, callbacks and search handlers.
 - [Analysis](analysis.md): duals, the basis, ranging, rays, IIS and feasibility relaxation after a solve.
 - [HiGHS](highs.md): the HiGHS backend's options, statuses and errors.
 - [SCIP](scip.md): the SCIP backend's options, statuses and errors, and pricing at every node.

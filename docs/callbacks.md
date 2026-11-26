@@ -340,14 +340,216 @@ An action returns `Err(ActionError)` when it is refused:
 | `NotFiniteBound { bound }` | A reported bound is NaN or infinite. |
 | `Refused(reason)` | The solver refused the action, for the reason given. |
 
+## Pricing
+
+Pricing is column generation inside the solve, branch-and-price on a solver whose search branches: after the
+solver has solved a node LP, it hands the pricer the LP's row multipliers and asks for columns that would improve
+it. The pricer adds them with `add_col`, as `NewCol`s with entries in the program's rows, and the solver solves the
+node LP again and asks again, until a round adds nothing. A pricer is a `Pricer<B>`, registered with
+`Hooks::register_pricer` for a backend that implements `Prices`; no set of events turns pricing on, so a callback
+never prices by accident: a solver that prices gives up reductions that need every column known up front, and SCIP
+refuses to price a program with a quadratic objective.
+
+- **Two modes.** In `PriceMode::ReducedCost { objective }` the node LP is optimal, and `duals()` holds each row's
+  dual in the sign convention of [`Duals`](analysis.md): the rate at which the LP optimum changes as the row's active
+  bound rises. A column's reduced cost is `cost − Σ duals[r]·a_r`. In `PriceMode::Farkas` the node LP is infeasible,
+  `duals()` holds the Farkas multipliers, and the cost counts as zero, so the reduced cost is `−Σ duals[r]·a_r`.
+  `reduced_cost(&column)` computes it, and `improves(&column)` says whether the column could improve the LP, or make
+  it feasible, beyond `tolerance()`, by the column's bounds and the program's sense: a column rising from zero
+  improves a minimisation (and every Farkas round) when its reduced cost is below `−tolerance`, a maximisation when
+  it is above `tolerance`. A pricer that ignores Farkas rounds leaves an infeasible node unrepaired, and the solver
+  then counts it infeasible.
+- **The signs, for both senses.** The convention is the same formula in both senses, so the signs follow from it:
+
+  | | Minimize | Maximize | Farkas, either sense |
+  |---|---|---|---|
+  | dual of a row at its lower bound (`≥`) | `≥ 0` | `≤ 0` | the multiplier as the solver reports it |
+  | dual of a row at its upper bound (`≤`) | `≤ 0` | `≥ 0` | |
+  | reduced cost `d` | `cost − Σ duals[r]·a_r` | `cost − Σ duals[r]·a_r` | `−Σ duals[r]·a_r` |
+  | a column in `[0, u]`, `u > 0`, improves when | `d < −tolerance` | `d > tolerance` | `d < −tolerance` |
+
+  A column whose bounds hold zero strictly inside (`lower < 0 < upper`) improves when `|d|` exceeds the tolerance in
+  the direction it can move, and one with `upper = 0` when the inequality is the other way round; `improves` encodes
+  all of it. In Farkas mode the multipliers certify `fᵀAx ≥ fᵀb`, `b` the active side of each row, violated by
+  every point within the bounds of the columns held; a column with `Σ f_r·a_r > 0` that can rise from zero weakens
+  that certificate, which is the reduced-cost rule of the phase-one minimisation with every cost zero.
+- **What is refused.** A priced column's bounds hold zero, so a column left out is the same as one fixed at zero
+  (`ExcludesZero`); it is continuous or integer, of a class the backend solves (`Integrality`); its cost and entries
+  are finite and name the program's rows. A refused column takes no id.
+- **Ids.** `add_col` returns the column's id, the next after the program's columns and every one priced before: the
+  first is `Col(n)` for a program of `n` columns. Every point a later event delivers counts it, and when the solve
+  ends the `Solver`'s program holds it ([A solve that prices](solving.md#a-solve-that-prices)).
+- **What the pricer guarantees.**
+  1. *Exact pricing.* Whenever some column the problem does not hold yet improves the node LP, in either mode, the
+     pricer adds at least one improving column, or calls `branch_early()`, which ends pricing at the node and
+     leaves the LP value no bound unless `report_bound(bound)` gives one (refused in Farkas mode). Only then is a node
+     LP's value a bound, and only then is `Outcome::Optimal` a proof.
+  2. *No re-adding.* The solver prices the columns it holds itself, within their bounds at the node, so the pricer
+     never adds one the problem already holds. A copy is not refused, since two identical columns may be meant (two
+     identical trucks), but a column branching fixed, added again, escapes the branching, and the search may then
+     revisit what it ruled out.
+  3. *Robust rows.* A priced column has entries only in the program's rows, so it enters every lazy constraint and
+     cut with coefficient zero, and their duals do not change its reduced cost: every lazy constraint and cut must
+     hold for every column the pricer may price, each entering it with zero. A bound given to `report_bound` holds
+     for the node's whole subtree over every column the program may price.
+- **What a backend that implements `Prices` guarantees.** It calls `price` only after a node LP is solved: optimal in
+  `ReducedCost` mode, infeasible in `Farkas` mode, with every program row's multiplier in the convention above. It
+  ends pricing at a node only after a round that added no column and did not branch early, and counts the node LP as
+  a bound only then; a round that branched early counts only through `report_bound`. Every column added enters the
+  search with its cost, bounds, integrality and entries, stays for the rest of the solve, and is part of every point
+  reported afterwards. A solve without a pricer runs as if the backend could not price.
+- **Branch-and-price.** On a backend whose search branches, pricing at every node with exact pricing is exact
+  branch-and-price under the backend's own branching. [SCIP](scip.md#pricing) branches on the master's integer
+  columns, as it chooses; culmen has no branching event, so branching on the pricing problem (Ryan–Foster) is out of
+  reach.
+
+```rust
+use std::time::Duration;
+
+use culmen::prelude::*;
+use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
+
+/// Adds every pattern of the pool, not added yet, that improves the node LP.
+struct Pool {
+    patterns: Vec<NewCol>,
+    added: Vec<Option<Col>>,
+}
+
+impl<B: Prices> Pricer<B> for Pool {
+    fn price(&mut self, ctx: &mut B::Price<'_>) {
+        for (pattern, added) in self.patterns.iter().zip(&mut self.added) {
+            if added.is_none() && ctx.improves(pattern) {
+                *added = ctx.add_col(pattern.clone()).ok();
+            }
+        }
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Cut rolls of width 10 into 7 pieces of width 3, 2 of width 4 and 3 of width 5, one pattern per width so far.
+    let mut m = Model::new();
+    let [a, d, f] = [(); 3].map(|_| m.add_var(Var::continuous()));
+    let threes = m.add_constraint((3.0 * a).geq(7));
+    let fours = m.add_constraint((2.0 * d).geq(2));
+    let fives = m.add_constraint((2.0 * f).geq(3));
+    m.minimize(a + d + f);
+    let pattern = |entries| NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries };
+    let b = pattern(vec![(threes, 2.0), (fours, 1.0)]); // two 3s and a 4
+    let e = pattern(vec![(fours, 1.0), (fives, 1.0)]); // a 4 and a 5
+
+    // A scripted backend hands over the duals a solver would: B prices at 1 - 2/3 - 1/2 = -1/6, E at exactly 0.
+    let at = Progress::at(Duration::ZERO, Phase::Simplex);
+    let round = |objective: f64, duals: Vec<f64>| Step::Price {
+        progress: at,
+        mode: PriceMode::ReducedCost { objective },
+        duals: duals.into(),
+    };
+    let first = round(29.0 / 6.0, vec![1.0 / 3.0, 0.5, 0.5]);
+    let second = round(4.5, vec![1.0 / 3.0, 1.0 / 3.0, 0.5]);
+    let end = Outcome::Optimal(Solution { objective: 4.5, values: vec![1.0, 0.0, 1.5, 2.0].into() });
+    let mut solver = Solver::new(Script::new([first, second], end), m.build()?)?;
+
+    let mut pool = Pool { patterns: vec![b, e], added: vec![None, None] };
+    let solved = solver.solve_with(Request::new(), Hooks::new().register_pricer(&mut pool))?;
+    assert_eq!(pool.added, [Some(Col::new(3)), None]);
+    assert_eq!(solver.program().num_cols(), 4);
+    let best = solved.outcome.solution().ok_or("no solution")?;
+    assert!(solver.program().max_violation(&best.values) < 1e-9);
+    Ok(())
+}
+```
+
+## Pairing callbacks
+
+Two callbacks run together as a pair `(a, b)`: each runs only for the events it asked for, `a` first, and the pair
+asks for the union. `&mut C` is a callback wherever `C` is, so a pair can borrow both and leave them readable
+afterwards. `()` is the callback that asks for nothing. Handlers pair the same way: `(a, b)` is a handler of a kind
+wherever both are, both run, `a` first, on one context, so at a price step the columns `b` adds follow those `a`
+added. One value in two roles that the backend calls apart is registered once in each, or, for lazy constraints and
+cuts, with `register_lazy_and_cut`; two handlers that share state hold it behind a `&Mutex`, since a backend never
+calls two of them at once.
+
+```rust
+use std::time::Duration;
+
+use culmen::prelude::*;
+use culmen::{Phase, Script, Step};
+
+#[derive(Default)]
+struct CountPolls(usize);
+
+impl<B: Backend> Callback<B> for CountPolls {
+    fn events(&self) -> Events {
+        Events::POLL
+    }
+    fn poll(&mut self, _: &mut B::Poll<'_>) {
+        self.0 += 1;
+    }
+}
+
+struct StopAfter(Duration);
+
+impl<B: Backend> Callback<B> for StopAfter {
+    fn events(&self) -> Events {
+        Events::POLL
+    }
+    fn poll(&mut self, ctx: &mut B::Poll<'_>) {
+        if ctx.progress().elapsed >= self.0 {
+            ctx.interrupt();
+        }
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut m = Model::new();
+    m.add_var(Var::binary());
+    let polls: Vec<Step> = (1..=5).map(|s| Step::Poll(Progress::at(Duration::from_secs(s), Phase::Mip))).collect();
+    let mut solver = Solver::new(Script::new(polls, Outcome::Infeasible), m.build()?)?;
+
+    let (mut count, mut stop) = (CountPolls::default(), StopAfter(Duration::from_secs(3)));
+    solver.solve_with(Request::new(), Hooks::new().register_callback(&mut (&mut count, &mut stop)))?;
+    assert_eq!(count.0, 3);
+    Ok(())
+}
+```
+
+The request's stop and observer are themselves a callback, `Watch`, which `solve_with` runs before yours, as the pair
+`(watch, callback)` would. `Request::into_watch()` hands out that `Watch` and the settings, for code that drives a
+`Backend` directly and registers `&mut (watch, callback)` on its `Hooks`; `Watch::finish` reports a last log line that
+never got its line break.
+
+## `Unsupported`
+
+A backend that cannot deliver an observational event leaves it out of `Backend::EVENTS` and names `Unsupported` as
+its context type. `Unsupported` is an enum with no values: a callback method for that event compiles, but it can never
+be called, since no context can be made. SCIP names it for its native event. A search capability a backend lacks
+needs no such type: the backend does not implement the trait, and a handler for it does not compile
+([Search handlers](#search-handlers)).
+
+```rust
+use culmen::prelude::*;
+
+assert_eq!(Highs::EVENTS, Events::ALL);
+assert!(culmen::Script::EVENTS.contains(Events::ALL));
+
+/// Compiles only for a backend that takes lazy constraints.
+fn takes_lazy<B: LazyConstraints>() {}
+takes_lazy::<culmen::Script>();
+```
+
+HiGHS 1.16 offers no lazy constraints, user cuts or pricing; see [Limitations](highs.md#limitations).
+[SCIP](scip.md#callback-events), with the `scip` feature, delivers every observational event but a native one and
+has every search capability, through plugins it includes in each instance; it refuses pricing on a program with a
+quadratic objective with a typed error before it solves.
+
 ## Panics and threads
 
-- **A panic in an observer, a stop or a callback never aborts the process.** It stops the solve as soon as the
+- **A panic in an observer, a stop, a callback or a handler never aborts the process.** It stops the solve as soon as the
   solver allows and then continues unwinding out of `solve` or `solve_with`. The backend stays usable: the next solve
   on the same `Solver` runs normally. Catch it with `std::panic::catch_unwind` around the solve, if you need to.
-- **Calls never overlap.** A backend calls one callback method at a time, and only while `solve` runs.
+- **Calls never overlap.** A backend calls one callback or handler method at a time, and only while `solve` runs.
 - **They may come from another thread.** A backend may call back from a thread other than the one that called
-  `solve`, so `Callback` and `Observer` are `Send` and `Stop` is `Sync`. HiGHS, for one, may write log lines from
+  `solve`, so `Callback`, every handler and `Observer` are `Send` and `Stop` is `Sync`. HiGHS, for one, may write log lines from
   its worker threads; it serialises every call behind a lock.
 
 ## See also
@@ -356,6 +558,6 @@ An action returns `Err(ActionError)` when it is refused:
 - [HiGHS](highs.md#callback-contexts): what each HiGHS context offers beyond the traits.
 - [SCIP](scip.md#callback-events): the SCIP plugin behind each event, lazy constraints, cuts, heuristic solutions and
   pricing.
-- [Testing](testing.md#testing-callbacks): driving callbacks with the `Script` backend.
+- [Testing](testing.md#testing-callbacks): driving callbacks and handlers with the `Script` backend.
 - [Backends](backends.md): how events map onto HiGHS, Gurobi and SCIP.
 - [Documentation index](README.md).

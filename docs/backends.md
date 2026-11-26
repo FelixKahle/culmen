@@ -18,22 +18,21 @@ pub trait Backend: Sized {
     type Progress<'a>: ProgressContext;   // Events::PROGRESS
     type Poll<'a>: PollContext;           // Events::POLL
     type Solution<'a>: SolutionContext;   // Events::FEASIBLE and Events::INCUMBENT
-    type Lazy<'a>: LazyContext;           // Events::LAZY
-    type Cut<'a>: CutContext;             // Events::CUT
-    type Heuristic<'a>: HeuristicContext; // Events::HEURISTIC
-    type Price<'a>: PriceContext;         // pricing, for a callback whose prices() is true
     type Native<'a>: Debug;               // Events::NATIVE: whatever only this solver reports
-    const EVENTS: Events;                 // what this backend delivers
-    const PRICES: bool = false;           // whether it prices
+    const EVENTS: Events;                 // the observational events this backend delivers
     const CLASSES: ModelClasses;          // the model classes this backend solves
     const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // the semi columns and objectives it takes
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
     fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), Self::Error> { self.load(program) }
-    fn solve(&mut self, settings: &Settings, callback: &mut dyn Callback<Self>, priced: &mut Priced)
-        -> Result<Solved<Self::Status>, Self::Error>;
+    fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<Self::Status>, Self::Error>;
 }
 
 // Capabilities beyond the seam, each a trait the backend implements or leaves out (culmen_core::capability).
+// The search capabilities hold the context their handler receives.
+pub trait LazyConstraints: Backend { type Lazy<'a>: LazyContext; }      // LazyHandler
+pub trait UserCuts: Backend { type Cut<'a>: CutContext; }               // CutHandler
+pub trait Heuristics: Backend { type Heuristic<'a>: HeuristicContext; } // HeuristicHandler
+pub trait Prices: Backend { type Price<'a>: PriceContext; }             // Pricer
 pub trait Starts: Backend {
     fn set_start(&mut self, start: &Start) -> Result<(), Self::Error>;
 }
@@ -53,10 +52,22 @@ pub trait RelaxationAnalysis: Backend {
 }
 ```
 
-- **Capabilities are typed and queryable.** A backend lists the events it delivers in `Backend::EVENTS`. For an event
-  it cannot deliver it names `culmen_core::Unsupported` as the context type: an enum with no values, so a callback
-  method for that event compiles but can never run. HiGHS, for instance, names `Unsupported` for `Lazy`, `Cut` and
-  `Price`.
+- **Observational events are typed and queryable.** A backend lists the observational events it delivers in
+  `Backend::EVENTS`. For one it cannot deliver it names `culmen_core::Unsupported` as the context type: an enum with
+  no values, so a callback method for that event compiles but can never run. SCIP, for instance, names `Unsupported`
+  for `Native`.
+- **Search events are capability traits.** Lazy constraints, user cuts, heuristic solutions and pricing change what a
+  solver searches, so a backend implements `LazyConstraints`, `UserCuts`, `Heuristics` or `Prices` for each it
+  delivers, naming the context of its handler there, and the registration method of the handler
+  (`Hooks::register_lazy` and so on) exists only for a backend that has it. HiGHS implements `Heuristics` alone, so a
+  lazy-constraint handler or a pricer for HiGHS does not compile instead of being ignored.
+- **Hooks carry the callback and the handlers.** `solve` receives a `Hooks<'_, Self>` by value: a core-owned value
+  with private fields that dispatches. The backend reads `hooks.events()` for the observational events to deliver and
+  `hooks.wants_lazy()`, `wants_cut()`, `wants_heuristic()` and `wants_price()` for the handlers registered, and calls
+  `hooks.log(ctx)`, `hooks.lazy(ctx)`, `hooks.price(ctx)` and so on; it never sees how they are stored. What a backend
+  gives up for a search handler it decides from `wants_*`, never from the events a callback asks for. A wrapping
+  backend hands its hooks to the backend it wraps through `Hooks::relay` and a `Relay` of its own, whose search methods
+  carry their capability as a `where` clause, so one wrapper serves every inner backend.
 - **Model classes are declared.** A backend lists the classes it solves (`ModelClass::Lp`, `Milp`, `Qp`, `Miqp`)
   in `Backend::CLASSES`. `Solver::new` reads it before `load`, for every backend alike, and refuses any other class
   with `LoadError::Unsupported { class, supported }`, so `load` never re-checks the class. Features beyond the class
@@ -71,9 +82,10 @@ pub trait RelaxationAnalysis: Backend {
   of a basis or weights and the solve read before it asks, for every backend alike ([Analysis](analysis.md)), and a
   wrapper backend forwards each trait with a conditional impl (`impl<B: DualAnalysis> DualAnalysis for Wrapper<B>`).
 - **Actions are typed per event.** Only `PollContext` has `interrupt`, only `LazyContext` has `add_lazy`, only
-  `CutContext` has `add_cut`, only `HeuristicContext` has `supply` and `supply_partial`, only `PriceContext` has
-  `add_col`, `branch_early` and `report_bound`. An action that a solver honours only at certain points exists only on
-  the context of those points.
+  `CutContext` has `add_cut`, only `HeuristicContext` has `supply`, only `PriceContext` has `add_col`, `branch_early`
+  and `report_bound`. An action that a solver honours only at certain points exists only on the context of those
+  points, and one only some solvers honour is an inherent method of their context (`HighsHeuristic::supply_partial`).
+  Every context trait has the supertrait `Context`, whose `progress()` reports where the solve stands.
 - **Extras stay with the backend.** Each context type is the backend's own struct. What the solver reports beyond
   the neutral trait is an inherent method on it (`HighsPoll::source`, `HighsSolution::mip`) or a native event
   (`HighsNative::CutPool`). Generic code (`impl<B: Backend> Callback<B> for …`) sees the traits, and backend code
@@ -81,7 +93,7 @@ pub trait RelaxationAnalysis: Backend {
 - **The convenient path sits on top.** `Watch` (made from a `Request` of settings, a `Stop` and an `Observer`) is an
   ordinary `impl<B: Backend> Callback<B>`: it polls the stop at `POLL`, throttles `PROGRESS`/`POLL` into
   `Observer::progress`, reports `INCUMBENT` as `Observer::improved`, and joins `LOG` chunks into lines. It works
-  unchanged on every backend, and pairs with a backend-specific callback as `(watch, mine)`.
+  unchanged on every backend, and a `Solver` runs it before the callback registered on the hooks.
 - **Edits are a hook with a correct default.** A `Solver` that [edits its program](solving.md#editing-a-loaded-program)
   calls `edit` with the edited program and an `Edit` naming what changed: the columns whose bounds, costs or
   integrality changed, the rows whose bounds changed, or the rows or columns appended. Only a `Solver` makes an
@@ -91,23 +103,26 @@ pub trait RelaxationAnalysis: Backend {
   in place and keep its warm start, and falls back to `load` for any kind of `Edit` it does not handle, since the enum
   is non-exhaustive. When `edit` fails, the backend may hold anything: the `Solver` loads the program before the edit
   again.
-- **Priced columns go to a sink the caller owns.** `solve` takes a `Priced`, made for the loaded program. A backend
-  that prices (`PRICES`) hands every column a callback adds to `Priced::push`, which checks it (rows the program has,
-  finite numbers, bounds that hold zero, no semi column, a class the backend solves) and returns its id, the next
-  after the program's columns and every one priced before. The core owns the checks and the numbering, so every
-  backend refuses the same columns the same way, and a backend that declared `PRICES` but forgot the sink would not
-  compile. A `Solver` appends the columns to its program however `solve` ends, unwinding included, and loads the
-  grown program at its next call; code that drives a backend directly makes its own `Priced` and takes the columns
-  with `Priced::into_cols`. A backend that does not price ignores the parameter.
+- **Priced columns go to a sink the caller owns.** The sink, a `Priced` made for the loaded program, travels in the
+  hooks with the pricer: a backend that `Prices` takes it with `hooks.take_priced()` before it solves, `Some` exactly
+  when a pricer is registered, and hands every column the pricer adds to `Priced::push`, which checks it (rows the
+  program has, finite numbers, bounds that hold zero, no semi column, a class the backend solves) and returns its id,
+  the next after the program's columns and every one priced before. The core owns the checks and the numbering, so
+  every backend refuses the same columns the same way. A `Solver` gives its own sink, appends the columns to its
+  program however `solve` ends, unwinding included, and loads the grown program at its next call; code that drives a
+  backend directly gives its own with `Hooks::sink` and takes the columns with `Priced::into_cols`. A backend that
+  does not price never sees one.
 - **The contract** (on `Backend`): solve the last program `load` or `edit` accepted; report every objective and bound
   with the program's quadratic part and offset in the model's sense, and every point with one value per column, the ones
-  priced so far included; call only events in `EVENTS ∩ callback.events()`, only during `solve`, never two at once; a
-  panic in a callback stops the solve and unwinds out of `solve`, never aborts. A backend that declares `PRICES` calls
-  `price`, for a callback whose `prices()` is true, only for a solved node LP, optimal (`PriceMode::ReducedCost`) or
+  priced so far included; deliver only observational events in `hooks.events()`, which lies within `EVENTS`, call a
+  handler only when one of its kind is registered, only during `solve`, never two calls at once; a panic in a callback
+  or handler stops the solve and unwinds out of `solve`, never aborts. A backend that implements `Prices` calls the
+  pricer only for a solved node LP, optimal (`PriceMode::ReducedCost`) or
   infeasible (`PriceMode::Farkas`), ends pricing at a node only after a round that added nothing and did not branch
   early, and keeps every added column for the rest of the solve.
 
-`Script`, the in-memory backend in culmen_core, delivers every generic event from a scripted list. Its tests drive
+`Script`, the in-memory backend in culmen_core, delivers every generic event from a scripted list and has every
+search capability. Its tests drive
 lazy constraints, cuts, heuristic solutions, pricing, native events, the observer, stops and panics without any
 solver. That is evidence that nothing in the core assumes HiGHS.
 
@@ -162,17 +177,17 @@ backend declares or leaves out.
 | `Progress` fields | `running_time`, `mip_primal_bound`, `mip_dual_bound`, `mip_node_count`, `mip_total_lp_iterations`, `simplex_iteration_count`, `ipm_iteration_count` | `cbGet` codes above, `GRB_CB_RUNTIME` | the wall clock of the solve and the getters above, each in the stages SCIP reports it |
 | `FEASIBLE`: any new solution | `kHighsCallbackMipSolution`: `mip_solution`, `objective_function_value`; `kHighsCallbackQpFirstFeasiblePoint` once per QP solve, valued by the backend | `GRB_CB_MIPSOL`: `MIPSOL_SOL`, `MIPSOL_OBJ` | the event handler on `SCIP_EVENTTYPE_SOLFOUND`, and the solutions stored before it caught events (starts, the last solve's best) |
 | `INCUMBENT`: a better solution | `kHighsCallbackMipImprovingSolution`; an accepted user solution is reported at the next MIP poll, as HiGHS skips its solution callbacks for it | `GRB_CB_MIPSOL` when `MIPSOL_OBJ` beats `MIPSOL_OBJBST` | `SCIP_EVENTTYPE_BESTSOLFOUND` |
-| `LAZY`: cut off a candidate | none: `kHighsCallbackMipDefineLazyConstraints` exists in 1.16 but is never called, so `Unsupported` | `GRB_CB_MIPSOL` (and `MIPNODE`): `GRBcblazy`, with `LazyConstraints = 1` | a constraint handler without constraints, checked and enforced last: `CONSCHECK` rejects, `CONSENFOLP` / `CONSENFOPS` / `CONSENFORELAX` add global linear constraints (`SCIPaddCons`, `CONSADDED`) |
-| `CUT`: cut off a node relaxation | none, so `Unsupported` | `GRB_CB_MIPNODE` with `MIPNODE_STATUS == OPTIMAL`: `GRBcbget(MIPNODE_REL)`, `GRBcbcut` | a separator (`SEPAEXECLP`): `SCIPgetSolVal` of the LP, `SCIPaddRow` and `SCIPaddPoolCut` |
-| `HEURISTIC`: supply a solution | `kHighsCallbackMipUserSolution`: `user_solution` + `user_has_solution`; partial via `Highs_setCallbackSparseSolution` + `Highs_repairCallbackSolution` | `GRB_CB_MIPNODE` (and `MIP`): `GRBcbsolution` (partial values allowed), `GRBcbusesolution` | a primal heuristic (`HEUREXEC`) before and after each node: `SCIPcreateOrigSol` (`SCIPcreateSol` in a solve that prices), `SCIPtrySolFree`; no partial solution during the search, so `supply_partial` is refused |
-| pricing (`PRICES`): answer a node LP's duals with columns | none, so `Unsupported` | none: Gurobi 12 has no pricing callback | a pricer plugin, delayed and active only in a solve whose callback prices, whose rows are then modifiable (`SCIPincludePricerBasic`, `SCIPactivatePricer`, `SCIPsetConsModifiable`): `PRICERREDCOST` and `PRICERFARKAS` read `SCIPgetDualsolLinear` or `SCIPgetDualfarkasLinear`, then `SCIPcreateVar`, `SCIPaddPricedVar` and `SCIPaddCoefLinear`; refused on a program with a quadratic objective |
+| `LazyConstraints`: cut off a candidate | none: `kHighsCallbackMipDefineLazyConstraints` exists in 1.16 but is never called, so not implemented | `GRB_CB_MIPSOL` (and `MIPNODE`): `GRBcblazy`, with `LazyConstraints = 1` | a constraint handler without constraints, checked and enforced last: `CONSCHECK` rejects, `CONSENFOLP` / `CONSENFOPS` / `CONSENFORELAX` add global linear constraints (`SCIPaddCons`, `CONSADDED`) |
+| `UserCuts`: cut off a node relaxation | none, so not implemented | `GRB_CB_MIPNODE` with `MIPNODE_STATUS == OPTIMAL`: `GRBcbget(MIPNODE_REL)`, `GRBcbcut` | a separator (`SEPAEXECLP`): `SCIPgetSolVal` of the LP, `SCIPaddRow` and `SCIPaddPoolCut` |
+| `Heuristics`: supply a solution | `kHighsCallbackMipUserSolution`: `user_solution` + `user_has_solution`; partial via `Highs_setCallbackSparseSolution` + `Highs_repairCallbackSolution` | `GRB_CB_MIPNODE` (and `MIP`): `GRBcbsolution` (partial values allowed), `GRBcbusesolution` | a primal heuristic (`HEUREXEC`) before and after each node: `SCIPcreateOrigSol` (`SCIPcreateSol` in a solve that prices), `SCIPtrySolFree`; no partial solution during the search, so `ScipHeuristic` has no `supply_partial` |
+| `Prices`: answer a node LP's duals with columns | none, so not implemented | none: Gurobi 12 has no pricing callback | a pricer plugin, delayed and active only in a solve with a pricer, whose rows are then modifiable (`SCIPincludePricerBasic`, `SCIPactivatePricer`, `SCIPsetConsModifiable`): `PRICERREDCOST` and `PRICERFARKAS` read `SCIPgetDualsolLinear` or `SCIPgetDualfarkasLinear`, then `SCIPcreateVar`, `SCIPaddPricedVar` and `SCIPaddCoefLinear`; refused on a program with a quadratic objective |
 | `NATIVE`: solver-only events | `kHighsCallbackMipGetCutPool` as `HighsNative::CutPool` (presolved-space cuts) | `GRB_CB_PRESOLVE`, `GRB_CB_MULTIOBJ`, `GRB_CB_IIS`, and `MIPNODE` node data beyond the relaxation | none in `culmen_scip`; any other event type (`SCIP_EVENTTYPE_*`), branching or node-selection data would fit |
 
 HiGHS's threading is handled inside culmen_highs. The MIP kinds come from its serial search loop. Logging may come
 from task-pool threads. The trampoline serialises all calls behind a mutex, so callbacks are `Send` and the stop is
 `Sync`. Gurobi calls back on the thread that called `GRBoptimize`, and SCIP plugins run on the solving thread, so a
-backend for either may call the callback directly, as `Script` does; the bounds on `Callback` and `Stop` already
-allow a solver that calls back from other threads.
+backend for either may call the hooks directly, as `Script` does; the bounds on `Callback`, the handlers and `Stop`
+already allow a solver that calls back from other threads.
 
 ## Settings
 
@@ -225,10 +240,10 @@ A `culmen_gurobi` crate would hold an `Env`/`Model` pair over `grb-sys`. `load` 
 arrays. `solve` sets parameters from its own typed `GurobiOptions`, then from `Settings`, installs one
 `GRBsetcallbackfunc` trampoline for the run, and maps `where` codes to events as in the table above. Its context types
 would be `GurobiMessage`, `GurobiMip`, `GurobiMipSol` and `GurobiMipNode`. `GurobiMipNode` would implement `CutContext`
-and `HeuristicContext` and offer `cbGet` codes as inherent methods. `EVENTS` would be `Events::ALL`, `PRICES` false, and
-`CLASSES` would be `ModelClasses::ALL`, the quadratic part passed with `GRBaddqpterms`. None of this needs a change to
+and `HeuristicContext` and offer `cbGet` codes as inherent methods. `EVENTS` would be `Events::ALL`; it would implement
+`LazyConstraints`, `UserCuts` and `Heuristics` and not `Prices`; and `CLASSES` would be `ModelClasses::ALL`, the quadratic part passed with `GRBaddqpterms`. None of this needs a change to
 culmen_core. SCIP needed more plumbing, since its callbacks are plugins (an event handler, a message handler, a
 constraint handler, a separator, a heuristic and a pricer, each included in the `SCIP*`), but each plugin maps onto the
 event kinds above; `culmen_scip` includes them in every instance and delivers every generic event that way
 ([SCIP](scip.md#callback-events)). Pricing is the one part of the seam the pricer needed in culmen_core: the sink
-`Priced` beside the callback, since the columns a solve prices outlive it.
+`Priced` in the hooks beside the pricer, since the columns a solve prices outlive it.

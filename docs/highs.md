@@ -13,7 +13,8 @@ it is `culmen::highs`, and its backend type is also `culmen::Highs` and in the p
 | `Highs::new()` | A backend with HiGHS's default options. |
 | `Highs::with_options(options)` | A backend with the given `HighsOptions`. |
 | `highs.options()`, `highs.options_mut()` | The options, to read or to change between solves. |
-| `Highs::EVENTS` | `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `HEURISTIC` and `NATIVE`. |
+| `Highs::EVENTS` | Every observational event: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT` and `NATIVE`. |
+| Search capabilities | `Heuristics` alone ([Heuristic solutions](#heuristic-solutions)); no `LazyConstraints`, `UserCuts` or `Prices` ([Limitations](#limitations)). |
 | `Highs::CLASSES` | `Lp`, `Milp` and `Qp`; see [Quadratic programs](#quadratic-programs). |
 | `culmen_highs::version()` | The version of the linked HiGHS; it displays as `1.16.x`. |
 
@@ -419,19 +420,19 @@ A run that ends without a solution is not an error but an outcome; a model statu
 
 ## Callback contexts
 
-A `Callback<Highs>` receives HiGHS's own context types. Each implements the neutral [context
-trait](callbacks.md#contexts) of its event and offers what HiGHS reports beyond it:
+A `Callback<Highs>` and a `HeuristicHandler<Highs>` receive HiGHS's own context types. Each implements the neutral
+[context trait](callbacks.md#contexts) of its event and offers what HiGHS reports beyond it:
 
-| Event | Context | HiGHS callback | Beyond the trait |
+| Event or handler | Context | HiGHS callback | Beyond the trait |
 |---|---|---|---|
 | `LOG` | `HighsLog` | `kHighsCallbackLogging` | `log_type()`: a `HighsLogType`, `Info`, `Detailed`, `Verbose`, `Warning` or `Error` |
 | `PROGRESS` | `HighsMipProgress` | `kHighsCallbackMipLogging`, when HiGHS writes a MIP log line | `mip()`: the `MipData` |
 | `POLL` | `HighsPoll` | the simplex, interior-point, MIP and QP interrupt callbacks | `source()`: a `PollSource`, `Simplex { iterations }`, `Ipm { iterations }`, `Mip(MipData)` or `Qp { iterations }` |
 | `FEASIBLE` | `HighsSolution` | `kHighsCallbackMipSolution`, and `kHighsCallbackQpFirstFeasiblePoint` once per QP solve | `mip()`: the `MipData`, `None` for the QP's point |
 | `INCUMBENT` | `HighsSolution` | `kHighsCallbackMipImprovingSolution` | `mip()` |
-| `HEURISTIC` | `HighsHeuristic` | `kHighsCallbackMipUserSolution` | `origin()`, a `QueryOrigin`; `mip()` |
+| `HeuristicHandler` | `HighsHeuristic` | `kHighsCallbackMipUserSolution`, started only for a solve with a heuristic handler | `origin()`, a `QueryOrigin`; `mip()`; `supply_partial(&entries)` |
 | `NATIVE` | `HighsNative` | `kHighsCallbackMipGetCutPool` | the [cut pool](#the-cut-pool) |
-| `LAZY`, `CUT`, pricing | `Unsupported` | none | never delivered; `Highs::PRICES` is false ([Limitations](#limitations)) |
+| lazy constraints, cuts, pricing | none | none | `Highs` implements none of their capabilities, so their handlers do not compile ([Limitations](#limitations)) |
 
 `MipData` is what every MIP callback reports, in the model's objective space, offset included:
 
@@ -450,7 +451,7 @@ program has columns is not delivered.
 The interrupt and logging callbacks are always installed, whatever the callback asks for: the polls so that a panic
 can stop the run, the log so that a failed run can name HiGHS's last error line. Calls are serialised behind one
 lock; a log line HiGHS writes while `supply_partial` repairs a solution re-enters the same run and is not delivered,
-since the callback is busy. A solve of another `Highs` started from inside a callback gets its own callbacks.
+since the heuristic handler is busy. A solve of another `Highs` started from inside a callback gets its own callbacks.
 
 ```rust
 use culmen::prelude::*;
@@ -488,7 +489,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(LinExpr::sum((0..6).map(|i| value[i] * take[i])));
 
     let mut inspect = Inspect::default();
-    let solved = Solver::new(Highs::new(), m.build()?)?.solve_with(Request::new(), &mut inspect)?;
+    let hooks = Hooks::new().register_callback(&mut inspect);
+    let solved = Solver::new(Highs::new(), m.build()?)?.solve_with(Request::new(), hooks)?;
     assert_eq!(solved.outcome.objective(), Some(25.0));
     assert!(inspect.warnings.is_empty());
     Ok(())
@@ -500,7 +502,8 @@ Backend>::Poll<'_>`; they are the same type.
 
 ## Heuristic solutions
 
-At `HEURISTIC`, HiGHS asks for a solution of the callback's own. `HighsHeuristic::origin()` says where in the
+HiGHS implements `Heuristics`: at its user-solution callback it asks a registered `HeuristicHandler<Highs>` for a
+solution of its own. `HighsHeuristic::origin()` says where in the
 search it asks: `QueryOrigin::AfterSetup`, once the MIP solver is set up; `BeforeDive`; `EvaluateRootNode(point)`,
 during root-node evaluation, `point` a `RootNodePoint` naming HiGHS's numbered point; or `Other(i32)` for a value
 HiGHS 1.16 does not define.
@@ -508,8 +511,8 @@ HiGHS 1.16 does not define.
 - `ctx.supply(&values)` offers a value for every column. The values are checked first: one finite value per column,
   or `ActionError::Length` or `ActionError::NotFinite`. HiGHS then checks the solution against the model and keeps
   it as its incumbent if it is feasible and better.
-- `ctx.supply_partial(&entries)` offers values for some columns, and HiGHS completes them into a feasible solution
-  if it can. It returns `ActionError::Refused` for no entries, for a column named twice, for a value outside its
+- `ctx.supply_partial(&entries)`, an inherent method of `HighsHeuristic` since not every solver completes a partial
+  solution, offers values for some columns, and HiGHS completes them into a feasible solution if it can. It returns `ActionError::Refused` for no entries, for a column named twice, for a value outside its
   column's bounds or integrality, and when HiGHS finds no feasible completion. A refused call leaves what an earlier
   call at the same query supplied.
 
@@ -527,10 +530,7 @@ struct Start {
     supplied: Vec<Result<(), ActionError>>,
 }
 
-impl Callback<Highs> for Start {
-    fn events(&self) -> Events {
-        Events::HEURISTIC
-    }
+impl HeuristicHandler<Highs> for Start {
     fn heuristic(&mut self, ctx: &mut HighsHeuristic<'_>) {
         if ctx.origin() == QueryOrigin::AfterSetup
             && let Some(values) = self.values.take()
@@ -554,9 +554,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let options = HighsOptions { presolve: Some(Switch::Off), ..HighsOptions::default() };
     let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
-    let mut callback = Start { values: Some(start), supplied: Vec::new() };
-    let solved = solver.solve_with(Request::new(), &mut callback)?;
-    assert_eq!(callback.supplied, [Ok(())]);
+    let mut handler = Start { values: Some(start), supplied: Vec::new() };
+    let solved = solver.solve_with(Request::new(), Hooks::new().register_heuristic(&mut handler))?;
+    assert_eq!(handler.supplied, [Ok(())]);
     assert_eq!(solved.outcome.objective(), Some(25.0));
     Ok(())
 }
@@ -580,12 +580,12 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 ## Limitations
 
 - **No lazy constraints.** HiGHS 1.16 declares `kHighsCallbackMipDefineLazyConstraints` and never calls it, so
-  `Events::LAZY` is not in `Highs::EVENTS` and its context is `Unsupported`. [SCIP](scip.md#lazy-constraints) takes
-  them.
-- **No user cuts.** HiGHS has no callback for them; `Events::CUT` is `Unsupported` too. [SCIP](scip.md#cuts) takes
-  them.
-- **No pricing.** HiGHS has no pricing callback, so `Highs::PRICES` is false and `price` is never called: price in an
-  outer loop by [editing](#editing-a-loaded-program) the program, as the `column_generation` example does, or at every
+  `Highs` does not implement `LazyConstraints`, and registering a `LazyHandler` for it does not compile.
+  [SCIP](scip.md#lazy-constraints) takes them.
+- **No user cuts.** HiGHS has no callback for them, so `Highs` does not implement `UserCuts`. [SCIP](scip.md#cuts)
+  takes them.
+- **No pricing.** HiGHS has no pricing callback, so `Highs` does not implement `Prices` and a `Pricer` for it does not
+  compile: price in an outer loop by [editing](#editing-a-loaded-program) the program, as the `column_generation` example does, or at every
   node on [SCIP](scip.md#pricing).
 - **An interrupt is honoured only at a poll.** Only `HighsPoll` has `interrupt`, and only `HighsHeuristic` accepts
   a solution.
