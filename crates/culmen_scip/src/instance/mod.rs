@@ -248,6 +248,31 @@ impl Instance {
         (active, modifiable)
     }
 
+    /// The variables of the columns the last solve priced, in the order of their ids.
+    #[cfg(test)]
+    pub(crate) fn priced_vars(&self) -> &[NonNull<SCIP_VAR>] {
+        &self.priced
+    }
+
+    /// The model locks SCIP holds on `var`, down and up.
+    #[cfg(test)]
+    pub(crate) fn model_locks(&self, var: NonNull<SCIP_VAR>) -> (i32, i32) {
+        let model = scip_sys::SCIP_LockType_SCIP_LOCKTYPE_MODEL;
+        // SAFETY: `var` is a live variable of the instance; the getters read its lock counts.
+        unsafe {
+            (
+                scip_sys::SCIPvarGetNLocksDownType(var.as_ptr(), model),
+                scip_sys::SCIPvarGetNLocksUpType(var.as_ptr(), model),
+            )
+        }
+    }
+
+    /// The locks the culmen plugins keep on `var`: the lazy-constraint handler's, down and up.
+    #[cfg(test)]
+    pub(crate) fn kept_locks(&self, var: NonNull<SCIP_VAR>) -> (i32, i32) {
+        self.slot().lazy_locks_on(var)
+    }
+
     /// Whether the objective has a quadratic part, which SCIP holds as an epigraph.
     pub(crate) const fn quadratic(&self) -> bool {
         self.epigraph.is_some()
@@ -325,7 +350,17 @@ impl Instance {
         let this: &Self = self;
         // SAFETY: the instance is live, holds the columns and rows, and is in its problem stage, as configuring left
         // it.
-        let run = unsafe { Run::new(this.raw(), hooks, priced, start, this.columns(), &this.conss) };
+        let run = unsafe {
+            Run::new(
+                this.raw(),
+                this.slot(),
+                hooks,
+                priced,
+                start,
+                this.columns(),
+                &this.conss,
+            )
+        };
         let solved = {
             let _installed = this.slot().install(&run);
             // SAFETY: the instance is live and borrowed exclusively by the caller, and holds its problem; the run its

@@ -77,4 +77,14 @@ impl Applied {
         }
         unlocked
     }
+
+    /// The locks kept on `var`, down and up, summed.
+    #[cfg(test)]
+    pub(super) fn on(&self, var: NonNull<SCIP_VAR>) -> (c_int, c_int) {
+        self.0
+            .borrow()
+            .iter()
+            .filter(|&&(v, _, _)| v == var)
+            .fold((0, 0), |(d, u), &(_, down, up)| (d + down, u + up))
+    }
 }

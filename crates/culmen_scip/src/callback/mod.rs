@@ -130,6 +130,12 @@ impl Slot {
         }
     }
 
+    /// The locks the lazy-constraint handler keeps on `var`, down and up.
+    #[cfg(test)]
+    pub(crate) fn lazy_locks_on(&self, var: NonNull<SCIP_VAR>) -> (c_int, c_int) {
+        self.lazy_locks.on(var)
+    }
+
     /// Whether SCIP's messages reach standard output and standard error.
     pub(crate) fn set_console(&self, console: bool) {
         self.console.set(console);
@@ -208,6 +214,8 @@ impl Drop for Installed<'_> {
 /// One solve's hooks and what its plugins share, on the solve's stack while `SCIPsolve` runs: what the run reads of
 /// the instance lives for `'a`, the hooks for `'h`.
 pub(crate) struct Run<'a, 'h> {
+    /// The instance's slot, which keeps the locks the handlers apply beyond the run.
+    slot: &'a Slot,
     /// The callback and the handlers, borrowed by one delivery at a time.
     hooks: RefCell<Hooks<'h, Scip>>,
     /// The events the callback asked for that SCIP delivers.
@@ -284,14 +292,15 @@ enum Delivered {
 }
 
 impl<'a, 'h> Run<'a, 'h> {
-    /// The run of a solve of `scip`, which holds the columns `cols` and the rows `rows`, for `hooks`, handing every
-    /// column its pricer prices to `priced`, the sink the hooks gave.
+    /// The run of a solve of `scip`, whose slot is `slot` and which holds the columns `cols` and the rows `rows`, for
+    /// `hooks`, handing every column its pricer prices to `priced`, the sink the hooks gave.
     ///
     /// # Safety
     ///
     /// `scip` is the live instance holding `cols` and `rows`, in its problem stage.
     pub(crate) unsafe fn new(
         scip: *mut SCIP,
+        slot: &'a Slot,
         hooks: Hooks<'h, Scip>,
         priced: Option<&'h mut Priced>,
         start: Instant,
@@ -312,6 +321,7 @@ impl<'a, 'h> Run<'a, 'h> {
             Sense::Minimize
         };
         Self {
+            slot,
             wanted: hooks.events(),
             wants_lazy: hooks.wants_lazy(),
             wants_cut: hooks.wants_cut(),

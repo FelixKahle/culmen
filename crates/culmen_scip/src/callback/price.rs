@@ -429,6 +429,13 @@ impl Run<'_, '_> {
         check("SCIPaddPricedVar", unsafe {
             SCIPaddPricedVar(scip, var.as_ptr(), score)
         })?;
+        // A lazy-constraint handler may add a constraint on the column, so it holds the column both ways, as it holds
+        // every column of the program; SCIP's lock of a handler without constraints never reaches a variable created
+        // while solving, so the lock is applied here, and the handler's unlock undoes it with the problem.
+        if self.wants_lazy {
+            // SAFETY: the instance is solving and `var` a variable of its transformed problem.
+            unsafe { self.slot.lazy_locks.lock(scip, var, 1, 1) }?;
+        }
         if kind == SCIP_Vartype_SCIP_VARTYPE_INTEGER {
             self.integral.set(true);
         }

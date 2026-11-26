@@ -734,6 +734,60 @@ mod tests {
         assert_eq!(search_params(&scip), (plain.0, plain.1, plain.2, Some(1), Some(1)));
     }
 
+    /// Prices one column without entries, of cost one, at its first round.
+    #[derive(Default)]
+    struct AddsOne(usize);
+
+    impl culmen_core::Pricer<Scip> for AddsOne {
+        fn price(&mut self, ctx: &mut ScipPrice<'_>) {
+            self.0 += 1;
+            assert!(self.0 < 1_000, "AddsOne: the pricer ran without end");
+            if self.0 == 1 {
+                let column = ProgramColumn::continuous(1.0, bounds!(0.0, 1.0));
+                culmen_core::PriceContext::add_col(
+                    &mut *ctx,
+                    culmen_core::NewCol {
+                        column,
+                        entries: Vec::new(),
+                    },
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    /// Maximize `x` over `x` in `[0, 1]` with the row `x <= 1`, loaded into SCIP.
+    fn maximize_one() -> (Scip, Program) {
+        let mut plan = ProgramPlan::new();
+        plan.sense = culmen_core::Sense::Maximize;
+        let x = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1.0)));
+        plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0)]);
+        let program = plan.build().unwrap();
+        let mut scip = Scip::new();
+        scip.load(&program).unwrap();
+        (scip, program)
+    }
+
+    #[test]
+    fn test_a_priced_column_is_locked_both_ways_by_the_lazy_handler_and_unlocked_with_its_problem() {
+        let (mut scip, program) = maximize_one();
+        let mut priced = Priced::new(&program, Scip::CLASSES);
+        let (mut pricer, mut lazy) = (AddsOne::default(), Calls::default());
+        let hooks = Hooks::new()
+            .register_lazy(&mut lazy)
+            .register_pricer(&mut pricer, &mut priced);
+        let solved = scip.solve(&limited(), hooks).unwrap();
+        assert_eq!(solved.outcome.objective(), Some(2.0));
+        let instance = scip.instance.as_ref().unwrap();
+        let var = instance.priced_vars()[0];
+        // The column has no entry, so every lock on it is the lazy handler's: it may add a constraint on it.
+        assert_eq!(instance.model_locks(var), (1, 1));
+        assert_eq!(instance.kept_locks(var), (1, 1));
+        // The next solve frees the transformed problem, and the handler's unlock with it.
+        scip.solve(&limited(), Hooks::new()).unwrap();
+        assert_eq!(scip.instance.as_ref().unwrap().kept_locks(var), (0, 0));
+    }
+
     #[test]
     fn test_presolving_on_keeps_the_presolving_parameters_the_options_set_by_name() {
         let mut scip = Scip::with_options(ScipOptions::default().param("presolving/domcol/maxrounds", 0));

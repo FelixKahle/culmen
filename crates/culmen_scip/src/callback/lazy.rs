@@ -20,8 +20,9 @@
 //! callback that keeps adding one constraint cannot keep SCIP enforcing the same candidate.
 //!
 //! The handler may constrain any variable, so its lock (`CONSLOCK`) locks every variable of the transformed problem
-//! both ways, which keeps presolve from fixing a variable by a dual argument that a constraint added later would
-//! refute. It does so only for a solve with a lazy-constraint handler; that solve also turns off SCIP's
+//! both ways, and each variable a pricer adds both ways as it is created, which keeps presolve and propagation from
+//! fixing a variable by a dual argument that a constraint added later would refute; its unlock undoes exactly the
+//! locks it applied, before SCIP frees the variables. It does so only for a solve with a lazy-constraint handler; that solve also turns off SCIP's
 //! symmetry handling and its dual reductions, which reason about the constraints SCIP holds, and its copies are
 //! invalid, so a sub-SCIP's solution is checked by the main SCIP and its components presolver does not run.
 
