@@ -82,7 +82,7 @@
 //! | `LOG` | the instance's message handler: each info message and warning, a whole line | [`ScipLog`] |
 //! | `POLL`, `PROGRESS` | an event handler: each presolve round, focused node, solved node LP and solved node | [`ScipPoll`], [`ScipProgress`] |
 //! | `FEASIBLE`, `INCUMBENT` | an event handler: each solution SCIP stores, a new best one as the incumbent too | [`ScipSolution`] |
-//! | [`ConstraintHandler`](culmen_core::ConstraintHandler) | a constraint handler without constraints, checked and enforced after every SCIP handler | [`ScipCheck`], [`ScipEnforce`] |
+//! | [`ConstraintHandler`](culmen_core::ConstraintHandler) | a constraint handler without constraints, checked and enforced after every SCIP handler, and a propagator at every node that also explains the bounds it tightened | [`ScipCheck`], [`ScipEnforce`], [`ScipPropagate`], [`ScipExplain`] |
 //! | [`LazyHandler`](culmen_core::LazyHandler) | a constraint handler without constraints, checked and enforced after every other | [`ScipLazy`] |
 //! | [`CutHandler`](culmen_core::CutHandler) | a separator on each node's LP solution | [`ScipCut`] |
 //! | [`HeuristicHandler`](culmen_core::HeuristicHandler) | a primal heuristic before and after each node | [`ScipHeuristic`] |
@@ -102,12 +102,15 @@
 //!
 //! A [`ConstraintHandler`](culmen_core::ConstraintHandler) is checked on every solution SCIP checks and asked to
 //! enforce every node's point SCIP's own handlers accept, `check` first and `enforce` only on a point it rejects. Of
-//! what [`CustomConstraints`] offers, SCIP honours in this release: `check`; `enforce` adding constraints and cutting
-//! the node off, or doing nothing, which leaves the point to SCIP's branching; the declaration's locks, every column
-//! both ways for [`Locks::All`] and the listed directions for [`Locks::Only`], every priced column both ways. It
-//! refuses tightening, branching of the handler's own and cutting off with a conflict with
-//! [`ActionError::Refused`](culmen_core::ActionError::Refused), does not call `propagate`, `explain` or `presolve`,
-//! and enforces [`Candidates::Fractional`](culmen_core::Candidates::Fractional) as
+//! what [`CustomConstraints`] offers, SCIP honours in this release: `check`; `enforce` adding constraints, tightening
+//! bounds, cutting the node off plainly or with the bounds that make it infeasible, or doing nothing, which leaves
+//! the point to SCIP's branching; `propagate` at every node, through culmen's propagator `culmen`, tightening bounds
+//! and cutting the node off; `explain` for every bound tightened with a reason, when SCIP's conflict analysis asks;
+//! the declaration's locks, every column both ways for [`Locks::All`] and the listed directions for [`Locks::Only`],
+//! every priced column both ways. It refuses branching of the handler's own with
+//! [`ActionError::Refused`](culmen_core::ActionError::Refused), and a tightening of a column presolve
+//! multi-aggregated, which SCIP cannot change; it does not call `presolve`, and enforces
+//! [`Candidates::Fractional`](culmen_core::Candidates::Fractional) as
 //! [`Candidates::Integral`](culmen_core::Candidates::Integral). A solve with a constraint handler turns off symmetry
 //! handling, SCIP's dual reductions (for either kind of locks, in this release) and the components presolver, and for
 //! [`Locks::All`] multi-aggregation. A point rejected without action where SCIP cannot branch fails the solve with
@@ -318,6 +321,8 @@ fn configure_hooks(
         // either kind until a solve keeps them for `Locks::Only`.
         instance.set_param("constraints/components/maxprerounds", &ParamValue::Int(0))?;
         instance.set_param("constraints/components/propfreq", &ParamValue::Int(-1))?;
+        // culmen's propagator asks the handler's `propagate` at every node; it stays off in any other solve.
+        instance.set_param("propagating/culmen/freq", &ParamValue::Int(1))?;
         if declaration.locks == Locks::All {
             // Every column stays one SCIP can write a bound of; `Locks::Only` marks the columns it lists instead.
             instance.set_param("presolving/donotmultaggr", &ParamValue::Bool(true))?;
@@ -531,11 +536,12 @@ impl LazyConstraints for Scip {
 /// enforced after every SCIP handler and before the lazy-constraint handler.
 ///
 /// In this release SCIP asks [`check`](culmen_core::ConstraintHandler::check) and
-/// [`enforce`](culmen_core::ConstraintHandler::enforce), and an enforcement resolves a point by adding constraints or
-/// cutting the node off; tightening a bound, branching and cutting off with a conflict are refused with
-/// [`ActionError::Refused`](culmen_core::ActionError::Refused), and SCIP does not call
-/// [`propagate`](culmen_core::ConstraintHandler::propagate), [`explain`](culmen_core::ConstraintHandler::explain) or
-/// [`presolve`](culmen_core::ConstraintHandler::presolve) yet, so their contexts have no values.
+/// [`enforce`](culmen_core::ConstraintHandler::enforce), and an enforcement resolves a point by adding constraints,
+/// tightening bounds or cutting the node off, plainly or naming the bounds SCIP's conflict analysis may learn from;
+/// culmen's propagator asks [`propagate`](culmen_core::ConstraintHandler::propagate) at every node and
+/// [`explain`](culmen_core::ConstraintHandler::explain) for each bound tightened with a reason that SCIP's conflict
+/// analysis resolves. Branching is refused with [`ActionError::Refused`](culmen_core::ActionError::Refused), and SCIP
+/// does not call [`presolve`](culmen_core::ConstraintHandler::presolve) yet, so its context has no values.
 /// [`Candidates::Fractional`](culmen_core::Candidates::Fractional) is enforced as
 /// [`Candidates::Integral`](culmen_core::Candidates::Integral): the handler sees every point SCIP would accept, but no
 /// LP point with a fractional integer column.
@@ -869,13 +875,14 @@ mod tests {
         }
     }
 
-    /// The parameters a constraint handler sets: symmetry handling, the two dual reductions, multi-aggregation and the
-    /// components presolver.
+    /// The parameters a constraint handler sets: symmetry handling, the two dual reductions, multi-aggregation, the
+    /// components presolver and how often culmen's propagator runs.
     type HandlerParams = (
         Option<i32>,
         Option<bool>,
         Option<bool>,
         Option<bool>,
+        Option<i32>,
         Option<i32>,
         Option<i32>,
     );
@@ -889,6 +896,7 @@ mod tests {
             instance.bool_param(c"presolving/donotmultaggr"),
             instance.int_param(c"constraints/components/maxprerounds"),
             instance.int_param(c"constraints/components/propfreq"),
+            instance.int_param(c"propagating/culmen/freq"),
         )
     }
 
@@ -899,16 +907,26 @@ mod tests {
         let plain = handler_params(&scip);
         assert_ne!(plain.0, Some(0), "{plain:?}");
         assert_eq!((plain.1, plain.2, plain.3), (Some(true), Some(true), Some(false)));
-        // SCIP runs its components presolver in every round by default and never propagates with it.
-        assert_eq!((plain.4, plain.5), (Some(-1), Some(-1)));
+        // SCIP runs its components presolver in every round by default and never propagates with it; culmen's
+        // propagator never runs without a handler.
+        assert_eq!((plain.4, plain.5, plain.6), (Some(-1), Some(-1), Some(-1)));
 
-        // Every lock: no symmetry, no dual reduction, no multi-aggregation, no components.
+        // Every lock: no symmetry, no dual reduction, no multi-aggregation, no components, culmen's propagator at
+        // every node.
         let mut all = Accepts(declared(Locks::All), 0);
         scip.solve(&limited(), Hooks::new().register_constraint(&mut all))
             .unwrap();
         assert_eq!(
             handler_params(&scip),
-            (Some(0), Some(false), Some(false), Some(true), Some(0), Some(-1))
+            (
+                Some(0),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(0),
+                Some(-1),
+                Some(1)
+            )
         );
         // Precise locks keep multi-aggregation, marking the columns they list instead; the dual reductions stay off
         // until a solve keeps them for a precise declaration.
@@ -917,7 +935,15 @@ mod tests {
             .unwrap();
         assert_eq!(
             handler_params(&scip),
-            (Some(0), Some(false), Some(false), Some(false), Some(0), Some(-1))
+            (
+                Some(0),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(0),
+                Some(-1),
+                Some(1)
+            )
         );
         // A solve without a handler is back to SCIP's defaults.
         scip.solve(&limited(), Hooks::new()).unwrap();

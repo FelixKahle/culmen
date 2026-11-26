@@ -12,6 +12,7 @@
 //! | event handler | `POORSOLFOUND`, `BESTSOLFOUND` | [`Events::FEASIBLE`] | [`ScipSolution`] |
 //! | event handler | `BESTSOLFOUND` | [`Events::INCUMBENT`] | [`ScipSolution`] |
 //! | constraint handler `culmen-handler` | `CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`, `CONSLOCK` | [`ConstraintHandler`](culmen_core::ConstraintHandler) | [`ScipCheck`], [`ScipEnforce`] |
+//! | propagator `culmen` | `PROPEXEC`, `PROPRESPROP` | [`ConstraintHandler`](culmen_core::ConstraintHandler) | [`ScipPropagate`], [`ScipExplain`] |
 //! | constraint handler `culmen` | `CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`, `CONSLOCK` | [`LazyHandler`](culmen_core::LazyHandler) | [`ScipLazy`] |
 //! | separator | `SEPAEXECLP` | [`CutHandler`](culmen_core::CutHandler) | [`ScipCut`] |
 //! | primal heuristic | `HEUREXEC` | [`HeuristicHandler`](culmen_core::HeuristicHandler) | [`ScipHeuristic`] |
@@ -41,8 +42,8 @@
 //! A panic in a callback is caught where the callback is called, never unwinds into SCIP, and asks SCIP to stop:
 //! `SCIPinterruptSolve`, at once or, in the one stage SCIP refuses it, at the next plugin call. Every later delivery of
 //! the run is skipped, each plugin returns a result its callback allows (the constraint handler rejects every
-//! candidate and cuts off every node, the separator and the heuristic do not run), and the panic is resumed once
-//! `SCIPsolve` has returned.
+//! candidate and cuts off every node, the propagator, the separator and the heuristic do not run, and the propagator
+//! explains nothing), and the panic is resumed once `SCIPsolve` has returned.
 
 mod constraint;
 mod cut;
@@ -51,7 +52,9 @@ mod heuristic;
 mod lazy;
 mod locks;
 mod log;
+mod node;
 mod price;
+mod propagate;
 mod rows;
 
 use core::any::Any;
@@ -64,7 +67,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 
 pub(crate) use constraint::Setup;
-pub use constraint::{ScipCheck, ScipEnforce, ScipExplain, ScipPresolve, ScipPropagate};
+pub use constraint::{ScipCheck, ScipEnforce, ScipPresolve};
 use culmen_core::{Col, Events, Found, Hooks, LogLevel, Phase, Priced, Progress, Row, Sense, TiSlice, TiVec};
 pub use cut::ScipCut;
 pub use events::{ScipEvent, ScipPoll, ScipProgress, ScipSolution};
@@ -73,9 +76,10 @@ pub use lazy::ScipLazy;
 pub use log::ScipLog;
 pub(crate) use price::NAME as PRICER;
 pub use price::ScipPrice;
+pub use propagate::{ScipExplain, ScipPropagate};
 use scip_sys::{
-    SCIP, SCIP_CONS, SCIP_Objsense_SCIP_OBJSENSE_MAXIMIZE, SCIP_RETCODE, SCIP_Retcode_SCIP_ERROR, SCIP_SOL, SCIP_STAGE,
-    SCIP_Stage_SCIP_STAGE_EXITPRESOLVE, SCIP_Stage_SCIP_STAGE_EXITSOLVE, SCIP_Stage_SCIP_STAGE_FREETRANS,
+    SCIP, SCIP_CONS, SCIP_Objsense_SCIP_OBJSENSE_MAXIMIZE, SCIP_PROP, SCIP_RETCODE, SCIP_Retcode_SCIP_ERROR, SCIP_SOL,
+    SCIP_STAGE, SCIP_Stage_SCIP_STAGE_EXITPRESOLVE, SCIP_Stage_SCIP_STAGE_EXITSOLVE, SCIP_Stage_SCIP_STAGE_FREETRANS,
     SCIP_Stage_SCIP_STAGE_INITPRESOLVE, SCIP_Stage_SCIP_STAGE_PRESOLVED, SCIP_Stage_SCIP_STAGE_PRESOLVING,
     SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_Stage_SCIP_STAGE_SOLVED, SCIP_Stage_SCIP_STAGE_SOLVING,
     SCIP_Stage_SCIP_STAGE_TRANSFORMED, SCIP_VAR, SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNOrigBinVars,
@@ -119,6 +123,9 @@ pub(crate) struct Slot {
     lazy_locks: locks::Applied,
     /// The locks the constraint handler's plugin applied to the transformed problem, which its unlock undoes.
     handler_locks: locks::Applied,
+    /// culmen's propagator, which a bound the constraint handler tightens with a reason names; null before it is
+    /// included.
+    prop: Cell<*mut SCIP_PROP>,
     /// The events the event handler caught on the transformed problem and their filter position; `None` when it
     /// caught none.
     caught: Cell<Option<(u64, c_int)>>,
@@ -133,6 +140,7 @@ impl Slot {
             console: Cell::new(false),
             lazy_locks: locks::Applied::new(),
             handler_locks: locks::Applied::new(),
+            prop: Cell::new(ptr::null_mut()),
             caught: Cell::new(None),
         }
     }
@@ -592,8 +600,8 @@ pub(crate) unsafe fn install_messages(scip: *mut SCIP, slot: NonNull<Slot>) -> R
     unsafe { log::install(scip, slot) }
 }
 
-/// Includes the constraint handler's and the lazy-constraint handler's plugins, the separator, the heuristic, the event
-/// handler and the pricer.
+/// Includes the constraint handler's plugin and propagator, the lazy-constraint handler's plugin, the separator, the
+/// heuristic, the event handler and the pricer.
 ///
 /// # Errors
 ///
@@ -606,6 +614,7 @@ pub(crate) unsafe fn include(scip: *mut SCIP, slot: NonNull<Slot>) -> Result<(),
     // SAFETY: the caller's contract is each `include`'s.
     unsafe {
         constraint::include(scip, slot)?;
+        propagate::include(scip, slot)?;
         lazy::include(scip, slot)?;
         cut::include(scip, slot)?;
         heuristic::include(scip, slot)?;
