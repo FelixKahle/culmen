@@ -31,7 +31,7 @@
 //!
 //! | Propagation | Result |
 //! |---|---|
-//! | no constraint handler, a callback of the run panicked, or the handler is busy with an outer call | `DIDNOTRUN` |
+//! | no constraint handler, a callback of the run panicked or a plugin met an error, or the handler is busy with an outer call | `DIDNOTRUN` |
 //! | `propagate` cut the node off, plainly or naming the bounds SCIP's conflict analysis is handed first | `CUTOFF` |
 //! | a tightening emptied a domain, as SCIP reports it | `CUTOFF` |
 //! | a tightening moved a bound, as SCIP reports it | `REDUCEDDOM` |
@@ -39,7 +39,7 @@
 //!
 //! | Explanation | Result |
 //! |---|---|
-//! | no constraint handler, a callback of the run panicked, the handler is busy, the variable is no column's, SCIP asks for a bound stronger than it inferred, or `explain` answers `Unknown` | `DIDNOTFIND`, nothing named |
+//! | no constraint handler, a callback of the run panicked or a plugin met an error, the handler is busy, the variable is no column's, SCIP asks for a bound stronger than it inferred, or `explain` answers `Unknown` | `DIDNOTFIND`, nothing named |
 //! | `explain` answers `Complete` | `SUCCESS`, every bound it named handed to SCIP |
 
 use core::ffi::c_int;
@@ -409,7 +409,7 @@ unsafe fn prop_run<'s>(scip: *mut SCIP, prop: *mut SCIP_PROP) -> Option<(&'s Run
     // SAFETY: SCIP calls the plugin during the solve the run is installed for, or with none installed.
     let run = unsafe { slot.run() }?;
     run.pass_stop(scip);
-    if run.panicked() {
+    if run.stopping() {
         return None;
     }
     run.constraint.as_ref().map(|active| (run, active))
