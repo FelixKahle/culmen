@@ -5,8 +5,8 @@
 //!
 //! A [`Backend`](crate::Backend) names one concrete type per observational event kind, and a backend with a search
 //! capability ([`LazyConstraints`](crate::LazyConstraints), [`UserCuts`](crate::UserCuts),
-//! [`Heuristics`](crate::Heuristics), [`Prices`](crate::Prices)) names the context of its handler, each implementing
-//! the matching trait here. Every context is a [`Context`]: it reports where the solve stands. Code generic over
+//! [`Heuristics`](crate::Heuristics), [`Prices`](crate::Prices), [`CustomConstraints`](crate::CustomConstraints))
+//! names the contexts of its handler, each implementing the matching trait here. Every context is a [`Context`]: it reports where the solve stands. Code generic over
 //! backends uses the traits; code written for one backend gets that backend's type, with whatever the solver offers
 //! beyond the traits as its inherent methods. A backend that cannot deliver an observational event names
 //! [`Unsupported`], which has no values, so a callback for that event can never run.
@@ -18,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use typed_index_collections::TiSlice;
 
 use crate::program::{BadTerm, bad_term};
-use crate::{Bounds, Col, Constraint, Integrality, InvalidBounds, LogLevel, NewCol, Progress, Row, Sense};
+use crate::{
+    Bound, Bounds, Child, Col, Constraint, Inferred, Integrality, InvalidBounds, LogLevel, NewCol, NodeAction,
+    Progress, Reason, Row, Sense,
+};
 
 /// What every context reports: where the solve stands when the event is delivered.
 ///
@@ -199,6 +202,106 @@ pub trait PriceContext: Context {
     }
 }
 
+/// A point a [`ConstraintHandler`](crate::ConstraintHandler) judges.
+pub trait CheckContext: Context {
+    /// The point's objective value, offset included.
+    fn objective(&self) -> f64;
+    /// The point's value of every column the problem holds when the event is delivered, the columns priced so far in
+    /// this solve included.
+    fn candidate(&self) -> &TiSlice<Col, f64>;
+}
+
+/// A node of the search: its domain, and the actions that narrow it or close it.
+///
+/// Bounds it reports are those when the call began; the actions take effect after the handler returns. Reducing,
+/// branching and cutting off exclude each other within one call, and a cutoff ends the call: an action they exclude
+/// is refused with [`ActionError::Exclusive`].
+pub trait NodeContext: Context {
+    /// The column's bounds at this node when the call began; `None` for a column the problem lacks.
+    fn bounds(&self, col: Col) -> Option<Bounds>;
+    /// Narrows the column to `bounds` at this node and below; at the root, for the rest of the solve. With a
+    /// reason, the solver may later ask [`ConstraintHandler::explain`](crate::ConstraintHandler::explain) which bounds
+    /// it rested on.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Exclusive`] after a branching or a cutoff; [`ActionError::UnknownColumn`],
+    /// [`ActionError::NotInvolved`] for a column the declaration does not involve; [`ActionError::Refused`] when the
+    /// solver cannot change the column.
+    fn tighten(&mut self, col: Col, bounds: Bounds, reason: Option<Reason>) -> Result<(), ActionError>;
+    /// Closes the node: it holds no point the program and the rule accept. Ends the call's actions; a second cutoff
+    /// changes nothing.
+    fn cut_off(&mut self);
+    /// Closes the node, naming the bounds that make it infeasible, so the solver may learn a conflict from them:
+    /// `(col, end)` is the column's `end` bound at this node. Ends the call's actions.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Exclusive`] after a cutoff; [`ActionError::UnknownColumn`].
+    fn cut_off_because(&mut self, reasons: &[(Col, Bound)]) -> Result<(), ActionError>;
+}
+
+/// A point at a node that [`ConstraintHandler::check`](crate::ConstraintHandler::check) rejected, to resolve.
+pub trait EnforceContext: CheckContext + NodeContext {
+    /// Adds a constraint every point the program and the rule accept satisfies; it holds for the rest of the solve.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Exclusive`] after a branching or a cutoff; the errors of [`check_constraint`];
+    /// [`ActionError::Refused`] when the solver refuses it.
+    fn add_constraint(&mut self, constraint: Constraint) -> Result<(), ActionError>;
+    /// Splits the node into `children`, whose union holds every point of the node the program and the rule accept,
+    /// and each of which narrows a bound of the node or adds a constraint.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Exclusive`] after any other action; [`ActionError::NoChildren`]; for the first child at fault,
+    /// [`ActionError::UnknownColumn`] or [`ActionError::NotInvolved`] for a bound, the errors of
+    /// [`check_constraint`] for a constraint, or [`ActionError::NoProgress`].
+    fn branch(&mut self, children: Vec<Child>) -> Result<(), ActionError>;
+}
+
+/// A node's domain to narrow, without a point.
+pub trait PropagateContext: NodeContext {}
+
+/// A bound a [`ConstraintHandler`](crate::ConstraintHandler) tightened with a [`Reason`], to explain.
+pub trait ExplainContext: Context {
+    /// The bound to explain.
+    fn inferred(&self) -> Inferred;
+    /// The tag the handler gave the tightening.
+    fn reason(&self) -> Reason;
+    /// The column's bounds just before the tightening; `None` for a column the problem lacks.
+    fn bounds_before(&self, col: Col) -> Option<Bounds>;
+    /// Names the column's `end` bound, as it was just before the tightening, as part of the explanation. The names
+    /// count only when the handler answers [`Explained::Complete`](crate::Explained::Complete).
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::UnknownColumn`].
+    fn because(&mut self, col: Col, end: Bound) -> Result<(), ActionError>;
+}
+
+/// The program's global domain before the search, for a [`ConstraintHandler`](crate::ConstraintHandler) to narrow.
+pub trait PresolveContext: Context {
+    /// The column's global bounds now; `None` for a column the problem lacks.
+    fn bounds(&self, col: Col) -> Option<Bounds>;
+    /// Narrows the column's global bounds; every point the program and the rule accept must keep satisfying them.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::UnknownColumn`], [`ActionError::NotInvolved`] for a column the declaration does not involve;
+    /// [`ActionError::Refused`] when the solver cannot change the column.
+    fn tighten(&mut self, col: Col, bounds: Bounds) -> Result<(), ActionError>;
+    /// Adds a constraint every point the program and the rule accept satisfies.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`check_constraint`]; [`ActionError::Refused`] when the solver refuses it.
+    fn add_constraint(&mut self, constraint: Constraint) -> Result<(), ActionError>;
+    /// Declares that no point satisfies the program and the rule.
+    fn infeasible(&mut self);
+}
+
 /// The context of an observational event a backend cannot deliver, and its native event when it has none. It has no
 /// values, so a callback for it never runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -290,6 +393,27 @@ pub enum ActionError {
         /// The bound reported.
         bound: f64,
     },
+    /// A tightening or a child's bound names a column the constraint handler's
+    /// [`Declaration`](crate::Declaration) does not involve.
+    NotInvolved {
+        /// The column named.
+        col: Col,
+    },
+    /// An action the actions recorded before it in the same call exclude: reducing (constraints, tightenings),
+    /// branching and cutting off exclude each other, a branching is one call, and a cutoff ends the call.
+    Exclusive {
+        /// The kind of the action refused.
+        action: NodeAction,
+        /// The kind recorded before that excludes it.
+        after: NodeAction,
+    },
+    /// A branching without children.
+    NoChildren,
+    /// A child of a branching that narrows no bound of the node and adds no constraint.
+    NoProgress {
+        /// The child's position among the children given.
+        child: usize,
+    },
     /// The solver refused the action; the text is its reason.
     Refused(String),
 }
@@ -320,6 +444,18 @@ impl fmt::Display for ActionError {
                  allow"
             ),
             Self::NotFiniteBound { bound } => write!(f, "callback action: the bound {bound} is not finite"),
+            Self::NotInvolved { col } => write!(
+                f,
+                "callback action: {col:?} is not a column the constraint handler's declaration involves"
+            ),
+            Self::Exclusive { action, after } => {
+                write!(f, "callback action: {action} is refused after {after} in the same call")
+            }
+            Self::NoChildren => write!(f, "callback action: a branching needs at least one child"),
+            Self::NoProgress { child } => write!(
+                f,
+                "callback action: child {child} of the branching narrows no bound of the node and adds no constraint"
+            ),
             Self::Refused(reason) => write!(f, "callback action: the solver refused it: {reason}"),
         }
     }
@@ -338,6 +474,10 @@ impl core::error::Error for ActionError {
             | Self::ExcludesZero { .. }
             | Self::Integrality { .. }
             | Self::NotFiniteBound { .. }
+            | Self::NotInvolved { .. }
+            | Self::Exclusive { .. }
+            | Self::NoChildren
+            | Self::NoProgress { .. }
             | Self::Refused(_) => None,
         }
     }

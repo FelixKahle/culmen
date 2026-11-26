@@ -5,7 +5,10 @@
 
 use core::fmt;
 
-use crate::{Backend, Callback, Events, Heuristics, LazyConstraints, Priced, Prices, UserCuts};
+use crate::{
+    Backend, Callback, CustomConstraints, Declaration, Events, Explained, Heuristics, LazyConstraints, Priced, Prices,
+    UserCuts, Verdict,
+};
 
 /// What a solve asks about each candidate solution: lazy constraints that cut it off before the solver accepts it.
 ///
@@ -57,6 +60,183 @@ pub trait HeuristicHandler<B: Heuristics>: Send {
 pub trait Pricer<B: Prices>: Send {
     /// A node LP's duals, to be answered with columns that improve it.
     fn price(&mut self, ctx: &mut B::Price<'_>);
+}
+
+/// A rule over the program's columns that only this handler knows, which the solver enforces as a constraint.
+///
+/// Registered with [`Run::constraint`](crate::Run::constraint), only for a backend that takes constraint handlers,
+/// one per solve: a later registration replaces the earlier, and two rules are composed as one handler whose methods
+/// call each part.
+///
+/// The solver calls [`check`](ConstraintHandler::check) on every point it would accept: solutions found by
+/// heuristics, starts, the solutions of earlier solves, and each node's relaxation point. `check` is the rule: a point
+/// it accepts satisfies the rule, one it rejects does not. It may be called any number of times on the same point and
+/// must answer the same way.
+///
+/// At a node whose point `check` rejects, the solver calls [`enforce`](ConstraintHandler::enforce). It resolves the
+/// point by any one of: adding constraints (each must hold for every point the program and the rule accept) and
+/// tightening bounds; branching into children (whose union must hold every accepted point of the node, and each of
+/// which narrows the node); or cutting the node off (when it holds no accepted point). Doing nothing leaves the point
+/// to the solver's branching on integer columns: that ends while the integer columns are bounded, and once every
+/// integer column is fixed a rejected point ends the solve with an error if the program has continuous columns. So a
+/// rule that depends on continuous columns, or a program with a quadratic objective, must resolve every rejected point
+/// itself.
+///
+/// [`propagate`](ConstraintHandler::propagate) may tighten the bounds of a node, which must keep every accepted point
+/// of the node, or cut it off. A tightening with a [`Reason`](crate::Reason) may later be explained:
+/// [`explain`](ConstraintHandler::explain) names, with [`because`](crate::ExplainContext::because), bounds as they
+/// were before the tightening that imply it, and returns [`Explained::Complete`]. An explanation that names too few
+/// bounds makes the solver learn a false conflict and lose solutions; when in doubt, return [`Explained::Unknown`],
+/// which is always sound.
+///
+/// [`presolve`](ConstraintHandler::presolve) may tighten the global bounds, add constraints and declare the program
+/// infeasible, each valid for every point the program and the rule accept: never a reduction that only keeps one
+/// optimum.
+///
+/// [`declaration`](ConstraintHandler::declaration) is read once when a solve starts.
+/// [`Locks::Only`](crate::Locks::Only) promises: for each column, moving an accepted point in a direction its lock
+/// does not name keeps it accepted. The solver then keeps reductions that rest on that promise (dual fixing among
+/// them); a broken promise makes it fix columns wrongly and report a wrong optimum or infeasibility as proven.
+/// [`Locks::All`](crate::Locks::All), the default, promises nothing and gives those reductions up. Only columns the
+/// declaration involves may be tightened or branched on.
+///
+/// Bounds a context reports are those when the call began; actions take effect after the method returns. Reducing,
+/// branching and cutting off exclude each other within one call; a cutoff ends the call.
+///
+/// ```
+/// use core::time::Duration;
+/// use culmen_core::{
+///     CheckContext, Col, ConstraintHandler, CustomConstraints, EnforceContext, Found, Linear, Model, Outcome, Phase,
+///     Progress, Script, Solver, Step, Var, Verdict, bounds,
+/// };
+///
+/// /// `x` only together with `y`, a rule the handler resolves with the constraint `x <= y`.
+/// struct OnlyWith {
+///     x: Col,
+///     y: Col,
+///     calls: u32,
+/// }
+///
+/// impl OnlyWith {
+///     fn count(&mut self) {
+///         self.calls += 1;
+///         assert!(self.calls < 1_000, "OnlyWith: the handler ran without end");
+///     }
+/// }
+///
+/// impl<B: CustomConstraints> ConstraintHandler<B> for OnlyWith {
+///     fn check(&mut self, ctx: &mut B::Check<'_>) -> Verdict {
+///         self.count();
+///         let point = ctx.candidate();
+///         if point[self.x] > point[self.y] + 0.5 { Verdict::Reject } else { Verdict::Accept }
+///     }
+///
+///     fn enforce(&mut self, ctx: &mut B::Enforce<'_>) {
+///         self.count();
+///         ctx.add_constraint(self.x.leq(self.y)).expect("a valid constraint");
+///     }
+/// }
+///
+/// let mut m = Model::new();
+/// let x = m.add_var(Var::binary());
+/// let y = m.add_var(Var::binary());
+/// m.maximize(2.0 * x - y);
+///
+/// // A scripted backend offers the node point a solver would: `x` without `y`.
+/// let at = Progress::at(Duration::ZERO, Phase::Mip);
+/// let found = Found { progress: at, objective: 2.0, values: vec![1.0, 0.0].into() };
+/// let node = vec![bounds!(0.0, 1.0); 2].into();
+/// let script = Script::new([Step::Enforce { found, bounds: node }], Outcome::Infeasible);
+/// let mut solver = Solver::new(script, m.build()?)?;
+/// let mut rule = OnlyWith { x, y, calls: 0 };
+/// solver.run().constraint(&mut rule).solve()?;
+///
+/// let record = &solver.backend().record;
+/// assert_eq!(record.verdicts, [Verdict::Reject]);
+/// assert_eq!(record.enforced[0].constraints().len(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// A backend without the capability takes no constraint handler:
+///
+/// ```compile_fail,E0599
+/// use culmen_core::{CheckContext, ConstraintHandler, CustomConstraints, Hooks, Unsupported, Verdict};
+/// # use culmen_core::{Backend, Events, ModelClasses, Program, Settings, Solved};
+/// # #[derive(Debug)] struct Plain;
+/// # impl Backend for Plain {
+/// #     type Error = std::io::Error; type Status = (); type Log<'a> = Unsupported; type Progress<'a> = Unsupported;
+/// #     type Poll<'a> = Unsupported; type Solution<'a> = Unsupported; type Native<'a> = Unsupported;
+/// #     type Options = ();
+/// #     const EVENTS: Events = Events::NONE; const CLASSES: ModelClasses = ModelClasses::ALL;
+/// #     fn options(&self) -> &() { &() }
+/// #     fn options_mut(&mut self) -> &mut () { Box::leak(Box::new(())) }
+/// #     fn load(&mut self, _: &Program) -> Result<(), Self::Error> { Ok(()) }
+/// #     fn solve(&mut self, _: &Settings, _: Hooks<'_, Self>) -> Result<Solved<()>, Self::Error> { unimplemented!() }
+/// # }
+/// struct AcceptAll;
+/// impl<B: CustomConstraints> ConstraintHandler<B> for AcceptAll {
+///     fn check(&mut self, _: &mut B::Check<'_>) -> Verdict {
+///         Verdict::Accept
+///     }
+/// }
+/// // `Plain` does not take constraint handlers.
+/// let hooks = Hooks::<Plain>::new().register_constraint(&mut AcceptAll);
+/// ```
+pub trait ConstraintHandler<B: CustomConstraints>: Send {
+    /// What the solver reads once when a solve starts: the columns the rule involves and which points to enforce. The
+    /// default involves every column, both ways, and enforces integral points.
+    fn declaration(&self) -> Declaration {
+        Declaration::default()
+    }
+
+    /// Whether the point satisfies the rule.
+    fn check(&mut self, ctx: &mut B::Check<'_>) -> Verdict;
+
+    /// A point `check` rejected, at a node: resolve it by adding constraints and tightening bounds, by branching, or
+    /// by cutting the node off. The default does nothing, which leaves the point to the solver's branching.
+    fn enforce(&mut self, ctx: &mut B::Enforce<'_>) {
+        let _ = ctx;
+    }
+
+    /// A node's domain: tighten bounds every accepted point of the node satisfies, or cut the node off. The default
+    /// does nothing.
+    fn propagate(&mut self, ctx: &mut B::Propagate<'_>) {
+        let _ = ctx;
+    }
+
+    /// A bound this handler tightened with a [`Reason`](crate::Reason): name the bounds it rested on. The default
+    /// answers [`Explained::Unknown`], which is always sound.
+    fn explain(&mut self, ctx: &mut B::Explain<'_>) -> Explained {
+        let _ = ctx;
+        Explained::Unknown
+    }
+
+    /// The program's global domain before the search: tighten it, add implied constraints, or declare it infeasible.
+    /// The default does nothing.
+    fn presolve(&mut self, ctx: &mut B::Presolve<'_>) {
+        let _ = ctx;
+    }
+}
+
+impl<B: CustomConstraints, H: ConstraintHandler<B> + ?Sized> ConstraintHandler<B> for &mut H {
+    fn declaration(&self) -> Declaration {
+        (**self).declaration()
+    }
+    fn check(&mut self, ctx: &mut B::Check<'_>) -> Verdict {
+        (**self).check(ctx)
+    }
+    fn enforce(&mut self, ctx: &mut B::Enforce<'_>) {
+        (**self).enforce(ctx);
+    }
+    fn propagate(&mut self, ctx: &mut B::Propagate<'_>) {
+        (**self).propagate(ctx);
+    }
+    fn explain(&mut self, ctx: &mut B::Explain<'_>) -> Explained {
+        (**self).explain(ctx)
+    }
+    fn presolve(&mut self, ctx: &mut B::Presolve<'_>) {
+        (**self).presolve(ctx);
+    }
 }
 
 impl<B: LazyConstraints, H: LazyHandler<B> + ?Sized> LazyHandler<B> for &mut H {
@@ -152,6 +332,34 @@ pub trait Relay<B: Backend>: Callback<B> {
     fn price(&mut self, ctx: &mut <B as Prices>::Price<'_>)
     where
         B: Prices;
+    /// Whether the relayed hooks have a constraint handler.
+    fn wants_constraint(&self) -> bool
+    where
+        B: CustomConstraints;
+    /// The relayed constraint handler's declaration; `None` without one.
+    fn declaration(&self) -> Option<Declaration>
+    where
+        B: CustomConstraints;
+    /// Hands a point to judge to the relayed hooks.
+    fn check(&mut self, ctx: &mut <B as CustomConstraints>::Check<'_>) -> Verdict
+    where
+        B: CustomConstraints;
+    /// Hands a rejected point at a node to the relayed hooks.
+    fn enforce(&mut self, ctx: &mut <B as CustomConstraints>::Enforce<'_>)
+    where
+        B: CustomConstraints;
+    /// Hands a node's domain to the relayed hooks.
+    fn propagate(&mut self, ctx: &mut <B as CustomConstraints>::Propagate<'_>)
+    where
+        B: CustomConstraints;
+    /// Hands an inferred bound to the relayed hooks.
+    fn explain(&mut self, ctx: &mut <B as CustomConstraints>::Explain<'_>) -> Explained
+    where
+        B: CustomConstraints;
+    /// Hands the program's global domain to the relayed hooks.
+    fn presolve(&mut self, ctx: &mut <B as CustomConstraints>::Presolve<'_>)
+    where
+        B: CustomConstraints;
 }
 
 // The slots below hold a registered handler for every `B`, while a handler trait names `B`'s context only when `B`
@@ -225,6 +433,70 @@ impl<B: Prices, P: Pricer<B>> PriceSlot<B> for P {
     }
 }
 
+trait ConstraintSlot<B: Backend>: Send {
+    fn declaration(&self) -> Declaration
+    where
+        B: CustomConstraints;
+    fn check(&mut self, ctx: &mut <B as CustomConstraints>::Check<'_>) -> Verdict
+    where
+        B: CustomConstraints;
+    fn enforce(&mut self, ctx: &mut <B as CustomConstraints>::Enforce<'_>)
+    where
+        B: CustomConstraints;
+    fn propagate(&mut self, ctx: &mut <B as CustomConstraints>::Propagate<'_>)
+    where
+        B: CustomConstraints;
+    fn explain(&mut self, ctx: &mut <B as CustomConstraints>::Explain<'_>) -> Explained
+    where
+        B: CustomConstraints;
+    fn presolve(&mut self, ctx: &mut <B as CustomConstraints>::Presolve<'_>)
+    where
+        B: CustomConstraints;
+}
+
+impl<B: CustomConstraints, H: ConstraintHandler<B>> ConstraintSlot<B> for H {
+    fn declaration(&self) -> Declaration {
+        ConstraintHandler::declaration(self)
+    }
+    fn check(&mut self, ctx: &mut B::Check<'_>) -> Verdict {
+        ConstraintHandler::check(self, ctx)
+    }
+    fn enforce(&mut self, ctx: &mut B::Enforce<'_>) {
+        ConstraintHandler::enforce(self, ctx);
+    }
+    fn propagate(&mut self, ctx: &mut B::Propagate<'_>) {
+        ConstraintHandler::propagate(self, ctx);
+    }
+    fn explain(&mut self, ctx: &mut B::Explain<'_>) -> Explained {
+        ConstraintHandler::explain(self, ctx)
+    }
+    fn presolve(&mut self, ctx: &mut B::Presolve<'_>) {
+        ConstraintHandler::presolve(self, ctx);
+    }
+}
+
+/// One handler in both roles, a constraint handler and cuts.
+trait ConstraintCutSlot<B: Backend>: ConstraintSlot<B> {
+    fn cut(&mut self, ctx: &mut <B as UserCuts>::Cut<'_>)
+    where
+        B: UserCuts;
+}
+
+impl<B: CustomConstraints + UserCuts, H: ConstraintHandler<B> + CutHandler<B>> ConstraintCutSlot<B> for H {
+    fn cut(&mut self, ctx: &mut <B as UserCuts>::Cut<'_>) {
+        CutHandler::cut(self, ctx);
+    }
+}
+
+/// Which handler registered in two roles holds the cut role: the one registered last.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Combined {
+    /// The handler of [`Hooks::register_lazy_and_cut`].
+    Lazy,
+    /// The handler of [`Hooks::register_constraint_and_cut`].
+    Constraint,
+}
+
 /// What one solve runs as the search goes: a callback for the observational events and a handler for each kind of
 /// search event the backend can take, handed to [`Backend::solve`] by value.
 ///
@@ -257,8 +529,8 @@ impl<B: Prices, P: Pricer<B>> PriceSlot<B> for P {
 /// ```
 ///
 /// A backend reads what to deliver from the hooks: [`Hooks::events`] for the observational events and
-/// [`Hooks::wants_lazy`], [`Hooks::wants_cut`], [`Hooks::wants_heuristic`] and [`Hooks::wants_price`] for the
-/// search events, each a property of what was registered, so a callback asking for every observational event costs
+/// [`Hooks::wants_lazy`], [`Hooks::wants_cut`], [`Hooks::wants_heuristic`], [`Hooks::wants_price`] and
+/// [`Hooks::wants_constraint`] for the search events, each a property of what was registered, so a callback asking for every observational event costs
 /// the solver no reduction.
 #[must_use]
 pub struct Hooks<'h, B: Backend> {
@@ -267,10 +539,17 @@ pub struct Hooks<'h, B: Backend> {
     callback: Option<&'h mut dyn Callback<B>>,
     lazy: Option<&'h mut dyn LazySlot<B>>,
     cut: Option<&'h mut dyn CutSlot<B>>,
-    /// A handler in both roles; [`Hooks::lazy`] and [`Hooks::cut`] reach it when `lazy` or `cut` is not set.
+    /// A handler in both roles; [`Hooks::lazy`] reaches it when `lazy` is not set, and [`Hooks::cut`] when `cut` is
+    /// not set and `combined_cut` names it.
     lazy_and_cut: Option<&'h mut dyn LazyCutSlot<B>>,
     heuristic: Option<&'h mut dyn HeuristicSlot<B>>,
     pricer: Option<&'h mut dyn PriceSlot<B>>,
+    constraint: Option<&'h mut dyn ConstraintSlot<B>>,
+    /// A handler in both roles; the constraint dispatch reaches it when `constraint` is not set, and [`Hooks::cut`]
+    /// when `cut` is not set and `combined_cut` names it.
+    constraint_and_cut: Option<&'h mut dyn ConstraintCutSlot<B>>,
+    /// Which handler in two roles cuts when `cut` is not set; `None` when neither was registered.
+    combined_cut: Option<Combined>,
     /// The hooks of a wrapping backend, reached for every kind nothing else here is registered for.
     relay: Option<&'h mut dyn Relay<B>>,
     /// The sink of the columns the pricer adds; taken out by the backend.
@@ -288,6 +567,9 @@ impl<'h, B: Backend> Hooks<'h, B> {
             lazy_and_cut: None,
             heuristic: None,
             pricer: None,
+            constraint: None,
+            constraint_and_cut: None,
+            combined_cut: None,
             relay: None,
             priced: None,
         }
@@ -324,6 +606,11 @@ impl<'h, B: Backend> Hooks<'h, B> {
             lazy_and_cut: self.lazy_and_cut.map(|h| -> &'x mut dyn LazyCutSlot<B> { h }),
             heuristic: self.heuristic.map(|h| -> &'x mut dyn HeuristicSlot<B> { h }),
             pricer: self.pricer.map(|h| -> &'x mut dyn PriceSlot<B> { h }),
+            constraint: self.constraint.map(|h| -> &'x mut dyn ConstraintSlot<B> { h }),
+            constraint_and_cut: self
+                .constraint_and_cut
+                .map(|h| -> &'x mut dyn ConstraintCutSlot<B> { h }),
+            combined_cut: self.combined_cut,
             relay: self.relay.map(|h| -> &'x mut dyn Relay<B> { h }),
             priced: Some(priced),
         }
@@ -438,14 +725,20 @@ impl<'h, B: UserCuts> Hooks<'h, B> {
     /// Whether a cut handler is registered.
     #[must_use]
     pub fn wants_cut(&self) -> bool {
-        self.cut.is_some() || self.lazy_and_cut.is_some() || self.relay.as_deref().is_some_and(|r| r.wants_cut())
+        self.cut.is_some() || self.combined_cut.is_some() || self.relay.as_deref().is_some_and(|r| r.wants_cut())
     }
 
     /// Hands a node relaxation to the cut handler, if one is registered.
     pub fn cut(&mut self, ctx: &mut B::Cut<'_>) {
         if let Some(handler) = self.cut.as_deref_mut() {
             handler.cut(ctx);
-        } else if let Some(handler) = self.lazy_and_cut.as_deref_mut() {
+        } else if self.combined_cut == Some(Combined::Lazy)
+            && let Some(handler) = self.lazy_and_cut.as_deref_mut()
+        {
+            handler.cut(ctx);
+        } else if self.combined_cut == Some(Combined::Constraint)
+            && let Some(handler) = self.constraint_and_cut.as_deref_mut()
+        {
             handler.cut(ctx);
         } else if let Some(relay) = self.relay.as_deref_mut()
             && relay.wants_cut()
@@ -462,6 +755,115 @@ impl<'h, B: LazyConstraints + UserCuts> Hooks<'h, B> {
         self.lazy = None;
         self.cut = None;
         self.lazy_and_cut = Some(handler);
+        self.combined_cut = Some(Combined::Lazy);
+        self
+    }
+}
+
+impl<'h, B: CustomConstraints> Hooks<'h, B> {
+    /// Runs `handler` as a constraint the backend checks, enforces, propagates, explains and presolves, replacing the
+    /// constraint handler registered before.
+    pub fn register_constraint(mut self, handler: &'h mut impl ConstraintHandler<B>) -> Self {
+        self.constraint = Some(handler);
+        self
+    }
+
+    /// The registered constraint handler, registered alone or in two roles.
+    fn constraint_slot(&mut self) -> Option<&mut (dyn ConstraintSlot<B> + 'h)> {
+        match (self.constraint.as_deref_mut(), self.constraint_and_cut.as_deref_mut()) {
+            (Some(handler), _) => Some(handler),
+            (None, Some(handler)) => Some(handler),
+            (None, None) => None,
+        }
+    }
+
+    /// The relayed hooks, when they have a constraint handler and nothing here does.
+    fn constraint_relay(&mut self) -> Option<&mut (dyn Relay<B> + 'h)> {
+        if self.constraint.is_some() || self.constraint_and_cut.is_some() {
+            return None;
+        }
+        self.relay.as_deref_mut().filter(|relay| relay.wants_constraint())
+    }
+
+    /// Whether a constraint handler is registered.
+    #[must_use]
+    pub fn wants_constraint(&self) -> bool {
+        self.constraint.is_some()
+            || self.constraint_and_cut.is_some()
+            || self.relay.as_deref().is_some_and(|r| r.wants_constraint())
+    }
+
+    /// The constraint handler's declaration, which a backend reads once when a solve starts; `None` without a
+    /// handler.
+    #[must_use]
+    pub fn declaration(&self) -> Option<Declaration> {
+        if let Some(handler) = self.constraint.as_deref() {
+            Some(handler.declaration())
+        } else if let Some(handler) = self.constraint_and_cut.as_deref() {
+            Some(handler.declaration())
+        } else {
+            self.relay.as_deref().and_then(|relay| relay.declaration())
+        }
+    }
+
+    /// Hands a point to judge to the constraint handler; [`Verdict::Accept`] without one.
+    pub fn check(&mut self, ctx: &mut B::Check<'_>) -> Verdict {
+        if let Some(handler) = self.constraint_slot() {
+            handler.check(ctx)
+        } else if let Some(relay) = self.constraint_relay() {
+            relay.check(ctx)
+        } else {
+            Verdict::Accept
+        }
+    }
+
+    /// Hands a rejected point at a node to the constraint handler, if one is registered.
+    pub fn enforce(&mut self, ctx: &mut B::Enforce<'_>) {
+        if let Some(handler) = self.constraint_slot() {
+            handler.enforce(ctx);
+        } else if let Some(relay) = self.constraint_relay() {
+            relay.enforce(ctx);
+        }
+    }
+
+    /// Hands a node's domain to the constraint handler, if one is registered.
+    pub fn propagate(&mut self, ctx: &mut B::Propagate<'_>) {
+        if let Some(handler) = self.constraint_slot() {
+            handler.propagate(ctx);
+        } else if let Some(relay) = self.constraint_relay() {
+            relay.propagate(ctx);
+        }
+    }
+
+    /// Hands an inferred bound to the constraint handler; [`Explained::Unknown`] without one.
+    pub fn explain(&mut self, ctx: &mut B::Explain<'_>) -> Explained {
+        if let Some(handler) = self.constraint_slot() {
+            handler.explain(ctx)
+        } else if let Some(relay) = self.constraint_relay() {
+            relay.explain(ctx)
+        } else {
+            Explained::Unknown
+        }
+    }
+
+    /// Hands the program's global domain to the constraint handler, if one is registered.
+    pub fn presolve(&mut self, ctx: &mut B::Presolve<'_>) {
+        if let Some(handler) = self.constraint_slot() {
+            handler.presolve(ctx);
+        } else if let Some(relay) = self.constraint_relay() {
+            relay.presolve(ctx);
+        }
+    }
+}
+
+impl<'h, B: CustomConstraints + UserCuts> Hooks<'h, B> {
+    /// Runs one `handler` both as a constraint and for node relaxations, as a constraint handler that also cuts off
+    /// fractional points, replacing the constraint and cut handlers registered before.
+    pub fn register_constraint_and_cut(mut self, handler: &'h mut (impl ConstraintHandler<B> + CutHandler<B>)) -> Self {
+        self.constraint = None;
+        self.cut = None;
+        self.constraint_and_cut = Some(handler);
+        self.combined_cut = Some(Combined::Constraint);
         self
     }
 }
@@ -542,6 +944,9 @@ impl<B: Backend> fmt::Debug for Hooks<'_, B> {
             .field("lazy_and_cut", &self.lazy_and_cut.is_some())
             .field("heuristic", &self.heuristic.is_some())
             .field("pricer", &self.pricer.is_some())
+            .field("constraint", &self.constraint.is_some())
+            .field("constraint_and_cut", &self.constraint_and_cut.is_some())
+            .field("combined_cut", &self.combined_cut)
             .field("relay", &self.relay.is_some())
             .field("priced", &self.priced.is_some())
             .finish()

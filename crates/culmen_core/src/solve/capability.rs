@@ -26,8 +26,9 @@
 //! the program. Called otherwise, it may fail or give an unspecified result, never undefined behaviour.
 
 use crate::{
-    Backend, Basis, Col, CutContext, Duals, HeuristicContext, Iis, LazyContext, PriceContext, Program, Ranging,
-    Relaxed, Row, Start, TiVec, Weights,
+    Backend, Basis, CheckContext, Col, CutContext, Duals, EnforceContext, ExplainContext, HeuristicContext, Iis,
+    LazyContext, PresolveContext, PriceContext, Program, PropagateContext, Ranging, Relaxed, Row, Start, TiVec,
+    Weights,
 };
 
 /// The backend takes lazy constraints: it hands every candidate solution it would accept to a registered
@@ -75,6 +76,34 @@ pub trait Heuristics: Backend {
 pub trait Prices: Backend {
     /// The context of a pricing round: a node LP whose duals the pricer answers with columns.
     type Price<'a>: PriceContext;
+}
+
+/// The backend takes a constraint handler: a rule over the program's columns that only the handler knows, which the
+/// backend checks on every point it would accept and has the handler enforce, propagate, explain and presolve through
+/// the contexts it hands it.
+///
+/// # Contract
+///
+/// The backend reads [`Hooks::declaration`](crate::Hooks::declaration) once when a solve starts and keeps every
+/// reduction its locks allow and no other. It calls `check` on every point it would accept and accepts none `check`
+/// rejects; at a node it calls `enforce` only on a point `check` rejected in the same round, and only for points the
+/// declaration's [`Candidates`](crate::Candidates) name. It applies a node's actions after the handler returns, as
+/// recorded by a [`NodeActions`](crate::NodeActions), so it refuses the same actions every backend refuses, and
+/// writes only columns the declaration involves. It calls `explain` only for a tightening the handler gave a
+/// [`Reason`](crate::Reason), and uses the bounds it names only on [`Explained::Complete`](crate::Explained::Complete).
+/// One constraint handler runs per solve.
+#[diagnostic::on_unimplemented(message = "`{Self}` does not take constraint handlers")]
+pub trait CustomConstraints: Backend {
+    /// The context of a point to judge.
+    type Check<'a>: CheckContext;
+    /// The context of a rejected point at a node, to resolve.
+    type Enforce<'a>: EnforceContext;
+    /// The context of a node's domain, to narrow.
+    type Propagate<'a>: PropagateContext;
+    /// The context of an inferred bound, to explain.
+    type Explain<'a>: ExplainContext;
+    /// The context of the program's global domain before the search.
+    type Presolve<'a>: PresolveContext;
 }
 
 /// The backend takes a start: a solution, full or partial, the next solve may begin its search from.

@@ -7,10 +7,10 @@
 use core::fmt;
 
 use culmen_core::{
-    Backend, Basis, BasisAnalysis, Callback, Col, DualAnalysis, Duals, Edit, Events, Heuristics, Hooks, Iis,
-    IisAnalysis, LazyConstraints, ModelClasses, Prices, Program, ProgramFeatures, ProgramPlan, Ranging,
-    RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Relay, Row, Settings, Solved, Start, Starts, TiVec,
-    UserCuts, Weights,
+    Backend, Basis, BasisAnalysis, Callback, Col, CustomConstraints, Declaration, DualAnalysis, Duals, Edit, Events,
+    Explained, Heuristics, Hooks, Iis, IisAnalysis, LazyConstraints, ModelClasses, Prices, Program, ProgramFeatures,
+    ProgramPlan, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Relay, Row, Settings, Solved,
+    Start, Starts, TiVec, UserCuts, Verdict, Weights,
 };
 
 /// A backend that forwards to `inner`, recording what it is asked to hold and failing as [`Faults`] say.
@@ -279,6 +279,48 @@ impl<B: Backend> Relay<B> for Forward<'_, '_, B> {
     {
         self.0.price(ctx);
     }
+    fn wants_constraint(&self) -> bool
+    where
+        B: CustomConstraints,
+    {
+        self.0.wants_constraint()
+    }
+    fn declaration(&self) -> Option<Declaration>
+    where
+        B: CustomConstraints,
+    {
+        self.0.declaration()
+    }
+    fn check(&mut self, ctx: &mut <B as CustomConstraints>::Check<'_>) -> Verdict
+    where
+        B: CustomConstraints,
+    {
+        self.0.check(ctx)
+    }
+    fn enforce(&mut self, ctx: &mut <B as CustomConstraints>::Enforce<'_>)
+    where
+        B: CustomConstraints,
+    {
+        self.0.enforce(ctx);
+    }
+    fn propagate(&mut self, ctx: &mut <B as CustomConstraints>::Propagate<'_>)
+    where
+        B: CustomConstraints,
+    {
+        self.0.propagate(ctx);
+    }
+    fn explain(&mut self, ctx: &mut <B as CustomConstraints>::Explain<'_>) -> Explained
+    where
+        B: CustomConstraints,
+    {
+        self.0.explain(ctx)
+    }
+    fn presolve(&mut self, ctx: &mut <B as CustomConstraints>::Presolve<'_>)
+    where
+        B: CustomConstraints,
+    {
+        self.0.presolve(ctx);
+    }
 }
 
 /// Every declaration is the inner backend's; every call is forwarded, recorded and checked.
@@ -375,6 +417,14 @@ impl<B: Heuristics> Heuristics for Mirror<B> {
 
 impl<B: Prices> Prices for Mirror<B> {
     type Price<'a> = B::Price<'a>;
+}
+
+impl<B: CustomConstraints> CustomConstraints for Mirror<B> {
+    type Check<'a> = B::Check<'a>;
+    type Enforce<'a> = B::Enforce<'a>;
+    type Propagate<'a> = B::Propagate<'a>;
+    type Explain<'a> = B::Explain<'a>;
+    type Presolve<'a> = B::Presolve<'a>;
 }
 
 /// Every other capability is the inner backend's, forwarded with its errors as [`MirrorError::Inner`].

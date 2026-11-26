@@ -19,11 +19,11 @@
 //! - **The solver is a seam.** A [`Backend`] loads a [`Program`] and solves it under [`Settings`], calling a
 //!   [`Callback`] with one typed context per observational event kind ([`Events`]); what it cannot deliver it
 //!   declares, and its context for that event is [`Unsupported`], so such a callback never runs. What changes the
-//!   search is a capability of its own ([`LazyConstraints`], [`UserCuts`], [`Heuristics`], [`Prices`]), and the
-//!   matching handler ([`LazyHandler`], [`CutHandler`], [`HeuristicHandler`], [`Pricer`]) can be registered on the
-//!   [`Run`] of a solve only for a backend that has it. It declares the [`ModelClasses`] it solves, and
-//!   [`Solver::new`] refuses a program of any other [`ModelClass`] with a typed [`LoadError`]. Whatever a solver
-//!   offers beyond the neutral contexts is on its own context types.
+//!   search is a capability of its own ([`LazyConstraints`], [`UserCuts`], [`Heuristics`], [`Prices`],
+//!   [`CustomConstraints`]), and the matching handler ([`LazyHandler`], [`CutHandler`], [`HeuristicHandler`],
+//!   [`Pricer`], [`ConstraintHandler`]) can be registered on the [`Run`] of a solve only for a backend that has it.
+//!   It declares the [`ModelClasses`] it solves, and [`Solver::new`] refuses a program of any other [`ModelClass`]
+//!   with a typed [`LoadError`]. Whatever a solver offers beyond the neutral contexts is on its own context types.
 //! - **A solve is a value.** A [`Solver`] holds a loaded backend; [`Solver::solve`] solves under the backend's
 //!   defaults, and [`Solver::run`] configures one solve with [`Settings`], a [`Stop`], an [`Observer`], a callback,
 //!   a start and handlers. Each returns [`Solved`]: a generic [`Outcome`] and the backend's own status.
@@ -111,6 +111,11 @@ pub use solve::{
     Analysis, AnalysisError, Basis, BasisAnalysis, BasisStatus, DualAnalysis, Duals, Iis, IisAnalysis, InvalidPenalty,
     Limit, Line, Misfit, Penalty, Ranged, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Side,
     Starts, Table, Violation, Violations, Weights,
+};
+pub use solve::{
+    Candidates, CheckContext, CheckedChild, Child, ConstraintHandler, CustomConstraints, Declaration, EnforceContext,
+    ExplainContext, Explained, Inferred, Involved, Lock, Locks, NodeAction, NodeActions, NodeContext, PresolveContext,
+    PropagateContext, Reason, Verdict,
 };
 pub use solve::{capability, context};
 pub use typed_index_collections::{TiSlice, TiVec};
