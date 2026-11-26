@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Solves and returns the optimal solution and the simplex iterations the solve took.
 fn solve(solver: &mut Solver<Highs>) -> Result<(Solution, u64), Box<dyn std::error::Error>> {
-    let solved = solver.solve(Request::new())?;
+    let solved = solver.solve()?;
     match solved.outcome {
         Outcome::Optimal(solution) => Ok((solution, solved.status.simplex_iterations)),
         other => Err(format!("no optimum: {other:?}").into()),

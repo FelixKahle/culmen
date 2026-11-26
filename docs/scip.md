@@ -40,11 +40,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let options = ScipOptions { heuristics: Some(Emphasis::Fast), ..ScipOptions::default() };
     let mut solver = Solver::new(Scip::with_options(options), m.build()?)?;
-    let first = solver.solve(Request::new())?;
+    let first = solver.solve()?;
 
     // The options belong to the backend; change them between solves.
     solver.backend_mut().options_mut().separating = Some(Emphasis::Off);
-    let second = solver.solve(Request::new())?;
+    let second = solver.solve()?;
     assert_eq!(first.outcome.objective(), Some(21.0));
     assert_eq!(second.outcome.objective(), Some(21.0));
     assert_eq!(culmen::scip::version().major, 10);
@@ -183,7 +183,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
 
     let settings = Settings { threads: Some(threads!(4)), ..Settings::new() };
-    let worker = std::thread::spawn(move || solver.solve(Request::new().settings_from(settings)));
+    let worker = std::thread::spawn(move || solver.run().settings(settings).solve());
     let solved = worker.join().map_err(|_| "the solve thread panicked")??;
     assert_eq!(solved.outcome.objective(), Some(2.0));
     Ok(())
@@ -236,7 +236,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.add_constraint((x + 3.0 * y).leq(6.0));
     m.maximize(3.0 * x + 2.0 * y + 10);
 
-    let solved = Solver::new(Scip::new(), m.build()?)?.solve(Request::new())?;
+    let solved = Solver::new(Scip::new(), m.build()?)?.solve()?;
     let status = &solved.status;
     assert_eq!(status.status, Status::Optimal);
     assert_eq!(status.status.to_string(), "optimal solution found");
@@ -277,7 +277,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let program = m.build()?;
     assert_eq!(program.class(), ModelClass::Miqp);
 
-    let solved = Solver::new(Scip::new(), program)?.solve(Request::new())?;
+    let solved = Solver::new(Scip::new(), program)?.solve()?;
     let Outcome::Optimal(best) = solved.outcome else { return Err("no optimum".into()) };
     assert!((best.objective - 2.0).abs() < 1e-6);
     assert!(best.values[x].abs() < 1e-3 && (best.values[y] - 1.0).abs() < 1e-3);
@@ -287,7 +287,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Starts
 
-`Scip` implements `Starts`, so `solve_from` takes a start. A [start](solving.md#starts) reaches SCIP before the
+`Scip` implements `Starts`, so `Run::start` takes a start. A [start](solving.md#starts) reaches SCIP before the
 solve: a full start as a SCIP solution (`SCIPcreateSol`, `SCIPaddSolFree`), a sparse one as a partial solution
 (`SCIPcreatePartialSol`) that SCIP completes when the solve begins. SCIP checks a start as it begins; an infeasible start, or a sparse one it cannot
 complete, is dropped then, without an error, as SCIP drops any. A feasible start is the solve's first incumbent. SCIP
@@ -315,13 +315,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // A start taking the last two items, worth 2.1, is the best one node holds.
     let last_two = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0];
-    let started = solver.solve_from(Request::new().settings_from(one_node.clone()), last_two)?;
+    let started = solver.run().settings(one_node.clone()).start(last_two).solve()?;
     let Outcome::Stopped { best: Some(best), .. } = started.outcome else { return Err("no start".into()) };
     assert!((best.objective - 2.1).abs() < 1e-9);
 
     // A solve to the optimum, 2.9, and then one node again: it ends with the optimum the last solve left.
-    assert!((solver.solve(Request::new())?.outcome.objective().ok_or("no optimum")? - 2.9).abs() < 1e-9);
-    let again = solver.solve(Request::new().settings_from(one_node))?;
+    assert!((solver.solve()?.outcome.objective().ok_or("no optimum")? - 2.9).abs() < 1e-9);
+    let again = solver.run().settings(one_node).solve()?;
     assert!((again.outcome.objective().ok_or("no solution")? - 2.9).abs() < 1e-9);
     Ok(())
 }
@@ -350,16 +350,16 @@ read through SCIP's original variables whatever presolve did to them, and every 
 program's sense with its offset and quadratic part. Progress carries the wall-clock time since the solve began, the
 primal and dual bound, the nodes and the LP iterations, each in the stages SCIP reports it.
 
-A handler's plugin acts only for a solve whose `Hooks` hold a handler of its kind, and the observational plugins only
-for the events the callback asks for, so a solve with neither runs SCIP as it would without culmen. What SCIP gives up
-is decided by the handlers registered, never by the events asked for: a lazy-constraint handler or a pricer changes
+A handler's plugin acts only for a solve whose `Run` registered a handler of its kind, and the observational plugins
+only for the events the callback asks for, so a solve with neither runs SCIP as it would without culmen. What SCIP gives
+up is decided by the handlers registered, never by the events asked for: a lazy-constraint handler or a pricer changes
 how SCIP solves (see each section below), a cut or a heuristic handler calls culmen's separator or heuristic at every
 node, and a callback, even one asking for `Events::ALL`, costs a call per event and nothing else. SCIP calls every
-plugin on the thread running the solve, one call at a time; a plugin called while a callback or handler is busy with
-an outer event (a solution supplied from `heuristic` is checked and stored at once, which calls the constraint handler
-and the event handler) finds the hooks busy: a log line or a solution is then delivered as soon as the outer call
-returns, and a poll or a progress report is dropped. Everything a context changes in SCIP (a lazy constraint, a cut, a
-priced column) is handed to SCIP once the handler returns.
+plugin on the thread running the solve, one call at a time; a plugin called while a callback or handler is busy with an
+outer event (a solution supplied from `heuristic` is checked and stored at once, which calls the constraint handler and
+the event handler) finds the hooks busy: a log line or a solution is then delivered as soon as the outer call returns,
+and a poll or a progress report is dropped. Everything a context changes in SCIP (a lazy constraint, a cut, a priced
+column) is handed to SCIP once the handler returns.
 
 A panic in a callback or handler never unwinds into SCIP: the plugin catches it and asks SCIP to stop (`SCIPinterruptSolve`),
 every later delivery is skipped, and the panic resumes once SCIP has returned. The backend stays usable.
@@ -422,11 +422,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(3.0 * x + 2.0 * y + z);
 
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
-    let request = Request::new()
-        .settings_from(Settings { node_limit: Some(1000), ..Settings::new() })
-        .time_limit(Duration::from_secs(10));
     let mut not_both = NotBoth { pair: (x, y), calls: 0, checked: 0 };
-    let solved = solver.solve_with(request, Hooks::new().register_lazy(&mut not_both))?;
+    let solved = solver
+        .run()
+        .settings(Settings { node_limit: Some(1000), ..Settings::new() })
+        .time_limit(Duration::from_secs(10))
+        .lazy(&mut not_both)
+        .solve()?;
     let best = solved.outcome.solution().ok_or("no solution")?;
     assert_eq!(best.objective, 4.0); // x and z
     assert!(best.values[x] + best.values[y] <= 1.0 + 1e-9);
@@ -480,11 +482,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SCIP's own cuts and presolve off, so the root LP takes 2.75 items and the handler's cut is the one that helps.
     let options = ScipOptions { separating: Some(Emphasis::Off), ..ScipOptions::default() };
     let mut solver = Solver::new(Scip::with_options(options), m.build()?)?;
-    let request = Request::new()
-        .settings_from(Settings { presolve: Some(false), node_limit: Some(1000), ..Settings::new() })
-        .time_limit(Duration::from_secs(10));
     let mut cover = Cover { items: take.clone(), calls: 0, added: 0 };
-    let solved = solver.solve_with(request, Hooks::new().register_cut(&mut cover))?;
+    let solved = solver
+        .run()
+        .settings(Settings { presolve: Some(false), node_limit: Some(1000), ..Settings::new() })
+        .time_limit(Duration::from_secs(10))
+        .cut(&mut cover)
+        .solve()?;
     assert_eq!(solved.outcome.objective(), Some(9.0));
     assert!(cover.added >= 1);
     Ok(())
@@ -541,10 +545,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Without presolve, which would solve so small a program before the first node, so no heuristic would run.
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
     let mut offer = Offer { values: Some(known), supplied: Vec::new() };
-    let request = Request::new()
-        .settings_from(Settings { presolve: Some(false), ..Settings::new() })
-        .time_limit(Duration::from_secs(10));
-    let solved = solver.solve_with(request, Hooks::new().register_heuristic(&mut offer))?;
+    let solved = solver
+        .run()
+        .settings(Settings { presolve: Some(false), ..Settings::new() })
+        .time_limit(Duration::from_secs(10))
+        .heuristic(&mut offer)
+        .solve()?;
     assert_eq!(offer.supplied, [Ok(())]);
     assert_eq!(solved.outcome.objective(), Some(25.0));
     Ok(())
@@ -653,10 +659,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Every pattern costs one roll, so less than one roll from the bound is optimal.
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
-    let request = Request::new()
-        .settings_from(Settings { absolute_gap: Some(absolute_gap!(0.999)), node_limit: Some(1000), ..Settings::new() })
-        .time_limit(Duration::from_secs(10));
-    let solved = solver.solve_with(request, Hooks::new().register_pricer(&mut pool))?;
+    let solved = solver
+        .run()
+        .settings(Settings { absolute_gap: Some(absolute_gap!(0.999)), node_limit: Some(1000), ..Settings::new() })
+        .time_limit(Duration::from_secs(10))
+        .pricer(&mut pool)
+        .solve()?;
 
     // Five rolls: the LP bound is 4.5, and three threes, two threes and a four, a three and a five, and two fives
     // cover the demand.
@@ -707,13 +715,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
 
     let settings = Settings { seed: Some(u32::MAX), ..Settings::new() };
-    let Err(SolveError::Backend(error)) = solver.solve(Request::new().settings_from(settings)) else {
+    let Err(SolveError::Backend(error)) = solver.run().settings(settings).solve() else {
         panic!("the seed is refused")
     };
     let max = i32::MAX.unsigned_abs().into();
     let value = u32::MAX.into();
     assert_eq!(error, ScipError::OutOfRange { name: "randomization/randomseedshift", value, max });
-    assert_eq!(solver.solve(Request::new())?.outcome.objective(), Some(1.0));
+    assert_eq!(solver.solve()?.outcome.objective(), Some(1.0));
     Ok(())
 }
 ```
@@ -750,7 +758,7 @@ the call or parameter and SCIP's return code, and the message is on standard err
 ## See also
 
 - [Callbacks](callbacks.md): the neutral events and contexts, the search handlers, and pricing.
-- [Solving](solving.md): requests, settings, starts and outcomes.
+- [Solving](solving.md): the run of a solve, settings, starts and outcomes.
 - [HiGHS](highs.md): the default backend.
 - [Backends](backends.md): how SCIP's plugins, parameters and statuses map onto culmen's seam, beside HiGHS and Gurobi.
 - [Documentation index](README.md).

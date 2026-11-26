@@ -98,9 +98,7 @@ impl Patterns {
             .zip(duals)
             .flat_map(|(choices, &dual)| choices.iter().enumerate().map(move |(k, &z)| (z, k as f64 * dual)));
         self.knapsack.set_col_costs(costs.collect::<Vec<_>>())?;
-        let solved = self
-            .knapsack
-            .solve(Request::new().time_limit(Duration::from_secs(10)))?;
+        let solved = self.knapsack.run().time_limit(Duration::from_secs(10)).solve()?;
         let Outcome::Optimal(best) = solved.outcome else {
             return Err(format!("the knapsack has no optimum: {:?}", solved.outcome).into());
         };
@@ -155,15 +153,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Every pattern costs one roll, so the objective is whole: a solution within less than one roll of the bound is
     // optimal, and the absolute gap stops the search there.
-    let request = Request::new()
-        .settings_from(Settings {
+    let mut patterns = Patterns::new(demand.clone())?;
+    let solved = master
+        .run()
+        .settings(Settings {
             absolute_gap: Some(absolute_gap!(0.999)),
             node_limit: Some(10_000),
             ..Settings::new()
         })
-        .time_limit(Duration::from_secs(60));
-    let mut patterns = Patterns::new(demand.clone())?;
-    let solved = master.solve_with(request, Hooks::new().register_pricer(&mut patterns))?;
+        .time_limit(Duration::from_secs(60))
+        .pricer(&mut patterns)
+        .solve()?;
 
     let (rolls, bound) = match &solved.outcome {
         Outcome::Optimal(best) => (best, best.objective),

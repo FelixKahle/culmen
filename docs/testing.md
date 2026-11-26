@@ -38,7 +38,7 @@ the four search steps.
 The script behaves as a solver would:
 
 - An observational step reaches the callback only when the callback asks for its kind, and a search step reaches
-  only a handler of its kind registered on the solve's `Hooks`, as with any backend. The outcome and the elapsed time
+  only a handler of its kind registered on the solve's `Run`, as with any backend. The outcome and the elapsed time
   count every step, whatever the callback asks for and whichever handlers are registered.
 - A poll that interrupts ends the solve at once as `Outcome::Stopped` with `StopReason::Interrupted`, the last
   incumbent delivered before as `best` and the last bound reported as `bound`.
@@ -67,7 +67,7 @@ fn best_within<B: Backend>(
     limit: Duration,
     stop: &AtomicBool,
 ) -> Result<Option<f64>, SolveError<B::Error>> {
-    let solved = solver.solve(Request::new().time_limit(limit).stop(stop))?;
+    let solved = solver.run().time_limit(limit).stop(stop).solve()?;
     Ok(solved.outcome.objective())
 }
 
@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stopped = AtomicBool::new(true);
     let solved_best = best_within(&mut solver, Duration::from_secs(5), &stopped)?;
     assert_eq!(solved_best, Some(0.0));
-    let again = solver.solve(Request::new().stop(&stopped))?;
+    let again = solver.run().stop(&stopped).solve()?;
     assert_eq!(again.status, ScriptStatus::Interrupted { step: 1 });
     Ok(())
 }
@@ -138,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(script, m.build()?)?;
 
     let mut not_both = NotBoth { x, y, refused: Vec::new() };
-    solver.solve_with(Request::new(), Hooks::new().register_lazy(&mut not_both))?;
+    solver.run().lazy(&mut not_both).solve()?;
     assert!(not_both.refused.is_empty());
     assert_eq!(
         solver.backend().record.lazy,
@@ -191,7 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // At the dual 3 the pattern prices at 1 - 3 = -2 and is added; at the dual 1 it prices at 0.
     let script = Script::new([round(3.0, 3.0), round(1.0, 1.0)], Outcome::Infeasible);
     let mut solver = Solver::new(script, m.build()?)?;
-    solver.solve_with(Request::new(), Hooks::new().register_pricer(&mut Pattern(pattern)))?;
+    solver.run().pricer(&mut Pattern(pattern)).solve()?;
 
     let rounds = &solver.backend().record.priced;
     assert_eq!(rounds[0].added.clone().collect::<Vec<_>>(), [Col::new(1)]);
@@ -237,7 +237,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_ne!(exact, Reference::Infeasible);
     assert_eq!(exact.objective(), Some(7.0));
 
-    let solved = Solver::new(Highs::new(), program)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), program)?.solve()?;
     let found = solved.outcome.objective().ok_or("no solution")?;
     assert!(reference::close(found, 7.0, 1e-9));
     Ok(())

@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(LinExpr::sum((0..4).map(|i| value[i] * take[i])));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    let Outcome::Optimal(best) = solver.solve(Request::new())?.outcome else {
+    let Outcome::Optimal(best) = solver.solve()?.outcome else {
         return Err("no optimum".into());
     };
     assert_eq!(best.objective, 21.0);
@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.minimize(LinExpr::sum(x.iter().map(|(&(p, l), x)| walk[p][l] * x)));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    if let Some(best) = solver.solve(Request::new())?.outcome.solution() {
+    if let Some(best) = solver.solve()?.outcome.solution() {
         for (&(p, l), value) in x.values(&best.values) {
             if value > 0.5 {
                 println!("product {p} -> location {l}");
@@ -147,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(program.class(), ModelClass::Qp);
 
     let mut solver = Solver::new(Highs::new(), program)?;
-    let Outcome::Optimal(best) = solver.solve(Request::new())?.outcome else {
+    let Outcome::Optimal(best) = solver.solve()?.outcome else {
         return Err("no optimum".into());
     };
     assert!((best.objective - 2.0).abs() < 1e-6);
@@ -162,8 +162,8 @@ with `LoadError::Unsupported`. SCIP, with the `scip` feature, solves all four cl
 ## SCIP: lazy constraints and pricing
 
 The same models solve on SCIP by naming another backend. A handler can then add constraints only it knows, as each
-candidate arrives, or price columns into every node of the search. Each handler is registered on the solve's `Hooks`,
-and only for a backend with its capability: the same `register_lazy` for `Highs` does not compile.
+candidate arrives, or price columns into every node of the search. Each handler is registered on the solve's `Run`,
+and only for a backend with its capability: the same `.lazy(..)` for `Highs` does not compile.
 
 ```rust
 use std::time::Duration;
@@ -189,9 +189,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(3.0 * x + 2.0 * y);
 
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
-    let request = Request::new().time_limit(Duration::from_secs(10));
     let mut not_both = NotBoth(x, y);
-    let solved = solver.solve_with(request, Hooks::new().register_lazy(&mut not_both))?;
+    let solved = solver
+        .run()
+        .time_limit(Duration::from_secs(10))
+        .lazy(&mut not_both)
+        .solve()?;
     assert_eq!(solved.outcome.objective(), Some(3.0));
     Ok(())
 }
@@ -230,14 +233,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setting the flag from any thread stops the solve at the solver's next poll.
     let cancel = AtomicBool::new(false);
     let mut feed = Feed;
-    let request = Request::new()
-        .settings_from(Settings { relative_gap: Some(relative_gap!(0.01)), ..Settings::new() })
+    let solved = solver
+        .run()
+        .settings(Settings { relative_gap: Some(relative_gap!(0.01)), ..Settings::new() })
         .time_limit(Duration::from_secs(60))
         .stop(&cancel)
         .observer(&mut feed)
-        .progress_interval(Duration::from_secs(1));
+        .progress_interval(Duration::from_secs(1))
+        .solve()?;
 
-    match solver.solve(request)?.outcome {
+    match solved.outcome {
         Outcome::Optimal(best) => println!("optimal {}", best.objective),
         Outcome::GapReached { solution, bound } => println!("{} within the gap of {bound}", solution.objective),
         Outcome::Stopped { reason, best, .. } => println!("stopped ({reason:?}), best {:?}", best.map(|b| b.objective)),
@@ -249,7 +254,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 A tokio `CancellationToken` adapts in one line: `stop_fn(move || token.is_cancelled())`. To reach everything a
 solver reports, such as the cut pool, implement `Callback<Highs>`, or `Callback<B>` for any backend, and pass it with
-`solver.solve_with(request, Hooks::new().register_callback(&mut callback))`.
+`solver.run().callback(&mut callback).solve()`.
 
 ## Installation
 
@@ -286,8 +291,8 @@ it runs as a doctest, but for the two marked `ignore`:
   [Macros](https://github.com/FelixKahle/culmen/blob/main/docs/macros.md): variables, linear and quadratic expressions,
   constraints, objectives and keyed families, written with methods or with macros.
 - [Solving](https://github.com/FelixKahle/culmen/blob/main/docs/solving.md) and
-  [Callbacks](https://github.com/FelixKahle/culmen/blob/main/docs/callbacks.md): model classes, requests, settings,
-  outcomes, observers, stops and every callback event.
+  [Callbacks](https://github.com/FelixKahle/culmen/blob/main/docs/callbacks.md): model classes, the `Run` builder,
+  settings, outcomes, observers, stops and every callback event.
 - [HiGHS](https://github.com/FelixKahle/culmen/blob/main/docs/highs.md): options, threads, statuses, quadratic programs,
   callback contexts, and limitations.
 - [SCIP](https://github.com/FelixKahle/culmen/blob/main/docs/scip.md): building, options, statuses, quadratic programs,

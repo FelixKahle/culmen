@@ -43,11 +43,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(3.0 * x + 2.0 * y);
 
     let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
-    let first = solver.solve(Request::new())?;
+    let first = solver.solve()?;
 
     // The options belong to the backend; change them between solves.
     solver.backend_mut().options_mut().solver = Some(LpSolver::Simplex);
-    let second = solver.solve(Request::new())?;
+    let second = solver.solve()?;
     assert_eq!(first.outcome.objective().map(f64::round), Some(13.0));
     assert_eq!(second.outcome.objective().map(f64::round), Some(13.0));
     Ok(())
@@ -139,7 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
 
     let two = Settings { threads: Some(threads!(2)), ..Settings::new() };
-    let worker = std::thread::spawn(move || solver.solve(Request::new().settings_from(two)));
+    let worker = std::thread::spawn(move || solver.run().settings(two).solve());
     let solved = worker.join().map_err(|_| "the solve thread panicked")??;
     assert_eq!(solved.outcome.objective(), Some(2.0));
     Ok(())
@@ -175,7 +175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.add_constraint((x + 3.0 * y).leq(6.0));
     m.maximize(3.0 * x + 2.0 * y + 10);
 
-    let solved = Solver::new(Highs::new(), m.build()?)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), m.build()?)?.solve()?;
     let status = &solved.status;
     assert_eq!((status.run, status.model), (CallStatus::Ok, ModelStatus::Optimal));
     assert_eq!(status.primal, SolutionStatus::Feasible);
@@ -226,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let program = m.build()?;
     assert_eq!(program.class(), ModelClass::Qp);
 
-    let solved = Solver::new(Highs::new(), program)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), program)?.solve()?;
     let Outcome::Optimal(best) = solved.outcome else { return Err("no optimum".into()) };
     assert!((best.objective - 2.0).abs() < 1e-6);
     assert!((best.values[x] - 0.0).abs() < 1e-6 && (best.values[y] - 1.0).abs() < 1e-6);
@@ -281,7 +281,7 @@ trusted:
   stage or the blend: the backend reports the program's own objective, computed from the solution, and no bound, so a
   MIP's outcome is `Optimal` or `Stopped`. Objective values HiGHS reports to callbacks during such a solve are those
   of the stage it is solving or of the blend.
-- **A start**, given to `solve_from`, reaches HiGHS through `Highs_setSparseSolution` before the run, a full one with
+- **A start**, given to `Run::start`, reaches HiGHS through `Highs_setSparseSolution` before the run, a full one with
   every column. HiGHS refuses no value for lying outside its column's bounds (`Highs::setSolution` in `Highs.cpp`), so
   a semi column's zero is kept, and leaves the other columns of a sparse start open; for a MIP it completes them by a
   sub-MIP over the columns left open. A feasible start of a MIP is the first incumbent HiGHS reports. HiGHS also starts from the
@@ -316,7 +316,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(read.columns()[x].name.as_deref(), Some("x"));
 
     let best = |p: Program| -> Result<Outcome, Box<dyn std::error::Error>> {
-        Ok(Solver::new(Highs::new(), p)?.solve(Request::new())?.outcome)
+        Ok(Solver::new(Highs::new(), p)?.solve()?.outcome)
     };
     assert_eq!(best(read)?, best(program)?);
 
@@ -408,7 +408,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = HighsOptions { log_file: Some("a\0b".to_owned()), ..HighsOptions::default() };
     let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
 
-    let Err(SolveError::Backend(error)) = solver.solve(Request::new()) else { panic!("the option is refused") };
+    let Err(SolveError::Backend(error)) = solver.solve() else { panic!("the option is refused") };
     assert_eq!(error, HighsError::OptionString { name: "log_file".to_owned() });
     assert_eq!(error.to_string(), "HiGHS: the value of option `log_file` holds a NUL byte");
     Ok(())
@@ -489,8 +489,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(LinExpr::sum((0..6).map(|i| value[i] * take[i])));
 
     let mut inspect = Inspect::default();
-    let hooks = Hooks::new().register_callback(&mut inspect);
-    let solved = Solver::new(Highs::new(), m.build()?)?.solve_with(Request::new(), hooks)?;
+    let mut solver = Solver::new(Highs::new(), m.build()?)?;
+    let solved = solver.run().callback(&mut inspect).solve()?;
     assert_eq!(solved.outcome.objective(), Some(25.0));
     assert!(inspect.warnings.is_empty());
     Ok(())
@@ -555,7 +555,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = HighsOptions { presolve: Some(Switch::Off), ..HighsOptions::default() };
     let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
     let mut handler = Start { values: Some(start), supplied: Vec::new() };
-    let solved = solver.solve_with(Request::new(), Hooks::new().register_heuristic(&mut handler))?;
+    let solved = solver.run().heuristic(&mut handler).solve()?;
     assert_eq!(handler.supplied, [Ok(())]);
     assert_eq!(solved.outcome.objective(), Some(25.0));
     Ok(())
@@ -602,7 +602,7 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 
 - [Callbacks](callbacks.md): the neutral events and contexts.
 - [Analysis](analysis.md#highs): duals, basis, ranging, rays, IIS and feasibility relaxation on HiGHS.
-- [Solving](solving.md): requests, settings and outcomes.
+- [Solving](solving.md): the run of a solve, settings and outcomes.
 - [SCIP](scip.md): the second backend, for MIQPs, lazy constraints, cuts and pricing.
 - [Backends](backends.md): how HiGHS's callbacks, options and statuses map onto culmen's seam, beside Gurobi and SCIP.
 - [Design](design.md#where-unsafe-lives): why the trampoline is sound.

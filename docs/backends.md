@@ -58,9 +58,10 @@ pub trait RelaxationAnalysis: Backend {
   for `Native`.
 - **Search events are capability traits.** Lazy constraints, user cuts, heuristic solutions and pricing change what a
   solver searches, so a backend implements `LazyConstraints`, `UserCuts`, `Heuristics` or `Prices` for each it
-  delivers, naming the context of its handler there, and the registration method of the handler
-  (`Hooks::register_lazy` and so on) exists only for a backend that has it. HiGHS implements `Heuristics` alone, so a
-  lazy-constraint handler or a pricer for HiGHS does not compile instead of being ignored.
+  delivers, naming the context of its handler there, and the method that registers the handler (`Run::lazy` and so
+  on, and `Hooks::register_lazy` for code that drives a backend directly) exists only for a backend that has it.
+  HiGHS implements `Heuristics` alone, so a lazy-constraint handler or a pricer for HiGHS does not compile instead of
+  being ignored.
 - **Hooks carry the callback and the handlers.** `solve` receives a `Hooks<'_, Self>` by value: a core-owned value
   with private fields that dispatches. The backend reads `hooks.events()` for the observational events to deliver and
   `hooks.wants_lazy()`, `wants_cut()`, `wants_heuristic()` and `wants_price()` for the handlers registered, and calls
@@ -75,7 +76,7 @@ pub trait RelaxationAnalysis: Backend {
   `LoadError::UnsupportedFeature`. Classes and features are properties of a program, which edits change, so they
   stay run-time refusals.
 - **Starts and analyses are capability traits.** A backend that takes a start implements `Starts`, and
-  `Solver::solve_from` exists only for such a backend, so a start is never handed to one that would drop it. A backend
+  `Run::start` exists only for such a backend, so a start is never handed to one that would drop it. A backend
   that reports an analysis after a solve implements its trait (`DualAnalysis`, `BasisAnalysis`, `RangingAnalysis`,
   `RayAnalysis`, `IisAnalysis`, `RelaxationAnalysis`), and the `Solver` methods of that analysis exist only for such a
   backend. Each method returns the backend's own error; the `Solver` checks the program's class and features, the fit
@@ -90,10 +91,10 @@ pub trait RelaxationAnalysis: Backend {
   the neutral trait is an inherent method on it (`HighsPoll::source`, `HighsSolution::mip`) or a native event
   (`HighsNative::CutPool`). Generic code (`impl<B: Backend> Callback<B> for …`) sees the traits, and backend code
   (`impl Callback<Highs> for …`) sees everything.
-- **The convenient path sits on top.** `Watch` (made from a `Request` of settings, a `Stop` and an `Observer`) is an
+- **The convenient path sits on top.** `Watch` (made from the `Stop` and the `Observer` of a `Run`) is an
   ordinary `impl<B: Backend> Callback<B>`: it polls the stop at `POLL`, throttles `PROGRESS`/`POLL` into
   `Observer::progress`, reports `INCUMBENT` as `Observer::improved`, and joins `LOG` chunks into lines. It works
-  unchanged on every backend, and a `Solver` runs it before the callback registered on the hooks.
+  unchanged on every backend, and a `Solver` runs it before the callback registered on the run.
 - **Edits are a hook with a correct default.** A `Solver` that [edits its program](solving.md#editing-a-loaded-program)
   calls `edit` with the edited program and an `Edit` naming what changed: the columns whose bounds, costs or
   integrality changed, the rows whose bounds changed, or the rows or columns appended. Only a `Solver` makes an
@@ -110,7 +111,8 @@ pub trait RelaxationAnalysis: Backend {
   the next after the program's columns and every one priced before. The core owns the checks and the numbering, so
   every backend refuses the same columns the same way. A `Solver` gives its own sink, appends the columns to its
   program however `solve` ends, unwinding included, and loads the grown program at its next call; code that drives a
-  backend directly gives its own with `Hooks::sink` and takes the columns with `Priced::into_cols`. A backend that
+  backend directly registers its own with the pricer, `Hooks::register_pricer(pricer, priced)`, and takes the columns
+  with `Priced::into_cols`, so a pricer without a sink cannot be registered. A backend that
   does not price never sees one.
 - **The contract** (on `Backend`): solve the last program `load` or `edit` accepted; report every objective and bound
   with the program's quadratic part and offset in the model's sense, and every point with one value per column, the ones

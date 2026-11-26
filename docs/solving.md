@@ -1,8 +1,9 @@
 # Solving
 
-A solve takes three values: a `Solver`, which holds a backend with a program loaded; a `Request`, which carries one
-solve's settings, stop and observer; and the `Solved` it returns, which holds the generic `Outcome` beside the
-backend's own status. This page covers all three. Watching and stopping a solve are on [Callbacks](callbacks.md).
+A solve takes three values: a `Solver`, which holds a backend with a program loaded; a `Run`, which configures one
+solve's settings, stop, observer, start and handlers; and the `Solved` it returns, which holds the generic `Outcome`
+beside the backend's own status. This page covers all three. Watching and stopping a solve are on
+[Callbacks](callbacks.md).
 
 ## `Solver`
 
@@ -10,13 +11,12 @@ backend's own status. This page covers all three. Watching and stopping a solve 
 [`LoadError`](#model-classes-and-refusal): `Unsupported` when the backend does not solve the program's class and
 `UnsupportedFeature` when it does not take a feature the program uses, both before the backend sees it, or `Backend`
 with the backend's own error when the backend refuses the program. A `Solver` can then solve as often as needed,
-each time with its own request.
+each solve configured on its own.
 
 | Method | Does |
 |---|---|
-| `solve(request)` | Solves under the request's settings, polling its stop and reporting to its observer. |
-| `solve_with(request, hooks)` | The same, and also runs the [`Callback`](callbacks.md#callback) and the [search handlers](callbacks.md#search-handlers) registered on `hooks`, with the backend's full context types: `Hooks::new().register_callback(&mut callback)`, `.register_lazy(&mut handler)` and so on. |
-| `solve_from(request, start)`, `solve_with_from(request, start, hooks)` | The same two from a [start](#starts), for a backend that implements `Starts`. |
+| `solve()` | Solves under the backend's defaults, with no stop, observer, callback, start or handler. |
+| `run()` | A [`Run`](#run) to configure one solve: settings, a stop, an observer, a [`Callback`](callbacks.md#callback), a [start](#starts) and the [search handlers](callbacks.md#search-handlers), ended by `.solve()`. |
 | `program()` | The loaded program, grown by every column a solve priced. |
 | `backend()`, `backend_mut()` | The backend, to read its state or change its own options between solves. |
 | `into_parts()` | The backend and the program, taken apart; the backend may be behind the program after a failed edit or a solve that priced. |
@@ -39,8 +39,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(LinExpr::sum([3.0 * x[0], 4.0 * x[1], 5.0 * x[2]]));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    let first = solver.solve(Request::new())?;
-    let second = solver.solve(Request::new().time_limit(Duration::from_secs(5)))?;
+    let first = solver.solve()?;
+    let second = solver.run().time_limit(Duration::from_secs(5)).solve()?;
     assert_eq!(first.outcome, second.outcome);
     assert_eq!(solver.program().num_cols(), 3);
     Ok(())
@@ -90,28 +90,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
     let x = m.add_var(Var::free());
     m.minimize((x - 0.5) * (x - 0.5));
-    let solved = Solver::new(Highs::new(), m.build()?)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), m.build()?)?.solve()?;
     let best = solved.outcome.solution().ok_or("no solution")?;
     assert!((best.values[x] - 0.5).abs() < 1e-6);
     Ok(())
 }
 ```
 
-## `Request`
+## `Run`
 
-A `Request` is built by chaining. Each method replaces what it sets:
+`solver.run()` starts a `Run`: the backend's defaults, no stop, no observer, no callback, no start and no handler. It
+is built by chaining and ended by `.solve()`, which returns what `solver.solve()` does. Each method replaces what it
+sets, so the last call of a method is the one that counts:
 
-| Method | Sets |
-|---|---|
-| `Request::new()` | The solver's defaults, no stop, no observer. |
-| `.time_limit(duration)` | The wall-clock time the solve may take. |
-| `.settings_from(settings)` | Every setting at once, from a [`Settings`](#settings); it replaces a time limit set before. |
-| `.stop(&stop)` | The [`Stop`](callbacks.md#stop) polled while the solve runs. |
-| `.observer(&mut observer)` | The [`Observer`](callbacks.md#observer) of progress, improving solutions and log lines. |
-| `.progress_interval(duration)` | The least time between two progress reports; `Request::DEFAULT_PROGRESS_INTERVAL`, one second, unless set. |
+| Method | Sets | For |
+|---|---|---|
+| `.settings(settings)` | Every setting at once, from a [`Settings`](#settings), its time limit included: a time limit set before is replaced. | every backend |
+| `.time_limit(duration)` | The wall-clock time the solve may take, and nothing else: the other settings stay, and a later `.settings(..)` replaces it. | every backend |
+| `.stop(&stop)` | The [`Stop`](callbacks.md#stop) polled while the solve runs. | every backend |
+| `.observer(&mut observer)` | The [`Observer`](callbacks.md#observer) of progress, improving solutions and log lines. | every backend |
+| `.progress_interval(duration)` | The least time between two progress reports; `Watch::DEFAULT_PROGRESS_INTERVAL`, one second, unless set. | every backend |
+| `.callback(&mut callback)` | The [`Callback`](callbacks.md#callback), run after the stop and the observer, with the backend's full context types. | every backend |
+| `.start(start)` | The [start](#starts) the search begins from. | `B: Starts` |
+| `.lazy(&mut h)`, `.cut(&mut h)`, `.lazy_and_cut(&mut h)`, `.heuristic(&mut h)`, `.pricer(&mut p)` | The [search handlers](callbacks.md#search-handlers). | `B: LazyConstraints`, `UserCuts`, both, `Heuristics`, `Prices` |
 
-`request.settings()` reads the settings back. The request borrows its stop and observer, so both outlive the solve
-and can be read afterwards. A [start](#starts) goes beside the request, to `solve_from`.
+A method of the last two rows exists only for a backend with the capability, so a start or a handler the backend
+would ignore does not compile. The run borrows its stop, observer, callback and handlers, so all of them outlive the
+solve and can be read afterwards.
 
 ## Starts
 
@@ -121,14 +126,13 @@ as its first incumbent and may complete a partial or infeasible one; an LP solve
 be feasible, but it must fit the program: `start.check(num_cols)` states it.
 
 A backend that takes a start implements `Starts`, as HiGHS, SCIP and the `Script` do, and only for such a backend
-does the `Solver` have `solve_from(request, start)` and `solve_with_from(request, start, hooks)`, the
-counterparts of `solve` and `solve_with`. A start is a full `TiVec<Col, f64>` or `Vec<f64>`, or a sparse
-`Vec<(Col, f64)>`, and `solve_from` checks it before the backend sees it. A start applies to its one solve; a backend
+does a `Run` have `.start(start)`. A start is a full `TiVec<Col, f64>` or `Vec<f64>`, or a sparse `Vec<(Col, f64)>`,
+and `.solve()` checks it before the backend sees it. A start applies to its one solve; a backend
 may also start a solve from the last solve's best solution, as HiGHS
 ([HiGHS](highs.md#semi-columns-several-objectives-and-starts)) and SCIP ([SCIP](scip.md#how-options-and-settings-layer))
 do until an edit.
 
-`solve_from` refuses a start typed, as `SolveError`:
+`.solve()` refuses a start typed, as `SolveError`, and the last solve stays readable:
 
 | Variant | When |
 |---|---|
@@ -161,10 +165,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Items 1 and 3, worth 21, are the optimum: HiGHS takes them as its first incumbent.
     let mut first = First::default();
     let start = vec![(take[0], 0.0), (take[1], 1.0), (take[2], 0.0), (take[3], 1.0)];
-    solver.solve_from(Request::new().observer(&mut first), start)?;
+    solver.run().observer(&mut first).start(start).solve()?;
     assert_eq!(first.0, Some(21.0));
 
-    let error = solver.solve_from(Request::new(), vec![(take[1], 1.0), (take[1], 0.0)]).unwrap_err();
+    let error = solver.run().start(vec![(take[1], 1.0), (take[1], 0.0)]).solve().unwrap_err();
     assert_eq!(error, SolveError::Start(StartError::RepeatedColumn { col: take[1] }));
     Ok(())
 }
@@ -172,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## `Settings`
 
-`Settings` is the plain data behind a request's limits, in terms every backend maps to its own parameters. `None`
+`Settings` is the plain data behind a solve's limits, in terms every backend maps to its own parameters. `None`
 leaves a setting to the backend's own options, which in turn default to the solver's. Settings take precedence over
 the backend's options for the one solve they are passed to.
 
@@ -188,24 +192,31 @@ the backend's options for the one solve they are passed to.
 | `solution_limit` | `Option<NonZeroU64>` | The number of improving solutions (each better than every one before, the first included) after which a MIP stops; `solutions!(n)` writes a literal one. |
 | `console` | `bool` | Whether the solver also prints its log to standard output; the log reaches callbacks either way. |
 
-The request sets the time limit itself; every other setting goes through `settings_from`:
+A `Run` sets them all with `.settings(..)`, and the time limit alone with `.time_limit(..)`:
 
 ```rust
 use std::time::Duration;
 
 use culmen::prelude::*;
 
-let settings = Settings {
-    time_limit: Some(Duration::from_secs(30)),
-    relative_gap: Some(relative_gap!(0.01)),
-    threads: Some(threads!(4)),
-    seed: Some(7),
-    node_limit: Some(10_000),
-    solution_limit: Some(solutions!(5)),
-    ..Settings::default()
-};
-let request = Request::new().settings_from(settings.clone());
-assert_eq!(request.settings(), &settings);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut m = Model::new();
+    let x = m.add_var(Var::binary());
+    m.maximize(x);
+    let mut solver = Solver::new(Highs::new(), m.build()?)?;
+
+    let settings = Settings {
+        relative_gap: Some(relative_gap!(0.01)),
+        threads: Some(threads!(4)),
+        seed: Some(7),
+        node_limit: Some(10_000),
+        solution_limit: Some(solutions!(5)),
+        ..Settings::default()
+    };
+    let solved = solver.run().settings(settings).time_limit(Duration::from_secs(30)).solve()?;
+    assert_eq!(solved.outcome.objective(), Some(1.0));
+    Ok(())
+}
 ```
 
 How each setting maps onto HiGHS is on [HiGHS](highs.md#how-options-and-settings-layer), onto SCIP on
@@ -334,7 +345,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(5.0 * take["cork"] + 6.0 * take["glass"] + 3.0 * take["tin"]);
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    let solved = solver.solve(Request::new())?;
+    let solved = solver.solve()?;
     let best = solved.outcome.solution().ok_or("no solution")?;
 
     let taken: Vec<&str> = take.values(&best.values).filter(|&(_, v)| v > 0.5).map(|(&item, _)| item).collect();
@@ -388,7 +399,7 @@ use culmen::{EditError, NewCol, ProgramColumn};
 
 /// The optimal objective of the next solve.
 fn best(solver: &mut Solver<Highs>) -> Result<f64, Box<dyn std::error::Error>> {
-    let solved = solver.solve(Request::new())?;
+    let solved = solver.solve()?;
     Ok(solved.outcome.objective().ok_or("no solution")?)
 }
 
@@ -427,9 +438,9 @@ The examples `cutting_planes` and `column_generation` of the `culmen` crate edit
 
 ## A solve that prices
 
-A [pricer](callbacks.md#pricing), registered with `Hooks::register_pricer` on a backend that implements `Prices`
-([SCIP](scip.md#pricing)), adds columns during the solve, column generation at every node of the search. Those columns are the
-program's from then on:
+A [pricer](callbacks.md#pricing), registered with `Run::pricer` on a backend that implements `Prices`
+([SCIP](scip.md#pricing)), adds columns during the solve, column generation at every node of the search. Those columns
+are the program's from then on:
 
 - **The program grows.** Each priced column continues the program's numbering: the first is `Col(n)` for a program
   of `n` columns, and `add_col` returns that id. When the solve ends, however it ends (returning `Ok`, failing, or
@@ -473,7 +484,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let end = Outcome::Optimal(Solution { objective: 1.0, values: vec![0.0, 1.0].into() });
     let mut solver = Solver::new(Script::new([step], end), m.build()?)?;
-    let solved = solver.solve_with(Request::new(), Hooks::new().register_pricer(&mut OneMore))?;
+    let solved = solver.run().pricer(&mut OneMore).solve()?;
 
     assert_eq!(solver.program().num_cols(), 2);
     assert_eq!(solved.outcome.solution().map(|s| s.values.len()), Some(2));
@@ -495,8 +506,8 @@ backend sees the edit, or `EditError::Backend` when the backend refuses it. For 
 [`HighsError`](highs.md#errors), for SCIP [`ScipError`](scip.md#errors). A solve that ends without a solution is not
 an error; it is an `Outcome` such as `Infeasible` or `Stopped`.
 
-`solve` and `solve_with` panic when an observer, a callback or a handler panics: the panic continues out of the call once the
-solver has stopped ([Panics and threads](callbacks.md#panics-and-threads)).
+`solve` panics when an observer, a callback or a handler panics: the panic continues out of the call once the solver
+has stopped ([Panics and threads](callbacks.md#panics-and-threads)).
 
 ## See also
 

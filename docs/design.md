@@ -109,7 +109,7 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
   for every event costs a solver no reduction.
 - **What changes the search is a capability.** Lazy constraints, user cuts, heuristic solutions and pricing are traits
   a backend implements or leaves out (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`), each naming the context
-  of its handler (`LazyHandler`, `CutHandler`, `HeuristicHandler`, `Pricer`). A handler is registered on the `Hooks`
+  of its handler (`LazyHandler`, `CutHandler`, `HeuristicHandler`, `Pricer`). A handler is registered on the `Run`
   of a solve only for a backend that has the capability, so a lazy constraint a solver would ignore, which would turn
   a relaxation's optimum into a wrong answer, does not compile, and a backend gives up a reduction for a handler only
   when one is registered.
@@ -127,8 +127,8 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
 - **Extras stay with their backend.** Each context type is the backend's own; what one solver reports beyond the
   neutral traits is an inherent method or a native event. Generic code sees the traits; code for one backend sees
   everything.
-- **The convenient path is built on the seam, not beside it.** The request's stop and observer run as `Watch`, an
-  ordinary generic callback that the `Solver` runs before yours, so they work on every backend unchanged.
+- **The convenient path is built on the seam, not beside it.** The stop and the observer of a `Run` run as `Watch`,
+  an ordinary generic callback that the `Solver` runs before yours, so they work on every backend unchanged.
 - **Settings are neutral, options are the backend's.** `Settings` holds what every solver understands; a backend's
   own options hold the rest; settings apply after options, per solve.
 - **Outcomes are neutral, statuses are kept.** Each solve maps the solver's status onto `Outcome`, which holds

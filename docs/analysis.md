@@ -39,7 +39,7 @@ objectives](program.md#several-objectives) has none: `Analysis::refused()` names
 `AnalysisError::Feature { analysis, feature }`. An IIS and a feasibility relaxation concern the constraints alone and
 take any objectives.
 
-What depends on the program or on the solve stays a run-time refusal. The `Solver` checks every request the same way
+What depends on the program or on the solve stays a run-time refusal. The `Solver` checks every analysis the same way
 for every backend, before the backend is asked, and refuses with a typed `AnalysisError<B::Error>`, in this order:
 
 | Variant | When |
@@ -47,7 +47,7 @@ for every backend, before the backend is asked, and refuses with a typed `Analys
 | `Class { analysis, class }` | The analysis is not defined for the program's class. |
 | `Feature { analysis, feature }` | The analysis is not defined for a feature the program uses, as duals for several objectives. |
 | `Misfit(Misfit)` | A basis or weights do not fit the program: `Length { table, expected, found }`, `BasicCount { expected, found }`, `Status { line, status }` for a line put at a bound it does not have, or `SoftSemiBound { col }` for weights pricing a semi column's bound. |
-| `NotSolved { analysis }` | It reads a solve and there is none: no solve since the program was loaded, the last one failed or panicked once its request reached the backend, or a later edit, `set_basis`, `iis` or `feasibility_relaxation` replaced its result. A request `solve` refuses before the backend sees it keeps the last solve readable. |
+| `NotSolved { analysis }` | It reads a solve and there is none: no solve since the program was loaded, the last one failed or panicked once it reached the backend, or a later edit, `set_basis`, `iis` or `feasibility_relaxation` replaced its result. A solve refused before the backend sees it, as for a start that does not fit, keeps the last solve readable. |
 | `NotOptimal { analysis }` | It reads an optimal solve and the last one did not end `Optimal`. |
 | `Backend(E)` | The backend failed; for HiGHS, `HighsError::Analysis(analysis)`. |
 
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(x);
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    solver.solve(Request::new())?;
+    solver.solve()?;
     let refused = row_duals(&solver).unwrap_err();
     assert_eq!(refused, AnalysisError::Class { analysis: Analysis::Duals, class: ModelClass::Milp });
     assert_eq!(refused.to_string(), "Solver: duals are defined for {LP, QP}, not a MILP");
@@ -117,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(3.0 * x + 2.0 * y);
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    let best = solver.solve(Request::new())?.outcome.into_solution().ok_or("no optimum")?;
+    let best = solver.solve()?.outcome.into_solution().ok_or("no optimum")?;
     let duals = solver.duals()?;
     // c_y = 2 = rows[r1] with y basic; c_x = 3 = rows[r1] + cols[x]; r2 is slack.
     assert_eq!((duals.rows[r1], duals.rows[r2]), (2.0, 0.0));
@@ -156,13 +156,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let no_presolve = Settings { presolve: Some(false), ..Settings::new() };
 
     let mut cold = Solver::new(Highs::new(), program.clone())?;
-    cold.solve(Request::new().settings_from(no_presolve.clone()))?;
+    cold.run().settings(no_presolve.clone()).solve()?;
     let basis = cold.basis()?.ok_or("no basis")?;
     assert_eq!(basis.rows.iter().chain(&basis.cols).filter(|&&s| s == BasisStatus::Basic).count(), 2);
 
     let mut warm = Solver::new(Highs::new(), program)?;
     warm.set_basis(&basis)?;
-    let solved = warm.solve(Request::new().settings_from(no_presolve))?;
+    let solved = warm.run().settings(no_presolve).solve()?;
     assert_eq!(solved.status.simplex_iterations, 0, "the optimal basis needs no pivot");
     Ok(())
 }
@@ -194,7 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.minimize(-3.0 * x - 2.0 * y);
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    solver.solve(Request::new())?;
+    solver.solve()?;
     let cost = solver.ranging()?.costs[y];
     // y's cost may fall to -3, where x leaves its bound and r2 tightens, and rise to 0, where r1 loosens.
     assert_eq!((cost.down.value, cost.down.objective), (-3.0, -12.0));
@@ -227,7 +227,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.minimize(x + y);
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    assert_eq!(solver.solve(Request::new())?.outcome, Outcome::Infeasible);
+    assert_eq!(solver.solve()?.outcome, Outcome::Infeasible);
     let ray = solver.dual_ray()?.ok_or("no certificate")?;
     // (-1, 1): -(x + y) + (x + y) = 0 over the box, but -r1 + r2 >= -1 + 3 = 2 over the rows' bounds.
     assert_eq!((ray[below], ray[above]), (-1.0, 1.0));
@@ -334,7 +334,7 @@ strategy, and `Highs_feasibilityRelaxation`. An IIS and a relaxation reset HiGHS
 
 ## See also
 
-- [Solving](solving.md): the solver, requests and outcomes.
+- [Solving](solving.md): the solver, the run of a solve and outcomes.
 - [HiGHS](highs.md): the backend's options, statuses and errors.
 - [Backends](backends.md): the `Backend` seam.
 - [Documentation index](README.md).

@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(LinExpr::sum(items.iter().map(|&(name, value, _)| value * take[name])));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    let solved = solver.solve(Request::new())?;
+    let solved = solver.solve()?;
     let Outcome::Optimal(best) = solved.outcome else {
         return Err(format!("no optimum: {:?}", solved.outcome).into());
     };

@@ -41,9 +41,9 @@ With `default-features = false` you get the modelling layer, the program and the
 build and inspect models, write LP files, or drive a backend of your own.
 
 `culmen::prelude` holds what a model and a solve need: `Model`, `Var`, `LinExpr`, `QuadExpr`, `Linear`, `Quadratic`,
-`Constraint`, `Objective`, `Tolerance`, `Bounds`, `Col`, `Row`, `Program`, `Sense`, `Solver`, `Request`, `Settings`,
-`Start`, `Outcome`, `Solution`, `Solved`, `SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`,
-`LogLine`, `Stop`, `Callback`, `Hooks`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the functions
+`Constraint`, `Objective`, `Tolerance`, `Bounds`, `Col`, `Row`, `Program`, `Sense`, `Solver`, `Settings`, `Start`,
+`Outcome`, `Solution`, `Solved`, `SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`, `LogLine`,
+`Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the functions
 `product`, `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`, `absolute_gap!`, `weight!`, `threads!`
 and `solutions!`, the [context traits](callbacks.md#contexts) a callback or handler calls (`Context`, `LogContext`,
 `PollContext`, `LazyContext` and the rest) with `Unsupported`, the [search capabilities and their
@@ -55,7 +55,7 @@ is at the crate root, `culmen::…`.
 ## Choosing a backend
 
 The backend is a type: `Solver::new(Highs::new(), program)` or `Solver::new(Scip::new(), program)`. The model, the
-request and the outcome are the same for both, so switching is one word.
+solve and the outcome are the same for both, so switching is one word.
 
 | Need | HiGHS (`highs`, default) | SCIP (`scip`) |
 |---|---|---|
@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build the checked program, load it into HiGHS, and solve with HiGHS's defaults.
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    let solved = solver.solve(Request::new())?;
+    let solved = solver.solve()?;
 
     let Outcome::Optimal(best) = solved.outcome else {
         return Err(format!("no optimum: {:?}", solved.outcome).into());
@@ -118,8 +118,9 @@ What happened, step by step:
    `.leq(10.0)` turns it into a [`Constraint`](modelling.md#comparisons).
 3. `m.build()` checked every number and produced a [`Program`](program.md#program). A defect there is a
    [`ModelError`](modelling.md#building-and-modelerror) naming the variable or constraint at fault.
-4. `Solver::new` loaded the program into the backend; `solve` ran it under a [`Request`](solving.md#request) and
-   returned [`Solved`](solving.md#solved-and-outcome): the generic `Outcome`, HiGHS's own status, and the time.
+4. `Solver::new` loaded the program into the backend; `solve` ran it under the backend's defaults (a
+   [`Run`](solving.md#run) sets limits, a stop and an observer) and returned
+   [`Solved`](solving.md#solved-and-outcome): the generic `Outcome`, HiGHS's own status, and the time.
 5. The solution is read with the handles the model returned: `best.values[take["tent"]]`, or the whole family at
    once with `take.values(&best.values)`.
 
@@ -143,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(m.var_name(take[0]), Some("take[0]"));
     assert_eq!(m.constraint_name(capacity), Some("capacity"));
 
-    let solved = Solver::new(Highs::new(), m.build()?)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), m.build()?)?.solve()?;
     assert_eq!(solved.outcome.objective(), Some(15.0));
     Ok(())
 }

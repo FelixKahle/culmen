@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     objective!(m, Max, sum!(value * take[name] for (name, value, _) in items));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    let solved = solver.solve(Request::new())?;
+    let solved = solver.solve()?;
     let Outcome::Optimal(best) = solved.outcome else {
         return Err(format!("no optimum: {:?}", solved.outcome).into());
     };

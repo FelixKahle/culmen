@@ -3,19 +3,19 @@
 While a solver runs, it reports what it does: log text, progress, polls at which it may be interrupted, and solutions
 it finds. A solver that can also takes part in its search: it accepts constraints and cuts, solutions of yours, and
 columns. culmen delivers the first kind as typed observational events and the second to search handlers, one trait
-per kind. This page covers the convenient way to watch a solve, a stop and an observer carried by the
-[`Request`](solving.md#request), the complete one, a `Callback` with a typed context per event, and the handlers.
+per kind. This page covers the convenient way to watch a solve, a stop and an observer set on the
+[`Run`](solving.md#run), the complete one, a `Callback` with a typed context per event, and the handlers.
 
 ## Two levels
 
 | Level | You write | You get | Works on |
 |---|---|---|---|
-| Convenient | a [`Stop`](#stop) and an [`Observer`](#observer), passed with `Request::stop` and `Request::observer` | progress at a steady pace, every new best solution, whole log lines, a cooperative stop | every backend, unchanged |
-| Complete | a [`Callback<B>`](#callback), registered on the solve's [`Hooks`](#search-handlers) and passed with `Solver::solve_with` | every observational event the backend delivers, each with its context | every backend through the neutral traits, or one backend through its own context types |
-| Search | a [search handler](#search-handlers) (`LazyHandler`, `CutHandler`, `HeuristicHandler`, `Pricer`), registered on the same `Hooks` | candidates to cut off, relaxations to cut, chances to supply solutions, node LPs to price | only a backend with the capability; on any other the registration does not compile |
+| Convenient | a [`Stop`](#stop) and an [`Observer`](#observer), passed with `Run::stop` and `Run::observer` | progress at a steady pace, every new best solution, whole log lines, a cooperative stop | every backend, unchanged |
+| Complete | a [`Callback<B>`](#callback), passed with `Run::callback` | every observational event the backend delivers, each with its context | every backend through the neutral traits, or one backend through its own context types |
+| Search | a [search handler](#search-handlers) (`LazyHandler`, `CutHandler`, `HeuristicHandler`, `Pricer`), passed with `Run::lazy`, `Run::cut`, `Run::heuristic` or `Run::pricer` | candidates to cut off, relaxations to cut, chances to supply solutions, node LPs to price | only a backend with the capability; on any other the method does not compile |
 
-All run in the same solve: `solve_with(request, hooks)` runs the request's stop and observer first and the callback
-after them, for every event, and the handlers at their own points of the search.
+All run in the same solve: `solver.run()...solve()` runs the stop and the observer first and the callback after them,
+for every event, and the handlers at their own points of the search.
 
 ## `Stop`
 
@@ -49,14 +49,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cancel = Arc::new(AtomicBool::new(false));
     cancel.store(true, Ordering::Release);
 
-    let solved = solver.solve(Request::new().stop(&cancel))?;
+    let solved = solver.run().stop(&cancel).solve()?;
     let Outcome::Stopped { reason: StopReason::Interrupted, best: Some(best), .. } = solved.outcome else {
         return Err("expected an interrupted solve".into());
     };
     assert_eq!(best.values[x], 1.0);
 
     let never = stop_fn(|| false);
-    let solved = solver.solve(Request::new().stop(&never))?;
+    let solved = solver.run().stop(&never).solve()?;
     assert_eq!(solved.outcome, Outcome::Infeasible);
     Ok(())
 }
@@ -73,7 +73,7 @@ An `Observer` watches a solve. Each method does nothing by default; implement th
 
 | Method | Called with | When |
 |---|---|---|
-| `progress(&Progress)` | where the solve stands | at most about once per `Request::progress_interval`, the first time at once |
+| `progress(&Progress)` | where the solve stands | at most about once per `Run::progress_interval`, the first time at once |
 | `improved(&Improvement)` | a new best solution | every new incumbent |
 | `log(&LogLine)` | a complete log line, without its line break | every line of the solver's log |
 
@@ -130,7 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Script::new(steps, end), m.build()?)?;
 
     let mut seen = Seen::default();
-    solver.solve(Request::new().observer(&mut seen))?;
+    solver.run().observer(&mut seen).solve()?;
     assert_eq!(seen.lines, ["Presolve done", "Solving"]);
     assert_eq!(seen.progress, [Duration::ZERO, Duration::from_millis(1200)]); // one report per second at most
     assert_eq!(seen.improved, [1.0]);
@@ -161,8 +161,8 @@ handler](#search-handlers), so a callback asking for every event costs a solver 
 Write it once for every backend, `impl<B: Backend> Callback<B>`, and it sees each context through its neutral
 trait. Write it for one backend, `impl Callback<Highs>`, and it sees that backend's own context types, with
 everything the solver offers beyond the traits ([HiGHS callback contexts](highs.md#callback-contexts),
-[SCIP callback events](scip.md#callback-events)). A callback reaches the solve registered on its `Hooks`:
-`Hooks::new().register_callback(&mut callback)`.
+[SCIP callback events](scip.md#callback-events)). A callback reaches the solve through its `Run`:
+`solver.run().callback(&mut callback).solve()`.
 
 ```rust
 use std::time::Duration;
@@ -191,7 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Script::new(polls.collect::<Vec<_>>(), Outcome::Infeasible), m.build()?)?;
 
     let mut deadline = Deadline(Duration::from_secs(2));
-    let solved = solver.solve_with(Request::new(), Hooks::new().register_callback(&mut deadline))?;
+    let solved = solver.run().callback(&mut deadline).solve()?;
     assert_eq!(solved.status, ScriptStatus::Interrupted { step: 1 });
     Ok(())
 }
@@ -231,12 +231,12 @@ takes one kind of handler:
 | `Heuristics` | `HeuristicHandler<B>`: `heuristic` | `B::Heuristic<'_>`: `HeuristicContext` | yes | yes | yes |
 | `Prices` | `Pricer<B>`: `price` | `B::Price<'_>`: `PriceContext` | no | yes | yes |
 
-A handler is registered on the `Hooks` of one solve, beside the callback: `register_lazy`, `register_cut`,
-`register_heuristic` and `register_pricer`, each replacing the handler of its kind registered before, and
-`register_lazy_and_cut` for one value in both roles, a separator that cuts off integer and fractional points alike.
-Each registration method exists only for a backend with the capability, so a handler the backend would ignore does
-not compile: a lazy-constraint handler for HiGHS, whose answer would be the optimum of the relaxation without the
-constraints, is an error at the call site, not a wrong optimum. Generic code states what it needs,
+A handler is registered on the `Run` of one solve, beside the callback: `.lazy(..)`, `.cut(..)`, `.heuristic(..)`
+and `.pricer(..)`, each replacing the handler of its kind registered before, and `.lazy_and_cut(..)` for one value in
+both roles, a separator that cuts off integer and fractional points alike. Each of these methods exists only for a
+backend with the capability, so a handler the backend would ignore does not compile: a lazy-constraint handler for
+HiGHS, whose answer would be the optimum of the relaxation without the constraints, is an error at the call site, not
+a wrong optimum. Generic code states what it needs,
 `fn solve_tour<B: LazyConstraints>(solver: &mut Solver<B>)`, and runs on every backend that has it.
 
 A backend calls a handler only when one of its kind is registered, and gives up nothing for a kind no handler is
@@ -271,7 +271,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let both = Found { progress: Progress::at(Duration::ZERO, Phase::Mip), objective: 5.0, values: vec![1.0, 1.0].into() };
     let mut solver = Solver::new(Script::new([Step::Lazy(both)], Outcome::Infeasible), m.build()?)?;
     let mut not_both = NotBoth(x, y);
-    solver.solve_with(Request::new(), Hooks::new().register_lazy(&mut not_both))?;
+    solver.run().lazy(&mut not_both).solve()?;
     assert_eq!(solver.backend().record.lazy.len(), 1);
     Ok(())
 }
@@ -292,9 +292,9 @@ let mut m = Model::new();
 let x = m.add_var(Var::binary());
 let y = m.add_var(Var::binary());
 let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
-// error[E0599]: the method `register_lazy` exists for struct `Hooks<'_, Highs>`, but its trait bounds were not
+// error[E0599]: the method `lazy` exists for struct `Run<'_, '_, Highs>`, but its trait bounds were not
 // satisfied: `Highs` does not take lazy constraints.
-solver.solve_with(Request::new(), Hooks::new().register_lazy(&mut NotBoth(x, y)));
+solver.run().lazy(&mut NotBoth(x, y)).solve();
 ```
 
 ## Contexts
@@ -346,7 +346,7 @@ Pricing is column generation inside the solve, branch-and-price on a solver whos
 solver has solved a node LP, it hands the pricer the LP's row multipliers and asks for columns that would improve
 it. The pricer adds them with `add_col`, as `NewCol`s with entries in the program's rows, and the solver solves the
 node LP again and asks again, until a round adds nothing. A pricer is a `Pricer<B>`, registered with
-`Hooks::register_pricer` for a backend that implements `Prices`; no set of events turns pricing on, so a callback
+`Run::pricer` for a backend that implements `Prices`; no set of events turns pricing on, so a callback
 never prices by accident: a solver that prices gives up reductions that need every column known up front, and SCIP
 refuses to price a program with a quadratic objective.
 
@@ -450,7 +450,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Script::new([first, second], end), m.build()?)?;
 
     let mut pool = Pool { patterns: vec![b, e], added: vec![None, None] };
-    let solved = solver.solve_with(Request::new(), Hooks::new().register_pricer(&mut pool))?;
+    let solved = solver.run().pricer(&mut pool).solve()?;
     assert_eq!(pool.added, [Some(Col::new(3)), None]);
     assert_eq!(solver.program().num_cols(), 4);
     let best = solved.outcome.solution().ok_or("no solution")?;
@@ -466,7 +466,7 @@ asks for the union. `&mut C` is a callback wherever `C` is, so a pair can borrow
 afterwards. `()` is the callback that asks for nothing. Handlers pair the same way: `(a, b)` is a handler of a kind
 wherever both are, both run, `a` first, on one context, so at a price step the columns `b` adds follow those `a`
 added. One value in two roles that the backend calls apart is registered once in each, or, for lazy constraints and
-cuts, with `register_lazy_and_cut`; two handlers that share state hold it behind a `&Mutex`, since a backend never
+cuts, with `Run::lazy_and_cut`; two handlers that share state hold it behind a `&Mutex`, since a backend never
 calls two of them at once.
 
 ```rust
@@ -507,16 +507,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Script::new(polls, Outcome::Infeasible), m.build()?)?;
 
     let (mut count, mut stop) = (CountPolls::default(), StopAfter(Duration::from_secs(3)));
-    solver.solve_with(Request::new(), Hooks::new().register_callback(&mut (&mut count, &mut stop)))?;
+    solver.run().callback(&mut (&mut count, &mut stop)).solve()?;
     assert_eq!(count.0, 3);
     Ok(())
 }
 ```
 
-The request's stop and observer are themselves a callback, `Watch`, which `solve_with` runs before yours, as the pair
-`(watch, callback)` would. `Request::into_watch()` hands out that `Watch` and the settings, for code that drives a
-`Backend` directly and registers `&mut (watch, callback)` on its `Hooks`; `Watch::finish` reports a last log line that
-never got its line break.
+The stop and the observer of a `Run` are themselves a callback, `Watch`, which the solve runs before yours, as the
+pair `(watch, callback)` would. Code that drives a `Backend` directly makes one with
+`Watch::new(stop, observer, interval)`, registers `&mut (watch, callback)` on the `Hooks` it hands to
+`Backend::solve` with `Hooks::register_callback`, and calls `Watch::finish` afterwards, which reports a last log line
+that never got its line break.
 
 ## `Unsupported`
 
@@ -545,7 +546,7 @@ quadratic objective with a typed error before it solves.
 ## Panics and threads
 
 - **A panic in an observer, a stop, a callback or a handler never aborts the process.** It stops the solve as soon as the
-  solver allows and then continues unwinding out of `solve` or `solve_with`. The backend stays usable: the next solve
+  solver allows and then continues unwinding out of `solve`. The backend stays usable: the next solve
   on the same `Solver` runs normally. Catch it with `std::panic::catch_unwind` around the solve, if you need to.
 - **Calls never overlap.** A backend calls one callback or handler method at a time, and only while `solve` runs.
 - **They may come from another thread.** A backend may call back from a thread other than the one that called
@@ -554,7 +555,7 @@ quadratic objective with a typed error before it solves.
 
 ## See also
 
-- [Solving](solving.md): the request that carries the stop and the observer.
+- [Solving](solving.md): the run that sets the stop, the observer, the callback and the handlers.
 - [HiGHS](highs.md#callback-contexts): what each HiGHS context offers beyond the traits.
 - [SCIP](scip.md#callback-events): the SCIP plugin behind each event, lazy constraints, cuts, heuristic solutions and
   pricing.

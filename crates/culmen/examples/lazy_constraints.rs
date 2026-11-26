@@ -117,18 +117,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.minimize(LinExpr::sum(road.iter().map(|(&(a, b), &x)| distance(a, b) * x)));
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
 
-    let request = Request::new()
-        .settings_from(Settings {
-            node_limit: Some(10_000),
-            ..Settings::new()
-        })
-        .time_limit(Duration::from_secs(30));
     let mut subtours = Subtours {
         road,
         candidates: 0,
         added: 0,
     };
-    let solved = solver.solve_with(request, Hooks::new().register_lazy(&mut subtours))?;
+    let solved = solver
+        .run()
+        .settings(Settings {
+            node_limit: Some(10_000),
+            ..Settings::new()
+        })
+        .time_limit(Duration::from_secs(30))
+        .lazy(&mut subtours)
+        .solve()?;
     let Outcome::Optimal(best) = solved.outcome else {
         return Err(format!("no optimum: {:?}", solved.outcome).into());
     };
