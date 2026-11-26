@@ -43,10 +43,13 @@ build and inspect models, write LP files, or drive a backend of your own.
 `culmen::prelude` holds what a model and a solve need: `Model`, `Var`, `LinExpr`, `QuadExpr`, `Linear`, `Quadratic`,
 `Constraint`, `Objective`, `Tolerance`, `Bounds`, `Col`, `Row`, `Program`, `Sense`, `Solver`, `Request`, `Settings`,
 `Start`, `Outcome`, `Solution`, `Solved`, `SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`,
-`LogLine`, `Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the functions `product`,
-`set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`, `absolute_gap!`, `weight!`, `threads!` and
-`solutions!`, the [context traits](callbacks.md#contexts) a callback calls (`LogContext`, `PollContext`, `LazyContext`
-and the rest) with `Unsupported`, and, with their features, `Highs`, `Scip` and the modelling macros. Everything else
+`LogLine`, `Stop`, `Callback`, `Hooks`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the functions
+`product`, `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`, `absolute_gap!`, `weight!`, `threads!`
+and `solutions!`, the [context traits](callbacks.md#contexts) a callback or handler calls (`Context`, `LogContext`,
+`PollContext`, `LazyContext` and the rest) with `Unsupported`, the [search capabilities and their
+handlers](callbacks.md#search-handlers) (`LazyConstraints` and `LazyHandler`, `UserCuts` and `CutHandler`,
+`Heuristics` and `HeuristicHandler`, `Prices` and `Pricer`), and, with their features, `Highs`, `Scip` and the
+modelling macros. Everything else
 is at the crate root, `culmen::…`.
 
 ## Choosing a backend
@@ -58,8 +61,8 @@ request and the outcome are the same for both, so switching is one word.
 |---|---|---|
 | LPs, MILPs, convex QPs | yes | yes; a quadratic objective through an epigraph, exact to SCIP's tolerance |
 | A convex quadratic objective over integer columns (MIQP) | no | yes |
-| Lazy constraints, user cuts | no | yes |
-| Pricing at every node (branch-and-price) | no; price in an outer loop with [edits](solving.md#editing-a-loaded-program) | yes |
+| Lazy constraints, user cuts | no: a handler for either does not compile | yes |
+| Pricing at every node (branch-and-price) | no, a pricer does not compile; price in an outer loop with [edits](solving.md#editing-a-loaded-program) | yes |
 | Duals, basis, ranging, rays, IIS, feasibility relaxation | yes | no |
 | Semi-continuous and semi-integer columns, several objectives | yes | no |
 | Reading and writing MPS and LP files with the solver's own readers | yes | no; culmen writes [LP files](program.md#lp-files) itself |

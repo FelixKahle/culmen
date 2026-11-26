@@ -56,9 +56,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   implements, so asking a backend for one it lacks does not compile, and a request the program or the last solve
   cannot answer is a typed error naming why.
 - **Any solver behind one seam.** `Backend` is an open trait with typed, solver-neutral callback events: log,
-  progress, interrupt poll, feasible and improving solutions, lazy constraints, user cuts, heuristic solutions,
-  pricing, and native events for what only one solver offers. HiGHS is the default backend, with every HiGHS
-  callback mapped; SCIP, behind the `scip` feature, adds MIQPs, lazy constraints, user cuts and branch-and-price.
+  progress, interrupt poll, feasible and improving solutions, and native events for what only one solver offers.
+  What changes the search (lazy constraints, user cuts, heuristic solutions, pricing) is a capability a backend
+  implements, with a handler you register only where the backend has it, so a lazy constraint a solver would ignore
+  does not compile. HiGHS is the default backend, with every HiGHS callback mapped; SCIP, behind the `scip` feature,
+  adds MIQPs, lazy constraints, user cuts and branch-and-price.
 - **A solve you can watch and stop.** A `Stop` can be an `AtomicBool`, a closure or a cancellation token. An
   `Observer` receives throttled progress, every new incumbent and each complete log line, while the solver's own
   console output stays quiet. A panic in an observer or callback stops the solve and unwinds out of `solve`; it
@@ -159,22 +161,20 @@ with `LoadError::Unsupported`. SCIP, with the `scip` feature, solves all four cl
 
 ## SCIP: lazy constraints and pricing
 
-The same models solve on SCIP by naming another backend. A callback can then add constraints only it knows, as each
-candidate arrives, or price columns into every node of the search:
+The same models solve on SCIP by naming another backend. A handler can then add constraints only it knows, as each
+candidate arrives, or price columns into every node of the search. Each handler is registered on the solve's `Hooks`,
+and only for a backend with its capability: the same `register_lazy` for `Highs` does not compile.
 
 ```rust
 use std::time::Duration;
 
 use culmen::prelude::*;
 
-/// Forbids taking both items, a conflict only the callback knows.
+/// Forbids taking both items, a conflict only the handler knows.
 struct NotBoth(Col, Col);
 
-impl Callback<Scip> for NotBoth {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
-    fn lazy(&mut self, ctx: &mut <Scip as Backend>::Lazy<'_>) {
+impl<B: LazyConstraints> LazyHandler<B> for NotBoth {
+    fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
         let candidate = ctx.candidate();
         if candidate[self.0] + candidate[self.1] > 1.5 {
             ctx.add_lazy((self.0 + self.1).leq(1)).expect("a valid constraint");
@@ -190,7 +190,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
     let request = Request::new().time_limit(Duration::from_secs(10));
-    let solved = solver.solve_with(request, &mut NotBoth(x, y))?;
+    let mut not_both = NotBoth(x, y);
+    let solved = solver.solve_with(request, Hooks::new().register_lazy(&mut not_both))?;
     assert_eq!(solved.outcome.objective(), Some(3.0));
     Ok(())
 }
@@ -247,8 +248,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 A tokio `CancellationToken` adapts in one line: `stop_fn(move || token.is_cancelled())`. To reach everything a
-solver reports, such as heuristic solutions or the cut pool, implement `Callback<Highs>`, or `Callback<B>` for any
-backend, and pass it with `solver.solve_with(request, &mut callback)`.
+solver reports, such as the cut pool, implement `Callback<Highs>`, or `Callback<B>` for any backend, and pass it with
+`solver.solve_with(request, Hooks::new().register_callback(&mut callback))`.
 
 ## Installation
 
@@ -321,7 +322,7 @@ node of SCIP's search, and `lazy_constraints` cuts subtours off a round trip as 
 | [`culmen`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen) | The crate to depend on: re-exports, a `prelude`, and the `highs`, `scip` and `macros` features. |
 | [`culmen_core`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_core) | The program as data, the modelling layer, the backend seam and the solve API. No solver and no `unsafe`. |
 | [`culmen_highs`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_highs) | The HiGHS backend: every callback as a typed, safe context, typed options and every status. |
-| [`culmen_scip`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_scip) | The SCIP backend: every generic event through SCIP plugins, pricing included, typed options and every status. |
+| [`culmen_scip`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_scip) | The SCIP backend: every generic event and every search handler through SCIP plugins, pricing included, typed options and every status. |
 | [`culmen_macros`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_macros) | The modelling macros, which expand to `culmen_core`'s methods. |
 | [`culmen_testing`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_testing) | Dev-only: an exact reference solver, property-test strategies and hard instances. |
 
