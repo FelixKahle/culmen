@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Property-test strategies: tiny bounded LPs and MILPs, with semi columns or without, the reference solver
-//! enumerates, small convex QPs, programs split into kept and withheld columns for pricing, and sequences of edits of
+//! enumerates, tiny integer programs with a rule for a constraint handler, small convex QPs, programs split into kept and withheld columns for pricing, and sequences of edits of
 //! a loaded program.
 
 use culmen_core::{
@@ -13,6 +13,7 @@ use itertools::Itertools;
 use proptest::prelude::*;
 
 use crate::op::EditOp;
+use crate::rules::Rule;
 
 /// A column: integrality, bounds and cost, all small integers.
 fn column() -> impl Strategy<Value = ProgramColumn> {
@@ -121,6 +122,51 @@ fn tiny(columns: impl Strategy<Value = Vec<ProgramColumn>>) -> impl Strategy<Val
             }
             .build()
             .expect("a valid plan")
+        })
+}
+
+/// A tiny pure integer program and a rule over all its columns for a constraint handler to enforce: two to four
+/// integer columns in `[0, 3]` with costs in `-5..=5`, up to two rows with coefficients in `-3..=3`, either sense,
+/// and one of the rules of [`crate::rules`] over the columns in their order.
+///
+/// # Panics
+///
+/// When a generated plan fails to build, which a strategy defect would cause.
+pub fn small_integer_with_rule() -> impl Strategy<Value = (Program, Rule)> {
+    let column =
+        (-5i32..=5).prop_map(|cost| ProgramColumn::integer(f64::from(cost), Bounds::new(0.0, 3.0).expect("0 <= 3")));
+    prop::collection::vec(column, 2..=4)
+        .prop_flat_map(|columns| {
+            let n = columns.len();
+            let row = (row_bounds(), prop::collection::vec((0..n, -3i32..=3), 1..=n));
+            (Just(columns), prop::collection::vec(row, 0..=2), any::<bool>(), 0u8..3)
+        })
+        .prop_map(|(columns, rows, maximize, kind)| {
+            let n = columns.len();
+            let rows = rows
+                .into_iter()
+                .map(|(bounds, terms)| ProgramRow {
+                    bounds,
+                    terms: terms.into_iter().map(|(j, a)| (Col::new(j), f64::from(a))).collect(),
+                    name: None,
+                })
+                .collect();
+            let sense = if maximize { Sense::Maximize } else { Sense::Minimize };
+            let program = ProgramPlan {
+                sense,
+                columns: columns.into(),
+                rows,
+                ..ProgramPlan::new()
+            }
+            .build()
+            .expect("a valid plan");
+            let all: Vec<usize> = (0..n).collect();
+            let rule = match kind {
+                0 => Rule::AllDifferent(all),
+                1 => Rule::EvenParity(all),
+                _ => Rule::NoTwoAdjacent(all),
+            };
+            (program, rule)
         })
 }
 
