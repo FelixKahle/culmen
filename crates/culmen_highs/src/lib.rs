@@ -168,7 +168,7 @@ impl Loaded {
                 .columns()
                 .iter()
                 .all(|c| c.bounds.lower().is_finite() && c.bounds.upper().is_finite()),
-            is_mip: program.is_mip(),
+            is_mip: program.class().is_discrete(),
             offset: program.offset(),
             sense: program.sense(),
         }

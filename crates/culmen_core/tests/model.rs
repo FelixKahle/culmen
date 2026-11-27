@@ -48,7 +48,7 @@ fn test_plan_merges_repeated_terms_and_drops_zeros() {
     let program = plan.build().unwrap();
     assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(y, 1.5)]);
     assert_eq!(program.num_entries(), 1);
-    assert!(program.is_mip());
+    assert!(program.class().is_discrete());
 }
 
 #[test]

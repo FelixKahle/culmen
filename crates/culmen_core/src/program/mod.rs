@@ -55,7 +55,7 @@ pub use row::{RowEntries, RowView};
 /// let y = plan.col(ProgramColumn::binary(4.0));
 /// let r = plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0), (x, 0.0)]);
 /// let program = plan.build()?;
-/// assert!(program.is_mip());
+/// assert!(program.class().is_discrete());
 /// assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(x, 1.0), (y, 1.0)]);
 /// # Ok::<(), culmen_core::ProgramError>(())
 /// ```
@@ -130,12 +130,6 @@ impl Program {
     #[must_use]
     pub const fn num_entries(&self) -> usize {
         self.entry_values.len()
-    }
-
-    /// Whether any column is integer, semi-continuous or semi-integer: whether its values are not one interval.
-    #[must_use]
-    pub fn is_mip(&self) -> bool {
-        self.integralities().any(Integrality::is_discrete)
     }
 
     /// The quadratic part of the objective, empty for a linear objective.

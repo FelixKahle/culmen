@@ -61,10 +61,9 @@ A `Program` is read through methods; it has no public fields and no constructor 
 |---|---|
 | `sense()`, `offset()` | The objective's sense and constant. |
 | `num_cols()`, `num_rows()`, `num_entries()` | The counts; entries are the non-zero coefficients. |
-| `is_mip()` | Whether any column is integer, semi-continuous or semi-integer. |
 | `quadratic()` | The objective's [quadratic part](#the-quadratic-part), a `QuadObjective`. |
 | `objectives()` | The further objectives and how they combine, an [`Objectives`](#several-objectives). |
-| `class()` | The [`ModelClass`](#model-classes): `Lp`, `Milp`, `Qp` or `Miqp`. |
+| `class()` | The [`ModelClass`](#model-classes): `Lp`, `Milp`, `Qp` or `Miqp`; `class().is_discrete()` says whether any column is integer, semi-continuous or semi-integer. |
 | `features()` | The [`ProgramFeatures`](#features) it uses beyond its class. |
 | `cols()`, `rows()` | Every `Col`, every `Row`, in order. |
 | `columns()` | The columns' `ProgramColumn` data, indexed by `Col`: `program.columns()[x]`. |
@@ -258,7 +257,7 @@ one interval; further objectives do not change the class, and are a [feature](#f
 | `ModelClass::Qp` | none | convex quadratic |
 | `ModelClass::Miqp` | some | convex quadratic |
 
-`is_integer()` and `is_quadratic()` read the two properties back, and a class displays as its abbreviation: `LP`,
+`is_discrete()` and `is_quadratic()` read the two properties back, and a class displays as its abbreviation: `LP`,
 `MILP`, `QP`, `MIQP`. A backend declares the classes it solves as a `ModelClasses` set, and
 [`Solver::new`](solving.md#model-classes-and-refusal) refuses any other. `ModelClass` is non-exhaustive: quadratic
 constraints would come as further classes, which a backend that does not declare them refuses.

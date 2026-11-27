@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 /// ```
 /// use culmen_core::ModelClass;
 /// assert_eq!(ModelClass::Miqp.to_string(), "MIQP");
-/// assert!(ModelClass::Miqp.is_integer() && ModelClass::Miqp.is_quadratic());
-/// assert!(!ModelClass::Lp.is_integer() && !ModelClass::Lp.is_quadratic());
+/// assert!(ModelClass::Miqp.is_discrete() && ModelClass::Miqp.is_quadratic());
+/// assert!(!ModelClass::Lp.is_discrete() && !ModelClass::Lp.is_quadratic());
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -39,9 +39,10 @@ impl ModelClass {
     /// Every class, in the order of their bits in [`ModelClasses`].
     const ALL: [Self; 4] = [Self::Lp, Self::Milp, Self::Qp, Self::Miqp];
 
-    /// Whether the class has integer columns.
+    /// Whether the class has discrete columns: integer, semi-continuous or semi-integer ones, whose values are not
+    /// one interval.
     #[must_use]
-    pub const fn is_integer(self) -> bool {
+    pub const fn is_discrete(self) -> bool {
         matches!(self, Self::Milp | Self::Miqp)
     }
 

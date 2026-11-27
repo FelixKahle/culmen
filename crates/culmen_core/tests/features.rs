@@ -37,7 +37,7 @@ fn test_a_semi_program_is_mixed_integer_and_uses_its_features() {
     let (mut m, x, y) = semi();
     let program = m.build().unwrap();
     assert_eq!(program.class(), ModelClass::Milp);
-    assert!(program.is_mip());
+    assert!(program.class().is_discrete());
     assert_eq!(
         program.features(),
         ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::SemiInteger])

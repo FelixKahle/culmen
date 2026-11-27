@@ -100,7 +100,7 @@ impl Instance {
     /// Hands HiGHS the model the arrays describe and returns `Highs_passModel`'s status; `arrays`, `hessian` and
     /// `counts` are those of `program`.
     fn pass_model(&mut self, program: &Program, a: &Arrays, q: &Hessian, counts: &Counts) -> HighsInt {
-        let integrality = if program.is_mip() {
+        let integrality = if program.class().is_discrete() {
             a.integrality.as_ptr()
         } else {
             ptr::null()
