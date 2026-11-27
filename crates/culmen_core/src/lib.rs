@@ -97,9 +97,8 @@ pub use program::{
     QuadEntries, QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
 };
 pub use script::{
-    Found, PresolveRound, PriceRound, Record, Script, ScriptCheck, ScriptCut, ScriptEnforce, ScriptError,
-    ScriptExplain, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote, ScriptPoll, ScriptPresolve, ScriptPrice,
-    ScriptProgress, ScriptPropagate, ScriptSolution, ScriptStatus, Step,
+    Found, PriceRound, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote,
+    ScriptPoll, ScriptPrice, ScriptProgress, ScriptSolution, ScriptStatus, Step,
 };
 pub use solve::{
     ActionError, AddedRow, Backend, Callback, Context, CutContext, CutHandler, Edit, EditError, Events, EventsIter,
