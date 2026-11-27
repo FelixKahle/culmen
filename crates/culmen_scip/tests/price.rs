@@ -673,29 +673,28 @@ fn test_a_pricing_solve_polls_at_each_solved_node_lp() {
     }
 }
 
-/// At the first Farkas round, tries to report a bound and branches early; prices as a `Pricer` after.
+/// At the first Farkas round, tries to report a bound and to branch early, then prices that round and every later
+/// one as a `Pricer`.
 struct FarkasEarly {
     pricer: Pricer,
-    bound: Option<Result<(), ActionError>>,
+    tried: Option<[Result<(), ActionError>; 2]>,
 }
 
 impl Roles for FarkasEarly {
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
-        if self.bound.is_none() {
+        if self.tried.is_none() {
             assert_eq!(ctx.mode(), PriceMode::Farkas, "the start is infeasible");
-            self.bound = Some(ctx.report_bound(1.0));
-            ctx.branch_early();
-            return;
+            self.tried = Some([ctx.report_bound(1.0), ctx.branch_early()]);
         }
         self.pricer.price_round(ctx);
     }
 }
 
 #[test]
-fn test_branching_early_in_a_farkas_round_is_a_round_not_run() {
+fn test_a_farkas_round_takes_neither_a_bound_nor_an_early_stop() {
     // The second fixture with integer columns: its start, x2 alone, cannot meet x1 + x3 >= 1, so the first round is
-    // Farkas. Branching early there leaves the round not run; with x2 integer SCIP branches, prices in the children,
-    // and reaches the integer optimum x3 = 2, worth 14.
+    // Farkas. Both the bound and the early stop are refused there, so the round prices in full, and SCIP reaches the
+    // integer optimum x3 = 2, worth 14.
     let (program, columns) = max_fixture();
     let mut plan = ProgramPlan::from(program);
     plan.columns[Col::new(0)].integrality = Integrality::Integer;
@@ -709,13 +708,14 @@ fn test_branching_early_in_a_farkas_round_is_a_round_not_run() {
     let mut solver = Solver::new(Scip::new(), plan.build().unwrap()).unwrap();
     let mut callback = FarkasEarly {
         pricer: Pricer::new(columns, 1..3, Pick::Every),
-        bound: None,
+        tried: None,
     };
     let solved = solve_as(&mut solver, limited(false), &mut callback);
+    let refused = |tried: &Result<(), ActionError>| matches!(tried, Err(ActionError::Refused(reason)) if reason.contains("Farkas"));
     assert!(
-        matches!(&callback.bound, Some(Err(ActionError::Refused(reason))) if reason.contains("Farkas")),
+        callback.tried.as_ref().is_some_and(|tried| tried.iter().all(refused)),
         "{:?}",
-        callback.bound
+        callback.tried
     );
     assert!(close(optimal(solved.unwrap().outcome).objective, 14.0, 1e-9));
 }
@@ -1011,8 +1011,7 @@ struct Early {
 impl Roles for Early {
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         if self.early.is_none() && matches!(ctx.mode(), PriceMode::ReducedCost { .. }) {
-            self.early = Some(ctx.report_bound(4.0));
-            ctx.branch_early();
+            self.early = Some(ctx.report_bound(4.0).and_then(|()| ctx.branch_early()));
             return;
         }
         self.pricer.price_round(ctx);
@@ -1045,6 +1044,43 @@ fn test_branching_early_where_scip_cannot_branch_fails_the_solve_with_a_typed_er
         matches!(failed, Err(SolveError::Backend(ScipError::BranchEarly))),
         "{failed:?}"
     );
+}
+
+/// Prices every round as a `Pricer` and branches early in the first one.
+struct EarlyAfterColumns {
+    pricer: Pricer,
+    early: bool,
+}
+
+impl Roles for EarlyAfterColumns {
+    fn price(&mut self, ctx: &mut ScipPrice<'_>) {
+        self.pricer.price_round(ctx);
+        if !self.early {
+            self.early = true;
+            ctx.branch_early().unwrap();
+        }
+    }
+}
+
+#[test]
+fn test_branching_early_after_adding_columns_where_scip_cannot_branch_fails_and_the_solver_solves_again() {
+    // The first round of the continuous first fixture adds B; SCIP cannot branch on the LP, so the solve fails, and
+    // the columns SCIP held for the LP when it did must not outlive the failed solve.
+    let (program, patterns) = cutting_stock(false);
+    let mut solver = Solver::new(Scip::new(), program).unwrap();
+    let mut early = EarlyAfterColumns {
+        pricer: Pricer::new(patterns.clone(), 3..11, Pick::Every),
+        early: false,
+    };
+    let failed = solve_as(&mut solver, limited(true), &mut early);
+    assert!(
+        matches!(failed, Err(SolveError::Backend(ScipError::BranchEarly))),
+        "{failed:?}"
+    );
+    assert_eq!(early.pricer.added.len(), 1, "{:?}", early.pricer.added);
+    let mut pricer = Pricer::new(patterns, 3..11, Pick::Every);
+    let solved = solve_as(&mut solver, limited(true), &mut pricer).unwrap();
+    assert!(close(optimal(solved.outcome).objective, 4.5, 1e-9));
 }
 
 #[test]

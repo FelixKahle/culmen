@@ -26,12 +26,19 @@
 //! | reduced cost | returned | `SUCCESS`, with the bound it reported as SCIP's lower bound |
 //! | reduced cost | branched early | `SUCCESS` with `stopearly` |
 //! | Farkas | returned | `SUCCESS` |
-//! | Farkas | branched early | `DIDNOTRUN` |
 //! | either | busy with an outer event, or panicked | `DIDNOTRUN` |
+//! | either | met an error, as [`ScipError::BranchEarly`] | `DIDNOTRUN`, SCIP is asked to stop |
 //! | reduced cost, on a node LP that is not optimal | not called | `DIDNOTRUN` |
 //!
 //! SCIP can stop pricing early only where it can branch: at a node without an unfixed integer variable, as in a
-//! program without integer columns, an early stop fails the solve with [`ScipError::BranchEarly`] instead.
+//! program without integer columns, an early stop fails the solve with [`ScipError::BranchEarly`] instead. A Farkas
+//! round does not end early: SCIP holds an infeasible node LP whose pricing was cut short as a state that does not
+//! arise (a debug SCIP asserts so at `solve.c:3436` of SCIP 10.0.2), and a release SCIP falls back on the node's
+//! pseudo solution as if the LP solver had failed, or fails the solve where it cannot branch.
+//!
+//! A pricer callback that meets an error keeps it, asks SCIP to stop and answers `DIDNOTRUN` instead of returning an
+//! error code: SCIP leaves the columns of the round in its pricing store on an error code (`solve.c:2323`), and a
+//! debug SCIP aborts when it frees the store (`pricestore.c:142`).
 
 use core::ffi::{CStr, c_uint};
 use core::ptr::{self, NonNull};
@@ -186,11 +193,20 @@ impl PriceContext for ScipPrice<'_> {
         self.round.added.push(col);
         Ok(col)
     }
-    /// In [`PriceMode::Farkas`] SCIP takes the round as not run, and the node LP stays infeasible to it. SCIP stops
-    /// pricing early only where it can branch: at a node where no integer variable is unfixed, as in a program
-    /// without integer columns, the solve fails with [`ScipError::BranchEarly`] once the callback returns.
-    fn branch_early(&mut self) {
+    /// SCIP stops pricing early only where it can branch: at a node where no integer variable is unfixed, as in a
+    /// program without integer columns, the solve fails with [`ScipError::BranchEarly`] once the callback returns.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Refused`] in [`PriceMode::Farkas`], where SCIP takes no early stop.
+    fn branch_early(&mut self) -> Result<(), ActionError> {
+        if matches!(self.mode, PriceMode::Farkas) {
+            return Err(ActionError::Refused(
+                "SCIP takes no early stop in a Farkas round".to_owned(),
+            ));
+        }
         self.round.early = true;
+        Ok(())
     }
     /// # Errors
     ///
@@ -331,8 +347,8 @@ impl Run<'_, '_> {
             return Err(ScipError::BranchEarly);
         }
         Ok(match (farkas, round.early) {
-            (true, true) => Verdict::DIDNOTRUN,
-            (true, false) => Verdict {
+            // `branch_early` refuses an early stop in a Farkas round.
+            (true, _) => Verdict {
                 result: SCIP_Result_SCIP_SUCCESS,
                 lower: None,
                 stop_early: false,
@@ -521,7 +537,8 @@ unsafe fn exec(scip: *mut SCIP, pricer: *mut SCIP_PRICER, farkas: bool) -> (Verd
         // SAFETY: the caller's contract.
         Some(run) => match unsafe { run.price(scip, farkas) } {
             Ok(verdict) => (verdict, SCIP_Retcode_SCIP_OKAY),
-            Err(error) => (Verdict::DIDNOTRUN, run.fail(error)),
+            // The solve fails with the error once SCIP has stopped.
+            Err(error) => (Verdict::DIDNOTRUN, run.stop_with(scip, error)),
         },
         None => (Verdict::DIDNOTRUN, SCIP_Retcode_SCIP_OKAY),
     }

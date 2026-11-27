@@ -169,7 +169,7 @@ impl<B: Prices> Pricer<B> for Pattern {
             let _ = ctx.add_col(self.0.clone());
         } else if let PriceMode::ReducedCost { objective } = ctx.mode() {
             let _ = ctx.report_bound(objective);
-            ctx.branch_early();
+            let _ = ctx.branch_early();
         }
     }
 }

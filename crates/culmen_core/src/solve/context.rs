@@ -153,7 +153,12 @@ pub trait PriceContext: Context {
     fn add_col(&mut self, column: NewCol) -> Result<Col, ActionError>;
     /// Ends pricing at this node after this round and has the solver branch; the node LP's value is then no bound
     /// unless [`PriceContext::report_bound`] gives one.
-    fn branch_early(&mut self);
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Refused`] in [`PriceMode::Farkas`], where the node LP is infeasible and only a round priced in
+    /// full proves it so or makes it feasible, or when the solver refuses it; pricing at the node goes on then.
+    fn branch_early(&mut self) -> Result<(), ActionError>;
     /// Reports a bound on the optimal objective in this node's subtree, over every column the program may price, in
     /// the program's sense with its offset: a lower bound when minimizing, an upper one when maximizing. The last
     /// bound reported in a round counts.

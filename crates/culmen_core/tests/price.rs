@@ -584,18 +584,21 @@ struct Bounding(Vec<Result<(), ActionError>>);
 impl<B: Prices> Pricer<B> for Bounding {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         match ctx.mode() {
-            PriceMode::Farkas => self.0.push(ctx.report_bound(0.0)),
+            PriceMode::Farkas => {
+                self.0.push(ctx.report_bound(0.0));
+                self.0.push(ctx.branch_early());
+            }
             PriceMode::ReducedCost { objective } => {
                 self.0.push(ctx.report_bound(f64::NAN));
                 self.0.push(ctx.report_bound(objective - 1.0));
-                ctx.branch_early();
+                self.0.push(ctx.branch_early());
             }
         }
     }
 }
 
 #[test]
-fn test_a_bound_and_an_early_stop_are_recorded_and_farkas_takes_no_bound() {
+fn test_a_bound_and_an_early_stop_are_recorded_and_farkas_takes_neither() {
     let program = small();
     let steps = vec![
         price(PriceMode::Farkas, [1.0, 0.0]),
@@ -605,12 +608,15 @@ fn test_a_bound_and_an_early_stop_are_recorded_and_farkas_takes_no_bound() {
     let mut bounding = Bounding::default();
     solver.run().pricer(&mut bounding).solve().unwrap();
     assert!(
-        matches!(bounding.0[0], Err(ActionError::Refused(_))),
+        matches!(
+            &bounding.0[..2],
+            [Err(ActionError::Refused(_)), Err(ActionError::Refused(_))]
+        ),
         "{:?}",
         bounding.0
     );
-    assert!(matches!(bounding.0[1], Err(ActionError::NotFiniteBound { bound }) if bound.is_nan()));
-    assert_eq!(bounding.0[2], Ok(()));
+    assert!(matches!(bounding.0[2], Err(ActionError::NotFiniteBound { bound }) if bound.is_nan()));
+    assert_eq!(bounding.0[3..], [Ok(()), Ok(())]);
     let rounds = &solver.backend().record.priced;
     assert_eq!(rounds.len(), 2);
     assert_eq!(
@@ -675,7 +681,7 @@ impl PriceContext for NoRound {
     fn add_col(&mut self, _: NewCol) -> Result<Col, ActionError> {
         match *self {}
     }
-    fn branch_early(&mut self) {
+    fn branch_early(&mut self) -> Result<(), ActionError> {
         match *self {}
     }
     fn report_bound(&mut self, _: f64) -> Result<(), ActionError> {

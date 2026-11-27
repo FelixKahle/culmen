@@ -613,7 +613,8 @@ impl HeuristicContext for ScriptHeuristic<'_> {
 }
 
 /// The price context of a [`Script`]: columns are checked and numbered by the solve's [`Priced`], and the round is
-/// recorded in [`Record::priced`]. A bound reported in [`PriceMode::Farkas`] is refused with [`ActionError::Refused`].
+/// recorded in [`Record::priced`]. A bound reported and an early stop in [`PriceMode::Farkas`] are refused with
+/// [`ActionError::Refused`].
 #[derive(Debug)]
 pub struct ScriptPrice<'a> {
     progress: Progress,
@@ -679,8 +680,14 @@ impl PriceContext for ScriptPrice<'_> {
         self.round.added = Cols::range(self.start, self.priced.num_cols());
         Ok(col)
     }
-    fn branch_early(&mut self) {
+    fn branch_early(&mut self) -> Result<(), ActionError> {
+        if matches!(self.mode, PriceMode::Farkas) {
+            return Err(ActionError::Refused(
+                "Script: a Farkas round does not end early".to_owned(),
+            ));
+        }
         self.round.early = true;
+        Ok(())
     }
     fn report_bound(&mut self, bound: f64) -> Result<(), ActionError> {
         if matches!(self.mode, PriceMode::Farkas) {

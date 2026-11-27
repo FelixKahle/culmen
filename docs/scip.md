@@ -364,6 +364,13 @@ column) is handed to SCIP once the handler returns.
 A panic in a callback or handler never unwinds into SCIP: the plugin catches it and asks SCIP to stop (`SCIPinterruptSolve`),
 every later delivery is skipped, and the panic resumes once SCIP has returned. The backend stays usable.
 
+An error a plugin meets while handing SCIP what a handler gave (SCIP refusing a lazy constraint, a pricer stopping
+early where SCIP cannot branch) fails the solve with that error. The lazy-constraint handler's enforcement and the
+pricer never return it to SCIP as an error code, which would leave SCIP's state behind for the next solve of the
+instance (a delayed constraint update, priced columns in SCIP's pricing store) and abort a debug build of SCIP: they
+keep the error, ask SCIP to stop and close the node (the pricer answers its round as not run), and the solve fails with
+the error once SCIP has returned.
+
 ## Lazy constraints
 
 A `LazyHandler<Scip>` sees every candidate SCIP would accept: each solution SCIP checks before storing it, from a
@@ -581,7 +588,9 @@ How SCIP does it:
   `SCIPaddPricedVar`) with its coefficients in the transformed rows (`SCIPaddCoefLinear`). SCIP never deletes it.
 - **Ending a round.** A round that returns is SCIP's `SUCCESS`, with the bound `report_bound` gave, if any, as the
   node's lower bound. `branch_early()` in a reduced-cost round stops pricing at the node (`stopearly`), and SCIP
-  branches; in a Farkas round SCIP takes the round as not run. SCIP can branch only on an unfixed integer column: an
+  branches; in a Farkas round it is refused (`ActionError::Refused`), since SCIP holds an infeasible node LP whose
+  pricing was cut short as a state that does not arise: a debug SCIP asserts, and a release SCIP falls back on the
+  node's pseudo solution as if the LP solver had failed. SCIP can branch only on an unfixed integer column: an
   early stop where there is none, as in a program without integer columns, fails the solve with
   `ScipError::BranchEarly`. A round SCIP calls while a callback or handler is busy with an outer event, or after one panicked,
   is not run. A stop during pricing ends the node's pricing loop, and the node LP then counts as no bound.

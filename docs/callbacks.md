@@ -382,8 +382,9 @@ refuses to price a program with a quadratic objective.
 - **What the pricer guarantees.**
   1. *Exact pricing.* Whenever some column the problem does not hold yet improves the node LP, in either mode, the
      pricer adds at least one improving column, or calls `branch_early()`, which ends pricing at the node and
-     leaves the LP value no bound unless `report_bound(bound)` gives one (refused in Farkas mode). Only then is a node
-     LP's value a bound, and only then is `Outcome::Optimal` a proof.
+     leaves the LP value no bound unless `report_bound(bound)` gives one (both refused in Farkas mode, where only a
+     round priced in full proves the node LP infeasible or makes it feasible). Only then is a node LP's value a bound,
+     and only then is `Outcome::Optimal` a proof.
   2. *No re-adding.* The solver prices the columns it holds itself, within their bounds at the node, so the pricer
      never adds one the problem already holds. A copy is not refused, since two identical columns may be meant (two
      identical trucks), but a column branching fixed, added again, escapes the branching, and the search may then
