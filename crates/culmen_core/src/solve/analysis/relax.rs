@@ -140,8 +140,9 @@ pub struct Weights {
 }
 
 impl Weights {
-    /// The same price for every column bound but a semi column's, which stays hard, and the same for every row, for
-    /// `program`.
+    /// Every bound and row of `program` hard: a relaxation with these weights violates nothing.
+    ///
+    /// Each table can be changed after, as its fields are public; the other constructors price whole tables at once.
     ///
     /// ```
     /// use culmen_core::{Linear, Model, Var, Weights, penalty};
@@ -149,12 +150,45 @@ impl Weights {
     /// let mut m = Model::new();
     /// let x = m.add_var(Var::continuous());
     /// let cap = m.add_constraint(x.leq(4.0));
-    /// let weights = Weights::uniform(&m.build()?, None, Some(penalty!(1.0)));
-    /// assert_eq!((weights.lower[x], weights.rows[cap]), (None, Some(penalty!(1.0))));
+    /// let program = m.build()?;
+    /// let mut weights = Weights::hard(&program);
+    /// weights.rows[cap] = Some(penalty!(10.0));
+    /// assert_eq!((weights.lower[x], weights.rows[cap]), (None, Some(penalty!(10.0))));
+    /// assert_eq!(Weights::soft_rows(&program, penalty!(1.0)).rows[cap], Some(penalty!(1.0)));
+    /// assert_eq!(Weights::soft_bounds(&program, penalty!(1.0)).upper[x], Some(penalty!(1.0)));
+    /// assert_eq!(Weights::soft(&program, penalty!(2.0)), Weights {
+    ///     rows: Weights::soft_rows(&program, penalty!(2.0)).rows,
+    ///     ..Weights::soft_bounds(&program, penalty!(2.0))
+    /// });
     /// # Ok::<(), culmen_core::ModelError>(())
     /// ```
     #[must_use]
-    pub fn uniform(program: &Program, cols: Option<Penalty>, rows: Option<Penalty>) -> Self {
+    pub fn hard(program: &Program) -> Self {
+        Self::priced(program, None, None)
+    }
+
+    /// Every row of `program` soft at `penalty` per unit, every column bound hard.
+    #[must_use]
+    pub fn soft_rows(program: &Program, penalty: Penalty) -> Self {
+        Self::priced(program, None, Some(penalty))
+    }
+
+    /// Every column bound of `program` soft at `penalty` per unit but a semi column's, which stays hard, every row
+    /// hard.
+    #[must_use]
+    pub fn soft_bounds(program: &Program, penalty: Penalty) -> Self {
+        Self::priced(program, Some(penalty), None)
+    }
+
+    /// Every row and every column bound of `program` soft at `penalty` per unit, but a semi column's bounds, which
+    /// stay hard.
+    #[must_use]
+    pub fn soft(program: &Program, penalty: Penalty) -> Self {
+        Self::priced(program, Some(penalty), Some(penalty))
+    }
+
+    /// `cols` for every column bound but a semi column's, which stays hard, and `rows` for every row of `program`.
+    fn priced(program: &Program, cols: Option<Penalty>, rows: Option<Penalty>) -> Self {
         let col = |c: &crate::ProgramColumn| cols.filter(|_| !c.integrality.is_semi());
         Self {
             lower: program.columns().iter().map(col).collect(),

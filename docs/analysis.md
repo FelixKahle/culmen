@@ -271,8 +271,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `feasibility_relaxation(&weights)` finds a point of least weighted violation, `None` when no point meets the bounds
 and rows kept hard. `Weights` holds an `Option<Penalty>` per column lower bound (`lower`), per column upper bound
 (`upper`) and per row (`rows`); `None` keeps it hard, and a row's penalty prices a violation of either of its bounds.
-`Weights::uniform(&program, cols, rows)` gives every column bound one price and every row another. A semi column's
-bounds stay hard, since relaxed below its lower bound it would no longer be a semi column: `uniform` leaves them
+`Weights::hard(&program)` keeps everything hard, `Weights::soft_rows(&program, penalty)` prices every row,
+`Weights::soft_bounds(&program, penalty)` every column bound and `Weights::soft(&program, penalty)` both; the fields
+are public, so a table or an entry is changed after. A semi column's bounds stay hard, since relaxed below its lower
+bound it would no longer be a semi column: the constructors leave them
 `None`, and weights that price one are refused with `Misfit::SoftSemiBound { col }`. A `Penalty` is a finite number,
 zero or above: a literal is `penalty!(2.0)`, checked when the code is compiled, and a number read at
 run time is checked by `Penalty::new`.
@@ -296,7 +298,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let program = m.build()?;
 
     // Missing demand costs 1 per unit, exceeding capacity 3.
-    let mut weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let mut weights = Weights::soft_rows(&program, penalty!(1.0));
     weights.rows[capacity] = Some(penalty!(3.0));
     let mut solver = Solver::new(Highs::new(), program.clone())?;
     let relaxed = solver.feasibility_relaxation(&weights)?.ok_or("hard constraints conflict")?;

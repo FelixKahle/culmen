@@ -561,7 +561,7 @@ fn gap_of_two() -> (Program, [Row; 2]) {
 fn test_a_relaxation_violates_the_cheaper_row_by_the_gap() {
     // The rows are 2 apart; violating r1 by 2 costs 2, violating r2 by 2 costs 6.
     let (program, [r1, r2]) = gap_of_two();
-    let mut weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let mut weights = Weights::soft_rows(&program, penalty!(1.0));
     weights.rows[r2] = Some(penalty!(3.0));
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
@@ -583,7 +583,7 @@ fn test_a_relaxation_of_a_maximized_program_minimizes_the_violation() {
     let r2 = m.add_constraint((x + y).leq(3.0));
     m.maximize(x - y + 7);
     let program = m.build().unwrap();
-    let mut weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let mut weights = Weights::soft_rows(&program, penalty!(1.0));
     weights.rows[r2] = Some(penalty!(3.0));
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
@@ -602,7 +602,7 @@ fn test_a_relaxation_may_move_a_column_past_a_soft_bound() {
     m.add_constraint(x.geq(3.0));
     m.minimize(x);
     let program = m.build().unwrap();
-    let mut weights = Weights::uniform(&program, None, None);
+    let mut weights = Weights::hard(&program);
     weights.upper[x] = Some(penalty!(1.0));
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
@@ -618,11 +618,8 @@ fn test_a_relaxation_with_only_hard_bounds_and_rows_finds_nothing() {
     // that program infeasible; the backend checks the point it returns.
     let (program, _) = gap_of_two();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-    assert_eq!(
-        solver.feasibility_relaxation(&Weights::uniform(&program, None, None)),
-        Ok(None)
-    );
-    let soft_columns = Weights::uniform(&program, Some(penalty!(1.0)), None);
+    assert_eq!(solver.feasibility_relaxation(&Weights::hard(&program)), Ok(None));
+    let soft_columns = Weights::soft_bounds(&program, penalty!(1.0));
     assert_eq!(
         solver.feasibility_relaxation(&soft_columns),
         Ok(None),
@@ -680,7 +677,7 @@ fn test_a_relaxation_of_a_milp_keeps_integrality() {
     m.add_constraint((2.0 * x).equals(3.0));
     m.minimize(x);
     let program = m.build().unwrap();
-    let weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let weights = Weights::soft_rows(&program, penalty!(1.0));
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
     assert!(near(relaxed.values[x], relaxed.values[x].round()), "{relaxed:?}");
@@ -691,7 +688,7 @@ fn test_a_relaxation_of_a_milp_keeps_integrality() {
 fn test_a_solve_after_a_relaxation_solves_the_program_again() {
     let (program, _, _) = production(Sense::Minimize);
     let (mut solver, _, _) = solved(&program);
-    let weights = Weights::uniform(&program, Some(penalty!(1.0)), Some(penalty!(1.0)));
+    let weights = Weights::soft(&program, penalty!(1.0));
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
     assert_eq!(
         relaxed.violations(&program).count(),
@@ -772,7 +769,7 @@ fn test_analyses_are_refused_by_class_and_state() {
     let x = m.add_var(Var::continuous());
     m.minimize(x * x);
     let mut qp = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
-    let weights = Weights::uniform(qp.program(), None, None);
+    let weights = Weights::hard(qp.program());
     assert_eq!(
         qp.feasibility_relaxation(&weights),
         Err(AnalysisError::Class {

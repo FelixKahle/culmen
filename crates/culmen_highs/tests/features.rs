@@ -403,7 +403,7 @@ fn test_highs_relaxation_of_a_semi_program_is_refused() {
     // HiGHS 1.16's feasibility relaxation keeps x within [2, 10]: it returns x = 2, a penalty of 15, however high the
     // second row's price, where x = 0 costs 0.8 (a raw fixture below). The backend refuses it.
     let (program, ..) = semi_relaxation();
-    let weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let weights = Weights::soft_rows(&program, penalty!(1.0));
     let mut solver = Solver::new(Highs::new(), program).unwrap();
     assert_eq!(
         solver.feasibility_relaxation(&weights).unwrap_err(),
@@ -480,7 +480,7 @@ fn test_highs_relaxation_keeps_a_semi_column_on() {
 #[test]
 fn test_a_soft_bound_of_a_semi_column_is_refused() {
     let (program, x, _) = semi_relaxation();
-    let mut weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let mut weights = Weights::soft_rows(&program, penalty!(1.0));
     weights.lower[x] = Some(penalty!(1.0));
     let mut solver = Solver::new(Highs::new(), program).unwrap();
     assert_eq!(

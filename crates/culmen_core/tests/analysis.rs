@@ -212,11 +212,7 @@ fn test_an_analysis_undefined_for_the_class_is_refused_before_the_backend_is_ask
             class
         })
     );
-    assert!(
-        solver
-            .feasibility_relaxation(&Weights::uniform(solver.program(), None, None))
-            .is_ok()
-    );
+    assert!(solver.feasibility_relaxation(&Weights::hard(solver.program())).is_ok());
     assert_eq!(asked(&solver), vec![Analysis::FeasibilityRelaxation]);
 }
 
@@ -287,7 +283,7 @@ fn test_rays_are_asked_for_only_after_the_ending_they_prove() {
 #[test]
 fn test_a_basis_iis_or_relaxation_ends_the_reading_of_the_last_solve() {
     let mut solver = canned(optimal(), false);
-    let weights = Weights::uniform(solver.program(), Some(penalty!(1.0)), None);
+    let weights = Weights::soft_bounds(solver.program(), penalty!(1.0));
     solver.solve().unwrap();
     assert_eq!(solver.iis(), Ok(None), "an optimum proves the constraints feasible");
     assert!(solver.duals().is_ok(), "an IIS answered from the last solve keeps it");
@@ -341,7 +337,7 @@ fn test_a_solve_that_panics_leaves_no_solve_to_read() {
 #[test]
 fn test_weights_and_bases_that_do_not_fit_are_refused() {
     let mut solver = canned(optimal(), false);
-    let mut weights = Weights::uniform(solver.program(), None, None);
+    let mut weights = Weights::hard(solver.program());
     weights.upper.push(None);
     assert_eq!(
         solver.feasibility_relaxation(&weights),
@@ -488,7 +484,10 @@ fn test_violations_and_their_penalty_on_a_fixture() {
             },
         ]
     );
-    let mut weights = Weights::uniform(&program, Some(penalty!(2.0)), Some(penalty!(5.0)));
+    let mut weights = Weights {
+        rows: Weights::soft_rows(&program, penalty!(5.0)).rows,
+        ..Weights::soft_bounds(&program, penalty!(2.0))
+    };
     weights.lower[y] = None;
     assert_eq!(weights.penalty(violations), 2.0, "y's hard lower bound counts nothing");
     assert_eq!(weights.price(Line::Row(r), Bound::Lower), Some(penalty!(5.0)));
@@ -571,7 +570,7 @@ proptest! {
         let want = reference_violations(&program, &values);
         prop_assert_eq!(&got, &want);
         let price = Penalty::new(f64::from(weight)).unwrap();
-        let weights = Weights::uniform(&program, Some(price), None);
+        let weights = Weights::soft_bounds(&program, price);
         let cols: f64 = want.iter().filter(|v| matches!(v.0, Line::Col(_))).map(|v| v.2 * f64::from(weight)).sum();
         prop_assert_eq!(weights.penalty(relaxed.violations(&program)), cols);
     }
@@ -642,7 +641,7 @@ mod serde_round_trips {
             rows: BTreeMap::from([(Row::new(0), Side::Both), (Row::new(2), Side::Lower)]),
         });
         round_trip(&penalty!(0.25));
-        round_trip(&Weights::uniform(&program, Some(penalty!(2.0)), None));
+        round_trip(&Weights::soft_bounds(&program, penalty!(2.0)));
         round_trip(&Relaxed {
             values: vec![1.0, -0.5].into(),
         });
@@ -699,5 +698,37 @@ mod serde_round_trips {
     fn test_a_negative_penalty_is_refused_as_it_is_read() {
         assert!(serde_json::from_str::<Penalty>("-1.0").is_err());
         assert!(serde_json::from_str::<Penalty>("1.5").is_ok());
+    }
+}
+
+#[test]
+fn test_weights_price_whole_tables_and_keep_semi_bounds_hard() {
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(4));
+    let s = m.add_var(Var::semi_continuous().bounds(1, 3));
+    let r = m.add_constraint((x + s).leq(5));
+    let program = m.build().unwrap();
+    let p = penalty!(2.0);
+    let tables = |w: &Weights| (w.lower[x], w.upper[x], w.lower[s], w.upper[s], w.rows[r]);
+    assert_eq!(tables(&Weights::hard(&program)), (None, None, None, None, None));
+    assert_eq!(
+        tables(&Weights::soft_rows(&program, p)),
+        (None, None, None, None, Some(p))
+    );
+    assert_eq!(
+        tables(&Weights::soft_bounds(&program, p)),
+        (Some(p), Some(p), None, None, None)
+    );
+    assert_eq!(
+        tables(&Weights::soft(&program, p)),
+        (Some(p), Some(p), None, None, Some(p))
+    );
+    for weights in [
+        Weights::hard(&program),
+        Weights::soft_rows(&program, p),
+        Weights::soft_bounds(&program, p),
+        Weights::soft(&program, p),
+    ] {
+        assert_eq!(weights.check(&program), Ok(()));
     }
 }
