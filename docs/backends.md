@@ -223,6 +223,8 @@ typed fields, except those `Settings` types) and a raw name/value escape hatch (
 `culmen_scip::ScipOptions` has SCIP's three emphasis settings as typed fields and every other parameter by name
 (`ScipOptions::param`, set with `SCIPsetIntParam` and friends). A Gurobi backend would do the same with `GRBsetintparam`
 / `GRBsetdblparam` / `GRBsetstrparam`. `Settings` apply after the backend's options, so a per-solve setting always wins.
+The by-name types keep each solver's own words, `HighsOption` and `OptionValue` for HiGHS's options, `ScipParam` and
+`ParamValue` for SCIP's parameters, so a name reads as the solver's documentation writes it.
 
 ## Outcomes and statuses
 

@@ -395,8 +395,8 @@ impl<'a, 'h> Run<'a, 'h> {
     /// constraint updates (`cons.c:3525-3531` of SCIP 10.0.2), which outlives the solve and aborts a debug SCIP at the
     /// next one (`cons.c:2524`), leaves a pricer's columns in its pricing store (`solve.c:2323`), which aborts a
     /// debug SCIP as it frees the store (`pricestore.c:142`), and leaves a separator's cuts in its separation store
-    /// (`solve.c:1794`, `solve.c:1895`), which aborts a debug SCIP as it frees that store (`sepastore.c:125`). The solve fails with the error once `SCIPsolve` has
-    /// returned, whatever SCIP's status.
+    /// (`solve.c:1794`, `solve.c:1895`), which aborts a debug SCIP as it frees that store (`sepastore.c:125`). The
+    /// solve fails with the error once `SCIPsolve` has returned, whatever SCIP's status.
     fn stop_with(&self, scip: *mut SCIP, error: ScipError) -> SCIP_RETCODE {
         self.error.borrow_mut().get_or_insert(error);
         self.request_stop(scip);
@@ -609,8 +609,8 @@ fn checked(constraint: &Constraint, num_cols: usize, infinity: f64) -> Result<Ad
 /// representation (`SCIPgetProbvarLinearSum` in `SCIPcreateConsLinear`, `cons_linear.c` of SCIP 10.0.2), moving the
 /// constant that adds up into the sides, and refuses a constant of at least its infinity in magnitude
 /// (`SCIP_INVALIDDATA`); a debug SCIP aborts on it before, as each variable's share of the constant is added
-/// (`var.c:5263`). So every share of the constant, the constant, every coefficient of the representation and each finite
-/// side less the constant stay below SCIP's infinity. The representation is walked here, through
+/// (`var.c:5263`). So every share of the constant, the constant, every coefficient of the representation and each
+/// finite side less the constant stay below SCIP's infinity. The representation is walked here, through
 /// `SCIPgetProbvarSum` for each variable, never through `SCIPgetProbvarLinearSum`, which carries that abort. A cut's
 /// row resolves its variables the same way as SCIP adds them (`SCIPvarAddToRow`), adding each fixed variable's share
 /// to the row's constant, which a debug SCIP asserts stays below its infinity (`lp.c:5868`), so the same check holds

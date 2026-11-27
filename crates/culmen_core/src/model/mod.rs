@@ -565,8 +565,9 @@ impl Model {
     /// # Errors
     ///
     /// [`ModelError::MixedObjectives`] for the first objective whose rank belongs to the other combination than the
-    /// first ranked objective's, [`ModelError::RankAlone`] for a rank of the model's own objective alone, else [`ModelError::UnknownVar`], [`ModelError::FurtherCoefficient`] or
-    /// [`ModelError::FurtherConstant`] for the first further objective at fault.
+    /// first ranked objective's, [`ModelError::RankAlone`] for a rank of the model's own objective alone, else
+    /// [`ModelError::UnknownVar`], [`ModelError::FurtherCoefficient`] or [`ModelError::FurtherConstant`] for the first
+    /// further objective at fault.
     fn build_objectives(&self) -> Result<Objectives, ModelError> {
         let Some(combination) = self.combination()? else {
             return Ok(Objectives::Single);

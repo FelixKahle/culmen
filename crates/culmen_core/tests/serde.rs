@@ -14,7 +14,7 @@ use core::fmt::Debug;
 use core::time::Duration;
 
 use culmen_core::{
-    AbsoluteGap, Bounds, Col, Event, Events, FeasibilityTolerance, Integrality, Linear, Model, ModelClass,
+    AbsoluteGap, Bounds, Col, Event, Events, FeasibilityTolerance, Integrality, Linear, LogLevel, Model, ModelClass,
     ModelClasses, Outcome, Phase, PriceMode, Program, ProgramError, ProgramPlan, Progress, RelativeGap, Row, Sense,
     Settings, Solution, Solved, StopReason, Var, absolute_gap, bounds, feasibility_tolerance, relative_gap, threads,
 };
@@ -97,6 +97,9 @@ fn test_plain_data_round_trips() {
     round_trip(&Outcome::InfeasibleOrUnbounded);
     round_trip(&PriceMode::ReducedCost { objective: 4.5 });
     round_trip(&PriceMode::Farkas);
+    for level in [LogLevel::Error, LogLevel::Warning, LogLevel::Info, LogLevel::Detail] {
+        round_trip(&level);
+    }
     round_trip(&Solved {
         outcome: Outcome::Infeasible,
         status: 8_i32,

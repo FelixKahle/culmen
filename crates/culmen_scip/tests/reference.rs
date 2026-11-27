@@ -111,7 +111,8 @@ proptest! {
                 sparse.push((Col::new(j), f64::from(value)));
             }
         }
-        let solved = Solver::new(Scip::new(), program.clone()).unwrap().run().settings(exact()).start(sparse).solve().unwrap();
+        let mut solver = Solver::new(Scip::new(), program.clone()).unwrap();
+        let solved = solver.run().settings(exact()).start(sparse).solve().unwrap();
         agrees(&program, &expected, &solved.outcome)?;
     }
 

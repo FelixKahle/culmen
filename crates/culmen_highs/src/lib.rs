@@ -781,9 +781,10 @@ impl Backend for Highs {
     }
 
     /// Changes HiGHS's model in place, so the next run starts from the basis of the last: bounds, costs and
-    /// integrality through HiGHS's `BySet` calls, coefficients through `Highs_changeCoeff`, new rows and columns through `Highs_addRows` and `Highs_addCols`,
-    /// the objective's sense and offset through `Highs_changeObjectiveSense` and `Highs_changeObjectiveOffset`. A
-    /// replaced objective whose quadratic part changed and rows added to a QP without rows load the program whole.
+    /// integrality through HiGHS's `BySet` calls, coefficients through `Highs_changeCoeff`, new rows and columns
+    /// through `Highs_addRows` and `Highs_addCols`, the objective's sense and offset through
+    /// `Highs_changeObjectiveSense` and `Highs_changeObjectiveOffset`. A replaced objective whose quadratic part
+    /// changed and rows added to a QP without rows load the program whole.
     ///
     /// # Panics
     ///

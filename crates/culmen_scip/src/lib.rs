@@ -139,8 +139,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! A panic in a callback or handler never unwinds into SCIP: the plugin catches it and asks SCIP to stop, and the panic resumes
-//! once SCIP has returned. The backend stays usable.
+//! A panic in a callback or handler never unwinds into SCIP: the plugin catches it and asks SCIP to stop, and the panic
+//! resumes once SCIP has returned. The backend stays usable.
 //!
 //! # Threads
 //!

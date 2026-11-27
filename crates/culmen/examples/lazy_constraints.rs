@@ -5,7 +5,8 @@
 //! SCIP. The model says only that every town has two roads; a round trip through all eight is one more condition, a
 //! constraint for every set of towns, too many to write down. The lazy-constraint handler (`LazyHandler`, which
 //! exists only for a backend that takes lazy constraints) receives every candidate SCIP would accept, finds its
-//! subtours, and adds for each one the constraint that some two roads leave it. SCIP keeps each constraint for the rest of the search, so the optimum it proves is a round trip.
+//! subtours, and adds for each one the constraint that some two roads leave it. SCIP keeps each constraint for the rest
+//! of the search, so the optimum it proves is a round trip.
 //!
 //! `cargo run -p culmen --example lazy_constraints --features scip`
 

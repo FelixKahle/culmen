@@ -46,8 +46,9 @@ impl Program {
     ///
     /// # Errors
     ///
-    /// [`LpFileError::UnsupportedFeature`] for a program with [`ProgramFeature::MultipleObjectives`]: CPLEX's multi-objective
-    /// sections combine tolerances otherwise than [`Tolerance`](super::Tolerance) states, and HiGHS cannot read them.
+    /// [`LpFileError::UnsupportedFeature`] for a program with [`ProgramFeature::MultipleObjectives`]: CPLEX's
+    /// multi-objective sections combine tolerances otherwise than [`Tolerance`](super::Tolerance) states, and HiGHS
+    /// cannot read them.
     pub fn to_lp_string(&self) -> Result<String, LpFileError> {
         self.writable()?;
         let mut out = String::new();

@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The one implementation of a set of the variants of a fieldless enum, for `ModelClasses`, `ProgramFeatures` and `Events`:
-//! every such set has the same methods, operators, iterator, conversions and formatting.
+//! The one implementation of a set of the variants of a fieldless enum, for `ModelClasses`, `ProgramFeatures` and
+//! `Events`: every such set has the same methods, operators, iterator, conversions and formatting.
 
 /// Implements a set over a fieldless element enum for a `Copy` newtype `$set` over the bits `$bits`, and its iterator
 /// `$iter`, a newtype over `$set`.

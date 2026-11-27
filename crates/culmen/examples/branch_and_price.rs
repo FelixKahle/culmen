@@ -5,8 +5,9 @@
 //! few whole rolls as possible, the instance of `column_generation`. The master holds one integer column per cutting
 //! pattern, at first one pattern per width. SCIP solves it by branch and bound and, at every node, hands the node LP's
 //! duals to the pricer (a `Pricer`, which exists only for a backend that prices), which prices patterns in with a
-//! knapsack solved by a second solver, until no pattern improves the node LP. `column_generation` is the same model priced in an outer loop on
-//! HiGHS and made whole only at the end; here the patterns are priced inside the search, so the search is exact.
+//! knapsack solved by a second solver, until no pattern improves the node LP. `column_generation` is the same model
+//! priced in an outer loop on HiGHS and made whole only at the end; here the patterns are priced inside the search, so
+//! the search is exact.
 //!
 //! Pricing on SCIP is column generation at every node, with SCIP's default branching on the master's columns. It is
 //! exact when the pricing is exact and never adds a column the master already holds, as here: the knapsack excludes

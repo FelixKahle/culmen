@@ -6,8 +6,9 @@
 //! The pricer is included in every instance, delayed, so SCIP prices the variables it holds before it asks the
 //! [`Pricer`](culmen_core::Pricer), and inactive. A solve with a pricer activates it and marks every program row's
 //! constraint modifiable, as SCIP requires of a constraint a pricer adds variables to; a solve without one deactivates
-//! it and leaves every constraint unmodifiable, so SCIP neither calls it nor gives up a reduction for it. A modifiable linear constraint is never presolved, upgraded or used to tighten bounds, so it stays a linear
-//! constraint whose dual SCIP reports.
+//! it and leaves every constraint unmodifiable, so SCIP neither calls it nor gives up a reduction for it. A modifiable
+//! linear constraint is never presolved, upgraded or used to tighten bounds, so it stays a linear constraint whose dual
+//! SCIP reports.
 //!
 //! SCIP minimizes `s·c` for the program's cost `c`, with `s = 1` when the program minimizes and `s = -1` when it
 //! maximizes; SCIP's dual of a row in its transformed problem is therefore `s` times the program's, which the context

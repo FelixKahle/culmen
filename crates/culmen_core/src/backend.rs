@@ -31,10 +31,11 @@
 //! A [`Solver`](crate::Solver) calls an analysis method only for an analysis defined for the program's class
 //! ([`Analysis::classes`](crate::Analysis::classes)) and features ([`Analysis::refused`](crate::Analysis::refused)),
 //! with the loaded program, and only in the state its [`Solver`](crate::Solver) method documents:
-//! [`DualAnalysis::duals`](crate::DualAnalysis::duals) and [`RangingAnalysis::ranging`](crate::RangingAnalysis::ranging)
-//! after a solve that ended optimal, [`BasisAnalysis::basis`](crate::BasisAnalysis::basis) after a solve, the rays
-//! after a solve that ended as they prove, a basis or weights that fit the program. Called otherwise, it may fail or
-//! give an unspecified result, never undefined behaviour.
+//! [`DualAnalysis::duals`](crate::DualAnalysis::duals) and
+//! [`RangingAnalysis::ranging`](crate::RangingAnalysis::ranging) after a solve that ended optimal,
+//! [`BasisAnalysis::basis`](crate::BasisAnalysis::basis) after a solve, the rays after a solve that ended as they
+//! prove, a basis or weights that fit the program. Called otherwise, it may fail or give an unspecified result, never
+//! undefined behaviour.
 
 pub use crate::solve::{
     AddedRow, Edit, Hooks, Priced, Relay, Unsupported, Watch, check_constraint, check_entries, check_solution,

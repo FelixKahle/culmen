@@ -352,10 +352,10 @@ impl<B: Backend> Solver<B> {
     /// # Errors
     ///
     /// [`EditError::UnknownCol`] for a column the program does not have, [`EditError::SemiBounds`] for a column made
-    /// semi whose bounds a semi column may not have, [`EditError::UnsupportedClass`] or [`EditError::UnsupportedFeature`]
-    /// when the backend does not solve the class or take a feature the edited program would have, all before the
-    /// backend sees the edit; [`EditError::Backend`] when the backend refuses it, or refuses the program the solver
-    /// loads first after an earlier failed edit.
+    /// semi whose bounds a semi column may not have, [`EditError::UnsupportedClass`] or
+    /// [`EditError::UnsupportedFeature`] when the backend does not solve the class or take a feature the edited program
+    /// would have, all before the backend sees the edit; [`EditError::Backend`] when the backend refuses it, or refuses
+    /// the program the solver loads first after an earlier failed edit.
     pub fn set_col_integrality(
         &mut self,
         integrality: impl IntoIterator<Item = (Col, Integrality)>,
@@ -541,9 +541,10 @@ impl<B: Backend> Solver<B> {
         self.commit(Edit::Offset, |program| Undo::Offset(program.replace_offset(offset)))
     }
 
-    /// Replaces the program's own objective, linear or quadratic, as [`Model::set_objective`](crate::Model::set_objective)
-    /// sets a model's: every column's cost becomes its coefficient in `objective`, zero when it has none, the
-    /// constant becomes the offset, and the quadratic part becomes `objective`'s. Further objectives stay as they are.
+    /// Replaces the program's own objective, linear or quadratic, as
+    /// [`Model::set_objective`](crate::Model::set_objective) sets a model's: every column's cost becomes its
+    /// coefficient in `objective`, zero when it has none, the constant becomes the offset, and the quadratic part
+    /// becomes `objective`'s. Further objectives stay as they are.
     ///
     /// ```
     /// use culmen_core::{Linear, Model, Sense, Solver, Var};

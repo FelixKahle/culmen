@@ -765,7 +765,8 @@ fn test_every_edit_error_displays_its_sentence_and_its_source() {
                 col: Col::new(1),
                 source: InvalidBounds::Empty { lower: 5.0, upper: 4.0 },
             },
-            "Solver: Col(1) with one end set would have invalid bounds: Bounds: the lower end 5 exceeds the upper end 4",
+            "Solver: Col(1) with one end set would have invalid bounds: Bounds: the lower end 5 exceeds the upper end \
+             4",
             true,
         ),
         (

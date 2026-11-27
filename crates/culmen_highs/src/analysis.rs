@@ -209,8 +209,8 @@ pub(crate) fn dual_ray(highs: &mut Highs) -> Analyzed<Option<TiVec<Row, f64>>> {
 ///
 /// # Errors
 ///
-/// When an option is refused, HiGHS fails, or it finds no IIS of a program it found infeasible; [`HighsError::Unlisted`] when HiGHS returns a
-/// status it does not define.
+/// When an option is refused, HiGHS fails, or it finds no IIS of a program it found infeasible;
+/// [`HighsError::Unlisted`] when HiGHS returns a status it does not define.
 pub(crate) fn iis(highs: &mut Highs, program: &Program) -> Analyzed<Option<Iis>> {
     configure(&mut highs.instance, &highs.options, &Settings::new())?;
     highs

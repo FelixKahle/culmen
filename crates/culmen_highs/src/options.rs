@@ -389,14 +389,14 @@ macro_rules! options {
         /// any other option is set by name through [`HighsOptions::option`], after the typed ones. The
         /// [`Settings`](culmen_core::Settings) of a solve apply after both, so a per-solve limit always wins. What
         /// `Settings` types (the time limit, the gaps, the feasibility and optimality tolerances, threads, the seed,
-        /// presolve, the node and solution limits, the console) has no field here; set by HiGHS's name, such an option holds for every solve whose settings leave
-        /// it unset.
+        /// presolve, the node and solution limits, the console) has no field here; set by HiGHS's name, such an option
+        /// holds for every solve whose settings leave it unset.
         ///
         /// An `f64` field is written in the form of [`culmen_core::serde_real`], so an infinity reads back.
         ///
-        /// A `u64` field is a limit, and one beyond HiGHS's integers is HiGHS's largest integer, its "no limit". A
-        /// `u32` field is an exact integer, and one beyond HiGHS's integers fails the solve with
-        /// [`HighsError::OutOfRange`].
+        /// A `u64` field is a limit or a count, and one beyond HiGHS's integers is HiGHS's largest integer: for a
+        /// limit its "no limit", for a count or threshold the largest HiGHS takes. A `u32` field is an exact integer,
+        /// and one beyond HiGHS's integers fails the solve with [`HighsError::OutOfRange`].
         ///
         /// ```
         /// use culmen_highs::{HighsOptions, LpSolver, OptionValue};

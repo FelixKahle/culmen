@@ -262,8 +262,8 @@ With the `serde` feature, the plain data derives `Serialize` and `Deserialize`:
   `Bounds`, `Integrality`, `Sense`, `Col`, `Row`, `ModelClass`, `ModelClasses` (as a list of classes),
   `ProgramFeature`, `ProgramFeatures`, and the further objectives: `Objectives`, `LinearObjective`, `ObjectiveId`,
   `Stage`, `Weighted`, `Tolerance`, `Weight`.
-- The solve: `Settings`, `RelativeGap`, `AbsoluteGap`, `Start`, `Solved`, `Outcome`, `Solution`, `StopReason`,
-  `Progress`, `Phase`, `LogLevel`.
+- The solve: `Settings`, `RelativeGap`, `AbsoluteGap`, `FeasibilityTolerance`, `Start`, `Solved`, `Outcome`,
+  `Solution`, `StopReason`, `Progress`, `Phase`, `LogLevel`, `Event`, `Events`, `PriceMode`.
 - The analyses: `Analysis`, `Duals`, `Basis`, `BasisStatus`, `Ranging`, `Ranged`, `Limit`, `Line`, `Iis`,
   `Side`, `Weights`, `Penalty`, `Relaxed`, `Violation`, `Bound`.
 - With `highs`: `HighsOptions` and its option types, `OptionValue`, `HighsStatus`, `ModelStatus`, `SolutionStatus`,
