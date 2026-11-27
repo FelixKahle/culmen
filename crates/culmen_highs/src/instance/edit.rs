@@ -491,12 +491,10 @@ mod tests {
             .unwrap();
         assert_eq!(held(&solver), unnamed(&solver), "the new rows' bounds");
         let both = NewCol {
-            column: ProgramColumn::integer(1.0, bounds!(0.0, 5.0)),
+            column: ProgramColumn::integer().cost(1.0).bounds(bounds!(0.0, 5.0)),
             entries: vec![(cap, 1.0), (floor, -2.0)],
         };
-        let cols = solver
-            .add_cols([both, NewCol::from(ProgramColumn::continuous(0.0, Bounds::FREE))])
-            .unwrap();
+        let cols = solver.add_cols([both, NewCol::from(ProgramColumn::free())]).unwrap();
         assert_eq!(held(&solver), unnamed(&solver), "columns");
         solver.set_col_costs(cols.map(|col| (col, 3.0))).unwrap();
         assert_eq!(held(&solver), unnamed(&solver), "the new columns' costs");
@@ -509,7 +507,7 @@ mod tests {
         m.minimize(x * x - 2.0 * x);
         let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
         let y = solver
-            .add_col(ProgramColumn::continuous(1.0, bounds!(0.0, 2.0)))
+            .add_col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 2.0)))
             .unwrap();
         assert_eq!(held(&solver), unnamed(&solver), "a column beside the free row");
         solver.add_row((x + y).geq(1)).unwrap();

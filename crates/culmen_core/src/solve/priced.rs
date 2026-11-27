@@ -16,7 +16,7 @@ use crate::{ActionError, Col, Cols, ModelClass, ModelClasses, NewCol, Program};
 /// ([`Priced::into_cols`]).
 ///
 /// ```
-/// use culmen_core::{Backend, Bounds, Col, Linear, Model, NewCol, Priced, ProgramColumn, Script, Var};
+/// use culmen_core::{Backend, Col, Linear, Model, NewCol, Priced, Script, Var};
 ///
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::continuous());
@@ -24,7 +24,7 @@ use crate::{ActionError, Col, Cols, ModelClass, ModelClasses, NewCol, Program};
 /// let program = m.build()?;
 ///
 /// let mut priced = Priced::new(&program, Script::CLASSES);
-/// let new = NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries: vec![(row, 1.0)] };
+/// let new = NewCol::continuous().cost(1).entry(row, 1);
 /// assert_eq!(priced.push(new), Ok(Col::new(1)));
 /// assert_eq!(priced.num_cols(), 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())

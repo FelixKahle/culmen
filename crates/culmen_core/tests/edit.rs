@@ -275,17 +275,17 @@ fn test_add_col_drops_entries_that_cancel_and_takes_a_bare_column() {
     let mut solver = mirrored();
     let cancelled = solver
         .add_col(NewCol {
-            column: ProgramColumn::continuous(0.0, Bounds::NON_NEGATIVE),
+            column: ProgramColumn::continuous(),
             entries: vec![(cap, 1.0), (cap, -1.0)],
         })
         .unwrap();
-    let open = solver.add_col(ProgramColumn::binary(1.0)).unwrap();
+    let open = solver.add_col(ProgramColumn::binary().cost(1.0)).unwrap();
     assert_eq!((cancelled, open), (Col::new(2), Col::new(3)));
     assert_eq!(
         solver.program().row(cap).entries().collect::<Vec<_>>(),
         [(x, 1.0), (y, 1.0)]
     );
-    assert_eq!(solver.program().columns()[open], ProgramColumn::binary(1.0));
+    assert_eq!(solver.program().columns()[open], ProgramColumn::binary().cost(1.0));
     assert_eq!(solver.program().class(), ModelClass::Milp);
     assert_in_sync(&solver);
 }
@@ -294,16 +294,13 @@ fn test_add_col_drops_entries_that_cancel_and_takes_a_bare_column() {
 fn test_add_cols_returns_the_new_columns_in_order_after_every_column_before() {
     let mut solver = mirrored();
     let cols = solver
-        .add_cols([
-            ProgramColumn::continuous(1.0, Bounds::FREE),
-            ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE),
-        ])
+        .add_cols([ProgramColumn::free().cost(1.0), ProgramColumn::continuous().cost(2.0)])
         .unwrap()
         .collect::<Vec<_>>();
     assert_eq!(cols, [Col::new(2), Col::new(3)]);
     let mut want = base_plan();
-    want.columns.push(ProgramColumn::continuous(1.0, Bounds::FREE));
-    want.columns.push(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
+    want.columns.push(ProgramColumn::free().cost(1.0));
+    want.columns.push(ProgramColumn::continuous().cost(2.0));
     let want = want.build().unwrap();
     assert_eq!(solver.program(), &want);
     assert_eq!(last_call(&solver), &Call::Edit(Edited::NewCols(cols), want));
@@ -315,9 +312,7 @@ fn test_ids_handed_out_keep_their_meaning_through_edits() {
     let (program, x, y, cap, floor) = base();
     let mut solver = mirrored();
     solver.add_row(y.leq(1)).unwrap();
-    solver
-        .add_col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE))
-        .unwrap();
+    solver.add_col(ProgramColumn::continuous().cost(1.0)).unwrap();
     solver.set_row_bounds([(floor, ..)]).unwrap();
     let edited = solver.program();
     assert_eq!(
@@ -437,7 +432,7 @@ fn refusals() -> Vec<Case> {
         ),
         (
             |s, _, _, _| {
-                let column = ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE);
+                let column = ProgramColumn::continuous().cost(1.0);
                 s.add_col(NewCol {
                     column,
                     entries: vec![(Row::new(9), 1.0)],
@@ -447,10 +442,7 @@ fn refusals() -> Vec<Case> {
             EditError::UnknownRow { row: Row::new(9) },
         ),
         (
-            |s, _, _, _| {
-                s.add_col(ProgramColumn::continuous(f64::INFINITY, Bounds::NON_NEGATIVE))
-                    .map(drop)
-            },
+            |s, _, _, _| s.add_col(ProgramColumn::continuous().cost(f64::INFINITY)).map(drop),
             EditError::NonFiniteCost {
                 col: new_col,
                 value: inf,
@@ -458,7 +450,7 @@ fn refusals() -> Vec<Case> {
         ),
         (
             |s, _, _, cap| {
-                let column = ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE);
+                let column = ProgramColumn::continuous().cost(1.0);
                 s.add_col(NewCol {
                     column,
                     entries: vec![(cap, f64::INFINITY)],
@@ -473,7 +465,7 @@ fn refusals() -> Vec<Case> {
         ),
         (
             |s, _, _, cap| {
-                let column = ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE);
+                let column = ProgramColumn::continuous().cost(1.0);
                 s.add_col(NewCol {
                     column,
                     entries: vec![(cap, 1e308), (cap, 1e308)],
@@ -488,7 +480,7 @@ fn refusals() -> Vec<Case> {
         ),
         (
             |s, _, _, _| {
-                s.add_col(ProgramColumn::semi_continuous(1.0, bounds!(0.0, 1.0)))
+                s.add_col(ProgramColumn::semi_continuous().cost(1.0).bounds(bounds!(0.0, 1.0)))
                     .map(drop)
             },
             EditError::SemiBounds {
@@ -657,7 +649,7 @@ fn test_an_lp_backend_refuses_an_integer_column_before_it_sees_the_edit() {
         solver.set_col_integrality([(y, Integrality::Integer)]),
         Err(milp.clone())
     );
-    assert_eq!(solver.add_col(ProgramColumn::binary(1.0)), Err(milp));
+    assert_eq!(solver.add_col(ProgramColumn::binary().cost(1.0)), Err(milp));
     assert_eq!(solver.program(), &program);
     assert_eq!(solver.backend().loads, 1);
 }
@@ -677,7 +669,7 @@ fn test_a_backend_without_semi_columns_refuses_one_before_it_sees_the_edit() {
         Err(refusal.clone())
     );
     assert_eq!(
-        solver.add_col(ProgramColumn::semi_continuous(1.0, bounds!(1.0, 2.0))),
+        solver.add_col(ProgramColumn::semi_continuous().cost(1.0).bounds(bounds!(1.0, 2.0))),
         Err(refusal)
     );
     assert_eq!(solver.program(), &before);

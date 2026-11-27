@@ -159,7 +159,7 @@ program the columns it added.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
+use culmen::{NewCol, Phase, PriceMode, Script, Step};
 
 /// Adds the pattern when it improves, else reports a bound and stops pricing.
 struct Pattern(NewCol);
@@ -181,7 +181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let x = m.add_var(Var::continuous());
     let demand = m.add_constraint(x.geq(1));
     m.minimize(3.0 * x);
-    let pattern = NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries: vec![(demand, 1.0)] };
+    let pattern = NewCol::continuous().cost(1).entry(demand, 1);
 
     let at = Progress::at(Duration::ZERO, Phase::Simplex);
     let round = |objective: f64, dual: f64| Step::Price {

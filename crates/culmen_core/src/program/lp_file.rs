@@ -30,13 +30,13 @@ impl Program {
     ///
     /// let mut plan = ProgramPlan::new();
     /// plan.sense = Sense::Maximize;
-    /// let x = plan.col(ProgramColumn::binary(3.0));
+    /// let x = plan.col(ProgramColumn::binary().cost(3.0));
     /// plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]);
     /// let text = plan.clone().build()?.to_lp_string()?;
     /// assert!(text.starts_with("Maximize\n obj: 3 x0\nSubject To\n r0: 2 x0 <= 1\n"));
     ///
     /// plan.sense = Sense::Minimize;
-    /// let y = plan.col(ProgramColumn::continuous(0.0, bounds!(0.0, 1.0)));
+    /// let y = plan.col(ProgramColumn::continuous().bounds(bounds!(0.0, 1.0)));
     /// plan.quadratic = vec![(x, x, 1.0), (x, y, -1.5), (y, y, 1.0)];
     /// let text = plan.build()?.to_lp_string()?;
     /// assert!(text.starts_with("Minimize\n obj: 3 x0 + [ 2 x0 ^ 2 - 3 x0 * x1 + 2 x1 ^ 2 ] / 2\n"));

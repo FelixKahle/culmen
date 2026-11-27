@@ -51,8 +51,8 @@ pub use row::{RowEntries, RowView};
 ///
 /// let mut plan = ProgramPlan::new();
 /// plan.sense = Sense::Maximize;
-/// let x = plan.col(ProgramColumn::binary(5.0));
-/// let y = plan.col(ProgramColumn::binary(4.0));
+/// let x = plan.col(ProgramColumn::binary().cost(5.0));
+/// let y = plan.col(ProgramColumn::binary().cost(4.0));
 /// let r = plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0), (x, 0.0)]);
 /// let program = plan.build()?;
 /// assert!(program.class().is_discrete());
@@ -768,10 +768,7 @@ mod tests {
         let parts = (number(), columns, prop::collection::vec(row, 0..4), squares);
         parts.prop_map(|(offset, costs, rows, squares)| ProgramPlan {
             offset,
-            columns: costs
-                .into_iter()
-                .map(|cost| ProgramColumn::continuous(cost, Bounds::FREE))
-                .collect(),
+            columns: costs.into_iter().map(|cost| ProgramColumn::free().cost(cost)).collect(),
             rows: rows.into(),
             quadratic: squares
                 .into_iter()

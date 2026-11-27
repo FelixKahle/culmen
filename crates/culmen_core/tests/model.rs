@@ -10,8 +10,8 @@
 
 use culmen_core::{
     Bounds, Col, Constraint, ExprPlace, Integrality, InvalidBounds, LinExpr, Linear, Model, ModelConstraint,
-    ModelError, ModelVar, ProgramColumn, ProgramError, ProgramPlan, ProgramRow, Row, Sense, Term, TiSlice, TiVec, Var,
-    VarMap, bounds, product, set,
+    ModelError, ModelVar, NewCol, ProgramColumn, ProgramError, ProgramPlan, ProgramRow, Row, Sense, Term, TiSlice,
+    TiVec, Var, VarMap, bounds, product, set,
 };
 use proptest::prelude::*;
 
@@ -42,8 +42,8 @@ fn test_bounds_refuse_every_empty_or_undefined_interval() {
 #[test]
 fn test_plan_merges_repeated_terms_and_drops_zeros() {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-    let y = plan.col(ProgramColumn::binary(2.0));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
+    let y = plan.col(ProgramColumn::binary().cost(2.0));
     let r = plan.row(bounds!(0.0, 4.0), [(y, 1.0), (x, 2.0), (x, -2.0), (y, 0.5)]);
     let program = plan.build().unwrap();
     assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(y, 1.5)]);
@@ -52,9 +52,84 @@ fn test_plan_merges_repeated_terms_and_drops_zeros() {
 }
 
 #[test]
+fn test_columns_are_built_by_chaining_with_the_defaults_their_integrality_names() {
+    let column = |cost: f64, bounds, integrality| ProgramColumn {
+        cost,
+        bounds,
+        integrality,
+        name: None,
+    };
+    let cases = [
+        (
+            ProgramColumn::continuous(),
+            column(0.0, Bounds::NON_NEGATIVE, Integrality::Continuous),
+        ),
+        (
+            ProgramColumn::free(),
+            column(0.0, Bounds::FREE, Integrality::Continuous),
+        ),
+        (
+            ProgramColumn::integer(),
+            column(0.0, Bounds::NON_NEGATIVE, Integrality::Integer),
+        ),
+        (
+            ProgramColumn::binary(),
+            column(0.0, Bounds::BINARY, Integrality::Integer),
+        ),
+        (
+            ProgramColumn::semi_continuous(),
+            column(0.0, Bounds::NON_NEGATIVE, Integrality::SemiContinuous),
+        ),
+        (
+            ProgramColumn::semi_integer(),
+            column(0.0, Bounds::NON_NEGATIVE, Integrality::SemiInteger),
+        ),
+    ];
+    for (built, expected) in cases {
+        assert_eq!(built.clone(), expected);
+        assert_eq!(
+            NewCol::from(built),
+            NewCol {
+                column: expected,
+                entries: Vec::new()
+            }
+        );
+    }
+    let named = ProgramColumn::integer().cost(3u8).bounds(bounds!(1.0, 4.0)).name("n");
+    assert_eq!(
+        named,
+        ProgramColumn {
+            cost: 3.0,
+            bounds: bounds!(1.0, 4.0),
+            integrality: Integrality::Integer,
+            name: Some("n".to_owned()),
+        }
+    );
+    let (a, b) = (Row::new(0), Row::new(2));
+    let new = NewCol::integer()
+        .cost(3u8)
+        .bounds(bounds!(1.0, 4.0))
+        .name("n")
+        .entry(a, 2)
+        .entries([(b, 0.5), (a, 1.0)]);
+    assert_eq!(
+        new,
+        NewCol {
+            column: named,
+            entries: vec![(a, 2.0), (b, 0.5), (a, 1.0)],
+        }
+    );
+    assert_eq!(NewCol::free(), NewCol::from(ProgramColumn::free()));
+    assert_eq!(NewCol::binary().column, ProgramColumn::binary());
+    assert_eq!(NewCol::continuous().column, ProgramColumn::continuous());
+    assert_eq!(NewCol::semi_continuous().column, ProgramColumn::semi_continuous());
+    assert_eq!(NewCol::semi_integer().column, ProgramColumn::semi_integer());
+}
+
+#[test]
 fn test_plan_names_the_first_defect() {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(f64::NAN, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free().cost(f64::NAN));
     assert!(matches!(plan.clone().build(), Err(ProgramError::NonFiniteCost { col, .. }) if col == x));
     plan.columns[x].cost = 1.0;
     let r = plan.row(Bounds::FREE, [(x, f64::INFINITY)]);
@@ -665,8 +740,8 @@ fn test_a_point_with_a_nan_is_infinitely_far_from_feasible() {
         f64::INFINITY
     );
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1.0)));
-    let y = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1.0)));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0)));
+    let y = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0)));
     plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0)]);
     let program = plan.build().unwrap();
     assert_eq!(

@@ -60,9 +60,9 @@ fn semi_column() -> impl Strategy<Value = ProgramColumn> {
     (any::<bool>(), 1i32..=2, 0i32..=2, -5i32..=5).prop_map(|(integer, lower, width, cost)| {
         let bounds = Bounds::new(f64::from(lower), f64::from(lower + width)).expect("lower <= upper");
         if integer {
-            ProgramColumn::semi_integer(f64::from(cost), bounds)
+            ProgramColumn::semi_integer().cost(f64::from(cost)).bounds(bounds)
         } else {
-            ProgramColumn::semi_continuous(f64::from(cost), bounds)
+            ProgramColumn::semi_continuous().cost(f64::from(cost)).bounds(bounds)
         }
     })
 }
@@ -150,7 +150,7 @@ pub fn small_qp() -> impl Strategy<Value = Program> {
                 .zip(&costs)
                 .map(|(&(lower, width), &cost)| {
                     let bounds = Bounds::new(f64::from(lower), f64::from(lower + width)).expect("lower <= upper");
-                    ProgramColumn::continuous(sign * f64::from(cost), bounds)
+                    ProgramColumn::continuous().cost(sign * f64::from(cost)).bounds(bounds)
                 })
                 .collect();
             let mid: Vec<f64> = boxes.iter().map(|&(l, w)| f64::from(l) + f64::from(w) / 2.0).collect();
@@ -238,9 +238,9 @@ pub fn priced_split() -> impl Strategy<Value = PricedSplit> {
                 .map(|(cost, lower, upper, integer)| {
                     let bounds = Bounds::new(f64::from(lower), f64::from(upper)).expect("lower <= 0 <= upper");
                     if integer {
-                        ProgramColumn::integer(f64::from(cost), bounds)
+                        ProgramColumn::integer().cost(f64::from(cost)).bounds(bounds)
                     } else {
-                        ProgramColumn::continuous(f64::from(cost), bounds)
+                        ProgramColumn::continuous().cost(f64::from(cost)).bounds(bounds)
                     }
                 })
                 .collect();

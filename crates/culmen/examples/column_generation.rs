@@ -9,7 +9,7 @@
 //! `cargo run -p culmen --example column_generation`
 
 use culmen::prelude::*;
-use culmen::{Integrality, NewCol, ProgramColumn};
+use culmen::{Integrality, NewCol};
 
 /// The width of a roll.
 const ROLL: f64 = 100.0;
@@ -68,10 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .filter(|&(_, pieces)| pieces > 0.0)
             .collect();
         println!("  new pattern: {entries:?}");
-        master.add_col(NewCol {
-            column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE),
-            entries,
-        })?;
+        master.add_col(NewCol::continuous().cost(1).entries(entries))?;
     }
 
     let patterns: Vec<Col> = master.program().cols().collect();

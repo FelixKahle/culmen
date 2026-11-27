@@ -576,7 +576,7 @@ mod tests {
     use core::num::NonZeroU64;
     use core::time::Duration;
 
-    use culmen_core::{Bounds, Priced, ProgramColumn, ProgramPlan, absolute_gap, bounds, relative_gap, threads};
+    use culmen_core::{Priced, ProgramColumn, ProgramPlan, absolute_gap, bounds, relative_gap, threads};
 
     use super::*;
 
@@ -647,7 +647,7 @@ mod tests {
     /// `x >= 1` and `2x <= 4` over one continuous column of cost one, loaded into SCIP.
     fn one_column() -> (Scip, Program) {
         let mut plan = ProgramPlan::new();
-        let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+        let x = plan.col(ProgramColumn::continuous().cost(1.0));
         plan.row(bounds!(1.0, f64::INFINITY), [(x, 1.0)]);
         plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 2.0)]);
         let program = plan.build().unwrap();
@@ -752,7 +752,7 @@ mod tests {
             self.0 += 1;
             assert!(self.0 < 1_000, "AddsOne: the pricer ran without end");
             if self.0 == 1 {
-                let column = ProgramColumn::continuous(1.0, bounds!(0.0, 1.0));
+                let column = ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0));
                 culmen_core::PriceContext::add_col(
                     &mut *ctx,
                     culmen_core::NewCol {
@@ -769,7 +769,7 @@ mod tests {
     fn maximize_one() -> (Scip, Program) {
         let mut plan = ProgramPlan::new();
         plan.sense = culmen_core::Sense::Maximize;
-        let x = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1.0)));
+        let x = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0)));
         plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0)]);
         let program = plan.build().unwrap();
         let mut scip = Scip::new();
@@ -801,7 +801,7 @@ mod tests {
     fn test_presolving_on_keeps_the_presolving_parameters_the_options_set_by_name() {
         let mut scip = Scip::with_options(ScipOptions::default().param("presolving/domcol/maxrounds", 0));
         let mut plan = ProgramPlan::new();
-        plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+        plan.col(ProgramColumn::continuous().cost(1.0));
         scip.load(&plan.build().unwrap()).unwrap();
         let instance = scip.instance.as_mut().unwrap();
         for presolve in [None, Some(true)] {

@@ -21,10 +21,11 @@ A `ProgramPlan` is a program as plain data, with `pub` fields, checked into a `P
 | `objectives` | Further linear objectives and how they combine, `Objectives::Single` for none. See [Several objectives](#several-objectives). |
 
 `plan.col(column)` pushes a column and returns its `Col`; `plan.row(bounds, terms)` pushes an unnamed row and
-returns its `Row`, its bounds anything that converts into `Bounds` (`..` for a free row).
-`ProgramColumn::continuous(cost, bounds)`, `ProgramColumn::integer(cost, bounds)`, `ProgramColumn::binary(cost)`,
-`ProgramColumn::semi_continuous(cost, bounds)` and `ProgramColumn::semi_integer(cost, bounds)` make columns without a
-name; the fields are public, so set `name` directly.
+returns its `Row`, its bounds anything that converts into `Bounds` (`..` for a free row). A `ProgramColumn` is built
+by chaining, as a [`Var`](modelling.md#variables) is: `ProgramColumn::continuous()`, `free()`, `integer()`,
+`binary()`, `semi_continuous()` or `semi_integer()`, costing nothing and in the bounds its integrality names
+(`[0, +inf)`, `(-inf, +inf)`, `[0, 1]` for a binary) until `.cost(..)`, `.bounds(..)` and `.name(..)` say otherwise.
+A semi column needs its bounds set; the build checks them. The fields stay public, as plain data.
 
 ```rust
 use culmen::{Bounds, ProgramColumn, ProgramPlan, Sense, bounds};
@@ -33,8 +34,8 @@ fn main() -> Result<(), culmen::ProgramError> {
     // Maximize 3x + 2y subject to x + y <= 4 and x + 3y <= 6, with x, y >= 0.
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
-    let x = plan.col(ProgramColumn { name: Some("x".into()), ..ProgramColumn::continuous(3.0, Bounds::NON_NEGATIVE) });
-    let y = plan.col(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(3).name("x"));
+    let y = plan.col(ProgramColumn::continuous().cost(2));
     let total = plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]);
     plan.row(bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0), (x, 0.5), (x, -0.5)]);
     plan.rows[total].name = Some("total".into());
@@ -176,8 +177,8 @@ use culmen::{ProgramColumn, ProgramPlan, TiVec, bounds};
 
 fn main() -> Result<(), culmen::ProgramError> {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::binary(1.0));
-    let y = plan.col(ProgramColumn::binary(1.0));
+    let x = plan.col(ProgramColumn::binary().cost(1.0));
+    let y = plan.col(ProgramColumn::binary().cost(1.0));
     let r = plan.row(bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]);
     let program = plan.build()?;
 
@@ -223,8 +224,8 @@ use culmen::{Bounds, ProgramColumn, ProgramPlan, TiSlice};
 fn main() -> Result<(), culmen::ProgramError> {
     // x² + 2xy + 3y², written with the cross term split in both orders.
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free());
+    let y = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(y, x, 1.0), (x, x, 1.0), (x, y, 1.0), (y, y, 3.0)];
     let program = plan.build()?;
 
@@ -331,8 +332,8 @@ use culmen::{Bounds, LinearObjective, Objectives, ProgramColumn, ProgramPlan, Se
 fn main() -> Result<(), culmen::ProgramError> {
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-    let y = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
+    let y = plan.col(ProgramColumn::continuous().cost(1.0));
     let second = LinearObjective { sense: Sense::Minimize, terms: vec![(y, 1.0), (y, 1.0)], offset: 0.0 };
     plan.objectives = Objectives::Lexicographic {
         first: Tolerance::EXACT,
@@ -450,7 +451,7 @@ other check: their types already guarantee them. Otherwise it returns a `Program
 use culmen::{Col, ProgramColumn, ProgramError, ProgramPlan, Row, bounds};
 
 let mut plan = ProgramPlan::new();
-let x = plan.col(ProgramColumn::binary(1.0));
+let x = plan.col(ProgramColumn::binary().cost(1.0));
 plan.row(bounds!(0.0, 1.0), [(x, 1.0), (Col::new(7), 1.0)]);
 assert_eq!(plan.build(), Err(ProgramError::UnknownCol { row: Row::new(0), col: Col::new(7) }));
 ```

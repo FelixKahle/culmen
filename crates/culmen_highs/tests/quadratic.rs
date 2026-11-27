@@ -90,8 +90,8 @@ fn test_a_square_and_a_cross_term_reach_highs_at_their_written_weight() {
     assert_point(&optimum(&m.build().unwrap()), -3.0, &[2.0, -1.0]);
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(-3.0, Bounds::FREE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free().cost(-3.0));
+    let y = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(y, y, 1.0), (y, x, 0.5), (x, x, 1.0), (x, y, 0.5)];
     assert_point(&optimum(&plan.build().unwrap()), -3.0, &[2.0, -1.0]);
 }
@@ -158,7 +158,13 @@ fn test_a_qp_with_bounds_alone_leaves_its_starting_point() {
     let mut plan = ProgramPlan::new();
     let x: Vec<Col> = [0.0, 0.0, 0.0, -1.0]
         .into_iter()
-        .map(|cost| plan.col(ProgramColumn::continuous(cost, Bounds::new(0.0, 1.0).unwrap())))
+        .map(|cost| {
+            plan.col(
+                ProgramColumn::continuous()
+                    .cost(cost)
+                    .bounds(Bounds::new(0.0, 1.0).unwrap()),
+            )
+        })
         .collect();
     plan.quadratic = vec![
         (x[0], x[0], 2.05),
@@ -187,7 +193,13 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
     let boxes = [(0.0, 3.0, 0.0), (-2.0, 0.0, -5.0), (-1.0, 1.0, 0.0), (-3.0, -1.0, -2.0)];
     let x: Vec<Col> = boxes
         .into_iter()
-        .map(|(lower, upper, cost)| plan.col(ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
+        .map(|(lower, upper, cost)| {
+            plan.col(
+                ProgramColumn::continuous()
+                    .cost(cost)
+                    .bounds(Bounds::new(lower, upper).unwrap()),
+            )
+        })
         .collect();
     let exactly_12 = Bounds::new(12.0, 12.0).unwrap();
     plan.row(exactly_12, [(x[0], 2.0), (x[1], -3.0), (x[2], -1.0), (x[3], -3.0)]);
@@ -227,7 +239,13 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
     let boxes = [(0.0, 2.0, 0.0), (-2.0, 2.0, -3.0), (1.0, 5.0, -2.0), (-1.0, 1.0, 0.0)];
     let x: Vec<Col> = boxes
         .into_iter()
-        .map(|(lower, upper, cost)| plan.col(ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
+        .map(|(lower, upper, cost)| {
+            plan.col(
+                ProgramColumn::continuous()
+                    .cost(cost)
+                    .bounds(Bounds::new(lower, upper).unwrap()),
+            )
+        })
         .collect();
     plan.row(Bounds::new(-1.0, 0.0).unwrap(), [(x[1], -2.0), (x[3], -1.0)]);
     plan.quadratic = vec![
@@ -260,7 +278,13 @@ fn test_a_qp_optimum_is_valued_as_its_point() {
     let boxes = [(1.0, 4.0, -5.0), (0.0, 3.0, -1.0), (-2.0, 2.0, -2.0), (-1.0, 0.0, 1.0)];
     let x: Vec<Col> = boxes
         .into_iter()
-        .map(|(lower, upper, cost)| plan.col(ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
+        .map(|(lower, upper, cost)| {
+            plan.col(
+                ProgramColumn::continuous()
+                    .cost(cost)
+                    .bounds(Bounds::new(lower, upper).unwrap()),
+            )
+        })
         .collect();
     plan.row(
         Bounds::new(-13.0, -11.0).unwrap(),

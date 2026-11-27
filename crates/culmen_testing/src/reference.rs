@@ -704,7 +704,7 @@ mod tests {
     #[test]
     fn test_edit_plan_appends_a_column_with_its_entries_added_up() {
         let (program, x, y, row) = small();
-        let column = ProgramColumn::continuous(-1.0, bounds!(0.0, 1.0));
+        let column = ProgramColumn::continuous().cost(-1.0).bounds(bounds!(0.0, 1.0));
         let new = NewCol {
             column: column.clone(),
             entries: vec![(row, 1.0), (row, 2.0)],
@@ -738,7 +738,7 @@ mod tests {
             (1e308 * x + 1e308 * x).leq(1)
         )])));
         let unknown_row = NewCol {
-            column: ProgramColumn::binary(0.0),
+            column: ProgramColumn::binary(),
             entries: vec![(Row::new(1), 1.0)],
         };
         assert!(refused(EditOp::AddCols(vec![unknown_row])));
@@ -748,10 +748,9 @@ mod tests {
         let linear = ModelClasses::of(&[ModelClass::Lp]);
         let integer = EditOp::ColIntegrality(vec![(x, Integrality::Integer)]);
         assert!(edit_plan(&program, &integer, linear, ProgramFeatures::ALL).is_err());
-        let semi = EditOp::AddCols(vec![NewCol::from(ProgramColumn::semi_continuous(
-            1.0,
-            bounds!(1.0, 2.0),
-        ))]);
+        let semi = EditOp::AddCols(vec![NewCol::from(
+            ProgramColumn::semi_continuous().cost(1.0).bounds(bounds!(1.0, 2.0)),
+        )]);
         assert!(edit_plan(&program, &semi, ModelClasses::ALL, ProgramFeature::SemiInteger.into()).is_err());
         assert!(
             edit_plan(

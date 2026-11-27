@@ -59,9 +59,9 @@ fn optimal(outcome: Outcome) -> Solution {
 /// A column of cost `cost` with the given bounds and entries.
 fn column(cost: f64, bounds: Bounds, integer: bool, entries: &[(Row, f64)]) -> NewCol {
     let column = if integer {
-        ProgramColumn::integer(cost, bounds)
+        ProgramColumn::integer().cost(cost).bounds(bounds)
     } else {
-        ProgramColumn::continuous(cost, bounds)
+        ProgramColumn::continuous().cost(cost).bounds(bounds)
     };
     NewCol {
         column,
@@ -724,7 +724,7 @@ fn test_a_farkas_round_takes_neither_a_bound_nor_an_early_stop() {
 fn test_a_column_without_an_upper_bound_is_priced_in() {
     // Minimize x + y over x + y >= 3, with y priced in [0, +inf) at cost 1/2: y = 3, worth 3/2.
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
     plan.row(bounds!(3.0, f64::INFINITY), [(x, 1.0)]);
     let program = plan.build().unwrap();
     let y = column(0.5, Bounds::NON_NEGATIVE, false, &[(Row::new(0), 1.0)]);
@@ -765,7 +765,7 @@ fn test_an_lp_whose_priced_column_is_integer_reports_its_search_as_a_mip() {
     // Minimize 2x + y over x + y >= 3/2, with y priced as an integer column: the LP is a MILP once y is held, its root
     // LP takes y = 3/2, and SCIP branches on y to the optimum 2 (y = 1, x = 1/2, or y = 2).
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(2.0));
     plan.row(bounds!(1.5, f64::INFINITY), [(x, 1.0)]);
     let program = plan.build().unwrap();
     let y = column(1.0, Bounds::NON_NEGATIVE, true, &[(Row::new(0), 1.0)]);
@@ -865,7 +865,7 @@ fn test_a_heuristic_solution_presolve_cannot_hold_is_refused_with_the_reason() {
     // not fit SCIP's problem and is refused, while one leaving it at zero is taken.
     let (program, patterns) = cutting_stock(false);
     let mut plan = ProgramPlan::from(program);
-    let z = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 5.0)));
+    let z = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 5.0)));
     let program = plan.build().unwrap();
     let mut patterns = patterns;
     patterns.insert(3, column(1.0, bounds!(0.0, 5.0), false, &[]));
@@ -912,7 +912,7 @@ fn test_a_pricing_solve_starts_from_a_start_over_the_programs_columns() {
 #[test]
 fn test_pricing_a_program_with_a_quadratic_objective_is_refused_before_scip_runs() {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(0.0, bounds!(0.0, 4.0)));
+    let x = plan.col(ProgramColumn::continuous().bounds(bounds!(0.0, 4.0)));
     plan.row(bounds!(1.0, f64::INFINITY), [(x, 1.0)]);
     plan.quadratic = vec![(x, x, 1.0)];
     let program = plan.build().unwrap();
@@ -1091,8 +1091,8 @@ fn test_a_degenerate_node_lp_hands_out_duals_that_price_its_bounds() {
     // SCIP's LP presolving handing out the dual 0, which prices nothing and ends at 0.
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
-    let x0 = plan.col(ProgramColumn::continuous(2.0, bounds!(0.0, 2.0)));
-    let x2 = plan.col(ProgramColumn::continuous(0.0, bounds!(0.0, 1.0)));
+    let x0 = plan.col(ProgramColumn::continuous().cost(2.0).bounds(bounds!(0.0, 2.0)));
+    let x2 = plan.col(ProgramColumn::continuous().bounds(bounds!(0.0, 1.0)));
     plan.row(bounds!(0.0, 0.0), [(x0, -1.0), (x2, -1.0)]);
     let program = plan.build().unwrap();
     for presolve in [true, false] {
@@ -1118,7 +1118,7 @@ fn test_no_cut_from_the_objective_over_the_columns_held_cuts_off_a_column_pricin
     // column priced later obeys, and the solve ending at -2.
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
-    let x2 = plan.col(ProgramColumn::continuous(-2.0, bounds!(0.0, 1.0)));
+    let x2 = plan.col(ProgramColumn::continuous().cost(-2.0).bounds(bounds!(0.0, 1.0)));
     plan.row(bounds!(1.0, f64::INFINITY), [(x2, 1.0)]);
     let program = plan.build().unwrap();
     let r = Row::new(0);

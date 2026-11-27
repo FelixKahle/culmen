@@ -14,9 +14,9 @@ use core::time::Duration;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use culmen_core::{
-    Backend, Bounds, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, ModelClasses, ModelError, ModelVar,
-    Outcome, Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Script, Sense, Settings,
-    Solved, Solver, Term, TiSlice, TiVec, Unsupported, Var,
+    Backend, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, ModelClasses, ModelError, ModelVar, Outcome,
+    Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Script, Sense, Settings, Solved,
+    Solver, Term, TiSlice, TiVec, Unsupported, Var,
 };
 use proptest::prelude::*;
 
@@ -360,8 +360,8 @@ fn test_semidefinite_and_concave_objectives_build() {
 #[test]
 fn test_the_plan_checks_its_quadratic_terms() {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free());
+    let y = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(x, Col::new(5), 1.0)];
     assert_eq!(
         plan.clone().build(),
@@ -415,9 +415,7 @@ fn gram_plan(a: &[Vec<i32>], ridge: f64, sign: f64, sense: Sense) -> ProgramPlan
     let h = |i: usize, j: usize| a.iter().map(|row| f64::from(row[i] * row[j])).sum::<f64>();
     let mut plan = ProgramPlan::new();
     plan.sense = sense;
-    let cols: Vec<Col> = (0..n)
-        .map(|_| plan.col(ProgramColumn::continuous(0.0, Bounds::FREE)))
-        .collect();
+    let cols: Vec<Col> = (0..n).map(|_| plan.col(ProgramColumn::free())).collect();
     for i in 0..n {
         plan.quadratic.push((cols[i], cols[i], sign * (h(i, i) + ridge) / 2.0));
         for j in i + 1..n {
@@ -641,7 +639,7 @@ fn test_a_product_with_a_zero_factor_keeps_a_non_finite_coefficient() {
 fn test_a_square_whose_hessian_value_overflows_is_refused() {
     // The coefficient 1e308 is finite, but the Hessian HiGHS reads holds it twice on the diagonal.
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(x, x, 1e308)];
     assert_eq!(
         plan.clone().build(),

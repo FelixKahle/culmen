@@ -72,7 +72,7 @@ fn test_a_semi_column_needs_bounds_that_exclude_zero() {
     for (lower, upper) in [(0.0, 4.0), (-1.0, 4.0), (1.0, f64::INFINITY)] {
         let bounds = Bounds::new(lower, upper).unwrap();
         let mut plan = ProgramPlan::new();
-        let x = plan.col(ProgramColumn::semi_continuous(1.0, bounds));
+        let x = plan.col(ProgramColumn::semi_continuous().cost(1.0).bounds(bounds));
         assert_eq!(plan.build(), Err(ProgramError::SemiBounds { col: x, bounds }));
 
         let mut m = Model::new();
@@ -83,7 +83,7 @@ fn test_a_semi_column_needs_bounds_that_exclude_zero() {
         assert_eq!((var.col, var.name.as_deref(), refused), (y, Some("y"), bounds));
     }
     let mut plan = ProgramPlan::new();
-    plan.col(ProgramColumn::semi_integer(0.0, bounds!(1e-9, 1e9)));
+    plan.col(ProgramColumn::semi_integer().bounds(bounds!(1e-9, 1e9)));
     assert!(plan.build().is_ok());
     assert_eq!(
         ProgramError::SemiBounds {
@@ -166,8 +166,8 @@ fn test_a_model_builds_its_further_objectives_lexicographic_or_blended() {
 #[test]
 fn test_further_objectives_are_canonical_in_a_program() {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
+    let y = plan.col(ProgramColumn::continuous());
     plan.objectives = Objectives::Blended {
         first: Weight::ONE,
         with: vec![Weighted {
@@ -200,7 +200,7 @@ fn test_further_objectives_are_canonical_in_a_program() {
 fn test_further_objectives_are_checked() {
     let further = |terms: Vec<(Col, f64)>, offset: f64| {
         let mut plan = ProgramPlan::new();
-        plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+        plan.col(ProgramColumn::continuous().cost(1.0));
         plan.objectives = Objectives::Lexicographic {
             first: Tolerance::EXACT,
             then: vec![Stage {
@@ -529,10 +529,10 @@ fn featured() -> impl Strategy<Value = ProgramPlan> {
     let column = (0u8..4).prop_map(|kind| {
         let bounds = bounds!(1.0, 3.0);
         match kind {
-            0 => ProgramColumn::continuous(1.0, bounds),
-            1 => ProgramColumn::integer(1.0, bounds),
-            2 => ProgramColumn::semi_continuous(1.0, bounds),
-            _ => ProgramColumn::semi_integer(1.0, bounds),
+            0 => ProgramColumn::continuous().cost(1.0).bounds(bounds),
+            1 => ProgramColumn::integer().cost(1.0).bounds(bounds),
+            2 => ProgramColumn::semi_continuous().cost(1.0).bounds(bounds),
+            _ => ProgramColumn::semi_integer().cost(1.0).bounds(bounds),
         }
     });
     (prop::collection::vec(column, 0..5), 0usize..3, any::<bool>()).prop_map(|(columns, further, blended)| {

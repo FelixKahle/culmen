@@ -372,7 +372,7 @@ relaxation, a column priced in by column generation, a variable fixed in a dive.
 | `set_col_integrality([(col, integrality), ..])` | Columns' integrality. |
 | `set_row_bounds([(row, bounds), ..])` | Rows' bounds; `..`, `Bounds::FREE`, switches a row off. |
 | `add_row(row)`, `add_rows(rows)` | Appends rows and returns them: anything [`Model::add_constraint`](modelling.md#constraints) takes, a `Constraint`, a `(name, constraint)` pair or a `ProgramRow`. |
-| `add_col(column)`, `add_cols(columns)` | Appends columns and returns them: a `NewCol` (a `ProgramColumn` with its `entries` in existing rows), or a bare `ProgramColumn` in no row. |
+| `add_col(column)`, `add_cols(columns)` | Appends columns and returns them: a `NewCol`, built as `NewCol::continuous().cost(2).entry(row, 1)` with its entries in existing rows, or a bare `ProgramColumn` in no row. |
 
 Every edit keeps these rules:
 
@@ -398,7 +398,7 @@ next call that runs the backend loads it first. [HiGHS](highs.md#editing-a-loade
 
 ```rust
 use culmen::prelude::*;
-use culmen::{EditError, NewCol, ProgramColumn};
+use culmen::{EditError, NewCol};
 
 /// The optimal objective of the next solve.
 fn best(solver: &mut Solver<Highs>) -> Result<f64, Box<dyn std::error::Error>> {
@@ -418,10 +418,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A cut, then a column worth 2 that the cut holds too.
     let cut = solver.add_row(("cut", (x + y).leq(1.5)))?;
     assert_eq!(best(&mut solver)?, 1.5);
-    let z = solver.add_col(NewCol {
-        column: ProgramColumn::continuous(2.0, bounds!(0.0, 1.0)),
-        entries: vec![(cut, 1.0)],
-    })?;
+    let z = solver.add_col(NewCol::continuous().cost(2).bounds(bounds!(0.0, 1.0)).entry(cut, 1))?;
     assert_eq!(best(&mut solver)?, 2.5);
 
     // The cut switched off, and y fixed at zero.
@@ -461,7 +458,7 @@ are the program's from then on:
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
+use culmen::{NewCol, Phase, PriceMode, Script, Step};
 
 /// Prices one column in at every price step.
 struct OneMore;
@@ -469,7 +466,7 @@ struct OneMore;
 impl<B: Prices> Pricer<B> for OneMore {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         let row = Row::new(0);
-        let column = NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries: vec![(row, 1.0)] };
+        let column = NewCol::continuous().cost(1).entry(row, 1);
         assert_eq!(ctx.add_col(column), Ok(Col::new(1)));
     }
 }

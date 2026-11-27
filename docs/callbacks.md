@@ -408,7 +408,7 @@ refuses to price a program with a quadratic objective.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceMode, ProgramColumn, Script, Step};
+use culmen::{NewCol, Phase, PriceMode, Script, Step};
 
 /// Adds every pattern of the pool, not added yet, that improves the node LP.
 struct Pool {
@@ -434,9 +434,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fours = m.add_constraint((2.0 * d).geq(2));
     let fives = m.add_constraint((2.0 * f).geq(3));
     m.minimize(a + d + f);
-    let pattern = |entries| NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries };
-    let b = pattern(vec![(threes, 2.0), (fours, 1.0)]); // two 3s and a 4
-    let e = pattern(vec![(fours, 1.0), (fives, 1.0)]); // a 4 and a 5
+    let b = NewCol::continuous().cost(1).entry(threes, 2).entry(fours, 1); // two 3s and a 4
+    let e = NewCol::continuous().cost(1).entry(fours, 1).entry(fives, 1); // a 4 and a 5
 
     // A scripted backend hands over the duals a solver would: B prices at 1 - 2/3 - 1/2 = -1/6, E at exactly 0.
     let at = Progress::at(Duration::ZERO, Phase::Simplex);

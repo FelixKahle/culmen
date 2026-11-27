@@ -17,8 +17,8 @@ use super::{Bounds, Col};
 /// use culmen_core::{ProgramColumn, ProgramPlan, bounds};
 ///
 /// let mut plan = ProgramPlan::new();
-/// let x = plan.col(ProgramColumn::binary(1.0));
-/// let y = plan.col(ProgramColumn::binary(1.0));
+/// let x = plan.col(ProgramColumn::binary().cost(1.0));
+/// let y = plan.col(ProgramColumn::binary().cost(1.0));
 /// let r = plan.row(bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]);
 /// let program = plan.build()?;
 /// let row = program.row(r);

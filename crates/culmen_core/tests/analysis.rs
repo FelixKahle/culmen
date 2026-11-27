@@ -538,7 +538,7 @@ fn small_program() -> impl Strategy<Value = Program> {
         .prop_map(|(columns, rows)| {
             let mut plan = ProgramPlan::new();
             columns.into_iter().for_each(|b| {
-                plan.col(culmen_core::ProgramColumn::continuous(1.0, b));
+                plan.col(culmen_core::ProgramColumn::continuous().cost(1.0).bounds(b));
             });
             rows.into_iter().for_each(|(b, terms)| {
                 plan.row(b, terms.into_iter().map(|(j, a)| (Col::new(j), f64::from(a))));

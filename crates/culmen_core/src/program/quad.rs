@@ -27,8 +27,8 @@ use super::{Col, Sense};
 /// use culmen_core::{Bounds, ProgramColumn, ProgramPlan, TiSlice};
 ///
 /// let mut plan = ProgramPlan::new();
-/// let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
-/// let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+/// let x = plan.col(ProgramColumn::free());
+/// let y = plan.col(ProgramColumn::free());
 /// plan.quadratic = vec![(y, x, 1.0), (x, x, 1.0), (x, y, 1.0), (y, y, 1.0)];
 /// let program = plan.build()?;
 /// let q = program.quadratic();

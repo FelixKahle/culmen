@@ -85,7 +85,7 @@ fn test_a_chain_of_edits_reaches_each_hand_worked_optimum() {
     // A new column z in [0, 1] worth 2, in the free cut row; then the cut back at x + y + z <= 0.5.
     let z = solver
         .add_col(NewCol {
-            column: ProgramColumn::continuous(2.0, bounds!(0.0, 1.0)),
+            column: ProgramColumn::continuous().cost(2.0).bounds(bounds!(0.0, 1.0)),
             entries: vec![(cut, 1.0)],
         })
         .unwrap();
@@ -114,7 +114,7 @@ fn test_column_generation_finds_the_cheaper_pattern() {
 
     let both = solver
         .add_col(NewCol {
-            column: ProgramColumn::continuous(1.5, Bounds::NON_NEGATIVE),
+            column: ProgramColumn::continuous().cost(1.5),
             entries: vec![(a, 1.0), (b, 1.0)],
         })
         .unwrap();
@@ -139,7 +139,7 @@ fn test_adding_a_column_beside_further_objectives_solves() {
     assert!(close(optimum(&mut solver), 0.0, 1e-9));
 
     let z = solver
-        .add_col(ProgramColumn::continuous(-1.0, bounds!(0.0, 1.0)))
+        .add_col(ProgramColumn::continuous().cost(-1.0).bounds(bounds!(0.0, 1.0)))
         .unwrap();
     let Outcome::Optimal(solution) = solve_exactly(&mut solver) else {
         panic!("expected an optimum")
@@ -204,7 +204,7 @@ fn test_an_integer_column_in_a_qp_is_refused_as_a_miqp() {
         solver.set_col_integrality([(x, Integrality::Integer)]),
         Err(miqp.clone())
     );
-    assert_eq!(solver.add_col(ProgramColumn::binary(0.0)), Err(miqp));
+    assert_eq!(solver.add_col(ProgramColumn::binary()), Err(miqp));
     assert_eq!(solver.program(), &program);
     assert!(close(optimum(&mut solver), 0.0, 1e-6));
 }

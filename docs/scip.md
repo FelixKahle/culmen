@@ -634,7 +634,7 @@ then optimal.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, ProgramColumn};
+use culmen::NewCol;
 
 /// Adds every pattern of the pool, not added yet, that improves the node LP. The pool holds every pattern the
 /// master lacks, so the pricing is exact and never adds a held column.
@@ -666,9 +666,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.minimize(a + d + f);
 
     // The other patterns of three, four and five pieces a roll of 10 holds.
-    let pattern = |pieces: [f64; 3]| NewCol {
-        column: ProgramColumn::integer(1.0, Bounds::NON_NEGATIVE),
-        entries: [threes, fours, fives].into_iter().zip(pieces).filter(|&(_, k)| k > 0.0).collect(),
+    let pattern = |pieces: [f64; 3]| {
+        let entries = [threes, fours, fives].into_iter().zip(pieces).filter(|&(_, k)| k > 0.0);
+        NewCol::integer().cost(1).entries(entries)
     };
     let others = [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0], [2.0, 1.0, 0.0],
         [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [0.0, 1.0, 1.0]];

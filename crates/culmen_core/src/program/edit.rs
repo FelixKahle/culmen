@@ -146,8 +146,8 @@ mod tests {
     /// Two columns, two rows: `x + y` in `[0, 4]`, `-x` free.
     fn program() -> Program {
         let mut plan = ProgramPlan::new();
-        let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-        let y = plan.col(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
+        let x = plan.col(ProgramColumn::continuous().cost(1.0));
+        let y = plan.col(ProgramColumn::continuous().cost(2.0));
         plan.row(bounds!(0.0, 4.0), [(x, 1.0), (y, 1.0)]);
         plan.row(Bounds::FREE, [(x, -1.0)]);
         plan.build().unwrap()
@@ -159,11 +159,11 @@ mod tests {
         let mut program = before.clone();
         program.push_cols([
             NewCol {
-                column: ProgramColumn::binary(0.0),
+                column: ProgramColumn::binary(),
                 entries: vec![(Row::new(1), 3.0)],
             },
             NewCol {
-                column: ProgramColumn::binary(1.0),
+                column: ProgramColumn::binary().cost(1.0),
                 entries: vec![(Row::new(0), 2.0), (Row::new(1), -1.0)],
             },
         ]);

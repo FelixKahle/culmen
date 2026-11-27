@@ -19,7 +19,7 @@
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, PriceMode, ProgramColumn};
+use culmen::{NewCol, PriceMode};
 
 /// The width of a roll.
 const ROLL: f64 = 100.0;
@@ -115,11 +115,10 @@ impl<B: Prices> Pricer<B> for Patterns {
         // finds the pattern that repairs an infeasible node LP most.
         let duals: Vec<f64> = self.demand.iter().map(|&row| ctx.duals()[row]).collect();
         let pattern = self.best(&duals).expect("the pricing knapsack solves");
-        let entries = self.demand.iter().zip(&pattern).filter(|&(_, &k)| k > 0);
-        let column = NewCol {
-            column: ProgramColumn::integer(1.0, Bounds::NON_NEGATIVE),
-            entries: entries.map(|(&row, &k)| (row, k as f64)).collect(),
-        };
+        let pieces = self.demand.iter().zip(&pattern).filter(|&(_, &k)| k > 0);
+        let column = NewCol::integer()
+            .cost(1)
+            .entries(pieces.map(|(&row, &k)| (row, k as f64)));
         // The knapsack is exact over the patterns the master lacks, so when its best does not improve, none does.
         if ctx.improves(&column) {
             if self.rounds <= 5 || matches!(ctx.mode(), PriceMode::Farkas) {

@@ -12,8 +12,8 @@
 use core::num::NonZeroU64;
 
 use culmen_core::{
-    Backend, Bounds, Col, Hooks, Linear, LoadError, Model, Program, ProgramColumn, ProgramFeature, ProgramPlan, Row,
-    Settings, SolveError, Solver, Start, Starts, Var, bounds,
+    Backend, Col, Hooks, Linear, LoadError, Model, Program, ProgramColumn, ProgramFeature, ProgramPlan, Row, Settings,
+    SolveError, Solver, Start, Starts, Var, bounds,
 };
 use culmen_scip::{Number, ParamValue, RetCode, Scip, ScipError, ScipOptions};
 
@@ -208,20 +208,20 @@ fn test_numbers_scip_would_read_as_infinite_are_refused_where_they_stand() {
         })
     };
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1e20)));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1e20)));
     assert_eq!(load(plan), refused(Number::ColBound(x), 1e20));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(-1e25, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(-1e25));
     assert_eq!(load(plan), refused(Number::Cost(x), -1e25));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free().cost(1.0));
     let row = plan.row(bounds!(-1e21, 0.0), [(x, 1.0)]);
     assert_eq!(load(plan), refused(Number::RowBound(row), -1e21));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
     let row = plan.row(bounds!(0.0, 1.0), [(x, 3e20)]);
     assert_eq!(load(plan), refused(Number::Coefficient { row, col: x }, 3e20));
 
@@ -230,8 +230,8 @@ fn test_numbers_scip_would_read_as_infinite_are_refused_where_they_stand() {
     assert_eq!(load(plan), refused(Number::Offset, 1e20));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free());
+    let y = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(x, x, 1e21), (y, y, 1e21)];
     assert_eq!(
         load(plan),
@@ -253,7 +253,7 @@ fn test_numbers_scip_would_read_as_infinite_are_refused_where_they_stand() {
 
     // Just below SCIP's infinity, a number is finite to SCIP and loads.
     let mut plan = ProgramPlan::new();
-    plan.col(ProgramColumn::continuous(1.0, bounds!(-9.9e19, 9.9e19)));
+    plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(-9.9e19, 9.9e19)));
     assert_eq!(load(plan), Ok(()));
 }
 
@@ -262,12 +262,12 @@ fn test_a_name_holding_a_nul_byte_is_refused_for_its_column_or_row() {
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn {
         name: Some("x\0".to_owned()),
-        ..ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE)
+        ..ProgramColumn::continuous().cost(1.0)
     });
     assert_eq!(load(plan), Err(ScipError::ColName { col: x }));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
     let row = plan.row(bounds!(0.0, 1.0), [(x, 1.0)]);
     plan.rows[row].name = Some("r\0w".to_owned());
     let program = plan.build().unwrap();
@@ -282,7 +282,7 @@ fn test_a_failed_load_leaves_no_program_and_a_later_load_works() {
     let mut scip = Scip::new();
     scip.load(&knapsack()).unwrap();
     let mut plan = ProgramPlan::new();
-    plan.col(ProgramColumn::continuous(1e30, Bounds::NON_NEGATIVE));
+    plan.col(ProgramColumn::continuous().cost(1e30));
     assert!(scip.load(&plan.build().unwrap()).is_err());
     assert_eq!(
         scip.solve(&Settings::new(), Hooks::new()).unwrap_err(),
