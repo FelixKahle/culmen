@@ -28,7 +28,7 @@ env:
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings
   # The workspace's `rust-version`; CI builds with exactly that toolchain.
-  RUST_TOOLCHAIN: "1.99"
+  RUST_TOOLCHAIN: "1.100"
 
 jobs:
   lint:

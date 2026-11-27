@@ -5,7 +5,7 @@ first model written two ways, and how to read its solution.
 
 ## Requirements
 
-- Rust 1.99 or later, edition 2024.
+- Rust 1.100 or later, edition 2024.
 - For the default `highs` feature: **cmake** and **libclang**. The HiGHS backend builds HiGHS 1.16 from the
   sources bundled with the `highs-sys` crate, so no system HiGHS is needed, but its C++ build needs both tools.
   The first build takes a minute or two; later builds reuse it.

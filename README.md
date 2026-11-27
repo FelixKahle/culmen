@@ -7,7 +7,7 @@ build it into a checked program, and solve it on a switchable backend. You can w
 cooperatively at any moment.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
-[![Rust 1.99+](https://img.shields.io/badge/rust-1.99%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust 1.100+](https://img.shields.io/badge/rust-1.100%2B-orange.svg)](https://www.rust-lang.org)
 [![Edition 2024](https://img.shields.io/badge/edition-2024-orange.svg)](https://doc.rust-lang.org/edition-guide/)
 [![Backend: HiGHS 1.16](https://img.shields.io/badge/backend-HiGHS%201.16-green.svg)](https://highs.dev)
 [![Backend: SCIP 10](https://img.shields.io/badge/backend-SCIP%2010-green.svg)](https://scipopt.org)
