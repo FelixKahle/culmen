@@ -273,55 +273,79 @@ impl Instance {
     }
 
     /// An integer info value, `None` when HiGHS does not know the name or has no valid info.
-    pub(crate) fn info_int(&self, name: &CStr) -> Option<i32> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn info_int(&self, name: &CStr) -> Result<Option<i32>, HighsError> {
         let mut value: HighsInt = 0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
         let status = unsafe { Highs_getIntInfoValue(self.raw(), name.as_ptr(), &raw mut value) };
-        (status != kHighsStatusError).then_some(value)
+        Ok(CallStatus::succeeded(status, "Highs_getIntInfoValue")?.then_some(value))
     }
 
     /// The value of an integer option as HiGHS holds it, `None` when HiGHS does not know the name or it is not an
     /// integer option.
-    pub(crate) fn option_int(&self, name: &CStr) -> Option<i32> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn option_int(&self, name: &CStr) -> Result<Option<i32>, HighsError> {
         let mut value: HighsInt = 0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
         let status = unsafe { Highs_getIntOptionValue(self.raw(), name.as_ptr(), &raw mut value) };
-        (status != kHighsStatusError).then_some(value)
+        Ok(CallStatus::succeeded(status, "Highs_getIntOptionValue")?.then_some(value))
     }
 
     /// The value of a `bool` option as HiGHS holds it, `None` when HiGHS does not know the name or it is not a `bool`
     /// option.
-    pub(crate) fn option_bool(&self, name: &CStr) -> Option<bool> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn option_bool(&self, name: &CStr) -> Result<Option<bool>, HighsError> {
         let mut value: HighsInt = 0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
         let status = unsafe { Highs_getBoolOptionValue(self.raw(), name.as_ptr(), &raw mut value) };
-        (status != kHighsStatusError).then_some(value != 0)
+        Ok(CallStatus::succeeded(status, "Highs_getBoolOptionValue")?.then_some(value != 0))
     }
 
     /// A 64-bit integer info value, `None` when HiGHS does not know the name or has no valid info.
-    pub(crate) fn info_i64(&self, name: &CStr) -> Option<i64> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn info_i64(&self, name: &CStr) -> Result<Option<i64>, HighsError> {
         let mut value: i64 = 0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one 64-bit integer to write.
         let status = unsafe { Highs_getInt64InfoValue(self.raw(), name.as_ptr(), &raw mut value) };
-        (status != kHighsStatusError).then_some(value)
+        Ok(CallStatus::succeeded(status, "Highs_getInt64InfoValue")?.then_some(value))
     }
 
     /// A floating-point info value, `None` when HiGHS does not know the name or has no valid info.
-    pub(crate) fn info_double(&self, name: &CStr) -> Option<f64> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn info_double(&self, name: &CStr) -> Result<Option<f64>, HighsError> {
         let mut value = 0.0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one double to write.
         let status = unsafe { Highs_getDoubleInfoValue(self.raw(), name.as_ptr(), &raw mut value) };
-        (status != kHighsStatusError).then_some(value)
+        Ok(CallStatus::succeeded(status, "Highs_getDoubleInfoValue")?.then_some(value))
     }
 
     /// The column values of the last run's primal solution, one per column of the loaded model with `num_cols`
     /// columns; `None` when HiGHS holds no primal solution.
-    pub(crate) fn primal_values(&self, num_cols: usize) -> Option<Vec<f64>> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn primal_values(&self, num_cols: usize) -> Result<Option<Vec<f64>>, HighsError> {
         let mut values = vec![0.0; num_cols];
         debug_assert_eq!(
             self.num_col(),
@@ -341,7 +365,7 @@ impl Instance {
             )
         };
         // HiGHS refuses the call, and leaves `values` unwritten, when its primal solution status is none.
-        (status != kHighsStatusError).then_some(values)
+        Ok(CallStatus::succeeded(status, "Highs_getSolution")?.then_some(values))
     }
 }
 
@@ -593,7 +617,16 @@ impl Instance {
     ///
     /// Every name of the model HiGHS holds is shorter than `buffer`: HiGHS copies the name with its terminating NUL
     /// into the buffer without a bound.
-    pub(crate) unsafe fn name(&self, line: Line, index: HighsInt, buffer: &mut [u8]) -> Option<String> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) unsafe fn name(
+        &self,
+        line: Line,
+        index: HighsInt,
+        buffer: &mut [u8],
+    ) -> Result<Option<String>, HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
             usize::try_from(index).is_ok_and(|i| i < self.count(line)),
@@ -603,17 +636,17 @@ impl Instance {
         let out: *mut c_char = buffer.as_mut_ptr().cast();
         // SAFETY: the instance is live, `index` a line of its model, and the caller vouches that the name and its NUL
         // fit `buffer`, which HiGHS writes during the call.
-        let status = unsafe {
+        let (status, call) = unsafe {
             match line {
-                Line::Col => Highs_getColName(self.raw(), index, out),
-                Line::Row => Highs_getRowName(self.raw(), index, out),
+                Line::Col => (Highs_getColName(self.raw(), index, out), "Highs_getColName"),
+                Line::Row => (Highs_getRowName(self.raw(), index, out), "Highs_getRowName"),
             }
         };
-        if status == kHighsStatusError {
-            return None;
+        if !CallStatus::succeeded(status, call)? {
+            return Ok(None);
         }
-        let name = CStr::from_bytes_until_nul(buffer).ok()?.to_string_lossy().into_owned();
-        (!name.is_empty()).then_some(name)
+        let name = CStr::from_bytes_until_nul(buffer).map(|name| name.to_string_lossy().into_owned());
+        Ok(name.ok().filter(|name| !name.is_empty()))
     }
 
     /// The number of columns or rows of the model HiGHS holds.

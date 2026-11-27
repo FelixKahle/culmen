@@ -436,7 +436,10 @@ mod tests {
 
     #[test]
     fn test_every_code_of_scip_10_reads_as_its_error_okay_as_none_and_any_other_as_an_error() {
-        assert_eq!(RetCode::from_raw(scip_sys::SCIP_Retcode_SCIP_OKAY, "SCIPcall"), Ok(None));
+        assert_eq!(
+            RetCode::from_raw(scip_sys::SCIP_Retcode_SCIP_OKAY, "SCIPcall"),
+            Ok(None)
+        );
         let codes = [
             (scip_sys::SCIP_Retcode_SCIP_ERROR, RetCode::Error),
             (scip_sys::SCIP_Retcode_SCIP_NOMEMORY, RetCode::NoMemory),

@@ -88,8 +88,8 @@ pub fn read_as(path: impl AsRef<Path>, format: ModelFormat) -> Result<Program, F
     // holds.
     let (col_names, row_names) = unsafe {
         (
-            names(&instance, Line::Col, model.costs.len(), &mut buffer),
-            names(&instance, Line::Row, model.row_lower.len(), &mut buffer),
+            names(&instance, Line::Col, model.costs.len(), &mut buffer).map_err(FileError::Highs)?,
+            names(&instance, Line::Row, model.row_lower.len(), &mut buffer).map_err(FileError::Highs)?,
         )
     };
     program_of(&model, col_names, row_names)
@@ -184,7 +184,16 @@ fn pass_names(instance: &mut Instance, program: &Program) -> Result<(), FileErro
 /// # Safety
 ///
 /// Every name of the model `instance` holds is shorter than `buffer`.
-unsafe fn names(instance: &Instance, line: Line, count: usize, buffer: &mut [u8]) -> Vec<Option<String>> {
+///
+/// # Errors
+///
+/// [`HighsError::Unlisted`](crate::HighsError::Unlisted) when HiGHS returns no `kHighsStatus*` value.
+unsafe fn names(
+    instance: &Instance,
+    line: Line,
+    count: usize,
+    buffer: &mut [u8],
+) -> Result<Vec<Option<String>>, crate::HighsError> {
     (0..count)
         .map(|i| {
             // A count of the model HiGHS holds fits its index type.

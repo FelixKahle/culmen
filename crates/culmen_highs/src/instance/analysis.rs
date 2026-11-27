@@ -129,7 +129,7 @@ impl Instance {
     /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
     pub(crate) fn duals(&self) -> Result<Option<PerLine<f64>>, HighsError> {
         // `Highs_getSolution` checks only the primal solution status, so the dual one is checked here.
-        if self.info_int(c"dual_solution_status") != Some(kHighsSolutionStatusFeasible) {
+        if self.info_int(c"dual_solution_status")? != Some(kHighsSolutionStatusFeasible) {
             return Ok(None);
         }
         let (mut cols, mut rows) = (vec![0.0; self.num_col()], vec![0.0; self.num_row()]);
@@ -349,7 +349,7 @@ impl Instance {
         }
         // HiGHS restores the model after solving its elastic LP and, as after every call that changes the model,
         // resizes its solution to the model's columns, so the relaxed point is read as any primal solution is.
-        Ok(self.primal_values(n))
+        self.primal_values(n)
     }
 }
 

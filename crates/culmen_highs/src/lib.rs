@@ -370,10 +370,10 @@ impl Highs {
         let count = |v: Option<i64>| u64::try_from(v.unwrap_or(0)).unwrap_or(0);
         let gap = self
             .instance
-            .info_double(c"mip_gap")
+            .info_double(c"mip_gap")?
             .filter(|g| loaded.is_mip && g.is_finite() && *g >= 0.0);
         let solution = |name: &core::ffi::CStr| {
-            self.instance.info_int(name).map_or(Ok(SolutionStatus::None), |raw| {
+            self.instance.info_int(name)?.map_or(Ok(SolutionStatus::None), |raw| {
                 SolutionStatus::from_raw(raw, "Highs_getIntInfoValue")
             })
         };
@@ -383,12 +383,12 @@ impl Highs {
             primal: solution(c"primal_solution_status")?,
             dual: solution(c"dual_solution_status")?,
             mip_gap: gap,
-            simplex_iterations: count(self.instance.info_int(c"simplex_iteration_count").map(i64::from)),
-            ipm_iterations: count(self.instance.info_int(c"ipm_iteration_count").map(i64::from)),
-            qp_iterations: count(self.instance.info_int(c"qp_iteration_count").map(i64::from)),
+            simplex_iterations: count(self.instance.info_int(c"simplex_iteration_count")?.map(i64::from)),
+            ipm_iterations: count(self.instance.info_int(c"ipm_iteration_count")?.map(i64::from)),
+            qp_iterations: count(self.instance.info_int(c"qp_iteration_count")?.map(i64::from)),
             primal_dual_objective_error: self
                 .instance
-                .info_double(c"primal_dual_objective_error")
+                .info_double(c"primal_dual_objective_error")?
                 .filter(|e| e.is_finite() && *e >= 0.0),
             last_error,
         })
@@ -396,10 +396,14 @@ impl Highs {
 
     /// The branch-and-bound nodes of the last run, `None` for a program without integer columns, which HiGHS solves
     /// without a search tree; and the iterations of every LP and QP solver it ran, `None` when HiGHS counted none.
-    fn work(&self, loaded: &Loaded) -> (Option<u64>, Option<u64>) {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    fn work(&self, loaded: &Loaded) -> Result<(Option<u64>, Option<u64>), HighsError> {
         let nodes = self
             .instance
-            .info_i64(c"mip_node_count")
+            .info_i64(c"mip_node_count")?
             .filter(|_| loaded.is_mip)
             .and_then(|n| u64::try_from(n).ok());
         // HiGHS counts a MIP's LP iterations over all nodes in `simplex_iteration_count`, and marks a count it did not
@@ -411,12 +415,12 @@ impl Highs {
             c"pdlp_iteration_count",
             c"qp_iteration_count",
         ];
-        let counted: Vec<u64> = names
-            .into_iter()
-            .filter_map(|name| self.instance.info_int(name).and_then(|n| u64::try_from(n).ok()))
-            .collect();
+        let mut counted: Vec<u64> = Vec::new();
+        for name in names {
+            counted.extend(self.instance.info_int(name)?.and_then(|n| u64::try_from(n).ok()));
+        }
         let iterations = (!counted.is_empty()).then(|| counted.iter().sum());
-        (nodes, iterations)
+        Ok((nodes, iterations))
     }
 
     /// The generic outcome of a run HiGHS reports as `status`, after `nodes` branch-and-bound nodes.
@@ -430,14 +434,16 @@ impl Highs {
         if status.run == CallStatus::Error {
             return Err(run_failed(status));
         }
-        let best = (status.primal == SolutionStatus::Feasible)
-            .then(|| self.solution(loaded))
-            .flatten();
+        let best = if status.primal == SolutionStatus::Feasible {
+            self.solution(loaded)?
+        } else {
+            None
+        };
         if let Some(why) = unsound_qp(loaded, status, best.as_ref(), self.options.qp_objective_error) {
             return Err(HighsError::UnsoundQp(why));
         }
-        let bound = self.mip_bound(loaded);
-        match self.ending(status, nodes) {
+        let bound = self.mip_bound(loaded)?;
+        match self.ending(status, nodes)? {
             Ending::Optimal => best
                 .map(|solution| optimum(solution, bound))
                 .ok_or_else(|| run_failed(status)),
@@ -467,8 +473,12 @@ impl Highs {
     }
 
     /// How a run HiGHS reports with `status` ended after `nodes` branch-and-bound nodes, in culmen's terms.
-    fn ending(&self, status: &HighsStatus, nodes: Option<u64>) -> Ending {
-        match status.model {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    fn ending(&self, status: &HighsStatus, nodes: Option<u64>) -> Result<Ending, HighsError> {
+        Ok(match status.model {
             ModelStatus::Optimal => Ending::Optimal,
             ModelStatus::ModelEmpty => Ending::Empty,
             ModelStatus::Infeasible => Ending::Infeasible,
@@ -479,7 +489,7 @@ impl Highs {
             ModelStatus::IterationLimit => Ending::Stopped(StopReason::IterationLimit),
             ModelStatus::ObjectiveBound | ModelStatus::ObjectiveTarget => Ending::Stopped(StopReason::ObjectiveLimit),
             ModelStatus::MemoryLimit => Ending::Stopped(StopReason::MemoryLimit),
-            ModelStatus::SolutionLimit => Ending::Stopped(self.search_limit(nodes.unwrap_or(0))),
+            ModelStatus::SolutionLimit => Ending::Stopped(self.search_limit(nodes.unwrap_or(0))?),
             ModelStatus::Unknown | ModelStatus::HighsInterrupt => Ending::Stopped(StopReason::Other),
             ModelStatus::NotSet
             | ModelStatus::LoadError
@@ -487,44 +497,59 @@ impl Highs {
             | ModelStatus::PresolveError
             | ModelStatus::SolveError
             | ModelStatus::PostsolveError => Ending::Failed,
-        }
+        })
     }
 
     /// The best bound HiGHS proved for a MIP with one objective; `None` for any other program or without one.
-    fn mip_bound(&self, loaded: &Loaded) -> Option<f64> {
-        self.instance
-            .info_double(c"mip_dual_bound")
-            .filter(|b| loaded.is_mip && !loaded.several() && b.is_finite())
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    fn mip_bound(&self, loaded: &Loaded) -> Result<Option<f64>, HighsError> {
+        Ok(self
+            .instance
+            .info_double(c"mip_dual_bound")?
+            .filter(|b| loaded.is_mip && !loaded.several() && b.is_finite()))
     }
 
     /// The last run's primal solution, valued with the program's own objective: HiGHS's objective value is the
     /// program's own unless it has further objectives, when it is the last stage's, zero after a lexicographic solve,
     /// or the blend's. `None` when HiGHS holds no primal solution.
-    fn solution(&self, loaded: &Loaded) -> Option<Solution> {
-        let values = self.instance.primal_values(loaded.num_cols())?;
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    fn solution(&self, loaded: &Loaded) -> Result<Option<Solution>, HighsError> {
+        let Some(values) = self.instance.primal_values(loaded.num_cols())? else {
+            return Ok(None);
+        };
         let objective = if loaded.several() {
             loaded.objective(&values)
         } else {
             self.instance.objective()
         };
-        Some(Solution {
+        Ok(Some(Solution {
             objective,
             values: values.into(),
-        })
+        }))
     }
 
     /// Which of HiGHS's search limits a run that ended at its solution limit reached: the node limit HiGHS held for
     /// the run, however it was set, when the node count reached it, else a limit on solutions or leaves.
-    fn search_limit(&self, nodes: u64) -> StopReason {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    fn search_limit(&self, nodes: u64) -> Result<StopReason, HighsError> {
         let node_limit = self
             .instance
-            .option_int(c"mip_max_nodes")
+            .option_int(c"mip_max_nodes")?
             .and_then(|limit| u64::try_from(limit).ok());
-        if node_limit.is_some_and(|limit| nodes >= limit) {
+        Ok(if node_limit.is_some_and(|limit| nodes >= limit) {
             StopReason::NodeLimit
         } else {
             StopReason::SolutionLimit
-        }
+        })
     }
 }
 
@@ -782,7 +807,7 @@ impl Backend for Highs {
     fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<HighsStatus>, HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         configure(&mut self.instance, &self.options, settings)?;
-        if loaded.is_mip && self.instance.option_bool(c"solve_relaxation") == Some(true) {
+        if loaded.is_mip && self.instance.option_bool(c"solve_relaxation")? == Some(true) {
             return Err(HighsError::Relaxation);
         }
         if let Some(blend) = loaded.combined.blend() {
@@ -797,7 +822,7 @@ impl Backend for Highs {
             return Err(error);
         }
         let status = self.status(loaded, ran.run?, ran.last_error)?;
-        let (nodes, iterations) = self.work(loaded);
+        let (nodes, iterations) = self.work(loaded)?;
         let outcome = self.outcome(loaded, &status, nodes)?;
         Ok(Solved {
             outcome,
