@@ -31,11 +31,12 @@ use crate::{
 
 /// A variable to add to a [`Model`]: its integrality, bounds and name.
 ///
-/// Built by chaining, and checked only when the model is built, where an error names the variable:
+/// Built by chaining; bounds set with [`Var::lower`] and [`Var::upper`] are checked only when the model is built,
+/// where an error names the variable:
 ///
 /// ```
-/// use culmen_core::Var;
-/// let stock = Var::integer().bounds(0, 40).name("stock");
+/// use culmen_core::{Var, bounds};
+/// let stock = Var::integer().bounds(bounds!(0.0, 40.0)).name("stock");
 /// let flow = Var::continuous().upper(12.5);
 /// let open = Var::binary();
 /// let slack = Var::free();
@@ -95,9 +96,9 @@ impl Var {
     /// `0 < lower` and `upper` finite, as [`Model::build`] checks.
     ///
     /// ```
-    /// use culmen_core::{Model, ModelError, Var};
+    /// use culmen_core::{Model, ModelError, Var, bounds};
     /// let mut m = Model::new();
-    /// m.add_var(Var::semi_continuous().bounds(2, 10).name("flow"));
+    /// m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)).name("flow"));
     /// assert!(m.build().is_ok());
     /// m.add_var(Var::semi_continuous().name("unbounded"));
     /// assert!(matches!(m.build(), Err(ModelError::SemiBounds { .. })));
@@ -122,21 +123,25 @@ impl Var {
         }
     }
 
-    /// The least value; `f64::NEG_INFINITY` for none.
+    /// Both bounds, an interval checked where it is made, as a [`ProgramColumn`]'s and a [`NewCol`]'s are.
+    ///
+    /// [`NewCol`]: crate::NewCol
+    pub fn bounds(self, bounds: impl Into<Bounds>) -> Self {
+        let bounds = bounds.into();
+        self.lower(bounds.lower()).upper(bounds.upper())
+    }
+
+    /// The least value; `f64::NEG_INFINITY` for none. A number known only at run time, which [`Model::build`] checks
+    /// with the upper bound, naming the variable.
     pub fn lower(mut self, lower: impl Into<f64>) -> Self {
         self.lower = lower.into();
         self
     }
 
-    /// The greatest value; `f64::INFINITY` for none.
+    /// The greatest value; `f64::INFINITY` for none, checked as [`Var::lower`] is.
     pub fn upper(mut self, upper: impl Into<f64>) -> Self {
         self.upper = upper.into();
         self
-    }
-
-    /// Both bounds.
-    pub fn bounds(self, lower: impl Into<f64>, upper: impl Into<f64>) -> Self {
-        self.lower(lower).upper(upper)
     }
 
     /// The name in errors, logs and LP files.
@@ -149,7 +154,7 @@ impl Var {
 impl From<Bounds> for Var {
     /// A continuous variable in the bounds.
     fn from(bounds: Bounds) -> Self {
-        Self::continuous().bounds(bounds.lower(), bounds.upper())
+        Self::continuous().bounds(bounds)
     }
 }
 

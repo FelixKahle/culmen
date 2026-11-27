@@ -308,7 +308,7 @@ fn test_a_failed_load_leaves_no_program_and_a_later_load_works() {
 #[test]
 fn test_programs_with_features_it_does_not_declare_are_refused() {
     let mut m = Model::new();
-    m.add_var(Var::semi_continuous().bounds(1, 2));
+    m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 2.0)));
     let semi = m.build().unwrap();
     // Loaded directly, against the `Backend` contract, the program is refused by a panic before SCIP sees it.
     let mut scip = Scip::new();

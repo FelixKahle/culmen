@@ -76,7 +76,7 @@ fn test_every_variable_form_writes_its_var() {
     p.add_var(Var::continuous().name("a"));
     p.add_var(Var::continuous().lower(-2.0).name("b"));
     p.add_var(Var::integer().upper(5).name("c"));
-    p.add_var(Var::free().bounds(2.5, 2.5).name("d"));
+    p.add_var(Var::free().bounds(bounds!(2.5, 2.5)).name("d"));
     p.add_var(Var::free().lower(-1).upper(1).name("e"));
     p.add_var(Var::integer().lower(1).upper(9).name("f"));
     p.add_var(Var::binary().name("g"));
@@ -105,9 +105,11 @@ fn test_semi_kinds_write_semi_vars() {
     variable!(m, 3 <= u <= 4, SemiInt);
 
     let mut p = Model::new();
-    p.add_var(Var::semi_continuous().bounds(2, 10).name("s"));
-    p.add_var_map(0..2, |&i| Var::semi_integer().bounds(1, ub[i]).name(format!("t[{i}]")));
-    p.add_var(Var::semi_integer().bounds(3, 4).name("u"));
+    p.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)).name("s"));
+    p.add_var_map(0..2, |&i| {
+        Var::semi_integer().lower(1).upper(ub[i]).name(format!("t[{i}]"))
+    });
+    p.add_var(Var::semi_integer().bounds(bounds!(3.0, 4.0)).name("u"));
 
     let program = m.build().unwrap();
     assert_eq!(program, p.build().unwrap());

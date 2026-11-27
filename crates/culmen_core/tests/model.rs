@@ -189,7 +189,7 @@ fn test_plan_names_the_first_defect() {
 #[test]
 fn test_model_errors_name_the_variable_or_constraint() {
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(3.0, 1.0).name("stock"));
+    let x = m.add_var(Var::continuous().lower(3.0).upper(1.0).name("stock"));
     assert_eq!(
         m.build().unwrap_err(),
         ModelError::VarBounds {
@@ -474,7 +474,7 @@ fn test_keyed_family_refuses_repeated_keys() {
 #[test]
 fn test_lp_file_writes_every_section() {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(-2.0, 5.0).name("x[1]"));
+    let x = m.add_var(Var::integer().bounds(bounds!(-2.0, 5.0)).name("x[1]"));
     let y = m.add_var(Var::free().name("1y"));
     m.add_constraint(("range", (x + y).between(-1.0, 4.0)));
     m.add_constraint(("fix", (x - y).equals(0.0)));

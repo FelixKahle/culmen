@@ -170,10 +170,10 @@ impl Program {
     /// What the program uses beyond its [`class`](Program::class): semi columns and multiple objectives.
     ///
     /// ```
-    /// use culmen_core::{Model, Objective, ProgramFeature, ProgramFeatures, Tolerance, Var};
+    /// use culmen_core::{Model, Objective, ProgramFeature, ProgramFeatures, Tolerance, Var, bounds};
     ///
     /// let mut m = Model::new();
-    /// let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    /// let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     /// m.minimize(x);
     /// assert_eq!(m.build()?.features(), ProgramFeature::SemiContinuous.into());
     /// m.add_stage(Objective::maximize(x), Tolerance::EXACT);

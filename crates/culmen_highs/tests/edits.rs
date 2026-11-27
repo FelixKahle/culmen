@@ -217,7 +217,7 @@ fn test_adding_rows_to_a_qp_without_rows_solves_it_right() {
 #[test]
 fn test_a_semi_column_beyond_the_highs_limit_is_refused_and_the_solver_still_solves() {
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(1, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 10.0)));
     m.maximize(x);
     let program = m.build().unwrap();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();

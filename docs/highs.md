@@ -309,7 +309,7 @@ use culmen::highs::{FileError, ModelFormat, files};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
     let x = m.add_var(Var::integer().upper(4).name("x"));
-    let y = m.add_var(Var::semi_continuous().bounds(1, 3).name("y"));
+    let y = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 3.0)).name("y"));
     m.add_constraint(("cap", (x + 2 * y).leq(6)));
     m.maximize(3 * x + 2 * y);
     let program = m.build()?;

@@ -233,8 +233,8 @@ use culmen_testing::reference::{self, Reference};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(0, 3));
-    let y = m.add_var(Var::continuous().bounds(0, 2));
+    let x = m.add_var(Var::integer().bounds(bounds!(0.0, 3.0)));
+    let y = m.add_var(Var::continuous().bounds(bounds!(0.0, 2.0)));
     m.add_constraint((x + y).leq(4.0));
     m.maximize(2.0 * x + y);
     let program = m.build()?;

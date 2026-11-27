@@ -20,7 +20,7 @@ use culmen_core::{
     ActionError, Backend, Callback, Col, Constraint, Context, CutContext, CutHandler, Event, Events, HeuristicContext,
     HeuristicHandler, Heuristics, LazyConstraints, LazyContext, LazyHandler, LinExpr, Linear, LogContext, LogLevel,
     Model, Observer, Outcome, Phase, PollContext, Program, ProgramPlan, ProgramRow, Progress, Settings, Solution,
-    SolutionContext, SolveError, Solver, StopReason, Term, TiSlice, TiVec, UserCuts, Var, relative_gap,
+    SolutionContext, SolveError, Solver, StopReason, Term, TiSlice, TiVec, UserCuts, Var, bounds, relative_gap,
 };
 use culmen_scip::{Emphasis, RetCode, Scip, ScipError, ScipEvent, ScipLazySource, ScipOptions};
 use culmen_testing::instances::assignment;
@@ -335,8 +335,8 @@ fn test_lazy_subtour_constraints_find_the_shortest_tour_found_by_brute_force() {
 fn test_a_lazy_constraint_on_a_qp_moves_its_optimum() {
     // The point of x + y <= 2 nearest (2, 2) is (1, 1), at squared distance 2.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(0, 5));
-    let y = m.add_var(Var::continuous().bounds(0, 5));
+    let x = m.add_var(Var::continuous().bounds(bounds!(0.0, 5.0)));
+    let y = m.add_var(Var::continuous().bounds(bounds!(0.0, 5.0)));
     m.minimize((x - 2) * (x - 2) + (y - 2) * (y - 2));
     let program = m.build().unwrap();
 
@@ -458,7 +458,7 @@ fn test_an_invalid_lazy_constraint_is_refused_typed() {
 /// problem as a fixed variable.
 fn fixed_beside_binary() -> (Program, Col, Col) {
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(1e10, 1e10));
+    let x = m.add_var(Var::continuous().bounds(bounds!(1e10, 1e10)));
     let y = m.add_var(Var::binary());
     m.maximize(y);
     (m.build().unwrap(), x, y)
@@ -674,7 +674,7 @@ fn test_cover_cuts_are_taken_and_leave_the_knapsack_optimum() {
 fn knapsack_beside_fixed() -> (Program, Vec<Col>, Col) {
     let mut m = Model::new();
     let take = m.add_vars(ITEMS.len(), |_| Var::binary());
-    let x = m.add_var(Var::continuous().bounds(1e10, 1e10));
+    let x = m.add_var(Var::continuous().bounds(bounds!(1e10, 1e10)));
     m.add_constraint(LinExpr::sum(ITEMS.iter().zip(&take).map(|(&(_, w), &x)| w * x)).leq(CAPACITY));
     m.maximize(LinExpr::sum(ITEMS.iter().zip(&take).map(|(&(v, _), &x)| v * x)));
     (m.build().unwrap(), take, x)
@@ -961,8 +961,8 @@ fn test_a_stop_request_set_before_the_solve_stops_it_at_the_first_poll() {
 #[test]
 fn test_a_pure_lp_is_polled_at_its_one_node() {
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(0, 4));
-    let y = m.add_var(Var::continuous().bounds(0, 4));
+    let x = m.add_var(Var::continuous().bounds(bounds!(0.0, 4.0)));
+    let y = m.add_var(Var::continuous().bounds(bounds!(0.0, 4.0)));
     m.add_constraint((x + 2 * y).leq(6));
     m.maximize(x + y);
     let mut polls = InterruptWhen {
@@ -1346,8 +1346,8 @@ impl Callback<Scip> for Everything {
 fn test_a_callback_asking_for_every_event_solves_a_qp_without_pricing() {
     // The point of x + y >= 1 nearest the origin is (1/2, 1/2), at squared distance 1/2.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(0, 5));
-    let y = m.add_var(Var::continuous().bounds(0, 5));
+    let x = m.add_var(Var::continuous().bounds(bounds!(0.0, 5.0)));
+    let y = m.add_var(Var::continuous().bounds(bounds!(0.0, 5.0)));
     m.add_constraint((x + y).geq(1));
     m.minimize(x * x + y * y);
     let mut everything = Everything::default();

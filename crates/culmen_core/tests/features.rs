@@ -27,8 +27,8 @@ use proptest::prelude::*;
 /// Minimize `x + y` over `x + y >= 1` with `x` semi-continuous in `[2, 10]` and `y` semi-integer in `[1.5, 4]`.
 fn semi() -> (Model, Col, Col) {
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10).name("x"));
-    let y = m.add_var(Var::semi_integer().bounds(1.5, 4).name("y"));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)).name("x"));
+    let y = m.add_var(Var::semi_integer().bounds(bounds!(1.5, 4.0)).name("y"));
     m.add_constraint((x + y).geq(1));
     m.minimize(x + y);
     (m, x, y)
@@ -78,7 +78,7 @@ fn test_a_semi_column_needs_bounds_that_exclude_zero() {
         assert_eq!(plan.build(), Err(ProgramError::SemiBounds { col: x, bounds }));
 
         let mut m = Model::new();
-        let y = m.add_var(Var::semi_integer().bounds(lower, upper).name("y"));
+        let y = m.add_var(Var::semi_integer().lower(lower).upper(upper).name("y"));
         let Err(ModelError::SemiBounds { var, bounds: refused }) = m.build() else {
             panic!("the semi variable in {bounds} is refused")
         };

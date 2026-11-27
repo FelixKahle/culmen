@@ -226,7 +226,7 @@ Each form beside the calls it writes:
 |---|---|
 | `variable!(m, x)` | `let x = m.add_var(Var::continuous().name("x"));` |
 | `variable!(m, 0 <= y <= 9, Int)` | `let y = m.add_var(Var::integer().lower(0).upper(9).name("y"));` |
-| `variable!(m, z == 2.5, Free)` | `let z = m.add_var(Var::free().bounds(2.5, 2.5).name("z"));` |
+| `variable!(m, z == 2.5, Free)` | `let z = m.add_var(Var::free().lower(2.5).upper(2.5).name("z"));` |
 | `variable!(m, x[i in I, j in J if f(i, j)], Bin)` | `let x = m.add_var_map(keys, \|&(i, j)\| Var::binary().name(format!("x[{i},{j}]")));` with `keys` the filtered pairs |
 | `constraint!(e <= f)` | `Linear::leq(e, f)`; also `geq`, `equals` |
 | `constraint!(lo <= e <= hi)` | `Linear::between(e, lo, hi)` |

@@ -58,9 +58,17 @@ say what was refused. Code never writes `.unwrap()` to make a literal.
 
 A type without an invariant is plain data with `pub` fields and no getters: `ProgramPlan`, `ProgramColumn`,
 `NewCol`, `Constraint`, `LinExpr`, `Settings`, `Solution`, `Progress`, `HighsOptions`, `HighsStatus`. You build them
-with struct literals and `..Default::default()`, read and change their fields directly, and match on them. A column is
-also built by chaining from its integrality (`ProgramColumn::integer().cost(1)`, `NewCol::continuous().entry(row,
-2)`), as a `Var` is, since a literal would spell out the defaults its integrality already names.
+with struct literals and `..Default::default()`, read and change their fields directly, and match on them.
+
+Plain data has no setters, with one exception: a method that chains is kept where it converts its input, appends to
+a list, or replaces a default the constructor named, since a literal would spell out those defaults. It covers
+exactly these types: `ProgramColumn` and `NewCol` (`cost`, `bounds`, `name`, and `entry`/`entries` on `NewCol`),
+built from their integrality (`ProgramColumn::integer().cost(1)`, `NewCol::continuous().entry(row, 2)`);
+`HighsOptions::option` and `ScipOptions::param`, which append a solver option by name; and `Var`. The three column
+builders share one shape: `.bounds(..)` takes anything that converts into a `Bounds`, so a literal interval is
+`bounds!(0.0, 40.0)`, checked when compiled. `Var` alone also has `.lower(..)` and `.upper(..)` for numbers known only
+at run time, which `Model::build` checks, naming the variable. For that reason `Var` keeps its fields private: they
+hold ends nothing has checked yet, which only the model reads.
 
 A type with an invariant keeps its fields private behind a checked constructor: `Bounds`, `Program`, the gaps. Their
 fields cannot be written from outside, not even all at once:

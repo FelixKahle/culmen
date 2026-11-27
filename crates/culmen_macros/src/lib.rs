@@ -199,7 +199,7 @@ fn var_expr(root: &TokenStream2, kind: Kind, bounds: &Bounds) -> TokenStream2 {
     };
     if let Some(value) = &bounds.fixed {
         let v = Ident::new("value", Span::mixed_site());
-        return quote!({ let #v = #value; #base.bounds(#v, #v) });
+        return quote!({ let #v = #value; #base.lower(#v).upper(#v) });
     }
     match (&bounds.lower, &bounds.upper) {
         (Some(l), Some(u)) => {

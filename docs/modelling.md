@@ -48,19 +48,21 @@ model is built.
 
 | Method | Effect |
 |---|---|
+| `.bounds(b)` | Sets both bounds from a [`Bounds`](program.md#bounds), such as `bounds!(0.0, 40.0)`, checked when compiled. |
 | `.lower(l)` | Sets the lower bound; `f64::NEG_INFINITY` for none. |
 | `.upper(u)` | Sets the upper bound; `f64::INFINITY` for none. |
-| `.bounds(l, u)` | Sets both. |
 | `.name(n)` | Names the variable in errors, logs and LP files. |
 
-Bounds take anything that converts into `f64` losslessly, so `Var::integer().bounds(0, 40)` needs no `.0`.
+`.bounds` takes a checked interval, as a program column's and a new column's `.bounds` do. `.lower` and `.upper` take
+numbers known only at run time, anything that converts into `f64` losslessly, so `Var::integer().upper(40)` needs no
+`.0`; `build` checks them and names the variable when they are no interval.
 A [`Bounds`](program.md#bounds) value converts into a continuous `Var` in those bounds, so `add_var` takes it directly:
 
 ```rust
 use culmen::prelude::*;
 
 let mut m = Model::new();
-let stock = m.add_var(Var::integer().bounds(0, 40).name("stock"));
+let stock = m.add_var(Var::integer().bounds(bounds!(0.0, 40.0)).name("stock"));
 let flow = m.add_var(bounds!(0.0, 12.5));
 m.add_var(Var::binary());
 m.add_var(Var::free());
@@ -86,9 +88,9 @@ use culmen::{ModelClass, ModelError};
 fn main() -> Result<(), ModelError> {
     let mut m = Model::new();
     // Off, or between 20 and 80 units.
-    let load = m.add_var(Var::semi_continuous().bounds(20, 80).name("load"));
+    let load = m.add_var(Var::semi_continuous().bounds(bounds!(20.0, 80.0)).name("load"));
     // Off, or 2 to 6 whole trucks.
-    let trucks = m.add_var(Var::semi_integer().bounds(2, 6).name("trucks"));
+    let trucks = m.add_var(Var::semi_integer().bounds(bounds!(2.0, 6.0)).name("trucks"));
     m.add_constraint((load + 10 * trucks).geq(15));
     m.minimize(2 * load + 5 * trucks);
     let program = m.build()?;
@@ -514,7 +516,7 @@ use culmen::prelude::*;
 use culmen::ModelError;
 
 let mut m = Model::new();
-m.add_var(Var::integer().bounds(5, 2).name("stock"));
+m.add_var(Var::integer().lower(5).upper(2).name("stock"));
 let error = m.build().unwrap_err();
 assert!(matches!(error, ModelError::VarBounds { .. }));
 assert_eq!(

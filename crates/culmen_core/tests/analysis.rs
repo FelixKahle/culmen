@@ -19,7 +19,7 @@ use culmen_core::{
     Analysis, AnalysisError, Backend, Basis, BasisAnalysis, BasisStatus, Bound, Col, DualAnalysis, Duals, Iis,
     IisAnalysis, InvalidPenalty, Limit, Line, Linear, Misfit, Model, ModelClass, ModelClasses, Outcome, Penalty,
     Program, ProgramPlan, Ranged, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Row, Settings,
-    Solution, Solved, Solver, Table, TiVec, Var, Violation, Weights, penalty,
+    Solution, Solved, Solver, Table, TiVec, Var, Violation, Weights, bounds, penalty,
 };
 use proptest::prelude::*;
 
@@ -464,7 +464,7 @@ fn test_violations_and_their_penalty_on_a_fixture() {
     // x in [0, 2], y in [1, 3], x + y <= 3: at (3, 0) x is 1 above, y 1 below, the row 0 off.
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(2.0));
-    let y = m.add_var(Var::continuous().bounds(1.0, 3.0));
+    let y = m.add_var(Var::continuous().bounds(bounds!(1.0, 3.0)));
     let r = m.add_constraint((x + y).leq(3.0));
     let program = m.build().unwrap();
     let relaxed = Relaxed {
@@ -707,7 +707,7 @@ mod serde_round_trips {
 fn test_weights_price_whole_tables_and_keep_semi_bounds_hard() {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(4));
-    let s = m.add_var(Var::semi_continuous().bounds(1, 3));
+    let s = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 3.0)));
     let r = m.add_constraint((x + s).leq(5));
     let program = m.build().unwrap();
     let p = penalty!(2.0);

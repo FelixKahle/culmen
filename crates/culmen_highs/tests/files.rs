@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use culmen_core::{
     Bounds, Integrality, Linear, Model, Objective, Outcome, Program, ProgramError, ProgramFeature, Sense, Solver,
-    Tolerance, Var,
+    Tolerance, Var, bounds,
 };
 use culmen_highs::Highs;
 use culmen_highs::{FileError, ModelFormat, files};
@@ -69,10 +69,10 @@ fn columns_by_name(program: &Program) -> BTreeMap<String, (Integrality, Bounds, 
 /// A MILP with every kind of column, a ranged row, a free column, an offset, maximized.
 fn mixed() -> Program {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(-2, 5).name("x"));
+    let x = m.add_var(Var::integer().bounds(bounds!(-2.0, 5.0)).name("x"));
     let y = m.add_var(Var::free().name("y"));
-    let z = m.add_var(Var::semi_continuous().bounds(2, 10).name("z"));
-    let w = m.add_var(Var::semi_integer().bounds(1, 7).name("w"));
+    let z = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)).name("z"));
+    let w = m.add_var(Var::semi_integer().bounds(bounds!(1.0, 7.0)).name("w"));
     m.add_constraint(("band", (x - y + z).between(-1, 4)));
     m.add_constraint(("floor", (x + w).geq(1.5)));
     m.add_constraint(("roof", (y + w).leq(9)));
@@ -117,13 +117,13 @@ fn read_lp_string(program: &Program) -> Program {
 fn test_culmens_lp_file_tells_every_column_and_row_apart_whatever_their_names() {
     let mut m = Model::new();
     // A named column `x1` beside unnamed column 1, which the writer would call `x1` too.
-    let x = m.add_var(Var::continuous().bounds(0, 10).name("x1"));
-    let y = m.add_var(Var::continuous().bounds(2, 10));
+    let x = m.add_var(Var::continuous().bounds(bounds!(0.0, 10.0)).name("x1"));
+    let y = m.add_var(Var::continuous().bounds(bounds!(2.0, 10.0)));
     // Two columns of one name, and two names that reduce to the same text.
-    let a = m.add_var(Var::continuous().bounds(0, 4).name("a"));
-    let b = m.add_var(Var::continuous().bounds(0, 4).name("a"));
-    let c = m.add_var(Var::continuous().bounds(0, 4).name("c d"));
-    let d = m.add_var(Var::continuous().bounds(0, 4).name("c_d"));
+    let a = m.add_var(Var::continuous().bounds(bounds!(0.0, 4.0)).name("a"));
+    let b = m.add_var(Var::continuous().bounds(bounds!(0.0, 4.0)).name("a"));
+    let c = m.add_var(Var::continuous().bounds(bounds!(0.0, 4.0)).name("c d"));
+    let d = m.add_var(Var::continuous().bounds(bounds!(0.0, 4.0)).name("c_d"));
     // A named row `r1` beside unnamed row 1, and a ranged row `band` beside a row named `band_lo`.
     m.add_constraint(("r1", (x - y).geq(1)));
     m.add_constraint((a - b).geq(1));
@@ -147,8 +147,8 @@ fn test_culmens_lp_file_tells_every_column_and_row_apart_whatever_their_names() 
 #[test]
 fn test_a_semi_column_with_equal_bounds_round_trips_in_both_formats() {
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(5, 5).name("x"));
-    let y = m.add_var(Var::semi_integer().bounds(3, 3).name("y"));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(5.0, 5.0)).name("x"));
+    let y = m.add_var(Var::semi_integer().bounds(bounds!(3.0, 3.0)).name("y"));
     m.add_constraint(("cap", (x + y).leq(4)));
     m.maximize(x + 2 * y);
     let program = m.build().unwrap();

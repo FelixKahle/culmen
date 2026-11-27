@@ -273,7 +273,7 @@ use culmen::ModelClass;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The point of x + y <= 1 nearest (1, 2) with x whole: (0, 1), at squared distance 2.
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(-5, 5));
+    let x = m.add_var(Var::integer().bounds(bounds!(-5.0, 5.0)));
     let y = m.add_var(Var::free());
     m.add_constraint((x + y).leq(1));
     m.minimize((x - 1) * (x - 1) + (y - 2) * (y - 2));

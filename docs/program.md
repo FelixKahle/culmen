@@ -297,7 +297,7 @@ use culmen::{ProgramFeature, ProgramFeatures};
 
 fn main() -> Result<(), culmen::ModelError> {
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(1, 4));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 4.0)));
     m.maximize(x);
     m.add_stage(Objective::minimize(x), Tolerance::EXACT);
     let features = m.build()?.features();
@@ -365,7 +365,7 @@ use culmen::prelude::*;
 
 fn main() -> Result<(), culmen::ModelError> {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(0, 3));
+    let x = m.add_var(Var::integer().bounds(bounds!(0.0, 3.0)));
     let y = m.add_var(Var::continuous());
     m.add_constraint((x + y).leq(4.0));
     m.maximize(2.0 * x + y + 1.0);
@@ -406,7 +406,7 @@ use culmen::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(0, 5).name("x"));
+    let x = m.add_var(Var::integer().bounds(bounds!(0.0, 5.0)).name("x"));
     let y = m.add_var(Var::free().name("y"));
     m.add_constraint(("band", (x - y).between(-1, 1)));
     m.maximize(3.0 * x + y);

@@ -170,8 +170,8 @@ fn test_a_program_without_columns_and_true_rows_is_optimal_at_its_offset() {
 fn test_a_program_with_only_bounds_takes_the_best_bound_of_each_column() {
     // Minimize x - y over x in [1, 3] and integer y in [-2, 5]: x = 1, y = 5, objective -4.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(1, 3));
-    let y = m.add_var(Var::integer().bounds(-2, 5));
+    let x = m.add_var(Var::continuous().bounds(bounds!(1.0, 3.0)));
+    let y = m.add_var(Var::integer().bounds(bounds!(-2.0, 5.0)));
     m.minimize(x - y);
     let solved = solve(m.build().unwrap());
     let best = optimum(&solved);
@@ -211,8 +211,8 @@ fn test_a_free_row_binds_nothing_and_a_ranged_row_binds_both_sides() {
 fn test_a_fixed_column_keeps_its_value() {
     // Maximize x + y with x fixed at 2.5, y integer in [0, 10] and x + y <= 6: y = 3, objective 5.5.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(2.5, 2.5));
-    let y = m.add_var(Var::integer().bounds(0, 10));
+    let x = m.add_var(Var::continuous().bounds(bounds!(2.5, 2.5)));
+    let y = m.add_var(Var::integer().bounds(bounds!(0.0, 10.0)));
     m.add_constraint((x + y).leq(6.0));
     m.maximize(x + y);
     let solved = solve(m.build().unwrap());
@@ -226,7 +226,7 @@ fn test_a_fixed_column_keeps_its_value() {
 fn test_infinite_bounds_leave_a_column_free() {
     // Minimize x over a free x and y >= 0 subject to x + y >= -3 and y <= 1 in a row: x = -4, y = 1, objective -4.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(f64::NEG_INFINITY, f64::INFINITY));
+    let x = m.add_var(Var::continuous().bounds(bounds!(f64::NEG_INFINITY, f64::INFINITY)));
     let y = m.add_var(Var::continuous());
     m.add_constraint((x + y).geq(-3.0));
     m.add_constraint(LinExpr::from(y).leq(1.0));
@@ -241,7 +241,7 @@ fn test_infinite_bounds_leave_a_column_free() {
 #[test]
 fn test_an_integer_column_whose_bounds_hold_no_whole_number_is_infeasible() {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(0.25, 0.75));
+    let x = m.add_var(Var::integer().bounds(bounds!(0.25, 0.75)));
     m.minimize(x);
     let solved = solve(m.build().unwrap());
     assert!(
@@ -486,8 +486,8 @@ fn test_a_second_solve_starts_from_the_last_solves_best_solution_until_an_edit()
 fn test_an_edit_reloads_the_program() {
     // Raising y's upper bound to 5 lets maximize x + y over x + y <= 4 reach 4 instead of 3.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(0, 1));
-    let y = m.add_var(Var::continuous().bounds(0, 2));
+    let x = m.add_var(Var::continuous().bounds(bounds!(0.0, 1.0)));
+    let y = m.add_var(Var::continuous().bounds(bounds!(0.0, 2.0)));
     m.add_constraint((x + y).leq(4.0));
     m.maximize(x + y);
     let mut solver = Solver::new(Scip::new(), m.build().unwrap()).unwrap();

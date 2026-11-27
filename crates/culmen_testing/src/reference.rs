@@ -751,19 +751,19 @@ mod tests {
     fn test_reference_solves_hand_worked_semi_problems() {
         // x is zero or in [2, 10]: maximizing it below 1.5 leaves it at zero; minimizing it above 0.5 lifts it to 2.
         let mut m = Model::new();
-        let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+        let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
         m.add_constraint(x.leq(1.5));
         m.maximize(x);
         assert_eq!(solve(&m.build().unwrap()).objective(), Some(0.0));
         let mut m = Model::new();
-        let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+        let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
         m.add_constraint(x.geq(0.5));
         m.minimize(x);
         assert_eq!(solve(&m.build().unwrap()).objective(), Some(2.0));
 
         // y is zero or a whole number in [2.5, 10]: at least 0.5 makes it 3; between 0.5 and 2.9 nothing fits.
         let mut m = Model::new();
-        let y = m.add_var(Var::semi_integer().bounds(2.5, 10));
+        let y = m.add_var(Var::semi_integer().bounds(bounds!(2.5, 10.0)));
         m.add_constraint(y.geq(0.5));
         m.minimize(y);
         assert_eq!(solve(&m.build().unwrap()).objective(), Some(3.0));
@@ -785,8 +785,8 @@ mod tests {
     fn test_the_reference_refuses_an_integer_box_beyond_i64() {
         // Each column has 8e18 + 1 whole values, which i64 counts; the box has their square, which it does not.
         let mut m = Model::new();
-        let x = m.add_var(Var::integer().bounds(-4e18, 4e18));
-        let y = m.add_var(Var::integer().bounds(-4e18, 4e18));
+        let x = m.add_var(Var::integer().bounds(bounds!(-4e18, 4e18)));
+        let y = m.add_var(Var::integer().bounds(bounds!(-4e18, 4e18)));
         m.minimize(x + y);
         let _ = solve(&m.build().unwrap());
     }

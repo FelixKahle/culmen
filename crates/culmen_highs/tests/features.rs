@@ -12,7 +12,7 @@
 use culmen_core::{
     Analysis, AnalysisError, Col, Improvement, LinExpr, Linear, LoadError, Misfit, Model, ModelClass, Objective,
     ObjectiveId, Observer, Outcome, Program, ProgramFeature, Solution, SolveError, Solver, Start, StartError, TiSlice,
-    TiVec, Tolerance, Var, Weights, absolute_gap, penalty, relative_gap, weight,
+    TiVec, Tolerance, Var, Weights, absolute_gap, bounds, penalty, relative_gap, weight,
 };
 use culmen_highs::{Highs, HighsError};
 use culmen_testing::reference::{self, close};
@@ -33,7 +33,7 @@ fn optimum(program: &Program) -> Solution {
 fn test_a_semi_continuous_column_is_zero_or_in_its_bounds() {
     // x is zero or in [2, 10]. Below 1.5 the most it can be is zero, where a continuous x would reach 1.5.
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     m.add_constraint(x.leq(1.5));
     m.maximize(x);
     let best = optimum(&m.build().unwrap());
@@ -41,7 +41,7 @@ fn test_a_semi_continuous_column_is_zero_or_in_its_bounds() {
 
     // Above 0.5 the least it can be is its lower bound 2, where a continuous x would stay at 0.5.
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     m.add_constraint(x.geq(0.5));
     m.minimize(x);
     let best = optimum(&m.build().unwrap());
@@ -55,14 +55,14 @@ fn test_a_semi_continuous_column_is_zero_or_in_its_bounds() {
 fn test_a_semi_integer_column_is_zero_or_whole_in_its_bounds() {
     // y is zero or a whole number in [2.5, 10]: above 0.5 the least is 3; below 2.9 the most is zero.
     let mut m = Model::new();
-    let y = m.add_var(Var::semi_integer().bounds(2.5, 10));
+    let y = m.add_var(Var::semi_integer().bounds(bounds!(2.5, 10.0)));
     m.add_constraint(y.geq(0.5));
     m.minimize(y);
     let best = optimum(&m.build().unwrap());
     assert_eq!((best.objective, best.values[y]), (3.0, 3.0));
 
     let mut m = Model::new();
-    let y = m.add_var(Var::semi_integer().bounds(2.5, 10));
+    let y = m.add_var(Var::semi_integer().bounds(bounds!(2.5, 10.0)));
     m.add_constraint(y.leq(2.9));
     m.maximize(y);
     assert_eq!(optimum(&m.build().unwrap()).values[y], 0.0);
@@ -73,12 +73,12 @@ fn test_a_semi_upper_bound_above_highs_limit_is_refused() {
     // HiGHS 1.16 lowers a semi column's upper bound above 1e5 to 1e5 (HighsLpUtils.cpp, assessSemiVariables), so
     // the optimum x = 2e5 of this program would be out of its reach.
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(1, 2e5));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 2e5)));
     m.maximize(x);
     let error = Solver::new(Highs::new(), m.build().unwrap()).unwrap_err();
     assert_eq!(error, LoadError::Backend(HighsError::SemiUpper { col: x, upper: 2e5 }));
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(1, Highs::SEMI_UPPER_LIMIT));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, Highs::SEMI_UPPER_LIMIT)));
     m.maximize(x);
     assert_eq!(optimum(&m.build().unwrap()).objective, Highs::SEMI_UPPER_LIMIT);
 }
@@ -306,7 +306,7 @@ fn test_a_sparse_start_may_hold_a_semi_columns_zero() {
     // Zero lies outside a semi column's bounds; HiGHS 1.16's sparse start refuses no value for its bounds, so the zero
     // is taken.
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     let y = m.add_var(Var::integer().upper(3));
     m.add_constraint((x + y).geq(1));
     m.minimize(x + 2 * y);
@@ -390,7 +390,7 @@ fn test_objective_values_follow_the_program() {
 /// zero, which violates none of its bounds.
 fn semi_relaxation() -> (Program, Col, Col) {
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     let y = m.add_var(Var::continuous().upper(1));
     m.add_constraint((x + y).geq(1.8));
     m.add_constraint(x.leq(0.5));
