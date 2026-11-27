@@ -109,7 +109,7 @@ pub use callback::{
 use culmen_core::backend::{Edit, Hooks};
 use culmen_core::{
     Backend, Configurable, Events, Heuristics, ModelClass, ModelClasses, Objectives, Outcome, Program, ProgramFeatures,
-    QuadObjective, RelativeGap, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice,
+    QuadObjective, RelativeGap, Settings, Solution, Solved, Start, StopReason, TiSlice,
 };
 use culmen_core::{
     Basis, BasisAnalysis, Col, DualAnalysis, Duals, Iis, IisAnalysis, Ranging, RangingAnalysis, RayAnalysis,
@@ -161,7 +161,6 @@ pub(crate) struct Loaded {
     pub(crate) bounded: bool,
     pub(crate) is_mip: bool,
     pub(crate) offset: f64,
-    pub(crate) sense: Sense,
     /// How the program's objectives combine.
     combined: Combined,
 }
@@ -210,7 +209,6 @@ impl Loaded {
                 .all(|c| c.bounds.lower().is_finite() && c.bounds.upper().is_finite()),
             is_mip: program.class().is_discrete(),
             offset: program.offset(),
-            sense: program.sense(),
         }
     }
 
@@ -220,7 +218,7 @@ impl Loaded {
 
     /// Whether the program has further objectives, whose solve leaves HiGHS's objective value and MIP bound those of
     /// its last stage or of the blend.
-    const fn several(&self) -> bool {
+    pub(crate) const fn several(&self) -> bool {
         !matches!(self.combined, Combined::Single)
     }
 
@@ -655,7 +653,6 @@ fn run_hooked(instance: &mut Instance, loaded: &Loaded, hooks: Hooks<'_, Highs>)
         unlisted: None,
         last_error: None,
         offered: None,
-        incumbent: None,
     });
     let user: *mut core::ffi::c_void = (&raw const hook).cast_mut().cast();
     debug_assert!(!user.is_null(), "run_hooked: a run is installed with no data");

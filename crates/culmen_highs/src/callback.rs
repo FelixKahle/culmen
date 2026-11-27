@@ -192,10 +192,8 @@ pub(crate) struct Hook<'a, 'h> {
     pub(crate) unlisted: Option<HighsError>,
     /// The last error line of HiGHS's log.
     pub(crate) last_error: Option<String>,
-    /// The last solution a callback supplied, until HiGHS takes it or a better incumbent arrives.
+    /// The last solution a callback supplied, until the next MIP poll or an improving solution.
     pub(crate) offered: Option<Offer>,
-    /// The objective of the last incumbent reported to the callback.
-    pub(crate) incumbent: Option<f64>,
 }
 
 impl fmt::Debug for Hook<'_, '_> {
@@ -208,16 +206,17 @@ impl fmt::Debug for Hook<'_, '_> {
             .field("unlisted", &self.unlisted)
             .field("last_error", &self.last_error)
             .field("offered", &self.offered)
-            .field("incumbent", &self.incumbent)
             .finish_non_exhaustive()
     }
 }
 
-/// A solution a callback supplied, valued.
+/// A solution a callback supplied, valued with the program's own objective.
 #[derive(Debug)]
 pub(crate) struct Offer {
     objective: f64,
     values: Vec<f64>,
+    /// HiGHS's primal bound when the solution was supplied; `None` before HiGHS had one.
+    primal: Option<f64>,
 }
 
 /// The function HiGHS calls for every started callback kind.
@@ -335,6 +334,7 @@ unsafe fn dispatch(hook: &mut Hook<'_, '_>, call: &Call, interrupt: &mut bool) {
         Kind::MipLogging => hook.hooks.progress(&mut HighsProgress {
             elapsed,
             mip: mip_data(call),
+            several: hook.program.several(),
         }),
         // SAFETY: the caller's contract holds for `call`, a solution kind.
         Kind::MipSolution | Kind::MipImprovingSolution => unsafe { solution(hook, call, elapsed) },
@@ -371,6 +371,7 @@ fn poll(hook: &mut Hook<'_, '_>, call: &Call, poller: Poller, elapsed: Duration,
         hook.hooks.poll(&mut HighsPoll {
             elapsed,
             source,
+            several: hook.program.several(),
             interrupt,
         });
     }
@@ -457,16 +458,24 @@ unsafe fn solution(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     if values.len() != hook.program.num_cols() {
         return;
     }
+    // With further objectives HiGHS's value is the stage's or the blend's.
+    let objective = if hook.program.several() {
+        hook.program.objective(values)
+    } else {
+        field!(call, objective_function_value)
+    };
     let mut ctx = HighsSolution {
         elapsed,
-        objective: field!(call, objective_function_value),
+        objective,
         values: TiSlice::from_ref(values),
         mip: Some(mip_data(call)),
+        several: hook.program.several(),
     };
     if call.kind == Kind::MipSolution {
         hook.hooks.feasible(&mut ctx);
     } else {
-        hook.incumbent = Some(ctx.objective);
+        // A solution HiGHS found is the incumbent now, so a supplied one is reported no more.
+        hook.offered = None;
         hook.hooks.incumbent(&mut ctx);
     }
 }
@@ -489,36 +498,30 @@ unsafe fn qp_feasible(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
         objective: hook.program.objective(values),
         values: TiSlice::from_ref(values),
         mip: None,
+        several: hook.program.several(),
     });
 }
 
-/// Reports a supplied solution HiGHS took as its incumbent: HiGHS calls neither solution kind for a user solution,
-/// so the trampoline reports it at the first MIP poll whose best objective is the supplied solution's.
+/// Reports a supplied solution HiGHS took as its incumbent at the first MIP poll after it was supplied.
+///
+/// HiGHS checks a supplied solution as soon as the query returns, takes it when it is feasible and better, and calls
+/// neither solution kind for it (`queryExternalSolution` in `HighsMipSolverData.cpp`), while a solution HiGHS finds
+/// itself is reported and drops the offer. So a primal bound that moved between the query and the poll moved to the
+/// supplied solution, whatever objective HiGHS is optimizing: the program's own, a stage's or a blend's.
 fn report_offer(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     let Some(primal) = finite(field!(call, mip_primal_bound)) else {
         return;
     };
-    let Some(offer) = hook.offered.as_ref() else { return };
-    let taken = (primal - offer.objective).abs() <= 1e-9 * primal.abs().max(1.0);
-    let improves = hook
-        .incumbent
-        .is_none_or(|best| hook.program.sense.better(primal, best));
-    if !improves {
-        hook.offered = None;
-        return;
-    }
-    if !taken {
-        return;
-    }
     let Some(offer) = hook.offered.take() else { return };
-    hook.incumbent = Some(offer.objective);
-    if hook.wanted.contains(Event::Incumbent) {
+    let taken = offer.primal.is_none_or(|before| before.to_bits() != primal.to_bits());
+    if taken && hook.wanted.contains(Event::Incumbent) {
         let values = TiSlice::from_ref(offer.values.as_slice());
         let mut ctx = HighsSolution {
             elapsed,
             objective: offer.objective,
             values,
             mip: Some(mip_data(call)),
+            several: hook.program.several(),
         };
         hook.hooks.incumbent(&mut ctx);
     }
@@ -709,7 +712,8 @@ impl LogContext for HighsLog<'_> {
     }
 }
 
-/// What every MIP callback kind reports, in the model's objective space, offset included.
+/// What every MIP callback kind reports, in the space of the objective HiGHS optimizes, offset included: the
+/// program's own, or with further objectives the current stage's or the blend's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HighsMipData {
     /// The MIP solver's own clock, which starts after presolve.
@@ -730,12 +734,15 @@ pub struct HighsMipData {
 }
 
 impl HighsMipData {
-    fn progress(&self, elapsed: Duration) -> Progress {
+    /// The generic progress, whose objective and bound are the program's own: left out when the program has
+    /// `several` objectives, whose figures here are a stage's or the blend's.
+    fn progress(&self, elapsed: Duration, several: bool) -> Progress {
+        let own = |value: Option<f64>| value.filter(|_| !several);
         Progress {
             elapsed,
             phase: Phase::Mip,
-            objective: self.primal_bound,
-            bound: self.dual_bound,
+            objective: own(self.primal_bound),
+            bound: own(self.dual_bound),
             nodes: Some(self.nodes),
             iterations: Some(self.lp_iterations),
         }
@@ -747,6 +754,7 @@ impl HighsMipData {
 pub struct HighsProgress {
     elapsed: Duration,
     mip: HighsMipData,
+    several: bool,
 }
 
 impl HighsProgress {
@@ -759,7 +767,7 @@ impl HighsProgress {
 
 impl Context for HighsProgress {
     fn progress(&self) -> Progress {
-        self.mip.progress(self.elapsed)
+        self.mip.progress(self.elapsed, self.several)
     }
 }
 
@@ -793,6 +801,7 @@ pub enum HighsPollSource {
 pub struct HighsPoll<'a> {
     elapsed: Duration,
     source: HighsPollSource,
+    several: bool,
     interrupt: &'a mut bool,
 }
 
@@ -815,7 +824,7 @@ impl Context for HighsPoll<'_> {
                 iterations: Some(iterations),
                 ..Progress::at(self.elapsed, Phase::Barrier)
             },
-            HighsPollSource::Mip(mip) => mip.progress(self.elapsed),
+            HighsPollSource::Mip(mip) => mip.progress(self.elapsed, self.several),
             HighsPollSource::Qp { iterations } => Progress {
                 iterations: Some(iterations),
                 ..Progress::at(self.elapsed, Phase::Other)
@@ -835,9 +844,11 @@ impl PollContext for HighsPoll<'_> {
 #[derive(Debug)]
 pub struct HighsSolution<'a> {
     elapsed: Duration,
+    /// The program's own objective value, whatever HiGHS optimizes.
     objective: f64,
     values: &'a TiSlice<Col, f64>,
     mip: Option<HighsMipData>,
+    several: bool,
 }
 
 impl HighsSolution<'_> {
@@ -851,7 +862,7 @@ impl HighsSolution<'_> {
 impl Context for HighsSolution<'_> {
     fn progress(&self) -> Progress {
         match &self.mip {
-            Some(mip) => mip.progress(self.elapsed),
+            Some(mip) => mip.progress(self.elapsed, self.several),
             None => Progress {
                 objective: Some(self.objective),
                 ..Progress::at(self.elapsed, Phase::Other)
@@ -949,13 +960,18 @@ impl HighsHeuristic<'_> {
     /// Keeps a supplied solution, valued, to report once HiGHS takes it.
     fn offer(&mut self, values: Vec<f64>) {
         let objective = self.program.objective(&values);
-        *self.offered = Some(Offer { objective, values });
+        let primal = self.mip.primal_bound;
+        *self.offered = Some(Offer {
+            objective,
+            values,
+            primal,
+        });
     }
 }
 
 impl Context for HighsHeuristic<'_> {
     fn progress(&self) -> Progress {
-        self.mip.progress(self.elapsed)
+        self.mip.progress(self.elapsed, self.program.several())
     }
 }
 

@@ -17,8 +17,8 @@ use std::thread;
 
 use culmen_core::{
     ActionError, Backend, Callback, Col, Context, Event, Events, HeuristicContext, HeuristicHandler, Heuristics,
-    Improvement, LinExpr, Linear, LogLine, Model, Observer, Outcome, Phase, PollContext, Program, Progress, Settings,
-    Solution, SolutionContext, SolveError, Solved, Solver, StopReason, TiVec, Var, relative_gap,
+    Improvement, LinExpr, Linear, LogLine, Model, Objective, Observer, Outcome, Phase, PollContext, Program, Progress,
+    Settings, Solution, SolutionContext, SolveError, Solved, Solver, StopReason, TiVec, Var, relative_gap, weight,
 };
 use culmen_highs::{
     Highs, HighsError, HighsNative, HighsOptions, HighsPollSource, HighsQueryOrigin, HighsStatus, LpSolver, Switch,
@@ -509,6 +509,76 @@ fn test_a_supplied_solution_becomes_the_first_incumbent() {
     );
     assert_eq!(solved.outcome.solution().unwrap().objective, objective);
     assert_eq!(values.len(), take.len());
+}
+
+/// The knapsack with a second objective blended in: its own objective, the value, plus half the weight taken, which
+/// HiGHS optimizes as one blend.
+fn blended_knapsack() -> Program {
+    let (value, weight) = ([10.0, 13.0, 7.0, 8.0, 9.0, 4.0], [5.0, 6.0, 4.0, 3.0, 5.0, 2.0]);
+    let mut m = Model::new();
+    let take = m.add_vars(6, |_| Var::binary());
+    m.add_constraint(LinExpr::sum((0..6).map(|i| weight[i] * take[i])).leq(12.0));
+    m.maximize(LinExpr::sum((0..6).map(|i| value[i] * take[i])));
+    m.add_weighted(
+        Objective::minimize(LinExpr::sum((0..6).map(|i| weight[i] * take[i]))),
+        weight!(0.5),
+    );
+    m.build().unwrap()
+}
+
+#[test]
+fn test_with_several_objectives_the_observer_sees_the_programs_own_objective() {
+    let program = blended_knapsack();
+    let mut seen = Seen::default();
+    Solver::new(Highs::new(), program.clone())
+        .unwrap()
+        .run()
+        .settings(no_presolve())
+        .observer(&mut seen)
+        .progress_interval(Duration::ZERO)
+        .solve()
+        .unwrap();
+    assert!(!seen.improved.is_empty());
+    for (objective, values) in &seen.improved {
+        assert!(
+            close(program.objective_value(values), *objective, 1e-9),
+            "{objective} against {}",
+            program.objective_value(values)
+        );
+    }
+    let mip = seen.progress.iter().filter(|p| p.phase == Phase::Mip);
+    assert!(
+        mip.clone().all(|p| p.objective.is_none() && p.bound.is_none()),
+        "a blend's figures are not the program's own: {:?}",
+        mip.collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_with_several_objectives_a_supplied_solution_becomes_the_first_incumbent() {
+    let program = blended_knapsack();
+    let optimum = Solver::new(Highs::new(), program.clone())
+        .unwrap()
+        .solve()
+        .unwrap()
+        .outcome;
+    let Outcome::Optimal(Solution { objective, values }) = optimum else {
+        panic!("{optimum:?}")
+    };
+    let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
+    let mut kinds = Kinds {
+        supply: Some(values.raw.clone()),
+        ..Kinds::default()
+    };
+    solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
+    assert_eq!(kinds.supplied, [Ok(())]);
+    assert_eq!(objective, program.objective_value(&values));
+    assert_eq!(
+        kinds.incumbents.first().copied(),
+        Some(objective),
+        "{:?}",
+        kinds.incumbents
+    );
 }
 
 #[test]

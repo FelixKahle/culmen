@@ -283,8 +283,9 @@ trusted:
   A multi-objective solve leaves HiGHS's own objective value at zero after a lexicographic solve and at the blend's
   otherwise (`returnFromLexicographicOptimization` in `HighsInterface.cpp`), and its MIP bound is that of the last
   stage or the blend: the backend reports the program's own objective, computed from the solution, and no bound, so a
-  MIP's outcome is `Optimal` or `Stopped`. Objective values HiGHS reports to callbacks during such a solve are those
-  of the stage it is solving or of the blend.
+  MIP's outcome is `Optimal` or `Stopped`. The callbacks' solutions are valued the same way, with the program's own
+  objective, and the generic `Progress` of such a solve carries no objective and no bound; HiGHS's own figures, those
+  of the stage it is solving or of the blend, stay in `HighsMipData`.
 - **A start**, given to `Run::start`, reaches HiGHS through `Highs_setSparseSolution` before the run, a full one with
   every column. HiGHS refuses no value for lying outside its column's bounds (`Highs::setSolution` in `Highs.cpp`), so
   a semi column's zero is kept, and leaves the other columns of a sparse start open; for a MIP it completes them by a
