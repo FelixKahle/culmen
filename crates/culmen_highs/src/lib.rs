@@ -65,8 +65,8 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
 pub use callback::{
-    Cut, CutPool, HighsHeuristic, HighsLog, HighsLogType, HighsMipProgress, HighsNative, HighsPoll, HighsSolution,
-    MipData, PollSource, QueryOrigin, ReducedCol, RootNodePoint,
+    HighsCut, HighsCutPool, HighsHeuristic, HighsLog, HighsLogType, HighsMipData, HighsNative, HighsPoll,
+    HighsPollSource, HighsProgress, HighsQueryOrigin, HighsRootNodePoint, HighsSolution, ReducedCol,
 };
 use culmen_core::{
     Backend, Configurable, Edit, Events, Heuristics, Hooks, ModelClass, ModelClasses, Objectives, Outcome, Program,
@@ -628,7 +628,7 @@ impl Backend for Highs {
     type Error = HighsError;
     type Status = HighsStatus;
     type Log<'a> = HighsLog<'a>;
-    type Progress<'a> = HighsMipProgress;
+    type Progress<'a> = HighsProgress;
     type Poll<'a> = HighsPoll<'a>;
     type Solution<'a> = HighsSolution<'a>;
     type Native<'a> = HighsNative;
@@ -713,7 +713,7 @@ impl Configurable for Highs {
 }
 
 /// HiGHS asks a heuristic handler for a solution at its user-solution callback, `kHighsCallbackMipUserSolution`, at
-/// the points [`QueryOrigin`] names.
+/// the points [`HighsQueryOrigin`] names.
 impl Heuristics for Highs {
     type Heuristic<'a> = HighsHeuristic<'a>;
 }

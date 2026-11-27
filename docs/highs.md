@@ -244,7 +244,7 @@ trusted:
 
 - **A poll, a first feasible point and the log.** HiGHS 1.16's active-set QP solver polls for an interrupt once its
   starting point is found and then at every iteration, and reports that starting point once. A QP solve therefore
-  delivers `POLL`, with `PollSource::Qp { iterations }`, so a [`Stop`](callbacks.md#stop) ends it as
+  delivers `POLL`, with `HighsPollSource::Qp { iterations }`, so a [`Stop`](callbacks.md#stop) ends it as
   `Stopped { reason: Interrupted, .. }`; it delivers `FEASIBLE` once, for the starting point, valued by the backend
   since HiGHS reports no objective with it; and `LOG`. It delivers no `PROGRESS` and no `INCUMBENT`, so an observer
   sees no progress and no improvement. The time limit of the [`Settings`](solving.md#settings) applies as before.
@@ -431,15 +431,15 @@ A `Callback<Highs>` and a `HeuristicHandler<Highs>` receive HiGHS's own context 
 | Event or handler | Context | HiGHS callback | Beyond the trait |
 |---|---|---|---|
 | `LOG` | `HighsLog` | `kHighsCallbackLogging` | `log_type()`: a `HighsLogType`, `Info`, `Detailed`, `Verbose`, `Warning` or `Error` |
-| `PROGRESS` | `HighsMipProgress` | `kHighsCallbackMipLogging`, when HiGHS writes a MIP log line | `mip()`: the `MipData` |
-| `POLL` | `HighsPoll` | the simplex, interior-point, MIP and QP interrupt callbacks | `source()`: a `PollSource`, `Simplex { iterations }`, `Ipm { iterations }`, `Mip(MipData)` or `Qp { iterations }` |
-| `FEASIBLE` | `HighsSolution` | `kHighsCallbackMipSolution`, and `kHighsCallbackQpFirstFeasiblePoint` once per QP solve | `mip()`: the `MipData`, `None` for the QP's point |
+| `PROGRESS` | `HighsProgress` | `kHighsCallbackMipLogging`, when HiGHS writes a MIP log line | `mip()`: the `HighsMipData` |
+| `POLL` | `HighsPoll` | the simplex, interior-point, MIP and QP interrupt callbacks | `source()`: a `HighsPollSource`, `Simplex { iterations }`, `Ipm { iterations }`, `Mip(HighsMipData)` or `Qp { iterations }` |
+| `FEASIBLE` | `HighsSolution` | `kHighsCallbackMipSolution`, and `kHighsCallbackQpFirstFeasiblePoint` once per QP solve | `mip()`: the `HighsMipData`, `None` for the QP's point |
 | `INCUMBENT` | `HighsSolution` | `kHighsCallbackMipImprovingSolution` | `mip()` |
-| `HeuristicHandler` | `HighsHeuristic` | `kHighsCallbackMipUserSolution`, started only for a solve with a heuristic handler | `origin()`, a `QueryOrigin`; `mip()`; `supply_partial(&entries)` |
+| `HeuristicHandler` | `HighsHeuristic` | `kHighsCallbackMipUserSolution`, started only for a solve with a heuristic handler | `origin()`, a `HighsQueryOrigin`; `mip()`; `supply_partial(&entries)` |
 | `NATIVE` | `HighsNative` | `kHighsCallbackMipGetCutPool` | the [cut pool](#the-cut-pool) |
 | lazy constraints, cuts, pricing | none | none | `Highs` implements none of their capabilities, so their handlers do not compile ([Limitations](#limitations)) |
 
-`MipData` is what every MIP callback reports, in the model's objective space, offset included:
+`HighsMipData` is what every MIP callback reports, in the model's objective space, offset included:
 
 | Field | Holds |
 |---|---|
@@ -460,7 +460,7 @@ since the heuristic handler is busy. A solve of another `Highs` started from ins
 
 ```rust
 use culmen::prelude::*;
-use culmen::highs::{HighsLog, HighsLogType, HighsPoll, PollSource};
+use culmen::highs::{HighsLog, HighsLogType, HighsPoll, HighsPollSource};
 
 #[derive(Default)]
 struct Inspect {
@@ -479,7 +479,7 @@ impl Callback<Highs> for Inspect {
         }
     }
     fn poll(&mut self, ctx: &mut HighsPoll<'_>) {
-        if let PollSource::Mip(mip) = ctx.source() {
+        if let HighsPollSource::Mip(mip) = ctx.source() {
             self.mip_polls += 1;
             self.best_bound = mip.dual_bound.or(self.best_bound);
         }
@@ -509,8 +509,8 @@ Backend>::Poll<'_>`; they are the same type.
 
 HiGHS implements `Heuristics`: at its user-solution callback it asks a registered `HeuristicHandler<Highs>` for a
 solution of its own. `HighsHeuristic::origin()` says where in the
-search it asks: `QueryOrigin::AfterSetup`, once the MIP solver is set up; `BeforeDive`; `EvaluateRootNode(point)`,
-during root-node evaluation, `point` a `RootNodePoint` naming HiGHS's numbered point; or `Other(i32)` for a value
+search it asks: `HighsQueryOrigin::AfterSetup`, once the MIP solver is set up; `BeforeDive`; `EvaluateRootNode(point)`,
+during root-node evaluation, `point` a `HighsRootNodePoint` naming HiGHS's numbered point; or `Other(i32)` for a value
 HiGHS 1.16 does not define.
 
 - `ctx.supply(&values)` offers a value for every column. The values are checked first: one finite value per column,
@@ -527,7 +527,7 @@ MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as 
 
 ```rust
 use culmen::prelude::*;
-use culmen::highs::{HighsHeuristic, QueryOrigin};
+use culmen::highs::{HighsHeuristic, HighsQueryOrigin};
 use culmen::{ActionError, TiVec};
 
 struct Start {
@@ -537,7 +537,7 @@ struct Start {
 
 impl HeuristicHandler<Highs> for Start {
     fn heuristic(&mut self, ctx: &mut HighsHeuristic<'_>) {
-        if ctx.origin() == QueryOrigin::AfterSetup
+        if ctx.origin() == HighsQueryOrigin::AfterSetup
             && let Some(values) = self.values.take()
         {
             self.supplied.push(ctx.supply(&values));
@@ -575,8 +575,8 @@ At `NATIVE`, HiGHS reports its cut pool after the root node, and again after eac
 | Field | Holds |
 |---|---|
 | `num_cols` | The number of columns of the presolved problem the cuts range over. |
-| `cuts` | Each `Cut { lower, upper, entries }`: `lower <= Σ value · column <= upper`, an open end infinite. |
-| `mip` | The `MipData` at the time. |
+| `cuts` | Each `HighsCut { lower, upper, entries }`: `lower <= Σ value · column <= upper`, an open end infinite. |
+| `mip` | The `HighsMipData` at the time. |
 
 The cuts range over the presolved problem HiGHS's MIP solver works on, not over the program you loaded, so their columns
 are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your program by mistake. `HighsNative` is

@@ -119,7 +119,7 @@ fn violates(scip: *mut SCIP, row: &AddedRow, values: &TiSlice<Col, f64>) -> bool
 /// Where a lazy-constraint candidate comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum LazySource {
+pub enum ScipLazySource {
     /// A solution SCIP checks before storing it: a heuristic's, a start, a sub-SCIP's, a supplied one (`CONSCHECK`).
     Check,
     /// The LP solution of a node, which every other constraint handler found feasible (`CONSENFOLP`).
@@ -142,7 +142,7 @@ pub struct ScipLazy<'a> {
     progress: Progress,
     objective: f64,
     candidate: &'a TiSlice<Col, f64>,
-    source: LazySource,
+    source: ScipLazySource,
     infinity: f64,
     added: &'a mut Vec<AddedRow>,
 }
@@ -150,7 +150,7 @@ pub struct ScipLazy<'a> {
 impl ScipLazy<'_> {
     /// Where the candidate comes from.
     #[must_use]
-    pub const fn source(&self) -> LazySource {
+    pub const fn source(&self) -> ScipLazySource {
         self.source
     }
 }
@@ -188,7 +188,7 @@ impl Run<'_, '_> {
         scip: *mut SCIP,
         objective: f64,
         candidate: &TiSlice<Col, f64>,
-        source: LazySource,
+        source: ScipLazySource,
     ) -> Option<Vec<AddedRow>> {
         let progress = self.progress(scip);
         let mut added = Vec::new();
@@ -263,7 +263,7 @@ impl Run<'_, '_> {
         // A callback busy with an outer event cannot judge the candidate, so it is rejected; the heuristic context
         // keeps the solutions it is handed in a run asking for lazy constraints until its callback returns, so no
         // candidate meets a busy callback.
-        let Some(rows) = self.ask_lazy(scip, objective, &values, LazySource::Check) else {
+        let Some(rows) = self.ask_lazy(scip, objective, &values, ScipLazySource::Check) else {
             return SCIP_Result_SCIP_INFEASIBLE;
         };
         let mut store = self.lazy.borrow_mut();
@@ -293,7 +293,7 @@ impl Run<'_, '_> {
         &self,
         scip: *mut SCIP,
         sol: *mut SCIP_SOL,
-        source: LazySource,
+        source: ScipLazySource,
         infeasible: bool,
     ) -> Result<SCIP_RESULT, ScipError> {
         // SCIP is being stopped: every node is closed until it does.
@@ -506,7 +506,7 @@ unsafe fn enforced(
     scip: *mut SCIP,
     conshdlr: *mut SCIP_CONSHDLR,
     sol: *mut SCIP_SOL,
-    source: LazySource,
+    source: ScipLazySource,
     infeasible: bool,
     result: *mut SCIP_RESULT,
 ) -> SCIP_RETCODE {
@@ -537,7 +537,7 @@ unsafe extern "C" fn enfolp(
 ) -> SCIP_RETCODE {
     let infeasible = solinfeasible != 0;
     // SAFETY: SCIP calls the enforcement while solving; null is the current LP solution.
-    unsafe { enforced(scip, conshdlr, ptr::null_mut(), LazySource::Lp, infeasible, result) }
+    unsafe { enforced(scip, conshdlr, ptr::null_mut(), ScipLazySource::Lp, infeasible, result) }
 }
 
 /// `CONSENFOPS`: the node's pseudo solution.
@@ -554,7 +554,16 @@ unsafe extern "C" fn enfops(
     // A pseudo solution worse than the incumbent ends its node whatever the handler says.
     let infeasible = solinfeasible != 0 || objinfeasible != 0;
     // SAFETY: SCIP calls the enforcement while solving; null is the current pseudo solution.
-    unsafe { enforced(scip, conshdlr, ptr::null_mut(), LazySource::Pseudo, infeasible, result) }
+    unsafe {
+        enforced(
+            scip,
+            conshdlr,
+            ptr::null_mut(),
+            ScipLazySource::Pseudo,
+            infeasible,
+            result,
+        )
+    }
 }
 
 /// `CONSENFORELAX`: a relaxator's solution.
@@ -570,7 +579,7 @@ unsafe extern "C" fn enforelax(
 ) -> SCIP_RETCODE {
     let infeasible = solinfeasible != 0;
     // SAFETY: SCIP calls the enforcement while solving, with the relaxation's solution.
-    unsafe { enforced(scip, conshdlr, sol, LazySource::Relaxation, infeasible, result) }
+    unsafe { enforced(scip, conshdlr, sol, ScipLazySource::Relaxation, infeasible, result) }
 }
 
 /// `CONSLOCK`: every variable both ways for a solve with a lazy-constraint handler, undone when SCIP unlocks.

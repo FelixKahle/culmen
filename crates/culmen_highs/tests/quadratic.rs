@@ -18,7 +18,7 @@ use culmen_core::{
     Program, ProgramColumn, ProgramPlan, Progress, QuadExpr, Sense, Solution, SolutionContext, SolveError, Solved,
     Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
 };
-use culmen_highs::{Highs, HighsError, HighsOptions, LpSolver, PollSource};
+use culmen_highs::{Highs, HighsError, HighsOptions, HighsPollSource, LpSolver};
 use culmen_testing::reference::close;
 use culmen_testing::strategy::small_qp;
 use proptest::prelude::*;
@@ -340,7 +340,7 @@ impl culmen_core::Callback<Highs> for Kinds {
     fn log(&mut self, _: &mut culmen_highs::HighsLog<'_>) {
         self.0 |= Events::LOG;
     }
-    fn progress(&mut self, _: &mut culmen_highs::HighsMipProgress) {
+    fn progress(&mut self, _: &mut culmen_highs::HighsProgress) {
         self.0 |= Events::PROGRESS;
     }
     fn poll(&mut self, _: &mut culmen_highs::HighsPoll<'_>) {
@@ -378,7 +378,7 @@ fn test_a_qp_solve_reports_its_log_its_polls_and_its_first_feasible_point() {
 /// Every QP poll's source, interrupting at the first when asked to.
 #[derive(Default)]
 struct Polls {
-    sources: Vec<PollSource>,
+    sources: Vec<HighsPollSource>,
     phases: Vec<Phase>,
     interrupt: bool,
 }
@@ -400,9 +400,9 @@ fn test_a_qp_poll_reports_qp_iterations_and_interrupts_the_solve() {
     let solved = solver.run().callback(&mut watched).solve().unwrap();
     assert!(matches!(solved.outcome, Outcome::Optimal(_)), "{solved:?}");
     // HiGHS polls once after the starting point, before the first iteration, then at every iteration.
-    assert_eq!(watched.sources.first(), Some(&PollSource::Qp { iterations: 0 }));
+    assert_eq!(watched.sources.first(), Some(&HighsPollSource::Qp { iterations: 0 }));
     assert!(
-        watched.sources.iter().all(|s| matches!(s, PollSource::Qp { .. })),
+        watched.sources.iter().all(|s| matches!(s, HighsPollSource::Qp { .. })),
         "{:?}",
         watched.sources
     );
@@ -413,7 +413,7 @@ fn test_a_qp_poll_reports_qp_iterations_and_interrupts_the_solve() {
         ..Polls::default()
     };
     let solved = solver.run().callback(&mut interrupting).solve().unwrap();
-    assert_eq!(interrupting.sources, [PollSource::Qp { iterations: 0 }]);
+    assert_eq!(interrupting.sources, [HighsPollSource::Qp { iterations: 0 }]);
     assert!(
         matches!(
             solved.outcome,

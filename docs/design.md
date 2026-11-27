@@ -86,10 +86,10 @@ Whether a public type is `#[non_exhaustive]` follows from what a user does with 
   learns new refusals; a caller matches the ones it handles and passes the rest on. Inside its crate the match stays
   exhaustive, so an error's `Display` remains one exhaustive table.
 - **An enum that lists an open set of kinds is non-exhaustive**: a solver's own statuses, return codes, option values
-  and log or poll kinds (`ModelStatus`, `CallStatus`, `LpSolver`, `PollSource`, `Status`, `RetCode`, `Emphasis`,
+  and log or poll kinds (`ModelStatus`, `CallStatus`, `LpSolver`, `HighsPollSource`, `Status`, `RetCode`, `Emphasis`,
   `ParamValue`, …), which grow with the solver's versions, and culmen's own lists of kinds that a further feature
   adds to (`ModelClass`, `ProgramFeature`, `Analysis`, `Phase`, `StopReason`, `Edit`, `Step`, `ScipEvent`,
-  `LazySource`, `HighsNative`, `ModelFormat`). Code that must handle every kind is told so by a declared set
+  `ScipLazySource`, `HighsNative`, `ModelFormat`). Code that must handle every kind is told so by a declared set
   instead (`Backend::CLASSES`, `FEATURES`), which refuses what it does not list.
 - **An enum whose variants its meaning closes stays exhaustive**, so that code which must handle every case is
   checked to: `Sense`, `Integrality`, `Outcome`, `Objectives`, `Combination`, `PriceMode`, `Start`, `NewRow`,

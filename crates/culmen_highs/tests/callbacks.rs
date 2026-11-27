@@ -21,7 +21,7 @@ use culmen_core::{
     SolutionContext, SolveError, Solved, Solver, StopReason, TiVec, Var, relative_gap,
 };
 use culmen_highs::{
-    Highs, HighsError, HighsNative, HighsOptions, HighsStatus, LpSolver, PollSource, QueryOrigin, Switch,
+    Highs, HighsError, HighsNative, HighsOptions, HighsPollSource, HighsQueryOrigin, HighsStatus, LpSolver, Switch,
 };
 use culmen_testing::instances::assignment;
 use culmen_testing::reference::close;
@@ -262,12 +262,12 @@ fn test_a_panicking_observer_panics_out_of_solve_and_leaves_highs_usable() {
 /// Records every HiGHS callback kind it receives, through the HiGHS contexts.
 #[derive(Default)]
 struct Kinds {
-    polls: Vec<PollSource>,
+    polls: Vec<HighsPollSource>,
     interrupt_at_first_poll: bool,
     mip_progress: usize,
     feasible: Vec<f64>,
     incumbents: Vec<f64>,
-    queries: Vec<QueryOrigin>,
+    queries: Vec<HighsQueryOrigin>,
     supply: Option<Vec<f64>>,
     /// Partial solutions to supply, in order, at the first query.
     supply_partial: Vec<Vec<(Col, f64)>>,
@@ -363,7 +363,7 @@ fn solve_kinds(
 impl HeuristicHandler<Highs> for Kinds {
     fn heuristic(&mut self, ctx: &mut <Highs as Heuristics>::Heuristic<'_>) {
         self.queries.push(ctx.origin());
-        if ctx.origin() != QueryOrigin::AfterSetup {
+        if ctx.origin() != HighsQueryOrigin::AfterSetup {
             return;
         }
         if let Some(values) = self.supply.take() {
@@ -398,7 +398,7 @@ fn test_simplex_poll_interrupts_an_lp() {
     };
     let solved = solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
     assert!(
-        matches!(kinds.polls[0], PollSource::Simplex { .. }),
+        matches!(kinds.polls[0], HighsPollSource::Simplex { .. }),
         "{:?}",
         kinds.polls
     );
@@ -426,7 +426,7 @@ fn test_ipm_poll_interrupts_an_lp() {
     };
     let solved = solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
     assert!(
-        kinds.polls.iter().any(|p| matches!(p, PollSource::Ipm { .. })),
+        kinds.polls.iter().any(|p| matches!(p, HighsPollSource::Ipm { .. })),
         "{:?}",
         kinds.polls
     );
@@ -457,14 +457,18 @@ fn test_mip_kinds_fire_progress_solutions_queries_and_cut_pool() {
         &mut kinds,
     )
     .unwrap();
-    assert!(kinds.polls.iter().any(|p| matches!(p, PollSource::Mip(_))));
+    assert!(kinds.polls.iter().any(|p| matches!(p, HighsPollSource::Mip(_))));
     assert!(kinds.mip_progress > 0, "MIP log lines fire progress events");
     assert!(!kinds.incumbents.is_empty());
     assert!(
         kinds.feasible.len() >= kinds.incumbents.len(),
         "every incumbent is also a feasible solution"
     );
-    assert!(kinds.queries.contains(&QueryOrigin::AfterSetup), "{:?}", kinds.queries);
+    assert!(
+        kinds.queries.contains(&HighsQueryOrigin::AfterSetup),
+        "{:?}",
+        kinds.queries
+    );
     assert!(
         !kinds.cut_pools.is_empty(),
         "the cut pool is read after the root, again after each restart"
@@ -630,7 +634,7 @@ fn test_poll_context_reports_mip_progress_in_generic_terms() {
             Events::POLL
         }
         fn poll(&mut self, ctx: &mut <Highs as Backend>::Poll<'_>) {
-            if let PollSource::Mip(mip) = ctx.source()
+            if let HighsPollSource::Mip(mip) = ctx.source()
                 && mip.primal_bound.is_some()
                 && self.0.is_none()
             {
@@ -725,7 +729,7 @@ impl Callback<Highs> for Nested {
         Events::POLL
     }
     fn poll(&mut self, ctx: &mut <Highs as Backend>::Poll<'_>) {
-        if self.inner.is_none() && matches!(ctx.source(), PollSource::Mip(_)) {
+        if self.inner.is_none() && matches!(ctx.source(), HighsPollSource::Mip(_)) {
             let mut seen = Seen::default();
             let mut solver = Solver::new(Highs::new(), knapsack().0).unwrap();
             solver.run().observer(&mut seen).solve().unwrap();

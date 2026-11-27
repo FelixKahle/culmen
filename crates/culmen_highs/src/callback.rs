@@ -8,17 +8,17 @@
 //! | HiGHS 1.16 callback | culmen event | context |
 //! |---|---|---|
 //! | `kHighsCallbackLogging` | [`Events::LOG`] | [`HighsLog`] |
-//! | `kHighsCallbackSimplexInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`PollSource::Simplex`] |
-//! | `kHighsCallbackIpmInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`PollSource::Ipm`] |
-//! | `kHighsCallbackMipInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`PollSource::Mip`] |
-//! | `kHighsCallbackMipLogging` | [`Events::PROGRESS`] | [`HighsMipProgress`] |
+//! | `kHighsCallbackSimplexInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`HighsPollSource::Simplex`] |
+//! | `kHighsCallbackIpmInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`HighsPollSource::Ipm`] |
+//! | `kHighsCallbackMipInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`HighsPollSource::Mip`] |
+//! | `kHighsCallbackMipLogging` | [`Events::PROGRESS`] | [`HighsProgress`] |
 //! | `kHighsCallbackMipSolution` | [`Events::FEASIBLE`] | [`HighsSolution`] |
 //! | `kHighsCallbackMipImprovingSolution` | [`Events::INCUMBENT`] | [`HighsSolution`] |
 //! | `kHighsCallbackMipUserSolution` | the heuristic handler ([`Heuristics`](culmen_core::Heuristics)) | [`HighsHeuristic`] |
 //! | `kHighsCallbackMipGetCutPool` | [`Events::NATIVE`] | [`HighsNative::CutPool`] |
 //! | `kHighsCallbackMipDefineLazyConstraints` | none | HiGHS 1.16 declares it and never calls it |
-//! | `kHighsCallbackQpFirstFeasiblePoint` | [`Events::FEASIBLE`] | [`HighsSolution`], no [`MipData`] |
-//! | `kHighsCallbackQpInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`PollSource::Qp`] |
+//! | `kHighsCallbackQpFirstFeasiblePoint` | [`Events::FEASIBLE`] | [`HighsSolution`], no [`HighsMipData`] |
+//! | `kHighsCallbackQpInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`HighsPollSource::Qp`] |
 //!
 //! HiGHS has no user cuts and never calls its lazy-constraint callback, so the backend implements neither
 //! [`LazyConstraints`](culmen_core::LazyConstraints) nor [`UserCuts`](culmen_core::UserCuts), and a handler of either
@@ -357,7 +357,7 @@ unsafe fn dispatch(hook: &mut Hook<'_, '_>, call: &Call, interrupt: &mut bool) {
         // SAFETY: the caller's contract holds for `call`, the logging kind.
         Kind::Logging => unsafe { log(hook, call, elapsed) },
         Kind::Poll(poller) => poll(hook, call, poller, elapsed, interrupt),
-        Kind::MipLogging => hook.hooks.progress(&mut HighsMipProgress {
+        Kind::MipLogging => hook.hooks.progress(&mut HighsProgress {
             elapsed,
             mip: mip_data(call),
         }),
@@ -378,17 +378,17 @@ unsafe fn dispatch(hook: &mut Hook<'_, '_>, call: &Call, interrupt: &mut bool) {
 /// Hands an interrupt poll to the callback; a MIP poll first reports a supplied solution HiGHS took.
 fn poll(hook: &mut Hook<'_, '_>, call: &Call, poller: Poller, elapsed: Duration, interrupt: &mut bool) {
     let source = match poller {
-        Poller::Simplex => PollSource::Simplex {
+        Poller::Simplex => HighsPollSource::Simplex {
             iterations: count(field!(call, simplex_iteration_count)),
         },
-        Poller::Ipm => PollSource::Ipm {
+        Poller::Ipm => HighsPollSource::Ipm {
             iterations: count(field!(call, ipm_iteration_count)),
         },
         Poller::Mip => {
             report_offer(hook, call, elapsed);
-            PollSource::Mip(mip_data(call))
+            HighsPollSource::Mip(mip_data(call))
         }
-        Poller::Qp => PollSource::Qp {
+        Poller::Qp => HighsPollSource::Qp {
             iterations: count(field!(call, qpasm_iteration_count)),
         },
     };
@@ -450,7 +450,7 @@ unsafe fn heuristic(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
         offered: &mut hook.offered,
         elapsed,
         mip: mip_data(call),
-        origin: QueryOrigin::from_raw(field!(call, external_solution_query_origin)),
+        origin: HighsQueryOrigin::from_raw(field!(call, external_solution_query_origin)),
         record,
     };
     hook.hooks.heuristic(&mut ctx);
@@ -541,10 +541,10 @@ fn report_offer(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
 /// # Safety
 ///
 /// `call` is the cut-pool kind of a call whose contract holds.
-unsafe fn cut_pool(call: &Call) -> CutPool {
+unsafe fn cut_pool(call: &Call) -> HighsCutPool {
     // SAFETY: the caller's contract holds for `call`, the cut-pool kind.
     let arrays = unsafe { CutArrays::of(call) };
-    CutPool {
+    HighsCutPool {
         num_cols: position(field!(call, cutpool_num_col)),
         cuts: arrays.cuts().collect(),
         mip: mip_data(call),
@@ -595,9 +595,9 @@ impl<'a> CutArrays<'a> {
     }
 
     /// Every cut both bound arrays hold, each with the entries its starts delimit within the entry arrays.
-    fn cuts(&self) -> impl Iterator<Item = Cut> + '_ {
+    fn cuts(&self) -> impl Iterator<Item = HighsCut> + '_ {
         let bounds = self.lower.iter().zip(self.upper);
-        bounds.enumerate().map(|(i, (&lower, &upper))| Cut {
+        bounds.enumerate().map(|(i, (&lower, &upper))| HighsCut {
             lower,
             upper,
             entries: self.entries(i),
@@ -629,8 +629,8 @@ unsafe fn slice<'a, T>(data: *const T, len: usize) -> &'a [T] {
 }
 
 /// The MIP figures every MIP kind reports.
-fn mip_data(call: &Call) -> MipData {
-    MipData {
+fn mip_data(call: &Call) -> HighsMipData {
+    HighsMipData {
         running_time: Duration::try_from_secs_f64(field!(call, running_time)).unwrap_or(Duration::ZERO),
         objective: finite(field!(call, objective_function_value)),
         primal_bound: finite(field!(call, mip_primal_bound)),
@@ -719,7 +719,7 @@ impl LogContext for HighsLog<'_> {
 
 /// What every MIP callback kind reports, in the model's objective space, offset included.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MipData {
+pub struct HighsMipData {
     /// The MIP solver's own clock, which starts after presolve.
     pub running_time: Duration,
     /// The objective value HiGHS reports with the call: the incumbent's, or the reported solution's at a solution
@@ -737,7 +737,7 @@ pub struct MipData {
     pub lp_iterations: u64,
 }
 
-impl MipData {
+impl HighsMipData {
     fn progress(&self, elapsed: Duration) -> Progress {
         Progress {
             elapsed,
@@ -752,31 +752,31 @@ impl MipData {
 
 /// A line of HiGHS's MIP log was written: `kHighsCallbackMipLogging`.
 #[derive(Debug)]
-pub struct HighsMipProgress {
+pub struct HighsProgress {
     elapsed: Duration,
-    mip: MipData,
+    mip: HighsMipData,
 }
 
-impl HighsMipProgress {
+impl HighsProgress {
     /// HiGHS's MIP figures.
     #[must_use]
-    pub const fn mip(&self) -> &MipData {
+    pub const fn mip(&self) -> &HighsMipData {
         &self.mip
     }
 }
 
-impl Context for HighsMipProgress {
+impl Context for HighsProgress {
     fn progress(&self) -> Progress {
         self.mip.progress(self.elapsed)
     }
 }
 
-impl ProgressContext for HighsMipProgress {}
+impl ProgressContext for HighsProgress {}
 
 /// Which solver polls.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
-pub enum PollSource {
+pub enum HighsPollSource {
     /// The simplex method: `kHighsCallbackSimplexInterrupt`.
     Simplex {
         /// Simplex iterations so far.
@@ -788,7 +788,7 @@ pub enum PollSource {
         iterations: u64,
     },
     /// The MIP solver: `kHighsCallbackMipInterrupt`.
-    Mip(MipData),
+    Mip(HighsMipData),
     /// The active-set QP solver: `kHighsCallbackQpInterrupt`.
     Qp {
         /// QP iterations so far; 0 at the poll after the starting point is found, before the first iteration.
@@ -801,14 +801,14 @@ pub enum PollSource {
 #[derive(Debug)]
 pub struct HighsPoll<'a> {
     elapsed: Duration,
-    source: PollSource,
+    source: HighsPollSource,
     interrupt: &'a mut bool,
 }
 
 impl HighsPoll<'_> {
     /// Which solver polls, with its figures.
     #[must_use]
-    pub const fn source(&self) -> &PollSource {
+    pub const fn source(&self) -> &HighsPollSource {
         &self.source
     }
 }
@@ -816,16 +816,16 @@ impl HighsPoll<'_> {
 impl Context for HighsPoll<'_> {
     fn progress(&self) -> Progress {
         match self.source {
-            PollSource::Simplex { iterations } => Progress {
+            HighsPollSource::Simplex { iterations } => Progress {
                 iterations: Some(iterations),
                 ..Progress::at(self.elapsed, Phase::Simplex)
             },
-            PollSource::Ipm { iterations } => Progress {
+            HighsPollSource::Ipm { iterations } => Progress {
                 iterations: Some(iterations),
                 ..Progress::at(self.elapsed, Phase::Barrier)
             },
-            PollSource::Mip(mip) => mip.progress(self.elapsed),
-            PollSource::Qp { iterations } => Progress {
+            HighsPollSource::Mip(mip) => mip.progress(self.elapsed),
+            HighsPollSource::Qp { iterations } => Progress {
                 iterations: Some(iterations),
                 ..Progress::at(self.elapsed, Phase::Other)
             },
@@ -846,13 +846,13 @@ pub struct HighsSolution<'a> {
     elapsed: Duration,
     objective: f64,
     values: &'a TiSlice<Col, f64>,
-    mip: Option<MipData>,
+    mip: Option<HighsMipData>,
 }
 
 impl HighsSolution<'_> {
     /// HiGHS's MIP figures; `None` for the QP solver's first feasible point.
     #[must_use]
-    pub const fn mip(&self) -> Option<&MipData> {
+    pub const fn mip(&self) -> Option<&HighsMipData> {
         self.mip.as_ref()
     }
 }
@@ -881,13 +881,13 @@ impl SolutionContext for HighsSolution<'_> {
 /// Where in the search HiGHS asks for a user solution: HiGHS's `ExternalMipSolutionQueryOrigin`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum QueryOrigin {
+pub enum HighsQueryOrigin {
     /// After the MIP solver is set up.
     AfterSetup,
     /// Before a dive.
     BeforeDive,
     /// During root-node evaluation.
-    EvaluateRootNode(RootNodePoint),
+    EvaluateRootNode(HighsRootNodePoint),
     /// A value HiGHS 1.16 does not define.
     Other(i32),
 }
@@ -896,7 +896,7 @@ pub enum QueryOrigin {
 /// `kExternalMipSolutionQueryOriginEvaluateRootNode0` to `4`, in the order a root-node evaluation reaches them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
-pub enum RootNodePoint {
+pub enum HighsRootNodePoint {
     /// Before the root LP is solved: point 0.
     BeforeLp,
     /// After each root separation round that found cuts: point 1.
@@ -909,17 +909,17 @@ pub enum RootNodePoint {
     End,
 }
 
-impl QueryOrigin {
+impl HighsQueryOrigin {
     /// The origin of HiGHS's number for it.
     pub(crate) const fn from_raw(raw: i32) -> Self {
         match raw {
             0 => Self::AfterSetup,
             1 => Self::BeforeDive,
-            2 => Self::EvaluateRootNode(RootNodePoint::BeforeLp),
-            3 => Self::EvaluateRootNode(RootNodePoint::SeparationRound),
-            4 => Self::EvaluateRootNode(RootNodePoint::AfterSeparation),
-            5 => Self::EvaluateRootNode(RootNodePoint::AfterRens),
-            6 => Self::EvaluateRootNode(RootNodePoint::End),
+            2 => Self::EvaluateRootNode(HighsRootNodePoint::BeforeLp),
+            3 => Self::EvaluateRootNode(HighsRootNodePoint::SeparationRound),
+            4 => Self::EvaluateRootNode(HighsRootNodePoint::AfterSeparation),
+            5 => Self::EvaluateRootNode(HighsRootNodePoint::AfterRens),
+            6 => Self::EvaluateRootNode(HighsRootNodePoint::End),
             other => Self::Other(other),
         }
     }
@@ -934,21 +934,21 @@ pub struct HighsHeuristic<'a> {
     program: &'a Loaded,
     offered: &'a mut Option<Offer>,
     elapsed: Duration,
-    mip: MipData,
-    origin: QueryOrigin,
+    mip: HighsMipData,
+    origin: HighsQueryOrigin,
     record: UserSolution<'a>,
 }
 
 impl HighsHeuristic<'_> {
     /// HiGHS's MIP figures.
     #[must_use]
-    pub const fn mip(&self) -> &MipData {
+    pub const fn mip(&self) -> &HighsMipData {
         &self.mip
     }
 
     /// Where in the search HiGHS asks.
     #[must_use]
-    pub const fn origin(&self) -> QueryOrigin {
+    pub const fn origin(&self) -> HighsQueryOrigin {
         self.origin
     }
 }
@@ -1169,7 +1169,7 @@ impl From<ReducedCol> for usize {
 
 /// A cut of HiGHS's cut pool: `lower <= Σ value · column <= upper` over presolved columns.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Cut {
+pub struct HighsCut {
     /// The lower bound; `-∞` for none.
     pub lower: f64,
     /// The upper bound; `+∞` for none.
@@ -1180,13 +1180,13 @@ pub struct Cut {
 
 /// HiGHS's cut pool after the root node: `kHighsCallbackMipGetCutPool`, copied out of HiGHS.
 #[derive(Clone, Debug, PartialEq)]
-pub struct CutPool {
+pub struct HighsCutPool {
     /// The number of columns of the presolved problem the cuts range over.
     pub num_cols: usize,
     /// The cuts.
-    pub cuts: Vec<Cut>,
+    pub cuts: Vec<HighsCut>,
     /// HiGHS's MIP figures.
-    pub mip: MipData,
+    pub mip: HighsMipData,
 }
 
 /// What only HiGHS reports, delivered as [`Events::NATIVE`].
@@ -1194,7 +1194,7 @@ pub struct CutPool {
 #[non_exhaustive]
 pub enum HighsNative {
     /// The cut pool after the root node.
-    CutPool(CutPool),
+    CutPool(HighsCutPool),
 }
 
 /// The pointer `ptr::null_mut` as the trampoline's data: no run in progress.
@@ -1206,18 +1206,18 @@ mod tests {
 
     #[test]
     fn test_every_query_origin_of_highs_has_its_own_variant() {
-        let origins: Vec<QueryOrigin> = (0..=7).map(QueryOrigin::from_raw).collect();
+        let origins: Vec<HighsQueryOrigin> = (0..=7).map(HighsQueryOrigin::from_raw).collect();
         assert_eq!(
             origins,
             [
-                QueryOrigin::AfterSetup,
-                QueryOrigin::BeforeDive,
-                QueryOrigin::EvaluateRootNode(RootNodePoint::BeforeLp),
-                QueryOrigin::EvaluateRootNode(RootNodePoint::SeparationRound),
-                QueryOrigin::EvaluateRootNode(RootNodePoint::AfterSeparation),
-                QueryOrigin::EvaluateRootNode(RootNodePoint::AfterRens),
-                QueryOrigin::EvaluateRootNode(RootNodePoint::End),
-                QueryOrigin::Other(7),
+                HighsQueryOrigin::AfterSetup,
+                HighsQueryOrigin::BeforeDive,
+                HighsQueryOrigin::EvaluateRootNode(HighsRootNodePoint::BeforeLp),
+                HighsQueryOrigin::EvaluateRootNode(HighsRootNodePoint::SeparationRound),
+                HighsQueryOrigin::EvaluateRootNode(HighsRootNodePoint::AfterSeparation),
+                HighsQueryOrigin::EvaluateRootNode(HighsRootNodePoint::AfterRens),
+                HighsQueryOrigin::EvaluateRootNode(HighsRootNodePoint::End),
+                HighsQueryOrigin::Other(7),
             ]
         );
     }

@@ -69,7 +69,7 @@ use culmen_core::{
 pub use cut::ScipCut;
 pub use events::{ScipEvent, ScipPoll, ScipProgress, ScipSolution};
 pub use heuristic::ScipHeuristic;
-pub use lazy::{LazySource, ScipLazy};
+pub use lazy::{ScipLazy, ScipLazySource};
 pub use log::ScipLog;
 pub(crate) use price::NAME as PRICER;
 pub use price::ScipPrice;
