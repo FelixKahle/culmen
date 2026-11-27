@@ -93,7 +93,9 @@ impl Instance {
             "Instance: the Hessian passed to HiGHS does not match the program's quadratic part"
         );
         let status = self.pass_model(program, &arrays, &hessian, &counts);
-        CallStatus::succeeded(status)?.then_some(()).ok_or(HighsError::Load)
+        CallStatus::succeeded(status, "Highs_passModel")?
+            .then_some(())
+            .ok_or(HighsError::Load)
     }
 
     /// Hands HiGHS the model the arrays describe and returns `Highs_passModel`'s status; `arrays`, `hessian` and
@@ -159,14 +161,23 @@ impl Instance {
         let raw = self.raw();
         let name_ptr = c_name.as_ptr();
         debug_assert!(!raw.is_null(), "Instance: the HiGHS instance is null");
-        let status = match value {
+        let (status, call) = match value {
             // SAFETY: the instance is live and borrowed exclusively, the name a NUL-terminated string HiGHS reads
             // during the call.
-            OptionValue::Bool(v) => unsafe { Highs_setBoolOptionValue(raw, name_ptr, HighsInt::from(*v)) },
+            OptionValue::Bool(v) => (
+                unsafe { Highs_setBoolOptionValue(raw, name_ptr, HighsInt::from(*v)) },
+                "Highs_setBoolOptionValue",
+            ),
             // SAFETY: as above.
-            OptionValue::Int(v) => unsafe { Highs_setIntOptionValue(raw, name_ptr, *v) },
+            OptionValue::Int(v) => (
+                unsafe { Highs_setIntOptionValue(raw, name_ptr, *v) },
+                "Highs_setIntOptionValue",
+            ),
             // SAFETY: as above.
-            OptionValue::Double(v) => unsafe { Highs_setDoubleOptionValue(raw, name_ptr, *v) },
+            OptionValue::Double(v) => (
+                unsafe { Highs_setDoubleOptionValue(raw, name_ptr, *v) },
+                "Highs_setDoubleOptionValue",
+            ),
             OptionValue::String(v) => {
                 let c_value =
                     CString::new(v.as_str()).map_err(|_| HighsError::OptionString { name: name.to_owned() })?;
@@ -175,10 +186,11 @@ impl Instance {
                     "Instance: the option value holds a NUL byte"
                 );
                 // SAFETY: as above, and the value is a NUL-terminated string HiGHS copies during the call.
-                unsafe { Highs_setStringOptionValue(raw, name_ptr, c_value.as_ptr()) }
+                let status = unsafe { Highs_setStringOptionValue(raw, name_ptr, c_value.as_ptr()) };
+                (status, "Highs_setStringOptionValue")
             }
         };
-        if !CallStatus::succeeded(status)? {
+        if !CallStatus::succeeded(status, call)? {
             return Err(HighsError::Option {
                 name: name.to_owned(),
                 value: value.clone(),
@@ -239,7 +251,7 @@ impl Instance {
         let _run = RunGuard::enter();
         // SAFETY: the instance is live and borrowed exclusively. Any callback it calls was installed by `hook`,
         // whose caller keeps the callback's data alive for the run.
-        CallStatus::from_raw(unsafe { Highs_run(self.raw()) })
+        CallStatus::from_raw(unsafe { Highs_run(self.raw()) }, "Highs_run")
     }
 
     /// The model status of the last run.
@@ -250,7 +262,7 @@ impl Instance {
     pub(crate) fn model_status(&self) -> Result<ModelStatus, HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live.
-        ModelStatus::from_raw(unsafe { Highs_getModelStatus(self.raw()) })
+        ModelStatus::from_raw(unsafe { Highs_getModelStatus(self.raw()) }, "Highs_getModelStatus")
     }
 
     /// The objective value of the last run's solution, offset included.
@@ -374,7 +386,9 @@ impl Instance {
                 o.priorities.as_ptr(),
             )
         };
-        CallStatus::succeeded(status)?.then_some(()).ok_or(HighsError::Load)
+        CallStatus::succeeded(status, "Highs_passLinearObjectives")?
+            .then_some(())
+            .ok_or(HighsError::Load)
     }
 
     /// Hands HiGHS `entries`, each a column of its model at most once, as the solution the next run starts from;
@@ -408,7 +422,9 @@ impl Instance {
         // SAFETY: the instance is live and borrowed exclusively. `indices` and `values` hold `count` entries each,
         // which is what HiGHS reads; it copies them and checks each index against its model.
         let status = unsafe { Highs_setSparseSolution(self.raw(), count, indices.as_ptr(), values.as_ptr()) };
-        CallStatus::succeeded(status)?.then_some(()).ok_or(HighsError::Start)
+        CallStatus::succeeded(status, "Highs_setSparseSolution")?
+            .then_some(())
+            .ok_or(HighsError::Start)
     }
 }
 
@@ -527,7 +543,7 @@ impl Instance {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads
         // during the call.
-        CallStatus::succeeded(unsafe { Highs_readModel(self.raw(), path.as_ptr()) })
+        CallStatus::succeeded(unsafe { Highs_readModel(self.raw(), path.as_ptr()) }, "Highs_readModel")
     }
 
     /// Writes the model HiGHS holds to the file at `path`; HiGHS picks the writer by the extension, `.mps` or `.lp`.
@@ -540,7 +556,10 @@ impl Instance {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads
         // during the call.
-        CallStatus::succeeded(unsafe { Highs_writeModel(self.raw(), path.as_ptr()) })
+        CallStatus::succeeded(
+            unsafe { Highs_writeModel(self.raw(), path.as_ptr()) },
+            "Highs_writeModel",
+        )
     }
 
     /// Names a column or a row of the model HiGHS holds.
@@ -557,13 +576,15 @@ impl Instance {
         );
         // SAFETY: the instance is live and borrowed exclusively, `index` a line of its model, and the name a
         // NUL-terminated string HiGHS copies during the call.
-        let status = unsafe {
+        let (status, call) = unsafe {
             match line {
-                Line::Col => Highs_passColName(self.raw(), index, name.as_ptr()),
-                Line::Row => Highs_passRowName(self.raw(), index, name.as_ptr()),
+                Line::Col => (Highs_passColName(self.raw(), index, name.as_ptr()), "Highs_passColName"),
+                Line::Row => (Highs_passRowName(self.raw(), index, name.as_ptr()), "Highs_passRowName"),
             }
         };
-        CallStatus::succeeded(status)?.then_some(()).ok_or(HighsError::Load)
+        CallStatus::succeeded(status, call)?
+            .then_some(())
+            .ok_or(HighsError::Load)
     }
 
     /// The name of a column or a row of the model HiGHS holds, read through `buffer`; `None` when HiGHS has none.

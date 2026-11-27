@@ -389,7 +389,7 @@ impl Instance {
         // SAFETY: the instance is live; the getters read the statistics of the last solve.
         let (status, solutions_found) = unsafe { (SCIPgetStatus(self.raw()), SCIPgetNSolsFound(self.raw())) };
         Ok(ScipStatus {
-            status: Status::from_raw(status)?,
+            status: Status::from_raw(status, "SCIPgetStatus")?,
             solutions_found: u64::try_from(solutions_found).unwrap_or(0),
         })
     }

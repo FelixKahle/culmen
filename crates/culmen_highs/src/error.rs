@@ -101,6 +101,8 @@ pub enum HighsError {
         code: HighsCode,
         /// The value.
         raw: i32,
+        /// The C function that returned the value, or the callback kind whose record held it.
+        call: &'static str,
     },
 }
 
@@ -108,8 +110,11 @@ pub enum HighsError {
 ///
 /// ```
 /// use culmen_highs::{HighsCode, HighsError};
-/// let error = HighsError::Unlisted { code: HighsCode::ModelStatus, raw: 42 };
-/// assert_eq!(error.to_string(), "HiGHS: model status 42 is no value HiGHS 1.16 defines");
+/// let error = HighsError::Unlisted { code: HighsCode::ModelStatus, raw: 42, call: "Highs_getModelStatus" };
+/// assert_eq!(
+///     error.to_string(),
+///     "HiGHS: Highs_getModelStatus gave the model status 42, which HiGHS 1.16 does not define"
+/// );
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HighsCode {
@@ -195,7 +200,12 @@ impl fmt::Display for HighsError {
                 f,
                 "HiGHS: the option `solve_relaxation` would report a MIP's continuous relaxation as its optimum"
             ),
-            Self::Unlisted { code, raw } => write!(f, "HiGHS: {code} {raw} is no value HiGHS 1.16 defines"),
+            Self::Unlisted { code, raw, call } => {
+                write!(
+                    f,
+                    "HiGHS: {call} gave the {code} {raw}, which HiGHS 1.16 does not define"
+                )
+            }
         }
     }
 }

@@ -407,7 +407,7 @@ from.
 | `Analysis(Analysis)` | HiGHS refused or failed an analysis, as a basis it finds singular ([Analysis](analysis.md#highs)). |
 | `AnalysisFeature { analysis, feature }` | HiGHS 1.16 gets the analysis wrong for a program with the feature, as a feasibility relaxation with semi columns ([Analysis](analysis.md#highs)). |
 | `Relaxation` | The options set `solve_relaxation` for a MIP, which would report the relaxation's optimum as the program's ([Options](#options)). |
-| `Unlisted { code, raw }` | HiGHS passed or returned a value of one of its enumerations (`code`, a `HighsCode`) that HiGHS 1.16 does not define, which the pinned HiGHS never does ([Design](design.md#public-types-are-exhaustive)). |
+| `Unlisted { code, raw, call }` | HiGHS's function `call` returned, or the callback kind `call` passed, a value of one of its enumerations (`code`, a `HighsCode`) that HiGHS 1.16 does not define, which the pinned HiGHS never does ([Design](design.md#public-types-are-exhaustive)). |
 
 ```rust
 use culmen::prelude::*;

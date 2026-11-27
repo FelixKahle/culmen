@@ -121,8 +121,8 @@ header that defines them named in its docs. Converting a C integer into it is st
 conversion is total and honest:
 
 - **A value the pinned headers rule out is a typed error.** The conversion returns the backend's error carrying the
-  raw value, `HighsError::Unlisted { code, raw }` or `ScipError::Unlisted { code, raw }`, where `code` names the
-  enumeration (`HighsCode`, `ScipCode`). It never panics, and it never maps the value onto a listed variant: an
+  raw value and the call that gave it, `HighsError::Unlisted { code, raw, call }` or `ScipError::Unlisted { code,
+  raw, call }`, where `code` names the enumeration (`HighsCode`, `ScipCode`). It never panics, and it never maps the value onto a listed variant: an
   unknown model status is not a failure, an unknown solution status is not "none", an unknown call status is not an
   error code. A value HiGHS passes to a callback is held like a panic, stops the run at the next poll, and fails the
   solve with that error once HiGHS returns; inside an action, which can only return an `ActionError`, it is the

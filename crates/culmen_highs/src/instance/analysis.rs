@@ -147,7 +147,7 @@ impl Instance {
             )
         };
         // HiGHS refuses the call, and leaves the buffers unwritten, when its primal solution status is none.
-        Ok(CallStatus::succeeded(status)?.then_some((cols, rows)))
+        Ok(CallStatus::succeeded(status, "Highs_getSolution")?.then_some((cols, rows)))
     }
 
     /// The basis statuses of every column and row, as `kHighsBasisStatus*`; `None` when HiGHS holds no valid basis.
@@ -162,7 +162,7 @@ impl Instance {
         // is what the buffers have room for, and HiGHS writes nothing when the basis is not valid.
         let status = unsafe { Highs_getBasis(self.raw(), cols.as_mut_ptr(), rows.as_mut_ptr()) };
         // HiGHS refuses the call, and leaves the buffers unwritten, when its basis is not valid.
-        Ok(CallStatus::succeeded(status)?.then_some((cols, rows)))
+        Ok(CallStatus::succeeded(status, "Highs_getBasis")?.then_some((cols, rows)))
     }
 
     /// Sets the basis the next run starts from, as `kHighsBasisStatus*` per column and per row; whether HiGHS took
@@ -183,7 +183,10 @@ impl Instance {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively, and HiGHS reads one status per column and per row
         // of its model, which the slices hold.
-        CallStatus::succeeded(unsafe { Highs_setBasis(self.raw(), cols.as_ptr(), rows.as_ptr()) })
+        CallStatus::succeeded(
+            unsafe { Highs_setBasis(self.raw(), cols.as_ptr(), rows.as_ptr()) },
+            "Highs_setBasis",
+        )
     }
 
     /// HiGHS's ranging of the last run; `None` when HiGHS refuses, as without an optimal simplex basis.
@@ -214,7 +217,7 @@ impl Instance {
                 bd.0, bd.1, bd.2, bd.3, ru.0, ru.1, ru.2, ru.3, rd.0, rd.1, rd.2, rd.3,
             )
         };
-        Ok(CallStatus::succeeded(status)?.then_some(r))
+        Ok(CallStatus::succeeded(status, "Highs_getRanging")?.then_some(r))
     }
 
     /// HiGHS's primal ray, one value per column; `None` when it has none.
@@ -231,7 +234,7 @@ impl Instance {
         // SAFETY: the instance is live and borrowed exclusively; HiGHS writes one flag and at most one value per
         // column of its model, which `ray` has room for.
         let status = unsafe { Highs_getPrimalRay(self.raw(), &raw mut has, ray.as_mut_ptr()) };
-        ray_result(status, has, ray)
+        ray_result(status, "Highs_getPrimalRay", has, ray)
     }
 
     /// HiGHS's dual ray, one value per row; `None` when it has none.
@@ -248,7 +251,7 @@ impl Instance {
         // SAFETY: the instance is live and borrowed exclusively; HiGHS writes one flag and at most one value per
         // row of its model, which `ray` has room for.
         let status = unsafe { Highs_getDualRay(self.raw(), &raw mut has, ray.as_mut_ptr()) };
-        ray_result(status, has, ray)
+        ray_result(status, "Highs_getDualRay", has, ray)
     }
 
     /// HiGHS's IIS of the loaded model, computed under the instance's options; `None` when the call fails.
@@ -283,7 +286,7 @@ impl Instance {
                 ptr::null_mut(), ptr::null_mut(),
             )
         };
-        Ok(CallStatus::succeeded(status)?.then(|| RawIis {
+        Ok(CallStatus::succeeded(status, "Highs_getIis")?.then(|| RawIis {
             cols: col_index.into_iter().zip(col_bound).collect(),
             rows: row_index.into_iter().zip(row_bound).collect(),
         }))
@@ -305,7 +308,7 @@ impl Instance {
         let status = unsafe {
             Highs_getIis(self.raw(), &raw mut num_cols, &raw mut num_rows, null, null, null, null, null, null)
         };
-        if !CallStatus::succeeded(status)? {
+        if !CallStatus::succeeded(status, "Highs_getIis")? {
             return Ok(None);
         }
         Ok(usize::try_from(num_cols).ok().zip(usize::try_from(num_rows).ok()))
@@ -341,7 +344,7 @@ impl Instance {
                 penalties.rows.as_ptr(),
             )
         };
-        if !CallStatus::succeeded(status)? {
+        if !CallStatus::succeeded(status, "Highs_feasibilityRelaxation")? {
             return Ok(None);
         }
         // HiGHS restores the model after solving its elastic LP and, as after every call that changes the model,
@@ -356,8 +359,13 @@ impl Instance {
 ///
 /// [`HighsError::Analysis`] of the rays when the call failed, [`HighsError::Unlisted`] when it returned no
 /// `kHighsStatus*` value.
-fn ray_result(status: HighsInt, has: HighsInt, ray: Vec<f64>) -> Result<Option<Vec<f64>>, HighsError> {
-    if CallStatus::succeeded(status)? {
+fn ray_result(
+    status: HighsInt,
+    call: &'static str,
+    has: HighsInt,
+    ray: Vec<f64>,
+) -> Result<Option<Vec<f64>>, HighsError> {
+    if CallStatus::succeeded(status, call)? {
         Ok((has != 0).then_some(ray))
     } else {
         Err(HighsError::Analysis(Analysis::Rays))

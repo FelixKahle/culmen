@@ -117,6 +117,8 @@ pub enum ScipError {
         code: ScipCode,
         /// The value.
         raw: i64,
+        /// The C function of SCIP that returned the value.
+        call: &'static str,
     },
 }
 
@@ -124,8 +126,8 @@ pub enum ScipError {
 ///
 /// ```
 /// use culmen_scip::{ScipCode, ScipError};
-/// let error = ScipError::Unlisted { code: ScipCode::Status, raw: 42 };
-/// assert_eq!(error.to_string(), "SCIP: status 42 is no value SCIP 10 defines");
+/// let error = ScipError::Unlisted { code: ScipCode::Status, raw: 42, call: "SCIPgetStatus" };
+/// assert_eq!(error.to_string(), "SCIP: SCIPgetStatus gave the status 42, which SCIP 10 does not define");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ScipCode {
@@ -201,7 +203,9 @@ impl fmt::Display for ScipError {
                 "SCIP: the best solution, of objective {objective}, is infeasible in the original problem by SCIP's \
                  own check, though the solve ended with \"{status}\""
             ),
-            Self::Unlisted { code, raw } => write!(f, "SCIP: {code} {raw} is no value SCIP 10 defines"),
+            Self::Unlisted { code, raw, call } => {
+                write!(f, "SCIP: {call} gave the {code} {raw}, which SCIP 10 does not define")
+            }
         }
     }
 }
@@ -345,7 +349,7 @@ impl RetCode {
     /// # Errors
     ///
     /// [`ScipError::Unlisted`] for a code `SCIP_RETCODE` does not have.
-    pub(crate) const fn from_raw(raw: SCIP_RETCODE) -> Result<Option<Self>, ScipError> {
+    pub(crate) const fn from_raw(raw: SCIP_RETCODE, call: &'static str) -> Result<Option<Self>, ScipError> {
         Ok(Some(match raw {
             1 => return Ok(None),
             0 => Self::Error,
@@ -371,6 +375,7 @@ impl RetCode {
                 return Err(ScipError::Unlisted {
                     code: ScipCode::RetCode,
                     raw: raw as i64,
+                    call,
                 });
             }
         }))
@@ -419,7 +424,7 @@ impl core::error::Error for RetCode {}
 /// [`ScipError::Call`] naming `call` when `code` is an error, [`ScipError::Unlisted`] when it is no value of
 /// `SCIP_RETCODE`.
 pub(crate) fn check(call: &'static str, code: SCIP_RETCODE) -> Result<(), ScipError> {
-    match RetCode::from_raw(code)? {
+    match RetCode::from_raw(code, call)? {
         None => Ok(()),
         Some(code) => Err(ScipError::Call { call, code }),
     }
@@ -431,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_every_code_of_scip_10_reads_as_its_error_okay_as_none_and_any_other_as_an_error() {
-        assert_eq!(RetCode::from_raw(scip_sys::SCIP_Retcode_SCIP_OKAY), Ok(None));
+        assert_eq!(RetCode::from_raw(scip_sys::SCIP_Retcode_SCIP_OKAY, "SCIPcall"), Ok(None));
         let codes = [
             (scip_sys::SCIP_Retcode_SCIP_ERROR, RetCode::Error),
             (scip_sys::SCIP_Retcode_SCIP_NOMEMORY, RetCode::NoMemory),
@@ -463,15 +468,16 @@ mod tests {
             (scip_sys::SCIP_Retcode_SCIP_NOTIMPLEMENTED, RetCode::NotImplemented),
         ];
         for (raw, code) in codes {
-            assert_eq!(RetCode::from_raw(raw), Ok(Some(code)), "{raw}");
+            assert_eq!(RetCode::from_raw(raw, "SCIPcall"), Ok(Some(code)), "{raw}");
             assert_eq!(check("SCIPcall", raw), Err(ScipError::Call { call: "SCIPcall", code }));
         }
         for raw in [-99, -19, 2, i32::MIN] {
             let unlisted = ScipError::Unlisted {
                 code: ScipCode::RetCode,
                 raw: i64::from(raw),
+                call: "SCIPcall",
             };
-            assert_eq!(RetCode::from_raw(raw), Err(unlisted.clone()));
+            assert_eq!(RetCode::from_raw(raw, "SCIPcall"), Err(unlisted.clone()));
             assert_eq!(check("SCIPcall", raw), Err(unlisted));
         }
         assert_eq!(check("SCIPcall", scip_sys::SCIP_Retcode_SCIP_OKAY), Ok(()));

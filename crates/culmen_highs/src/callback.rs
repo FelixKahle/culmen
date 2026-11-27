@@ -395,7 +395,7 @@ fn position(value: HighsInt) -> usize {
 unsafe fn log(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     // SAFETY: HiGHS passes the log line as a NUL-terminated string valid for the call.
     let text = unsafe { text(call.message) };
-    let log_type = match HighsLogType::from_raw(field!(call, log_type)) {
+    let log_type = match HighsLogType::from_raw(field!(call, log_type), "kHighsCallbackLogging") {
         Ok(log_type) => log_type,
         Err(error) => {
             hook.unlisted = Some(error);
@@ -424,7 +424,10 @@ unsafe fn heuristic(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
         !call.data_in.is_null() && call.data_in.is_aligned(),
         "heuristic: HiGHS passed no usable input record"
     );
-    let origin = match HighsQueryOrigin::from_raw(field!(call, external_solution_query_origin)) {
+    let origin = match HighsQueryOrigin::from_raw(
+        field!(call, external_solution_query_origin),
+        "kHighsCallbackMipUserSolution",
+    ) {
         Ok(origin) => origin,
         Err(error) => {
             hook.unlisted = Some(error);
@@ -658,14 +661,14 @@ impl HighsLogType {
     /// # Errors
     ///
     /// [`HighsError::Unlisted`] for a number `HighsLogType` does not have.
-    pub(crate) const fn from_raw(raw: c_int) -> Result<Self, HighsError> {
+    pub(crate) const fn from_raw(raw: c_int, call: &'static str) -> Result<Self, HighsError> {
         Ok(match raw {
             1 => Self::Info,
             2 => Self::Detailed,
             3 => Self::Verbose,
             4 => Self::Warning,
             5 => Self::Error,
-            _ => return Err(unlisted(HighsCode::LogType, raw)),
+            _ => return Err(unlisted(HighsCode::LogType, raw, call)),
         })
     }
 
@@ -914,7 +917,7 @@ impl HighsQueryOrigin {
     /// # Errors
     ///
     /// [`HighsError::Unlisted`] for a number `ExternalMipSolutionQueryOrigin` does not have.
-    pub(crate) const fn from_raw(raw: i32) -> Result<Self, HighsError> {
+    pub(crate) const fn from_raw(raw: i32, call: &'static str) -> Result<Self, HighsError> {
         Ok(match raw {
             0 => Self::AfterSetup,
             1 => Self::BeforeDive,
@@ -923,7 +926,7 @@ impl HighsQueryOrigin {
             4 => Self::EvaluateRootNode(HighsRootNodePoint::AfterSeparation),
             5 => Self::EvaluateRootNode(HighsRootNodePoint::AfterRens),
             6 => Self::EvaluateRootNode(HighsRootNodePoint::End),
-            _ => return Err(unlisted(HighsCode::QueryOrigin, raw)),
+            _ => return Err(unlisted(HighsCode::QueryOrigin, raw, call)),
         })
     }
 }
@@ -1110,7 +1113,7 @@ impl UserSolution<'_> {
         // HiGHS stores the entries only when its check of them passes without a warning. A warning (no entries, a
         // column named twice, or a value outside its column's bounds or integrality) leaves the solution HiGHS held
         // before, which a repair would complete again as if these entries were taken.
-        match CallStatus::from_raw(status) {
+        match CallStatus::from_raw(status, "Highs_setCallbackSparseSolution") {
             Ok(CallStatus::Ok) => Ok(()),
             Ok(CallStatus::Warning) => Err(ActionError::Refused(
                 "HiGHS refused the entries: a value lies outside its column's bounds or integrality".into(),
@@ -1134,7 +1137,7 @@ impl UserSolution<'_> {
         // SAFETY: the record is the call's input record, whose internal pointer HiGHS set to its own input. HiGHS
         // may log, which re-enters the trampoline on this thread and is not delivered.
         let status = unsafe { Highs_repairCallbackSolution(&raw mut *self.0) };
-        match CallStatus::succeeded(status) {
+        match CallStatus::succeeded(status, "Highs_repairCallbackSolution") {
             Ok(true) => Ok(()),
             Ok(false) => Err(ActionError::Refused("HiGHS found no feasible completion".into())),
             Err(unlisted) => Err(ActionError::Refused(unlisted.to_string())),
@@ -1216,7 +1219,9 @@ mod tests {
 
     #[test]
     fn test_every_query_origin_of_highs_has_its_own_variant_and_any_other_number_is_an_error() {
-        let origins: Vec<HighsQueryOrigin> = (0..=6).map(|raw| HighsQueryOrigin::from_raw(raw).unwrap()).collect();
+        let origins: Vec<HighsQueryOrigin> = (0..=6)
+            .map(|raw| HighsQueryOrigin::from_raw(raw, "test").unwrap())
+            .collect();
         assert_eq!(
             origins,
             [
@@ -1231,10 +1236,11 @@ mod tests {
         );
         for raw in [-1, 7, i32::MAX] {
             assert_eq!(
-                HighsQueryOrigin::from_raw(raw),
+                HighsQueryOrigin::from_raw(raw, "test"),
                 Err(HighsError::Unlisted {
                     code: HighsCode::QueryOrigin,
-                    raw
+                    raw,
+                    call: "test"
                 })
             );
         }
@@ -1242,7 +1248,9 @@ mod tests {
 
     #[test]
     fn test_every_log_type_of_highs_has_its_own_variant_and_any_other_number_is_an_error() {
-        let types: Vec<HighsLogType> = (1..=5).map(|raw| HighsLogType::from_raw(raw).unwrap()).collect();
+        let types: Vec<HighsLogType> = (1..=5)
+            .map(|raw| HighsLogType::from_raw(raw, "test").unwrap())
+            .collect();
         assert_eq!(
             types,
             [
@@ -1255,10 +1263,11 @@ mod tests {
         );
         for raw in [0, 6, -1] {
             assert_eq!(
-                HighsLogType::from_raw(raw),
+                HighsLogType::from_raw(raw, "test"),
                 Err(HighsError::Unlisted {
                     code: HighsCode::LogType,
-                    raw
+                    raw,
+                    call: "test"
                 })
             );
         }

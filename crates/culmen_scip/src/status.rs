@@ -59,7 +59,7 @@ impl Status {
     /// # Errors
     ///
     /// [`ScipError::Unlisted`] for a number `SCIP_STATUS` does not have.
-    pub(crate) const fn from_raw(raw: scip_sys::SCIP_STATUS) -> Result<Self, ScipError> {
+    pub(crate) const fn from_raw(raw: scip_sys::SCIP_STATUS, call: &'static str) -> Result<Self, ScipError> {
         Ok(match raw {
             0 => Self::Unknown,
             1 => Self::Optimal,
@@ -83,6 +83,7 @@ impl Status {
                 return Err(ScipError::Unlisted {
                     code: ScipCode::Status,
                     raw: raw as i64,
+                    call,
                 });
             }
         })
@@ -216,14 +217,15 @@ mod tests {
     #[test]
     fn test_every_status_of_scip_10_reads_as_itself_and_any_other_number_as_an_error() {
         for (raw, expected) in ALL {
-            assert_eq!(Status::from_raw(raw), Ok(expected), "{raw}");
+            assert_eq!(Status::from_raw(raw, "SCIPgetStatus"), Ok(expected), "{raw}");
         }
         for raw in [5, 9, 31, u32::MAX] {
             assert_eq!(
-                Status::from_raw(raw),
+                Status::from_raw(raw, "SCIPgetStatus"),
                 Err(ScipError::Unlisted {
                     code: ScipCode::Status,
-                    raw: i64::from(raw)
+                    raw: i64::from(raw),
+                    call: "SCIPgetStatus"
                 })
             );
         }

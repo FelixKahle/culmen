@@ -373,9 +373,9 @@ impl Highs {
             .info_double(c"mip_gap")
             .filter(|g| loaded.is_mip && g.is_finite() && *g >= 0.0);
         let solution = |name: &core::ffi::CStr| {
-            self.instance
-                .info_int(name)
-                .map_or(Ok(SolutionStatus::None), SolutionStatus::from_raw)
+            self.instance.info_int(name).map_or(Ok(SolutionStatus::None), |raw| {
+                SolutionStatus::from_raw(raw, "Highs_getIntInfoValue")
+            })
         };
         Ok(HighsStatus {
             run,

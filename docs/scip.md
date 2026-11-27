@@ -722,7 +722,7 @@ a second `Scip`, which excludes every pattern the master holds.
 | `PricingQuadratic` | A solve with a pricer was given a program with a quadratic objective. |
 | `BranchEarly` | A pricer ended pricing early where SCIP has no integer column left to branch on. |
 | `InfeasibleBest { status, objective }` | SCIP's own check finds its best solution infeasible in the original problem; the solution is not reported. |
-| `Unlisted { code, raw }` | SCIP returned a return code or status (`code`, a `ScipCode`) that SCIP 10 does not define, which the pinned SCIP never does ([Design](design.md#public-types-are-exhaustive)). |
+| `Unlisted { code, raw, call }` | SCIP's function `call` returned a return code or status (`code`, a `ScipCode`) that SCIP 10 does not define, which the pinned SCIP never does ([Design](design.md#public-types-are-exhaustive)). |
 
 `RetCode` is every error value of `SCIP_RETCODE` (`NoMemory`, `LpError`, `InvalidCall`, `ParameterUnknown`, …).
 
