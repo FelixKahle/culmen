@@ -31,7 +31,7 @@ pub use objectives::{
 pub use plan::{NewCol, ProgramColumn, ProgramPlan, ProgramRow};
 pub use quad::{HessianEntries, QuadEntries, QuadObjective};
 pub(crate) use quad::{check_convex, hessian_value, merge_pairs};
-pub use row::{RowEntries, RowView};
+pub use row::{ColEntries, RowEntries, RowView};
 
 /// A linear, mixed-integer or convex quadratic program: minimize or maximize
 /// `cost · x + Σ q · xᵢ · xⱼ + offset` over `x` with every column in its bounds, the integer columns whole, every
@@ -262,6 +262,75 @@ impl Program {
             &self.entry_cols[range.clone()],
             &self.entry_values[range],
         )
+    }
+
+    /// The coefficient of `col` in `row`; zero when the row has no entry for it.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous());
+    /// let y = m.add_var(Var::continuous());
+    /// let cap = m.add_constraint((2 * x + y).leq(4));
+    /// let only = m.add_constraint(x.geq(1));
+    /// let program = m.build()?;
+    /// assert_eq!((program.coefficient(cap, x), program.coefficient(only, y)), (2.0, 0.0));
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// When the program has no row `row`.
+    #[must_use]
+    pub fn coefficient(&self, row: Row, col: Col) -> f64 {
+        let view = self.row(row);
+        view.position(col).map_or(0.0, |i| view.value_at(i))
+    }
+
+    /// The entries of one column as `(row, coefficient)`, sorted by row: its column of the matrix, which is stored by
+    /// rows, so each step searches one row.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous());
+    /// let y = m.add_var(Var::continuous());
+    /// let a = m.add_constraint((2 * x + y).leq(4));
+    /// m.add_constraint(y.geq(1));
+    /// let c = m.add_constraint((x - y).equals(0));
+    /// let program = m.build()?;
+    /// assert_eq!(program.col_entries(x).collect::<Vec<_>>(), [(a, 2.0), (c, 1.0)]);
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    pub fn col_entries(&self, col: Col) -> ColEntries<'_> {
+        ColEntries::new(self, col)
+    }
+
+    /// The first column named `name`, `None` when no column is; a search through every column.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous().name("x"));
+    /// let cap = m.add_constraint(("cap", x.leq(4)));
+    /// let program = m.build()?;
+    /// assert_eq!((program.col_named("x"), program.row_named("cap")), (Some(x), Some(cap)));
+    /// assert_eq!(program.col_named("y"), None);
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    #[must_use]
+    pub fn col_named(&self, name: &str) -> Option<Col> {
+        self.columns
+            .iter_enumerated()
+            .find_map(|(col, c)| (c.name.as_deref() == Some(name)).then_some(col))
+    }
+
+    /// The first row named `name`, `None` when no row is; a search through every row.
+    #[must_use]
+    pub fn row_named(&self, name: &str) -> Option<Row> {
+        self.row_names
+            .iter_enumerated()
+            .find_map(|(row, n)| (n.as_deref() == Some(name)).then_some(row))
     }
 
     /// The whole constraint matrix in compressed row form.

@@ -746,6 +746,33 @@ proptest! {
         prop_assert_eq!(program.row(row).len(), forwards.len());
         prop_assert!(forwards.windows(2).all(|w| w[0].0 < w[1].0));
     }
+
+    /// A column's entries, read from either end, and every coefficient are the plan's terms of that column added up
+    /// per row in a map, the zero sums left out.
+    #[test]
+    fn test_column_entries_and_coefficients_are_the_terms_summed_per_row(
+        rows in prop::collection::vec(prop::collection::vec((0usize..4, -2i32..=2), 0..5), 0..5),
+    ) {
+        let mut plan = ProgramPlan::new();
+        let cols: Vec<Col> = (0..4).map(|_| plan.col(ProgramColumn::free())).collect();
+        for terms in &rows {
+            plan.row((.., terms.iter().map(|&(c, a)| (cols[c], f64::from(a)))));
+        }
+        let program = plan.build().unwrap();
+        for (c, &col) in cols.iter().enumerate() {
+            let mut expected = Vec::new();
+            for (r, terms) in rows.iter().enumerate() {
+                let sum: i32 = terms.iter().filter(|&&(t, _)| t == c).map(|&(_, a)| a).sum();
+                prop_assert_eq!(program.coefficient(Row::new(r), col), f64::from(sum));
+                if sum != 0 {
+                    expected.push((Row::new(r), f64::from(sum)));
+                }
+            }
+            prop_assert_eq!(program.col_entries(col).collect::<Vec<_>>(), expected.clone());
+            expected.reverse();
+            prop_assert_eq!(program.col_entries(col).rev().collect::<Vec<_>>(), expected);
+        }
+    }
 }
 
 #[test]

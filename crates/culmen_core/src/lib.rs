@@ -91,10 +91,10 @@ pub use model::{
     Summand, Term, Values, Var, VarMap, product, set,
 };
 pub use program::{
-    Bounds, Col, Cols, FurtherObjectives, HessianEntries, Integrality, InvalidBounds, InvalidWeight, LinearObjective,
-    LpFileError, ModelClass, ModelClasses, ModelClassesIter, NewCol, ObjectiveId, Objectives, Program, ProgramColumn,
-    ProgramError, ProgramFeature, ProgramFeatures, ProgramFeaturesIter, ProgramPlan, ProgramRow, QuadEntries,
-    QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
+    Bounds, Col, ColEntries, Cols, FurtherObjectives, HessianEntries, Integrality, InvalidBounds, InvalidWeight,
+    LinearObjective, LpFileError, ModelClass, ModelClasses, ModelClassesIter, NewCol, ObjectiveId, Objectives, Program,
+    ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramFeaturesIter, ProgramPlan, ProgramRow,
+    QuadEntries, QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
 };
 pub use script::{
     Found, PriceRound, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote,

@@ -70,6 +70,9 @@ A `Program` is read through methods; it has no public fields and no constructor 
 | `columns()` | The columns' `ProgramColumn` data, indexed by `Col`: `program.columns()[x]`. |
 | `row_bounds()` | The rows' bounds, indexed by `Row`. |
 | `row(row)` | A [`RowView`](#row-views-and-iterators) of one row: its bounds, name and entries. |
+| `col_entries(col)` | One column's entries as `(Row, f64)`, sorted by row; each step searches a row, since the matrix is stored by rows. |
+| `coefficient(row, col)` | The coefficient of `col` in `row`, zero for none. |
+| `col_named(name)`, `row_named(name)` | The first column or row of that name, `None` for none; a search through every one. |
 | `matrix()` | The whole matrix in compressed row form, a `RowMatrix { starts, cols, values }`. |
 | `objective_value(values)`, `objective_values(values)`, `activities(values)`, `max_violation(values)` | See [Checking a point](#checking-a-point). |
 | `to_lp_string()`, `write_lp(out)` | See [LP files](#lp-files). |

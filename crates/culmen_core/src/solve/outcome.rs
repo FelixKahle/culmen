@@ -81,6 +81,33 @@ impl Outcome {
         self.solution().map(|solution| solution.objective)
     }
 
+    /// The best objective bound proved, offset included: the optimum's own objective for [`Outcome::Optimal`], the
+    /// bound a gap or a stop proved, and `None` when none was proved or the outcome proves no finite bound
+    /// (infeasible or unbounded).
+    ///
+    /// With [`Outcome::objective`] it gives the gap a solve left, as gurobipy's `ObjVal` and `ObjBound` do.
+    ///
+    /// ```
+    /// use culmen_core::{Outcome, Solution, StopReason};
+    ///
+    /// let best = Solution { objective: 4.5, values: vec![1.0].into() };
+    /// assert_eq!(Outcome::Optimal(best.clone()).bound(), Some(4.5));
+    /// let gap = Outcome::GapReached { solution: best.clone(), bound: 4.25 };
+    /// assert_eq!((gap.objective(), gap.bound()), (Some(4.5), Some(4.25)));
+    /// let stopped = Outcome::Stopped { reason: StopReason::TimeLimit, best: Some(best), bound: None };
+    /// assert_eq!(stopped.bound(), None);
+    /// assert_eq!(Outcome::Unbounded.bound(), None);
+    /// ```
+    #[must_use]
+    pub const fn bound(&self) -> Option<f64> {
+        match self {
+            Self::Optimal(solution) => Some(solution.objective),
+            Self::GapReached { bound, .. } => Some(*bound),
+            Self::Stopped { bound, .. } => *bound,
+            Self::Infeasible | Self::Unbounded | Self::InfeasibleOrUnbounded => None,
+        }
+    }
+
     /// The best solution found, by value.
     #[must_use]
     pub fn into_solution(self) -> Option<Solution> {

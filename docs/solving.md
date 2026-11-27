@@ -296,7 +296,9 @@ sense. For a program with [several objectives](program.md#several-objectives), `
 objective, the first; `program.objective_values(&solution.values)` gives every objective's value, and a backend
 reports no bound, since its bound is that of the last stage or of the blend. `outcome.solution()` returns the
 best solution of any variant, `None` when there is none, `outcome.objective()` its objective value, and
-`outcome.into_solution()` takes it by value.
+`outcome.into_solution()` takes it by value. `outcome.bound()` is the best bound proved: the optimum for `Optimal`,
+the `bound` of `GapReached` and `Stopped`, and `None` when none was proved; with `objective()` it gives the gap a solve
+left.
 
 ```rust
 use culmen::prelude::*;
@@ -313,7 +315,7 @@ fn report(outcome: &Outcome) -> String {
 
 let stopped = Outcome::Stopped { reason: StopReason::TimeLimit, best: None, bound: Some(10.0) };
 assert_eq!(report(&stopped), "stopped (TimeLimit) without a solution");
-assert_eq!(stopped.solution(), None);
+assert_eq!((stopped.solution(), stopped.bound()), (None, Some(10.0)));
 ```
 
 ## `StopReason`

@@ -179,14 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for col in program.cols() {
         let used = rolls.values[col].round();
         if used > 0.0 {
-            let pieces = |row: Row| {
-                program
-                    .row(row)
-                    .entries()
-                    .find(|&(c, _)| c == col)
-                    .map_or(0.0, |(_, a)| a)
-            };
-            let pattern: Vec<f64> = demand.iter().map(|&row| pieces(row)).collect();
+            let pattern: Vec<f64> = demand.iter().map(|&row| program.coefficient(row, col)).collect();
             println!(
                 "  {used} rolls cut into {pattern:?} pieces of widths {:?}",
                 PIECES.map(|(width, _)| width)

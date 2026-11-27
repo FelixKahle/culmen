@@ -1,14 +1,14 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Borrowed views of one row of a [`Program`](super::Program).
+//! Borrowed views of one row of a [`Program`](super::Program), and the entries of one column.
 
 use core::iter::{Copied, FusedIterator, Zip};
 use core::slice;
 
 use typed_index_collections::TiSlice;
 
-use super::{Bounds, Col};
+use super::{Bounds, Col, Program, Row, Rows};
 
 /// One row of a [`Program`](super::Program): its bounds, its name and its entries, sorted by column, each column at
 /// most once and with a non-zero coefficient.
@@ -76,6 +76,20 @@ impl<'a> RowView<'a> {
         }
     }
 
+    /// The position of `col` among the entries, `None` when the row has no entry for it.
+    pub(crate) fn position(&self, col: Col) -> Option<usize> {
+        self.cols.binary_search(&col).ok()
+    }
+
+    /// The coefficient of the entry at `position`.
+    ///
+    /// # Panics
+    ///
+    /// When the row has no entry at `position`.
+    pub(crate) fn value_at(&self, position: usize) -> f64 {
+        self.values[position]
+    }
+
     /// The row's activity `Σ coefficient · value` at a point.
     ///
     /// # Panics
@@ -125,3 +139,57 @@ impl DoubleEndedIterator for RowEntries<'_> {
 impl ExactSizeIterator for RowEntries<'_> {}
 
 impl FusedIterator for RowEntries<'_> {}
+
+/// The entries of one column of a [`Program`] as `(row, coefficient)`, sorted by row; made by
+/// [`Program::col_entries`].
+#[derive(Clone, Debug)]
+#[must_use = "iterators are lazy and do nothing unless consumed"]
+pub struct ColEntries<'a> {
+    program: &'a Program,
+    col: Col,
+    /// The rows not yet searched.
+    rows: Rows,
+}
+
+impl<'a> ColEntries<'a> {
+    /// The entries of `col` in `program`.
+    pub(crate) fn new(program: &'a Program, col: Col) -> Self {
+        Self {
+            program,
+            col,
+            rows: program.rows(),
+        }
+    }
+}
+
+/// The entry of `col` in `row` of `program`, `None` when the row has none.
+///
+/// # Panics
+///
+/// When `program` has no row `row`.
+fn entry(program: &Program, col: Col, row: Row) -> Option<(Row, f64)> {
+    let view = program.row(row);
+    view.position(col).map(|i| (row, view.value_at(i)))
+}
+
+impl Iterator for ColEntries<'_> {
+    type Item = (Row, f64);
+
+    fn next(&mut self) -> Option<(Row, f64)> {
+        let (program, col) = (self.program, self.col);
+        self.rows.find_map(|row| entry(program, col, row))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.rows.len()))
+    }
+}
+
+impl DoubleEndedIterator for ColEntries<'_> {
+    fn next_back(&mut self) -> Option<(Row, f64)> {
+        let (program, col) = (self.program, self.col);
+        self.rows.by_ref().rev().find_map(|row| entry(program, col, row))
+    }
+}
+
+impl FusedIterator for ColEntries<'_> {}
