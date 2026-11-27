@@ -601,8 +601,10 @@ fn checked(constraint: &Constraint, num_cols: usize, infinity: f64) -> Result<Ad
 /// (`SCIP_INVALIDDATA`); a debug SCIP aborts on it before, as each variable's share of the constant is added
 /// (`var.c:5263`). So every share of the constant, the constant, every coefficient of the representation and each finite
 /// side less the constant stay below SCIP's infinity. The representation is walked here, through
-/// `SCIPgetProbvarSum` for each variable, never through `SCIPgetProbvarLinearSum`, which carries that abort. Before
-/// SCIP's transformed problem exists no variable is represented, and the row is taken as given.
+/// `SCIPgetProbvarSum` for each variable, never through `SCIPgetProbvarLinearSum`, which carries that abort. A cut's
+/// row resolves its variables the same way as SCIP adds them (`SCIPvarAddToRow`), adding each fixed variable's share
+/// to the row's constant, which a debug SCIP asserts stays below its infinity (`lp.c:5868`), so the same check holds
+/// for it. Before SCIP's transformed problem exists no variable is represented, and the row is taken as given.
 ///
 /// # Errors
 ///

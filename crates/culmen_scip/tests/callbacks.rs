@@ -669,6 +669,67 @@ fn test_cover_cuts_are_taken_and_leave_the_knapsack_optimum() {
     assert_eq!(plain.objective, best.objective);
 }
 
+/// The knapsack beside a column `x` fixed at `1e10` by its bounds, which presolve removes from SCIP's problem as a
+/// fixed variable; the items and `x`.
+fn knapsack_beside_fixed() -> (Program, Vec<Col>, Col) {
+    let mut m = Model::new();
+    let take = m.add_vars(ITEMS.len(), |_| Var::binary());
+    let x = m.add_var(Var::continuous().bounds(1e10, 1e10));
+    m.add_constraint(LinExpr::sum(ITEMS.iter().zip(&take).map(|(&(_, w), &x)| w * x)).leq(CAPACITY));
+    m.maximize(LinExpr::sum(ITEMS.iter().zip(&take).map(|(&(v, _), &x)| v * x)));
+    (m.build().unwrap(), take, x)
+}
+
+/// Adds `item - 1e11·x <= 1` at every call, which holds for every point as `x` is fixed at `1e10`, and whose fixed `x`
+/// adds up to the constant -1e21, beyond SCIP's infinity; keeps what `add_cut` answered.
+struct BeyondFixedCut {
+    item: Col,
+    x: Col,
+    answers: Vec<Result<(), ActionError>>,
+}
+
+impl CutHandler<Scip> for BeyondFixedCut {
+    fn cut(&mut self, ctx: &mut <Scip as UserCuts>::Cut<'_>) {
+        assert!(self.answers.len() < 1000, "the cut handler ran without end");
+        self.answers.push(ctx.add_cut((self.item - 1e11 * self.x).leq(1)));
+    }
+}
+
+#[test]
+fn test_a_cut_whose_fixed_columns_add_up_beyond_scips_infinity_is_refused_typed() {
+    let (program, take, x) = knapsack_beside_fixed();
+    let mut handler = BeyondFixedCut {
+        item: take[0],
+        x,
+        answers: Vec::new(),
+    };
+    let settings = Settings {
+        node_limit: Some(100),
+        ..exact()
+    };
+    // One presolve round fixes `x`; SCIP's full presolve would solve the knapsack before any LP, so no cut is asked.
+    let options = ScipOptions {
+        heuristics: Some(Emphasis::Off),
+        ..ScipOptions::default()
+    }
+    .param("presolving/maxrounds", 1);
+    let solved = Solver::new(Scip::with_options(options), program)
+        .unwrap()
+        .run()
+        .settings(settings)
+        .cut(&mut handler)
+        .solve()
+        .unwrap();
+    assert_eq!(solved.outcome.objective(), Some(best_subset()), "{solved:?}");
+    assert!(!handler.answers.is_empty(), "{solved:?}");
+    for answer in &handler.answers {
+        assert!(
+            matches!(answer, Err(ActionError::Refused(reason)) if reason.contains("infinite")),
+            "{answer:?}"
+        );
+    }
+}
+
 /// What a heuristic handler supplies at its first call, and what came of it.
 #[derive(Default)]
 struct Supplier {

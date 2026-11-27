@@ -462,6 +462,9 @@ variables; a cut that cuts the LP solution off by SCIP's efficacy goes into the 
 goes into SCIP's global cut pool (`SCIPaddPoolCut`), which SCIP separates again at later nodes. SCIP takes a cut as
 valid and may cut off every point it excludes; that the cut is valid is the handler's promise, which nothing checks.
 A solve with a cut handler calls the separator at every node, also when the `separating` emphasis turned SCIP's own off.
+SCIP adds a column presolve fixed or aggregated to a row by its value or representation, the value's share going into
+the row's constant, so `add_cut` refuses a cut whose columns then add up to a number at least SCIP's infinity (`1e20`)
+with `ActionError::Refused`, as it refuses such a lazy constraint.
 
 ```rust
 use std::time::Duration;

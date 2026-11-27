@@ -30,7 +30,7 @@ use scip_sys::{
     SCIPreleaseRow, SCIPsepaGetData,
 };
 
-use super::{Delivered, Run, Slot, checked, sides, slot};
+use super::{Delivered, Run, Slot, checked, representable, sides, slot};
 use crate::columns::Columns;
 use crate::error::check;
 use crate::{RetCode, ScipError};
@@ -41,6 +41,10 @@ const PRIORITY: c_int = 1_000_000;
 /// A node's LP solution, to be cut off with user cuts: the separator's `SEPAEXECLP`.
 #[derive(Debug)]
 pub struct ScipCut<'a> {
+    scip: *mut SCIP,
+    cols: Columns<'a>,
+    /// The variables of the columns priced so far.
+    priced: &'a [NonNull<SCIP_VAR>],
     progress: Progress,
     relaxation: &'a TiSlice<Col, f64>,
     infinity: f64,
@@ -62,10 +66,17 @@ impl CutContext for ScipCut<'_> {
     ///
     /// # Errors
     ///
-    /// Besides the core errors, [`ActionError::Refused`] for a number SCIP would read as infinite, or more terms
-    /// than SCIP's `int` counts.
+    /// Besides the core errors, [`ActionError::Refused`] for a number SCIP would read as infinite, more terms than
+    /// SCIP's `int` counts, or columns SCIP has fixed or aggregated that add up to a number SCIP would read as
+    /// infinite, as SCIP stands now: SCIP adds such a column to a row as its share of the row's constant
+    /// (`SCIPvarAddToRow`), and asserts on a debug SCIP that each share and the constant stay below its infinity
+    /// (`var.c:20053`, `lp.c:5868`, `lp.c:5813` of SCIP 10.0.2).
     fn add_cut(&mut self, cut: Constraint) -> Result<(), ActionError> {
         let row = checked(&cut, self.relaxation.len(), self.infinity)?;
+        // SAFETY: the instance is the run's, live while the callback runs, and holds the columns and the priced ones;
+        // `checked` found every column of the row among them.
+        unsafe { representable(self.scip, self.cols, self.priced, &row, self.infinity) }
+            .map_err(ActionError::Refused)?;
         self.added.push(row);
         Ok(())
     }
@@ -153,14 +164,19 @@ impl Run<'_, '_> {
         let relaxation = unsafe { self.values(scip, ptr::null_mut()) };
         let progress = self.progress(scip);
         let mut added = Vec::new();
+        let priced = self.priced_vars.borrow();
         let delivered = self.deliver(scip, |hooks| {
             hooks.cut(&mut ScipCut {
+                scip,
+                cols: self.cols,
+                priced: &priced,
                 progress,
                 relaxation: &relaxation,
                 infinity: self.infinity,
                 added: &mut added,
             });
         });
+        drop(priced);
         if delivered != Delivered::Ran {
             return (SCIP_Result_SCIP_DIDNOTRUN, Ok(()));
         }
