@@ -22,7 +22,7 @@ culmen is on crates.io:
 
 ```toml
 [dependencies]
-culmen = { version = "0.4", features = ["macros"] }
+culmen = { version = "0.5", features = ["macros"] }
 # the main branch instead: culmen = { git = "https://github.com/FelixKahle/culmen", features = ["macros"] }
 ```
 

@@ -262,7 +262,7 @@ culmen is on crates.io:
 
 ```toml
 [dependencies]
-culmen = { version = "0.4", features = ["macros"] }
+culmen = { version = "0.5", features = ["macros"] }
 ```
 
 To follow the main branch instead, depend on it from git:

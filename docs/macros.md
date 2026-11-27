@@ -10,7 +10,7 @@ Turn on the `macros` feature of `culmen`:
 
 ```toml
 [dependencies]
-culmen = { version = "0.4", features = ["macros"] }
+culmen = { version = "0.5", features = ["macros"] }
 ```
 
 The macros are then in `culmen::prelude` and at `culmen::variable` and so on. They work from a crate that depends on

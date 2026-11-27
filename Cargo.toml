@@ -18,7 +18,7 @@ members = ["crates/culmen", "crates/culmen_core", "crates/culmen_highs", "crates
     "crates/culmen_testing"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT OR Apache-2.0"
@@ -29,10 +29,10 @@ categories = ["mathematics", "science"]
 
 [workspace.dependencies]
 # The workspace's own crates, each published with the workspace's version.
-culmen_core = { path = "crates/culmen_core", version = "0.4.0" }
-culmen_highs = { path = "crates/culmen_highs", version = "0.4.0" }
-culmen_macros = { path = "crates/culmen_macros", version = "0.4.0" }
-culmen_scip = { path = "crates/culmen_scip", version = "0.4.0" }
+culmen_core = { path = "crates/culmen_core", version = "0.5.0" }
+culmen_highs = { path = "crates/culmen_highs", version = "0.5.0" }
+culmen_macros = { path = "crates/culmen_macros", version = "0.5.0" }
+culmen_scip = { path = "crates/culmen_scip", version = "0.5.0" }
 culmen_testing = { path = "crates/culmen_testing" }
 
 # Vectors indexed by `Col` and `Row`, so a column table cannot be read with a row id.

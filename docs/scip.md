@@ -80,7 +80,7 @@ default feature of `culmen`: most models are served by HiGHS, whose build is sho
 
 ```toml
 [dependencies]
-culmen = { version = "0.4", features = ["scip"] }
+culmen = { version = "0.5", features = ["scip"] }
 ```
 
 ## Options
