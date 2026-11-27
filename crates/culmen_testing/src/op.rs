@@ -35,7 +35,7 @@ pub enum EditOp {
     Sense(Sense),
     /// [`Solver::set_offset`].
     Offset(f64),
-    /// [`Solver::set_objective`] of `Σ coefficient · col + constant + Σ q · col²` in `sense`.
+    /// [`Solver::set_objective`] of `Σ coefficient · col + constant + Σ q · col² + Σ q · first · second` in `sense`.
     Objective {
         /// The sense.
         sense: Sense,
@@ -45,6 +45,9 @@ pub enum EditOp {
         constant: f64,
         /// The squares as `(col, q)`, each adding `q · col²`, in order.
         squares: Vec<(Col, f64)>,
+        /// The cross terms as `(first, second, q)`, each adding `q · first · second` for two different columns, in
+        /// order.
+        cross: Vec<(Col, Col, f64)>,
     },
 }
 
@@ -85,6 +88,7 @@ impl EditOp {
                 terms,
                 constant,
                 squares,
+                cross,
             } => {
                 let mut objective = QuadExpr::from(constant);
                 for (col, a) in terms {
@@ -92,6 +96,9 @@ impl EditOp {
                 }
                 for (col, q) in squares {
                     objective.add_term(col, col, q);
+                }
+                for (first, second, q) in cross {
+                    objective.add_term(first, second, q);
                 }
                 solver.set_objective(sense, objective).map(|()| Applied::Changed)
             }

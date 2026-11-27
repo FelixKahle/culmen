@@ -450,20 +450,41 @@ fn edit_sense() -> impl Strategy<Value = Sense> {
     prop_oneof![Just(Sense::Minimize), Just(Sense::Maximize)]
 }
 
-/// A replaced objective whose terms name columns below `cols`: its sense, linear terms, constant, and mostly no
-/// squares.
-fn edit_objective(cols: usize) -> impl Strategy<Value = EditOp> {
+/// A replaced objective whose terms name columns below `cols`: its sense, linear terms, constant, mostly no squares,
+/// and sometimes a block on one pair of different columns: a square on each, signed for the sense, and one or two
+/// cross terms between them, written in either order, the pair mostly among the program's `held` columns. The
+/// quadratic part's blocks are then a pair at most.
+fn edit_objective(cols: usize, held: usize) -> impl Strategy<Value = EditOp> {
     let col = move || (0..cols).prop_map(Col::new);
     let squares = prop_oneof![
         2 => Just(Vec::new()),
         1 => prop::collection::vec((col(), edit_number()), 1..=2),
     ];
+    let n = held.max(2);
+    let pair = (0..n, 1..n).prop_map(move |(first, step)| (Col::new(first), Col::new((first + step) % n)));
+    let cross = prop::collection::vec((any::<bool>(), edit_number()), 1..=2);
+    let block = prop_oneof![1 => Just(None), 1 => (pair, 0i32..=3, 0i32..=3, cross).prop_map(Some)];
     let terms = prop::collection::vec((col(), edit_number()), 0..=3);
-    (edit_sense(), terms, edit_offset(), squares).prop_map(|(sense, terms, constant, squares)| EditOp::Objective {
-        sense,
-        terms,
-        constant,
-        squares,
+    (edit_sense(), terms, edit_offset(), squares, block).prop_map(|(sense, terms, constant, mut squares, block)| {
+        let mut cross = Vec::new();
+        if let Some(((i, j), a, b, terms)) = block {
+            let s = match sense {
+                Sense::Minimize => 1.0,
+                Sense::Maximize => -1.0,
+            };
+            squares.extend([(i, s * f64::from(a)), (j, s * f64::from(b))]);
+            cross = terms
+                .into_iter()
+                .map(|(swap, q)| if swap { (j, i, q) } else { (i, j, q) })
+                .collect();
+        }
+        EditOp::Objective {
+            sense,
+            terms,
+            constant,
+            squares,
+            cross,
+        }
     })
 }
 
@@ -486,7 +507,7 @@ fn edit_op(cols: usize, rows: usize) -> impl Strategy<Value = EditOp> {
         prop::collection::vec(new_col(rows), 0..=2).prop_map(EditOp::AddCols),
         edit_sense().prop_map(EditOp::Sense),
         edit_offset().prop_map(EditOp::Offset),
-        edit_objective(cols),
+        edit_objective(cols, cols - 2),
     ]
 }
 
@@ -515,11 +536,12 @@ mod tests {
     use crate::reference::edit_plan;
 
     #[test]
+    /// Every kind of edit, an objective with cross terms counted apart, is accepted and refused often.
     fn test_edits_of_every_kind_are_both_accepted_and_refused() {
         let mut runner = TestRunner::deterministic();
         let strategy = with_edits(prop_oneof![small_lp(), small_semi(), small_qp()]);
-        let (mut accepted, mut refused) = ([0usize; 14], [0usize; 14]);
-        for _ in 0..2000 {
+        let (mut accepted, mut refused) = ([0usize; 15], [0usize; 15]);
+        for _ in 0..4000 {
             let (program, ops) = strategy.new_tree(&mut runner).unwrap().current();
             for op in &ops {
                 let kind = match op {
@@ -531,12 +553,13 @@ mod tests {
                     EditOp::AddCols(_) => 5,
                     EditOp::Sense(_) => 6,
                     EditOp::Offset(_) => 7,
-                    EditOp::Objective { .. } => 8,
+                    EditOp::Objective { cross, .. } if cross.is_empty() => 8,
                     EditOp::ColLower(_) => 9,
                     EditOp::ColUpper(_) => 10,
                     EditOp::RowLower(_) => 11,
                     EditOp::RowUpper(_) => 12,
                     EditOp::Coefficients(_) => 13,
+                    EditOp::Objective { .. } => 14,
                 };
                 match edit_plan(&program, op, ModelClasses::ALL, ProgramFeatures::ALL) {
                     Ok(_) => accepted[kind] += 1,
@@ -544,7 +567,12 @@ mod tests {
                 }
             }
         }
-        assert!(accepted.iter().all(|&n| n >= 100), "accepted {accepted:?}");
+        // An objective with cross terms needs two columns, which many small programs lack, so fewer are accepted.
+        let (cross, others) = accepted.split_last().unwrap();
+        assert!(
+            others.iter().all(|&n| n >= 100) && *cross >= 40,
+            "accepted {accepted:?}, refused {refused:?}"
+        );
         assert!(refused.iter().all(|&n| n >= 50), "refused {refused:?}");
     }
 }

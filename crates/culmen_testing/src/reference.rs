@@ -444,7 +444,8 @@ pub fn edit_plan(
             terms,
             constant,
             squares,
-        } => replace_objective(&mut plan, *sense, terms, *constant, squares)?,
+            cross,
+        } => replace_objective(&mut plan, *sense, terms, *constant, squares, cross)?,
     }
     check_columns_and_rows(&plan)?;
     let (class, used) = class_and_features(&plan);
@@ -568,7 +569,7 @@ fn finite_offset(offset: f64) -> Result<f64, Refused> {
     }
 }
 
-/// Replaces the plan's own objective with `Σ terms + constant + Σ q · col²` in `sense`.
+/// Replaces the plan's own objective with `Σ terms + constant + Σ q · col² + Σ q · first · second` in `sense`.
 ///
 /// # Errors
 ///
@@ -579,9 +580,12 @@ fn replace_objective(
     terms: &[(Col, f64)],
     constant: f64,
     squares: &[(Col, f64)],
+    cross: &[(Col, Col, f64)],
 ) -> Result<(), Refused> {
     let num_cols = plan.columns.len();
-    if let Some((col, _)) = terms.iter().chain(squares).find(|(col, _)| col.index() >= num_cols) {
+    let named = terms.iter().chain(squares).map(|&(col, _)| col);
+    let named = named.chain(cross.iter().flat_map(|&(first, second, _)| [first, second]));
+    if let Some(col) = named.into_iter().find(|col| col.index() >= num_cols) {
         return Err(refused(format!("the objective names {col:?}, which the program lacks")));
     }
     let mut costs = vec![0.0; num_cols];
@@ -595,8 +599,8 @@ fn replace_objective(
         }
     }
     let offset = finite_offset(constant)?;
-    let sums = square_sums(squares, sense)?;
-    if sums.values().any(|&q| q != 0.0) && plan.objectives.are_several() {
+    let quadratic = quadratic_part(squares, cross, sense)?;
+    if !quadratic.is_empty() && plan.objectives.are_several() {
         return Err(refused("a quadratic part beside further objectives"));
     }
     plan.sense = sense;
@@ -605,20 +609,79 @@ fn replace_objective(
         .iter_mut()
         .zip(costs)
         .for_each(|(column, cost)| column.cost = cost);
-    plan.quadratic = sums
+    plan.quadratic = quadratic;
+    Ok(())
+}
+
+/// The quadratic part of squares and cross terms on at most one pair of columns, as `(first, second, q)` with every
+/// `q` not zero.
+///
+/// The Hessian splits into the pair's block and a block per other column. A column's block alone is convex to
+/// minimize when its squares sum to at least zero, and concave to maximize when they sum to at most zero. The pair's
+/// block `[[2a, c], [c, 2b]]`, with `a` and `b` its columns' square sums and `c` its cross terms' sum, is convex when
+/// `a` and `b` are at least zero and its determinant `4ab - c²` is too, and concave when `a` and `b` are at most zero
+/// and the determinant at least zero; with whole numbers this is exact.
+///
+/// # Errors
+///
+/// [`Refused`] for a coefficient or a sum that is not finite, or a block that is not convex for `sense`.
+///
+/// # Panics
+///
+/// When the cross terms name more than one pair, or a column paired with itself.
+fn quadratic_part(
+    squares: &[(Col, f64)],
+    cross: &[(Col, Col, f64)],
+    sense: Sense,
+) -> Result<Vec<(Col, Col, f64)>, Refused> {
+    let pair = cross.first().map(|&(i, j, _)| (i.min(j), i.max(j)));
+    assert!(
+        cross
+            .iter()
+            .all(|&(i, j, _)| Some((i.min(j), i.max(j))) == pair && i != j),
+        "the reference judges cross terms on one pair of different columns"
+    );
+    if let Some((i, j, q)) = cross.iter().find(|(.., q)| !q.is_finite()) {
+        return Err(refused(format!("the term {i:?} · {j:?} has the coefficient {q}")));
+    }
+    let c: f64 = cross.iter().map(|&(.., q)| q).sum();
+    if !c.is_finite() {
+        return Err(refused(format!("the cross terms sum to {c}")));
+    }
+    let sums = square_sums(squares)?;
+    let sum = |col: Col| sums.get(&col).copied().unwrap_or(0.0);
+    let signed = |q: f64| match sense {
+        Sense::Minimize => q >= 0.0,
+        Sense::Maximize => q <= 0.0,
+    };
+    let in_pair = |col: Col| pair.is_some_and(|(i, j)| c != 0.0 && (col == i || col == j));
+    if let Some((&col, &q)) = sums.iter().find(|&(&col, &q)| !in_pair(col) && !signed(q)) {
+        return Err(refused(format!(
+            "the squares of {col:?} sum to {q}, which {sense:?} refuses"
+        )));
+    }
+    if let Some((i, j)) = pair.filter(|_| c != 0.0) {
+        let (a, b) = (sum(i), sum(j));
+        if !(signed(a) && signed(b) && 4.0 * a * b - c * c >= 0.0) {
+            return Err(refused(format!(
+                "the block of {i:?} and {j:?}, squares {a} and {b}, cross {c}, which {sense:?} refuses"
+            )));
+        }
+    }
+    let squares = sums
         .into_iter()
         .filter(|&(_, q)| q != 0.0)
-        .map(|(col, q)| (col, col, q))
-        .collect();
-    Ok(())
+        .map(|(col, q)| (col, col, q));
+    let pair = pair.filter(|_| c != 0.0).map(|(i, j)| (i, j, c));
+    Ok(squares.chain(pair).collect())
 }
 
 /// Each column's squares' coefficients added up.
 ///
 /// # Errors
 ///
-/// [`Refused`] for a coefficient, a sum or twice a sum that is not finite, or a sum of the wrong sign for `sense`.
-fn square_sums(squares: &[(Col, f64)], sense: Sense) -> Result<BTreeMap<Col, f64>, Refused> {
+/// [`Refused`] for a coefficient, a sum or twice a sum that is not finite.
+fn square_sums(squares: &[(Col, f64)]) -> Result<BTreeMap<Col, f64>, Refused> {
     if let Some((col, q)) = squares.iter().find(|(_, q)| !q.is_finite()) {
         return Err(refused(format!("the square of {col:?} has the coefficient {q}")));
     }
@@ -626,19 +689,8 @@ fn square_sums(squares: &[(Col, f64)], sense: Sense) -> Result<BTreeMap<Col, f64
     for &(col, q) in squares {
         *sums.entry(col).or_insert(0.0) += q;
     }
-    for (&col, &sum) in &sums {
-        if !(2.0 * sum).is_finite() {
-            return Err(refused(format!("the squares of {col:?} sum to {sum}")));
-        }
-        let convex = match sense {
-            Sense::Minimize => sum >= 0.0,
-            Sense::Maximize => sum <= 0.0,
-        };
-        if !convex {
-            return Err(refused(format!(
-                "the squares of {col:?} sum to {sum}, which {sense:?} refuses"
-            )));
-        }
+    if let Some((col, sum)) = sums.iter().find(|&(_, &sum)| !(2.0 * sum).is_finite()) {
+        return Err(refused(format!("the squares of {col:?} sum to {sum}")));
     }
     Ok(sums)
 }
