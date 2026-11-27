@@ -26,6 +26,11 @@
 //! that solve also turns off SCIP's symmetry handling and its dual reductions, which reason about the constraints
 //! SCIP holds, and its copies are invalid, so a sub-SCIP's solution is checked by the main SCIP and its components
 //! presolver does not run.
+//!
+//! An enforcement that meets an error, SCIP refusing a constraint, keeps it, asks SCIP to stop and cuts its node off
+//! instead of returning an error code, which would leave SCIP's delay of the handler's constraint updates in place
+//! (`cons.c:3525-3531` of SCIP 10.0.2) and abort a debug SCIP at the next solve of the instance (`cons.c:2524`). Every
+//! later enforcement cuts its node off until SCIP stops, and the solve fails with the error.
 
 use core::ffi::{c_int, c_uint};
 use core::ptr::{self, NonNull};
@@ -219,6 +224,13 @@ impl Run<'_, '_> {
         };
         let mut violated = false;
         for (i, row) in waiting {
+            #[cfg(test)]
+            if self.slot.refuse_lazy.get() {
+                return Err(ScipError::Call {
+                    call: "SCIPaddCons",
+                    code: RetCode::Error,
+                });
+            }
             // The store is not borrowed while SCIP runs, which may write a message the callback is handed.
             // SAFETY: the caller's contract is `add_cons`'s.
             unsafe { add_cons(scip, self.cols, &self.priced_vars.borrow(), &row, self.infinity) }?;
@@ -284,7 +296,8 @@ impl Run<'_, '_> {
         source: LazySource,
         infeasible: bool,
     ) -> Result<SCIP_RESULT, ScipError> {
-        if self.panicked() {
+        // SCIP is being stopped: every node is closed until it does.
+        if self.stopping() {
             return Ok(SCIP_Result_SCIP_CUTOFF);
         }
         // SAFETY: the caller vouches for the instance, its stage and `sol`.
@@ -502,7 +515,8 @@ unsafe fn enforced(
         // SAFETY: SCIP enforces while solving, on `sol`.
         Some(run) => match unsafe { run.enforce(scip, sol, source, infeasible) } {
             Ok(verdict) => (verdict, SCIP_Retcode_SCIP_OKAY),
-            Err(error) => (SCIP_Result_SCIP_FEASIBLE, run.fail(error)),
+            // The solve fails with the error once SCIP has stopped; the node is closed meanwhile.
+            Err(error) => (SCIP_Result_SCIP_CUTOFF, run.stop_with(scip, error)),
         },
         None => (SCIP_Result_SCIP_FEASIBLE, SCIP_Retcode_SCIP_OKAY),
     };

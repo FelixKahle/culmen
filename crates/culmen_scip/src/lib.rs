@@ -787,6 +787,39 @@ mod tests {
         assert_eq!(scip.instance.as_ref().unwrap().kept_locks(var), (0, 0));
     }
 
+    /// Adds `x <= 1/2` for every candidate, counting its calls.
+    #[derive(Default)]
+    struct HalvesX(usize);
+
+    impl culmen_core::LazyHandler<Scip> for HalvesX {
+        fn lazy(&mut self, ctx: &mut ScipLazy<'_>) {
+            self.0 += 1;
+            assert!(self.0 < 1_000, "HalvesX: the lazy-constraint handler ran without end");
+            let half = culmen_core::Linear::leq(culmen_core::Col::new(0), 0.5);
+            culmen_core::LazyContext::add_lazy(ctx, half).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_a_lazy_constraint_scip_refuses_in_enforcement_fails_the_solve_and_the_instance_solves_again() {
+        let (mut scip, _) = maximize_one();
+        scip.instance.as_ref().unwrap().refuse_lazy(true);
+        let mut lazy = HalvesX::default();
+        let failed = scip.solve(&limited(), Hooks::new().register_lazy(&mut lazy));
+        assert_eq!(
+            failed.map(|solved| solved.outcome),
+            Err(ScipError::Call {
+                call: "SCIPaddCons",
+                code: RetCode::Error,
+            })
+        );
+        assert!(lazy.0 >= 1);
+        // SCIP finished the failed solve cleanly, so the instance solves again.
+        scip.instance.as_ref().unwrap().refuse_lazy(false);
+        let solved = scip.solve(&limited(), Hooks::new()).unwrap();
+        assert_eq!(solved.outcome.objective(), Some(1.0));
+    }
+
     #[test]
     fn test_presolving_on_keeps_the_presolving_parameters_the_options_set_by_name() {
         let mut scip = Scip::with_options(ScipOptions::default().param("presolving/domcol/maxrounds", 0));
