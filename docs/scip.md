@@ -494,7 +494,7 @@ asking `explain`. The analysis runs only where SCIP analyses conflicts: while so
 with `conflict/enable` on; elsewhere the cutoff is plain. SCIP also gives up a conflict that would involve more than
 `conflict/maxvarsfac` (15 %) of the integer variables, at least `conflict/minmaxvars` (0) of them, so in a program of
 a handful of columns it learns nothing unless `conflict/minmaxvars` is raised through `ScipOptions::params`. A
-tightening that SCIP finds empties a domain cuts the node off plainly; a handler that wants SCIP to learn from such a
+tightening SCIP itself finds empties a domain cuts the node off plainly; a handler that wants SCIP to learn from such a
 node names its bounds with `cut_off_because`.
 
 A false explanation is a wrong answer, not a slower one. An explanation that answers `Complete` with bounds that do not
