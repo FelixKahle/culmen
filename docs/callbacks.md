@@ -323,7 +323,7 @@ as a deadline check, takes any context as `&impl Context`.
 | `SolutionContext` | `objective()`, `values()` | nothing |
 | `LazyContext` | `objective()`, `candidate()` | `add_lazy(constraint)`: a constraint the candidate may violate, kept for the rest of the search |
 | `CutContext` | `relaxation()` | `add_cut(cut)`: a constraint every integer-feasible point satisfies |
-| `HeuristicContext` | the progress | `supply(values)`: a full solution |
+| `HeuristicContext` | the progress | `supply(values)`: a full solution, handed over for the solver to check; `Ok` does not say it was kept |
 | `PriceContext` | `mode()`, `sense()`, `duals()`, `tolerance()`; `reduced_cost(column)` and `improves(column)` computed from them | `add_col(column)`: a column to add to the search, returning its id; `branch_early()`: stop pricing at this node; `report_bound(bound)`: a bound on this node's subtree |
 
 A solver that completes a partial solution offers that on its own heuristic context, as an inherent method, since

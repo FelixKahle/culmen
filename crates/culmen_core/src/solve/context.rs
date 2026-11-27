@@ -93,6 +93,10 @@ pub trait HeuristicContext: Context {
     /// Offers a value for every column the problem holds when the event is delivered, the columns priced so far in
     /// this solve included. The solver checks it and keeps it if it is feasible and better.
     ///
+    /// `Ok` means the solution was handed over, not that the solver kept it, since a solver may check it only later;
+    /// a solver may also check it at once and refuse an infeasible one with `Err`. Each backend's context says which
+    /// it does.
+    ///
     /// # Errors
     ///
     /// [`ActionError`] when `values` does not hold one finite value per column, or the solver refuses it.
