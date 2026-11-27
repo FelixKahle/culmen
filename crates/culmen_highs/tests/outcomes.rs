@@ -339,7 +339,7 @@ fn test_options_and_statuses_round_trip() {
     .option("infinite_bound", f64::INFINITY);
     round_trip(&infinite);
     round_trip(&culmen_highs::OptionValue::Double(f64::NEG_INFINITY));
-    use culmen_highs::{EdgeWeight, LpSolver, MipIpmSolver, MipLpSolver, ScaleStrategy, files::ModelFormat};
+    use culmen_highs::{EdgeWeight, LpSolver, MipIpmSolver, MipLpSolver, ModelFormat, ScaleStrategy};
     for format in [ModelFormat::Mps, ModelFormat::Lp] {
         round_trip(&format);
     }

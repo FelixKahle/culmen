@@ -267,7 +267,7 @@ With the `serde` feature, the plain data derives `Serialize` and `Deserialize`:
 - The analyses: `Analysis`, `Duals`, `Basis`, `BasisStatus`, `Ranging`, `Ranged`, `Limit`, `Line`, `Iis`,
   `Side`, `Weights`, `Penalty`, `Relaxed`, `Violation`, `Bound`.
 - With `highs`: `HighsOptions` and its option types, `OptionValue`, `HighsStatus`, `ModelStatus`, `SolutionStatus`,
-  `CallStatus`, `Version` and `files::ModelFormat`.
+  `CallStatus`, `Version` and `ModelFormat`.
 - With `scip`: `ScipOptions`, `Emphasis`, `ScipParam`, `ParamValue`, `ScipStatus`, `Status`, `RetCode` and `Version`.
 
 The model (`Model`, `Var`, `LinExpr`, `QuadExpr`, `Constraint`, the families) is not serializable: serialize the

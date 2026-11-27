@@ -84,7 +84,8 @@ analyses' data and the errors. `Backend` is there too, since generic consumer co
 the scripted test backend and what only it needs; `culmen::backend` holds what only code implementing or driving a
 backend names (`Hooks`, `Relay`, `Edit`, `Priced`, `Watch`, `Found`, `Unsupported`, the `check_*` helpers). Each
 solver's own types are at the root of its crate, `culmen::highs` or `culmen::scip`, and a submodule holds only free
-functions whose names read right with it (`culmen::highs::files::read`). Nothing is re-exported a second time for
+functions whose names read right with it (`culmen::highs::files::read`), and the types those functions take and
+return stay at the crate root (`culmen::highs::ModelFormat`). Nothing is re-exported a second time for
 convenience; the prelude, a selection of root items and the backend types, is the one exception.
 
 ## Public types are exhaustive

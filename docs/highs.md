@@ -293,17 +293,17 @@ trusted:
 
 ## Model files
 
-`culmen_highs::files` reads and writes MPS and LP files with HiGHS's own readers and writers. `files::read(path)` and
-`files::write(&program, path)` pick the `ModelFormat`, `Mps` or `Lp`, by the extension, `.mps` or `.lp` in any case;
-`files::read_as` and `files::write_as` take it explicitly, through a temporary file of the right extension when the
-path has another. Reading gives a checked `Program`, every column and row named as in the file and in the file's
+`culmen_highs::files` reads and writes MPS and LP files with HiGHS's own readers and writers; its types,
+`ModelFormat` and `FileError`, are at the crate root. `files::read(path)` and `files::write(&program, path)` pick the
+`ModelFormat`, `Mps` or `Lp`, by the extension, `.mps` or `.lp` in any case; `files::read_as` and `files::write_as`
+take it explicitly, through a temporary file of the right extension when the path has another. Reading gives a checked `Program`, every column and row named as in the file and in the file's
 order; writing then reading gives the same program up to names and that order, and the same optimum. The one
 exception is a ranged row in an LP file, which HiGHS writes, and so reads back, as two rows named with `lo` and `up`
 appended.
 
 ```rust
 use culmen::prelude::*;
-use culmen::highs::files::{self, FileError, ModelFormat};
+use culmen::highs::{FileError, ModelFormat, files};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();

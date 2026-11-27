@@ -92,6 +92,7 @@ mod callback;
 mod error;
 pub mod files;
 mod instance;
+mod model_file;
 mod options;
 mod status;
 
@@ -115,6 +116,7 @@ use culmen_core::{
     RelaxationAnalysis, Relaxed, Row, Starts, TiVec, Weights,
 };
 pub use error::{Dimension, HighsCode, HighsError, UnsoundQp};
+pub use model_file::{FileError, ModelFormat};
 pub use options::{
     EdgeWeight, HighsOption, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OptionValue, PresolveMode,
     ScaleStrategy, SimplexStrategy, Switch,

@@ -18,7 +18,7 @@ use culmen_core::{
     Tolerance, Var,
 };
 use culmen_highs::Highs;
-use culmen_highs::files::{self, FileError, ModelFormat};
+use culmen_highs::{FileError, ModelFormat, files};
 use culmen_testing::reference::close;
 use culmen_testing::strategy::{small_lp, small_semi};
 use proptest::prelude::*;
