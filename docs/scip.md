@@ -2,8 +2,8 @@
 
 `culmen_scip` is the SCIP backend: SCIP 10 with SoPlex as its LP solver, built from source through the `scip-sys`
 crate, with every SCIP status, SCIP's emphasis settings and parameters as typed options, and every generic callback
-event and every search handler delivered through SCIP plugins: lazy constraints, user cuts, heuristic solutions,
-pricing and constraint handlers included. With the
+event and every search handler delivered through SCIP plugins: lazy constraints, user cuts, heuristic solutions and
+pricing included. With the
 `scip` feature it is `culmen::scip`, and its backend type is also `culmen::Scip` and in the prelude.
 
 SCIP is the backend for what HiGHS cannot do: a convex quadratic objective over integer columns (MIQP), constraints
@@ -93,7 +93,6 @@ culmen = { version = "0.4", features = ["scip"] }
 | `presolving` | `SCIPsetPresolving`: how hard SCIP presolves | `None` |
 | `separating` | `SCIPsetSeparating`: how hard SCIP separates its cutting planes | `None` |
 | `params` | parameters set by SCIP's names, in order, after the emphases | empty |
-| `enforcement_rounds` | none: the most times a [constraint handler](#constraint-handlers) is asked to enforce at one node before the solve fails with `ScipError::EnforcementStalled` | `10_000` |
 
 `Emphasis` is SCIP's `SCIP_PARAMSETTING`: `Default`, `Aggressive`, `Fast` or `Off`. **Parameters by name** are added
 with `ScipOptions::param(name, value)`, which appends a `ScipParam { name, value }`. The value is a `ParamValue`, one of
@@ -340,7 +339,6 @@ instance:
 | `POLL` | an event handler on each presolve round, focused node, solved node LP and solved node (`PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED`); `interrupt` calls `SCIPinterruptSolve` | `ScipPoll` | `event()`: a `ScipEvent` |
 | `PROGRESS` | the same event handler, at each poll | `ScipProgress` | `event()` |
 | `FEASIBLE`, `INCUMBENT` | the event handler on each solution SCIP stores (`POORSOLFOUND`, `BESTSOLFOUND`), a new best one as the incumbent too; the starts and carried solutions SCIP stored before it, as it catches its events | `ScipSolution` | |
-| `ConstraintHandler` | a constraint handler without constraints, `culmen-handler`, checked and enforced after every SCIP handler and before the lazy one (`CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`, `CONSLOCK`) | `ScipCheck`, `ScipEnforce` | `source()`: a `CandidateSource`; `ScipEnforce::depth()` |
 | `LazyHandler` | a constraint handler without constraints, checked and enforced after every other (`CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`) | `ScipLazy` | `source()`: a `CandidateSource`, `Check`, `Lp`, `Pseudo` or `Relaxation` |
 | `CutHandler` | a separator on each node's LP solution (`SEPAEXECLP`) | `ScipCut` | |
 | `HeuristicHandler` | a primal heuristic before and after each node (`HEUREXEC`) | `ScipHeuristic` | |
@@ -354,8 +352,8 @@ primal and dual bound, the nodes and the LP iterations, each in the stages SCIP 
 
 A handler's plugin acts only for a solve whose `Run` registered a handler of its kind, and the observational plugins
 only for the events the callback asks for, so a solve with neither runs SCIP as it would without culmen. What SCIP gives
-up is decided by the handlers registered, never by the events asked for: a constraint handler, a lazy-constraint handler
-or a pricer changes how SCIP solves (see each section below), a cut or a heuristic handler calls culmen's separator or heuristic at every
+up is decided by the handlers registered, never by the events asked for: a lazy-constraint handler or a pricer changes
+how SCIP solves (see each section below), a cut or a heuristic handler calls culmen's separator or heuristic at every
 node, and a callback, even one asking for `Events::ALL`, costs a call per event and nothing else. SCIP calls every
 plugin on the thread running the solve, one call at a time; a plugin called while a callback or handler is busy with an
 outer event (a solution supplied from `heuristic` is checked and stored at once, which calls the constraint handler and
@@ -440,122 +438,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The `lazy_constraints` example of the `culmen` crate solves a small travelling-salesman problem this way, cutting off
 subtours.
-
-## Constraint handlers
-
-A `ConstraintHandler<Scip>` runs on SCIP's constraint handler `culmen-handler`, which holds no constraints of its own
-and is checked and enforced after every constraint handler of SCIP's, integrality included, and before the
-lazy-constraint handler. In this release SCIP asks `check` and `enforce`:
-
-- `check` judges every solution SCIP checks before storing it: a heuristic's, a start, a sub-SCIP's, a supplied one,
-  one kept from the solve before (`ScipCheck::source()` is `CandidateSource::Check`). It is also asked first at every
-  enforcement.
-- `enforce` is asked about a node's LP or pseudo solution (`Lp`, `Pseudo`) that every SCIP handler accepted, so an
-  integer one, and only when `check` rejected it. SCIP stores a point every enforcement accepted without checking it
-  again, so asking `check` first is what keeps a rejected point out.
-- An enforcement resolves the point by adding constraints (`add_constraint`: a global linear constraint for the rest of
-  the solve, `SCIPaddCons`) or by cutting the node off (`cut_off`). Doing nothing leaves the point to SCIP's branching
-  on an unfixed integer column. Tightening a bound, branching into children of the handler's own and cutting off with
-  a conflict (`tighten`, `branch`, `cut_off_because`) are refused with `ActionError::Refused` in this release, after
-  the checks every backend makes (`Exclusive`, `UnknownColumn`, `NotInvolved`); SCIP does not call `propagate`,
-  `explain` or `presolve` yet, so `ScipPropagate`, `ScipExplain` and `ScipPresolve` have no values. A declaration of
-  `Candidates::Fractional` is enforced as `Candidates::Integral`: the handler sees every point SCIP would accept, but no
-  LP point with a fractional integer column.
-
-The handler never names SCIP's result: the plugin derives it from what was recorded and what SCIP reports. `check`
-accepting is `FEASIBLE`; a cutoff is `CUTOFF`; a constraint not added before in the solve that the point violates by
-SCIP's feasibility tolerance is `CONSADDED`, so SCIP solves the node again with it; and nothing changed is
-`INFEASIBLE`, which SCIP resolves by branching on an unfixed integer column, or, at a node of a pure integer problem
-without a pricer where every integer column is fixed, by cutting the node off. Two cases end the solve with a typed
-error instead of a hang or SCIP's own failure:
-
-| Error | When |
-|---|---|
-| `ScipError::UnresolvedRejection` | `check` rejected a node's LP point that `enforce` left as it was, at a node with no integer column left to branch on and a continuous column (the epigraph of a quadratic objective counts) or an active pricer, where SCIP would solve the same LP again and fail with `SCIP_INVALIDRESULT`. A rule that depends on continuous columns, or a program with a quadratic objective, must resolve every rejected point itself. |
-| `ScipError::EnforcementStalled { rounds }` | the handler was asked to enforce at one node more than `ScipOptions::enforcement_rounds` times (10 000 by default), as a handler that keeps adding constraints without resolving its point is. |
-
-A solve with a constraint handler gives up what does not see the handler's rule. Symmetry handling is off
-(`misc/usesymmetry = 0`), and so is the components presolver (`constraints/components/maxprerounds = 0`), which splits
-the problem without the handler. SCIP's strong and weak dual reductions (`misc/allowstrongdualreds`,
-`misc/allowweakdualreds`) are off for either kind of `Locks`: a solve that keeps them for a precise declaration comes
-with a later release. Copies of the problem are invalid, so SCIP's sub-SCIPs run without the handler and their
-solutions meet `check` in the main SCIP.
-
-The locks follow the declaration. `Locks::All` locks every column both ways and turns multi-aggregation off
-(`presolving/donotmultaggr`), so every column stays one SCIP can write a bound of. `Locks::Only` locks each listed
-column in its directions (`Down`, `Up`, `Both`) and marks it so presolve does not multi-aggregate it; columns it does
-not list SCIP may multi-aggregate, which a handler reads through as ever. Every column a pricer adds is locked both
-ways as it is created, whatever the declaration, and every lock is undone exactly before SCIP frees the problem.
-
-```rust
-use std::time::Duration;
-
-use culmen::prelude::*;
-use culmen::scip::{ScipCheck, ScipEnforce};
-
-/// No two of `cols` take the same value: a rule no single linear inequality states.
-struct AllDifferent {
-    cols: Vec<Col>,
-    calls: usize,
-}
-
-impl AllDifferent {
-    fn clash(&self, x: &[f64]) -> bool {
-        self.cols
-            .iter()
-            .enumerate()
-            .any(|(i, &a)| self.cols[i + 1..].iter().any(|&b| (x[a.index()] - x[b.index()]).abs() < 0.5))
-    }
-
-    fn count(&mut self) {
-        self.calls += 1;
-        assert!(self.calls < 100_000, "AllDifferent: the handler ran without end");
-    }
-}
-
-impl ConstraintHandler<Scip> for AllDifferent {
-    fn declaration(&self) -> Declaration {
-        // Moving any of the columns either way can create a clash; the other columns are free.
-        let locks = self.cols.iter().map(|&col| (col, Lock::Both)).collect();
-        Declaration { locks: Locks::Only(locks), ..Declaration::default() }
-    }
-
-    fn check(&mut self, ctx: &mut ScipCheck<'_>) -> Verdict {
-        self.count();
-        if self.clash(&ctx.candidate().raw) { Verdict::Reject } else { Verdict::Accept }
-    }
-
-    fn enforce(&mut self, ctx: &mut ScipEnforce<'_>) {
-        self.count();
-        // A node that fixes every column holds only the rejected point; any other node is left to SCIP's branching.
-        let fixed = self.cols.iter().all(|&col| ctx.bounds(col).is_some_and(|b| b.lower() == b.upper()));
-        if fixed {
-            ctx.cut_off();
-        }
-    }
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Three columns in {0, 1, 2}, pairwise different, with x0 + x1 >= 2: the best is (0, 2, 1), worth 7.
-    let mut m = Model::new();
-    let x = m.add_vars(3, |i| Var::integer().bounds(0, 2).name(format!("x[{i}]")));
-    m.add_constraint((x[0] + x[1]).geq(2));
-    m.maximize(x[0] + 2.0 * x[1] + 3.0 * x[2]);
-
-    let mut solver = Solver::new(Scip::new(), m.build()?)?;
-    let mut rule = AllDifferent { cols: x.clone(), calls: 0 };
-    let solved = solver
-        .run()
-        .settings(Settings { node_limit: Some(1000), ..Settings::new() })
-        .time_limit(Duration::from_secs(10))
-        .constraint(&mut rule)
-        .solve()?;
-    let best = solved.outcome.solution().ok_or("no solution")?;
-    assert_eq!(best.objective, 7.0);
-    assert!(!rule.clash(&best.values.raw));
-    Ok(())
-}
-```
 
 ## Cuts
 
@@ -817,8 +699,6 @@ a second `Scip`, which excludes every pattern the master holds.
 | `Failed { status }` | SCIP ended with a status that proves nothing, or claimed an optimum or a gap without a solution or a bound. |
 | `PricingQuadratic` | A solve with a pricer was given a program with a quadratic objective. |
 | `BranchEarly` | A pricer ended pricing early where SCIP has no integer column left to branch on. |
-| `UnresolvedRejection` | A constraint handler rejected a node's point without resolving it where SCIP cannot either ([Constraint handlers](#constraint-handlers)). |
-| `EnforcementStalled { rounds }` | A constraint handler was asked to enforce at one node more than `ScipOptions::enforcement_rounds` times. |
 | `InfeasibleBest { status, objective }` | SCIP's own check finds its best solution infeasible in the original problem; the solution is not reported. |
 
 `RetCode` is every error value of `SCIP_RETCODE` (`NoMemory`, `LpError`, `InvalidCall`, `ParameterUnknown`, …) and
@@ -861,10 +741,6 @@ the call or parameter and SCIP's return code, and the message is on standard err
 - **No native events and no branching event.** `NATIVE` is `Unsupported`, and there is no event to branch on the
   pricing problem, so branch-and-price branches on master columns only ([Pricing](#pricing)).
 - **No pricing on a quadratic objective.** `ScipError::PricingQuadratic` ([Pricing](#pricing)).
-- **A constraint handler checks and enforces only.** It adds constraints and cuts nodes off; tightening, branching of
-  its own and conflicts are refused, `propagate`, `explain` and `presolve` are not called, `Candidates::Fractional` is
-  enforced as `Integral`, and the dual reductions stay off for precise locks too ([Constraint
-  handlers](#constraint-handlers)).
 - **An interrupt acts after the current LP.** SCIP's LP solver runs without events, so a stop asked for during one LP
   solve, by a `Stop` or a poll's `interrupt`, acts when that LP ends; a long root LP delays it.
 - **One thread per solve.** `Settings::threads` has no effect ([Threads](#threads)).

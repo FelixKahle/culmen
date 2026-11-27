@@ -162,8 +162,7 @@ with `LoadError::Unsupported`. SCIP, with the `scip` feature, solves all four cl
 ## SCIP: lazy constraints and pricing
 
 The same models solve on SCIP by naming another backend. A handler can then add constraints only it knows, as each
-candidate arrives, enforce a rule no linear constraint states with a constraint handler, or price columns into every
-node of the search. Each handler is registered on the solve's `Run`,
+candidate arrives, or price columns into every node of the search. Each handler is registered on the solve's `Run`,
 and only for a backend with its capability: the same `.lazy(..)` for `Highs` does not compile.
 
 ```rust
@@ -277,7 +276,7 @@ access**; its first build takes a few minutes more and about 500 MB of disk.
 | Feature | Default | What it adds |
 |---|---|---|
 | `highs` | yes | The HiGHS backend, as `culmen::Highs` and the module `culmen::highs`. |
-| `scip` | no | The SCIP backend, as `culmen::Scip` and the module `culmen::scip`: MIQPs, lazy constraints, user cuts, branch-and-price, and constraint handlers that check and enforce a rule of their own. |
+| `scip` | no | The SCIP backend, as `culmen::Scip` and the module `culmen::scip`: MIQPs, lazy constraints, user cuts and branch-and-price. |
 | `macros` | no | `variable!`, `constraint!`, `objective!` and `sum!`. |
 | `serde` | no | Serialization of the plain data: programs (quadratic parts included), model classes, bounds, settings, outcomes, solutions, and the options and statuses of each backend enabled. |
 
@@ -328,7 +327,7 @@ node of SCIP's search, and `lazy_constraints` cuts subtours off a round trip as 
 | [`culmen`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen) | The crate to depend on: re-exports, a `prelude`, and the `highs`, `scip` and `macros` features. |
 | [`culmen_core`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_core) | The program as data, the modelling layer, the backend seam and the solve API. No solver and no `unsafe`. |
 | [`culmen_highs`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_highs) | The HiGHS backend: every callback as a typed, safe context, typed options and every status. |
-| [`culmen_scip`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_scip) | The SCIP backend: every generic event and the search handlers through SCIP plugins (lazy constraints, cuts, heuristics, pricing, and a constraint handler's check and enforcement), typed options and every status. |
+| [`culmen_scip`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_scip) | The SCIP backend: every generic event and every search handler through SCIP plugins, pricing included, typed options and every status. |
 | [`culmen_macros`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_macros) | The modelling macros, which expand to `culmen_core`'s methods. |
 | [`culmen_testing`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_testing) | Dev-only: an exact reference solver, property-test strategies and hard instances. |
 

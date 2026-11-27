@@ -230,7 +230,7 @@ takes one kind of handler:
 | `UserCuts` | `CutHandler<B>`: `cut` | `B::Cut<'_>`: `CutContext` | no | yes | yes |
 | `Heuristics` | `HeuristicHandler<B>`: `heuristic` | `B::Heuristic<'_>`: `HeuristicContext` | yes | yes | yes |
 | `Prices` | `Pricer<B>`: `price` | `B::Price<'_>`: `PriceContext` | no | yes | yes |
-| `CustomConstraints` | [`ConstraintHandler<B>`](#constraint-handlers): `check`, and `declaration`, `enforce`, `propagate`, `explain`, `presolve` with sound defaults | `B::Check<'_>`, `B::Enforce<'_>`, `B::Propagate<'_>`, `B::Explain<'_>`, `B::Presolve<'_>`: `CheckContext`, `EnforceContext`, `PropagateContext`, `ExplainContext`, `PresolveContext` | no | `check` and `enforce` | yes |
+| `CustomConstraints` | [`ConstraintHandler<B>`](#constraint-handlers): `check`, and `declaration`, `enforce`, `propagate`, `explain`, `presolve` with sound defaults | `B::Check<'_>`, `B::Enforce<'_>`, `B::Propagate<'_>`, `B::Explain<'_>`, `B::Presolve<'_>`: `CheckContext`, `EnforceContext`, `PropagateContext`, `ExplainContext`, `PresolveContext` | no | no | yes |
 
 A handler is registered on the `Run` of one solve, beside the callback: `.lazy(..)`, `.cut(..)`, `.heuristic(..)`,
 `.pricer(..)` and `.constraint(..)`, each replacing the handler of its kind registered before, `.lazy_and_cut(..)` for
@@ -242,8 +242,8 @@ a wrong optimum. Generic code states what it needs,
 `fn solve_tour<B: LazyConstraints>(solver: &mut Solver<B>)`, and runs on every backend that has it.
 
 A backend calls a handler only when one of its kind is registered, and gives up nothing for a kind no handler is
-registered for: [SCIP](scip.md#callback-events) turns off its dual reductions for a lazy-constraint or a constraint
-handler and activates its pricer for a pricer, never for a callback that asks for events.
+registered for: [SCIP](scip.md#callback-events) turns off its dual reductions for a lazy-constraint handler and
+activates its pricer for a pricer, never for a callback that asks for events.
 
 ```rust
 use std::time::Duration;
@@ -476,11 +476,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 A `ConstraintHandler<B>` is a rule over the program's columns that only the handler knows, which the solver enforces
 as a constraint: a rule no linear inequality states, such as "no two of these columns take the same value", with the
 handler's own propagation, branching and presolve. It is registered with `Run::constraint`, only for a backend that
-implements `CustomConstraints`. The `Script` backend implements all of it, so a handler can be written and tested
-against scripted points and nodes. [SCIP](scip.md#constraint-handlers) implements it in part: it asks `check` and
-`enforce`, and takes added constraints and cutoffs; it refuses tightening, branching and conflicts with
-`ActionError::Refused`, does not call `propagate`, `explain` or `presolve` yet, and enforces `Candidates::Fractional`
-as `Candidates::Integral`. HiGHS does not implement it.
+implements `CustomConstraints`. Today the `Script` backend implements it, so a handler can be written and tested
+against scripted points and nodes; HiGHS and SCIP do not implement it.
 
 `check` is the one method a handler must write; each of the others has a default that is always sound.
 
