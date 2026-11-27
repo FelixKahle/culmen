@@ -298,11 +298,13 @@ fn test_programs_with_features_it_does_not_declare_are_refused() {
     let mut m = Model::new();
     m.add_var(Var::semi_continuous().bounds(1, 2));
     let semi = m.build().unwrap();
+    // Loaded directly, against the `Backend` contract, the program is refused by a panic before SCIP sees it.
+    let mut scip = Scip::new();
+    let direct = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scip.load(&semi)));
+    assert!(direct.is_err());
     assert_eq!(
-        Scip::new().load(&semi),
-        Err(ScipError::UnsupportedFeature {
-            feature: ProgramFeature::SemiContinuous
-        })
+        scip.solve(&Settings::new(), Hooks::new()).unwrap_err(),
+        ScipError::NotLoaded
     );
     assert!(matches!(
         Solver::new(Scip::new(), semi),

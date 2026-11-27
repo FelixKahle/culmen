@@ -210,21 +210,19 @@ impl Scip {
     }
 }
 
-/// Refuses a program of a class or with a feature this backend does not declare, which a
-/// [`Solver`](culmen_core::Solver) never hands it.
+/// Panics for a program with a feature this backend does not declare, which a [`Solver`](culmen_core::Solver) never
+/// hands it: the instance would hold a semi column as no variable type of SCIP's and drop further objectives. Every
+/// class is declared, so none is checked.
 ///
-/// # Errors
+/// # Panics
 ///
-/// [`ScipError::Unsupported`] for the class, else [`ScipError::UnsupportedFeature`] for the first feature.
-fn refuse_unsupported(program: &Program) -> Result<(), ScipError> {
-    let class = program.class();
-    if !Scip::CLASSES.contains(class) {
-        return Err(ScipError::Unsupported { class });
-    }
-    match program.features().difference(Scip::FEATURES).iter().next() {
-        Some(feature) => Err(ScipError::UnsupportedFeature { feature }),
-        None => Ok(()),
-    }
+/// When `program` uses a feature outside [`Scip::FEATURES`].
+fn assert_declared(program: &Program) {
+    let lacking = program.features().difference(Scip::FEATURES);
+    assert!(
+        lacking.is_empty(),
+        "Scip::load: the program uses {lacking:?}, which Scip::FEATURES does not declare and a Solver never hands it"
+    );
 }
 
 /// Resets SCIP's parameters, keeps SCIP from catching `SIGINT`, turns off the reformulation of binary products in
@@ -409,13 +407,17 @@ impl Backend for Scip {
     ///
     /// # Errors
     ///
-    /// [`ScipError::Unsupported`] or [`ScipError::UnsupportedFeature`] for a program this backend does not declare;
     /// [`ScipError::BeyondInfinity`] for a finite number SCIP would read as infinite; [`ScipError::ColName`] or
     /// [`ScipError::RowName`] for a name holding a NUL byte; [`ScipError::Call`] when SCIP refuses a call. The
     /// backend then holds no program.
+    ///
+    /// # Panics
+    ///
+    /// When `program` uses a feature outside [`Scip::FEATURES`], which a [`Solver`](culmen_core::Solver) never hands
+    /// it, before SCIP sees it; the backend then holds no program.
     fn load(&mut self, program: &Program) -> Result<(), ScipError> {
         self.instance = None;
-        refuse_unsupported(program)?;
+        assert_declared(program);
         self.instance = Some(Instance::load(program)?);
         Ok(())
     }

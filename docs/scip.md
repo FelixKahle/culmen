@@ -295,7 +295,9 @@ completes a sparse start with its `completesol` heuristic, a sub-SCIP over the c
 emphasis of `Off` keeps a sparse start from being completed, and it is dropped.
 
 Semi columns and several objectives are refused by [`Solver::new`](solving.md#model-classes-and-refusal) with
-`LoadError::UnsupportedFeature` before SCIP sees the program.
+`LoadError::UnsupportedFeature` before SCIP sees the program. `Backend::load` called directly with such a program,
+against the [`Backend` contract](backends.md#the-seam), panics before SCIP sees it: neither backend
+has an error variant for what the contract rules out.
 
 ```rust
 use culmen::prelude::*;
@@ -703,7 +705,6 @@ a second `Scip`, which excludes every pattern the master holds.
 | `ColName { col }`, `RowName { row }` | A column's or row's name holds a NUL byte. |
 | `BeyondInfinity { number, value, infinity }` | A finite number of the program is at least SCIP's infinity (`1e20`) in magnitude; `number` says where it stands. |
 | `RowTooLong { row, len }`, `QuadraticTooLong { len }` | A row or the quadratic part has more entries than SCIP's `int` counts. |
-| `Unsupported { class }`, `UnsupportedFeature { feature }` | A program the backend does not take, which a `Solver` never hands it. |
 | `Start` | A start that does not fit the program, which a `Solver` never hands over. |
 | `Failed { status }` | SCIP ended with a status that proves nothing, or claimed an optimum or a gap without a solution or a bound. |
 | `PricingQuadratic` | A solve with a pricer was given a program with a quadratic objective. |

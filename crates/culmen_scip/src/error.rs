@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use culmen_core::{Col, ModelClass, ProgramFeature, Row};
+use culmen_core::{Col, Row};
 use scip_sys::SCIP_RETCODE;
 
 use crate::{ParamValue, Status};
@@ -89,16 +89,6 @@ pub enum ScipError {
         /// Its number of entries.
         len: usize,
     },
-    /// The program is of a class this backend does not solve; a [`Solver`](culmen_core::Solver) never hands it one.
-    Unsupported {
-        /// The program's class.
-        class: ModelClass,
-    },
-    /// The program uses a feature this backend does not take; a [`Solver`](culmen_core::Solver) never hands it one.
-    UnsupportedFeature {
-        /// The first feature the backend lacks.
-        feature: ProgramFeature,
-    },
     /// The start does not fit the loaded program; a [`Solver`](culmen_core::Solver) never hands such a start over.
     Start,
     /// SCIP ended a solve with a status that proves nothing (`UNKNOWN`), or claimed an optimum or a reached gap
@@ -165,8 +155,6 @@ impl fmt::Display for ScipError {
                     "SCIP: the quadratic objective has {len} entries, more than SCIP's `int` counts"
                 )
             }
-            Self::Unsupported { class } => write!(f, "SCIP: the backend does not solve a {class}"),
-            Self::UnsupportedFeature { feature } => write!(f, "SCIP: the backend does not take {feature}"),
             Self::Start => write!(f, "SCIP: the start does not fit the loaded program"),
             Self::Failed { status } => write!(f, "SCIP: the solve ended without a result ({status})"),
             Self::PricingQuadratic => write!(
@@ -200,8 +188,6 @@ impl core::error::Error for ScipError {
             | Self::BeyondInfinity { .. }
             | Self::RowTooLong { .. }
             | Self::QuadraticTooLong { .. }
-            | Self::Unsupported { .. }
-            | Self::UnsupportedFeature { .. }
             | Self::Start
             | Self::Failed { .. }
             | Self::PricingQuadratic
