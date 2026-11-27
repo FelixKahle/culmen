@@ -171,7 +171,7 @@ use culmen_core::{
     Backend, Configurable, Event, Events, Heuristics, LazyConstraints, ModelClasses, Outcome, Prices, Program,
     Settings, Solved, Start, Starts, UserCuts,
 };
-pub use error::{Number, RetCode, ScipCode, ScipError};
+pub use error::{NotAscii, Number, RetCode, ScipCode, ScipError};
 pub use options::{Emphasis, ParamValue, ScipOptions, ScipParam};
 pub use status::{ScipStatus, Status};
 

@@ -230,6 +230,23 @@ impl core::error::Error for ScipError {
     }
 }
 
+/// A character a SCIP `char` parameter cannot take, refused by [`ParamValue`]'s `TryFrom<char>`: one that is not
+/// ASCII, which SCIP's C `char` cannot carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NotAscii(pub char);
+
+impl fmt::Display for NotAscii {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "SCIP: the character {:?} is not ASCII, as a char parameter needs",
+            self.0
+        )
+    }
+}
+
+impl core::error::Error for NotAscii {}
+
 /// Where a number SCIP would read as infinite stands in the program.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Number {

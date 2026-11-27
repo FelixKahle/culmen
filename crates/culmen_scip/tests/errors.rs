@@ -155,7 +155,7 @@ fn test_parameters_of_every_type_are_set() {
         .param("limits/maxsol", 50)
         .param("limits/totalnodes", 1_000_000_i64)
         .param("limits/memory", 4096.0)
-        .param("nodeselection/childsel", 'h')
+        .param("nodeselection/childsel", ParamValue::Char('h'))
         .param("visual/vbcfilename", "-");
     let solved = Solver::new(Scip::with_options(options), knapsack())
         .unwrap()
@@ -179,7 +179,7 @@ fn test_names_and_values_c_cannot_carry_are_refused_before_scip_sees_them() {
             name: "visual/vbcfilename".to_owned()
         }
     );
-    let char = with(ScipOptions::default().param("nodeselection/childsel", 'é'));
+    let char = with(ScipOptions::default().param("nodeselection/childsel", ParamValue::Char('é')));
     assert_eq!(
         char,
         ScipError::ParamChar {
@@ -190,6 +190,17 @@ fn test_names_and_values_c_cannot_carry_are_refused_before_scip_sees_them() {
     assert_eq!(
         char.to_string(),
         "SCIP: the value 'é' of parameter `nodeselection/childsel` is not an ASCII character"
+    );
+}
+
+#[test]
+fn test_a_char_that_is_not_ascii_is_refused_where_the_value_is_made() {
+    assert_eq!(ParamValue::try_from('h'), Ok(ParamValue::Char('h')));
+    let refused = ParamValue::try_from('é');
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(
+        refused.unwrap_err().to_string(),
+        "SCIP: the character 'é' is not ASCII, as a char parameter needs"
     );
 }
 

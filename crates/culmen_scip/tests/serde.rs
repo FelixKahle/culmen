@@ -33,7 +33,7 @@ fn test_options_and_parameters_round_trip() {
     .param("limits/maxsol", 50)
     .param("limits/totalnodes", 7_i64)
     .param("limits/memory", 0.5)
-    .param("nodeselection/childsel", 'h')
+    .param("nodeselection/childsel", ParamValue::Char('h'))
     .param("visual/vbcfilename", "tree.vbc");
     round_trip(&options);
     round_trip(&ScipOptions::default());

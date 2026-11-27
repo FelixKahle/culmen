@@ -97,15 +97,17 @@ culmen = { version = "0.5", features = ["scip"] }
 `Emphasis` is SCIP's `SCIP_PARAMSETTING`: `Default`, `Aggressive`, `Fast` or `Off`. **Parameters by name** are added
 with `ScipOptions::param(name, value)`, which appends a `ScipParam { name, value }`. The value is a `ParamValue`, one of
 SCIP's six types (`Bool`, `Int`, `Longint`, `Real`, `Char`, `String`), converted from a `bool`, `i32`, `i64`, `f64`,
-`char`, `&str` or `String`. SCIP checks the name and the value when the solve sets them; an unknown name or a value of
+`&str` or `String`; a `char` converts with `ParamValue::try_from`, which refuses one that is not ASCII with
+`NotAscii`, or is written as `ParamValue::Char(c)`. A whole-number literal is an `i32`, so a `SCIP_Longint` parameter
+such as `limits/nodes` takes `100_i64`. SCIP checks the name and the value when the solve sets them; an unknown name or a value of
 the wrong type or range is a [`ScipError::Param`](#errors) naming the parameter and SCIP's return code.
 
 ```rust
-use culmen::scip::{Emphasis, ScipOptions};
+use culmen::scip::{Emphasis, ParamValue, ScipOptions};
 
 let options = ScipOptions { presolving: Some(Emphasis::Aggressive), ..ScipOptions::default() }
     .param("limits/maxorigsol", 5)
-    .param("lp/initalgorithm", 'd')
+    .param("lp/initalgorithm", ParamValue::Char('d'))
     .param("display/verblevel", 5);
 assert_eq!(options.params.len(), 3);
 ```
