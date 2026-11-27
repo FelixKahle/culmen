@@ -21,7 +21,7 @@ each solve configured on its own.
 | `backend()` | The backend, to read its own state. |
 | `options()`, `options_mut()` | The backend's own options, for a backend that is `Configurable` (`HighsOptions`, `ScipOptions`; the `Script` has none), to read or to change between solves; the backend itself is not reachable mutably, so the program it holds stays the solver's. |
 | `into_parts()` | The backend and the program, taken apart; the backend may be behind the program after a failed edit or a solve that priced. |
-| `set_col_bounds(..)`, `set_col_lower(..)`, `set_col_upper(..)`, `set_col_costs(..)`, `set_col_integrality(..)`, `set_row_bounds(..)`, `set_row_lower(..)`, `set_row_upper(..)`, `add_row(..)`, `add_rows(..)`, `add_col(..)`, `add_cols(..)`, `set_sense(..)`, `set_offset(..)`, `set_objective(..)` | Edit the loaded program, to solve it again warm ([Editing a loaded program](#editing-a-loaded-program)). |
+| `set_col_bounds(..)`, `set_col_lower(..)`, `set_col_upper(..)`, `set_col_costs(..)`, `set_col_integrality(..)`, `set_row_bounds(..)`, `set_row_lower(..)`, `set_row_upper(..)`, `set_coefficients(..)`, `add_row(..)`, `add_rows(..)`, `add_col(..)`, `add_cols(..)`, `set_sense(..)`, `set_offset(..)`, `set_objective(..)` | Edit the loaded program, to solve it again warm ([Editing a loaded program](#editing-a-loaded-program)). |
 | `duals()`, `basis()`, `set_basis(..)`, `ranging()`, `primal_ray()`, `dual_ray()`, `iis()`, `feasibility_relaxation(..)` | What a solve reports beyond its outcome, each for a backend that implements its analysis trait ([Analysis](analysis.md)). |
 
 The backend is chosen by type: `Solver<Highs>` solves with HiGHS, `Solver<Scip>` with SCIP ([SCIP](scip.md), the
@@ -375,6 +375,7 @@ relaxation, a column priced in by column generation, a variable fixed in a dive.
 | `set_col_integrality([(col, integrality), ..])` | Columns' integrality. |
 | `set_row_bounds([(row, bounds), ..])` | Rows' bounds; `..`, `Bounds::FREE`, switches a row off. |
 | `set_row_lower([(row, lower), ..])`, `set_row_upper([(row, upper), ..])` | One end of rows' bounds, the other kept; refused with `EditError::RowEnd` when the bounds would be no interval. |
+| `set_coefficients([(row, col, value), ..])` | Entries of the constraint matrix, gurobipy's `chgCoeff`; zero takes an entry out. |
 | `add_row(row)`, `add_rows(rows)` | Appends rows and returns them: anything [`Model::add_constraint`](modelling.md#constraints) takes, a `Constraint`, a `(name, constraint)` pair or a `ProgramRow`. |
 | `set_sense(sense)` | The sense of the program's own objective; refused for a program with a quadratic part, which is convex for one sense only. |
 | `set_offset(offset)` | The constant of the program's own objective. |

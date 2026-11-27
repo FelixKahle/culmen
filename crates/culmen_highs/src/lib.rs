@@ -278,7 +278,8 @@ impl Highs {
 
     /// Changes HiGHS's model, which is the program before `edit`, into `program`.
     ///
-    /// Bounds, costs, integrality and row bounds change through HiGHS's `BySet` calls, rows and columns are appended
+    /// Bounds, costs, integrality and row bounds change through HiGHS's `BySet` calls, coefficients through
+    /// `Highs_changeCoeff`, rows and columns are appended
     /// with `Highs_addRows` and `Highs_addCols`, the objective's sense and offset change through
     /// `Highs_changeObjectiveSense` and `Highs_changeObjectiveOffset`, and further objectives are passed again after a
     /// change of costs, columns, sense or offset, since HiGHS 1.16 neither reads the own objective into them nor
@@ -311,6 +312,7 @@ impl Highs {
                 self.instance.change_col_integrality(program, cols)
             }
             Edit::RowBounds { rows } => self.instance.change_row_bounds(program, rows),
+            Edit::Coefficients { entries } => self.instance.change_coefficients(program, entries),
             Edit::NewRows { rows } if self.instance.num_row() + rows.len() == program.num_rows() => {
                 self.instance.add_rows(program, rows)
             }
@@ -746,7 +748,7 @@ impl Backend for Highs {
     }
 
     /// Changes HiGHS's model in place, so the next run starts from the basis of the last: bounds, costs and
-    /// integrality through HiGHS's `BySet` calls, new rows and columns through `Highs_addRows` and `Highs_addCols`,
+    /// integrality through HiGHS's `BySet` calls, coefficients through `Highs_changeCoeff`, new rows and columns through `Highs_addRows` and `Highs_addCols`,
     /// the objective's sense and offset through `Highs_changeObjectiveSense` and `Highs_changeObjectiveOffset`. A
     /// replaced objective whose quadratic part changed and rows added to a QP without rows load the program whole.
     ///

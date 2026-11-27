@@ -358,6 +358,7 @@ keeps the basis of its last solve:
 | Costs | `Highs_changeColsCostBySet`; with several objectives, `Highs_passLinearObjectives` again, since HiGHS does not read the costs into them |
 | Integrality | `Highs_changeColsIntegralityBySet` |
 | Row bounds | `Highs_changeRowsBoundsBySet` |
+| Coefficients | `Highs_changeCoeff`, one call per entry; HiGHS takes an entry set to zero out |
 | New rows | `Highs_addRows` |
 | New columns | `Highs_addCols`, then `Highs_changeColsIntegralityByRange` for any that is not continuous; with several objectives, `Highs_passLinearObjectives` again, since HiGHS does not extend them |
 | Sense, offset | `Highs_changeObjectiveSense`, `Highs_changeObjectiveOffset`; with several objectives, `Highs_passLinearObjectives` again |

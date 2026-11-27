@@ -427,6 +427,7 @@ pub fn edit_plan(
         EditOp::RowBounds(given) => given
             .iter()
             .try_for_each(|&(r, b)| row(&mut plan, r).map(|r| r.bounds = b))?,
+        EditOp::Coefficients(given) => set_coefficients(&mut plan, given)?,
         EditOp::RowLower(given) => row_ends(&mut plan, given, true)?,
         EditOp::RowUpper(given) => row_ends(&mut plan, given, false)?,
         EditOp::AddRows(new) => {
@@ -488,6 +489,32 @@ fn row_ends(plan: &mut ProgramPlan, given: &[(Row, f64)], lower: bool) -> Result
     for (r, end) in last {
         let bounds = &mut plan.rows[r].bounds;
         *bounds = one_end(*bounds, end, lower)?;
+    }
+    Ok(())
+}
+
+/// Sets each entry `given` names to the last value given for it: its row then holds the column once with that
+/// value, or not at all for zero.
+///
+/// # Errors
+///
+/// [`Refused`] for an entry naming a row or column the plan lacks, or a value that is not finite.
+fn set_coefficients(plan: &mut ProgramPlan, given: &[(Row, Col, f64)]) -> Result<(), Refused> {
+    for &(r, c, value) in given {
+        if r.index() >= plan.rows.len() || c.index() >= plan.columns.len() {
+            return Err(refused(format!("the program has no entry ({r:?}, {c:?})")));
+        }
+        if !value.is_finite() {
+            return Err(refused(format!("the coefficient {value} of {c:?} in {r:?}")));
+        }
+    }
+    let last: BTreeMap<(Row, Col), f64> = given.iter().map(|&(r, c, value)| ((r, c), value)).collect();
+    for ((r, c), value) in last {
+        let terms = &mut plan.rows[r].terms;
+        terms.retain(|&(col, _)| col != c);
+        if value != 0.0 {
+            terms.push((c, value));
+        }
     }
     Ok(())
 }

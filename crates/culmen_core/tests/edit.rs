@@ -166,6 +166,44 @@ fn test_one_end_of_a_bound_changes_and_the_other_is_kept() {
 }
 
 #[test]
+fn test_set_coefficients_changes_adds_and_takes_out_entries() {
+    let (_, x, y, cap, floor) = base();
+    let mut solver = mirrored();
+    let given = [(floor, y, 0.0), (cap, x, 3.0), (cap, x, 2.0)];
+    solver.set_coefficients(given).unwrap();
+    let mut want = base_plan();
+    want.rows[cap].terms = vec![(x, 2.0), (y, 1.0)];
+    want.rows[floor].terms = vec![(x, 1.0)];
+    let want = want.build().unwrap();
+    assert_eq!(solver.program(), &want);
+    let entries = vec![(cap, x), (floor, y)];
+    assert_eq!(
+        last_call(&solver),
+        &Call::Edit(Edited::Coefficients(entries), want.clone())
+    );
+    solver.set_coefficients([(floor, y, -4)]).unwrap();
+    assert_eq!(
+        solver.program().row(floor).entries().collect::<Vec<_>>(),
+        [(x, 1.0), (y, -4.0)]
+    );
+    assert_in_sync(&solver);
+
+    let before = solver.program().clone();
+    let nan = solver.set_coefficients([(cap, y, 5.0), (floor, x, f64::NAN)]);
+    assert!(matches!(nan, Err(EditError::NonFiniteCoefficient { row, col, .. }) if row == floor && col == x));
+    assert_eq!(
+        solver.set_coefficients([(Row::new(7), x, 1.0)]),
+        Err(EditError::UnknownRow { row: Row::new(7) })
+    );
+    assert_eq!(
+        solver.set_coefficients([(cap, Col::new(7), 1.0)]),
+        Err(EditError::UnknownCol { col: Col::new(7) })
+    );
+    assert_eq!(solver.program(), &before);
+    assert_in_sync(&solver);
+}
+
+#[test]
 fn test_set_col_costs_changes_the_own_objective_and_takes_integers() {
     let (_, _, y, ..) = base();
     let mut solver = mirrored();
@@ -1076,6 +1114,7 @@ fn is_empty(op: &EditOp) -> bool {
         EditOp::ColBounds(items) => items.is_empty(),
         EditOp::ColLower(items) | EditOp::ColUpper(items) => items.is_empty(),
         EditOp::RowLower(items) | EditOp::RowUpper(items) => items.is_empty(),
+        EditOp::Coefficients(items) => items.is_empty(),
         EditOp::ColCosts(items) => items.is_empty(),
         EditOp::ColIntegrality(items) => items.is_empty(),
         EditOp::RowBounds(items) => items.is_empty(),

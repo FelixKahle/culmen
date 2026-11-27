@@ -106,7 +106,8 @@ pub trait RelaxationAnalysis: Backend {
   unchanged on every backend, and a `Solver` runs it before the callback registered on the run.
 - **Edits are a hook with a correct default.** A `Solver` that [edits its program](solving.md#editing-a-loaded-program)
   calls `edit` with the edited program and an `Edit` naming what changed: the columns whose bounds, costs or integrality
-  changed, the rows whose bounds changed, the rows or columns appended, the objective's sense or offset, or the whole
+  changed, the rows whose bounds changed, the entries of the matrix whose coefficients changed, the rows or columns
+  appended, the objective's sense or offset, or the whole
   own objective. A `Solver` calls `edit` only right after the backend held the program before the edit, and only with
   a class and features the backend declares. The default loads the program whole; a backend overrides it to change its
   model in place and keep its warm start. The override matches every variant of `Edit` by name, with no wildcard arm,

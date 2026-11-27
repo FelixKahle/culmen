@@ -68,6 +68,8 @@ pub enum Edited {
     NewRows(Vec<Row>),
     /// [`Edit::NewCols`].
     NewCols(Vec<Col>),
+    /// [`Edit::Coefficients`].
+    Coefficients(Vec<(Row, Col)>),
     /// [`Edit::Sense`].
     Sense,
     /// [`Edit::Offset`].
@@ -86,6 +88,7 @@ impl Edited {
             Edit::RowBounds { rows } => Self::RowBounds(rows.clone()),
             Edit::NewRows { rows } => Self::NewRows(rows.into_iter().collect()),
             Edit::NewCols { cols } => Self::NewCols(cols.into_iter().collect()),
+            Edit::Coefficients { entries } => Self::Coefficients(entries.clone()),
             Edit::Sense => Self::Sense,
             Edit::Offset => Self::Offset,
             Edit::Objective => Self::Objective,
@@ -183,6 +186,20 @@ fn changed_only_as_named(before: &Program, after: &Program, edit: &Edited) -> bo
             rows.iter().for_each(|&r| expected.rows.push(got.rows[r].clone()));
         }
         Edited::NewCols(cols) => return appended_columns(&mut expected, &got, cols) && expected == got,
+        Edited::Coefficients(entries) => {
+            let ascending = entries.windows(2).all(|w| w[0] < w[1]);
+            let known = |&(r, c): &(Row, Col)| r.index() < got.rows.len() && c.index() < got.columns.len();
+            if !ascending || !entries.iter().all(known) || expected.rows.len() != got.rows.len() {
+                return false;
+            }
+            for &(r, c) in entries {
+                let value = got.rows[r].terms.iter().find(|(col, _)| *col == c).map(|&(_, v)| v);
+                let terms = &mut expected.rows[r].terms;
+                terms.retain(|(col, _)| *col != c);
+                terms.extend(value.map(|v| (c, v)));
+                terms.sort_by_key(|&(col, _)| col);
+            }
+        }
         Edited::Sense => expected.sense = got.sense,
         Edited::Offset => expected.offset = got.offset,
         Edited::Objective => {

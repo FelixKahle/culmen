@@ -497,6 +497,23 @@ fn test_an_edit_reloads_the_program() {
 }
 
 #[test]
+fn test_a_coefficient_edit_reloads_the_program() {
+    // Maximize x + y over x + y <= 4, x, y in [0, 3]: 4. With the row 2x + y <= 4 instead: 3.5 at (0.5, 3); with y
+    // taken out of the row: 3 + 2 = 5 at (2, 3), x bound by 2x <= 4.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(3));
+    let y = m.add_var(Var::continuous().upper(3));
+    let cap = m.add_constraint((x + y).leq(4.0));
+    m.maximize(x + y);
+    let mut solver = Solver::new(Scip::new(), m.build().unwrap()).unwrap();
+    assert_close(optimum(&solver.solve().unwrap()).objective, 4.0);
+    solver.set_coefficients([(cap, x, 2.0)]).unwrap();
+    assert_close(optimum(&solver.solve().unwrap()).objective, 3.5);
+    solver.set_coefficients([(cap, y, 0.0)]).unwrap();
+    assert_close(optimum(&solver.solve().unwrap()).objective, 5.0);
+}
+
+#[test]
 fn test_columns_and_rows_may_share_a_name_and_go_without_one() {
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;

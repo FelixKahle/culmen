@@ -25,6 +25,8 @@ pub enum EditOp {
     RowLower(Vec<(Row, f64)>),
     /// [`Solver::set_row_upper`].
     RowUpper(Vec<(Row, f64)>),
+    /// [`Solver::set_coefficients`].
+    Coefficients(Vec<(Row, Col, f64)>),
     /// [`Solver::add_rows`].
     AddRows(Vec<NewRow>),
     /// [`Solver::add_cols`].
@@ -73,6 +75,7 @@ impl EditOp {
             Self::RowBounds(bounds) => solver.set_row_bounds(bounds).map(|()| Applied::Changed),
             Self::RowLower(lower) => solver.set_row_lower(lower).map(|()| Applied::Changed),
             Self::RowUpper(upper) => solver.set_row_upper(upper).map(|()| Applied::Changed),
+            Self::Coefficients(entries) => solver.set_coefficients(entries).map(|()| Applied::Changed),
             Self::AddRows(rows) => solver.add_rows(rows).map(|rows| Applied::Rows(rows.collect())),
             Self::AddCols(cols) => solver.add_cols(cols).map(|cols| Applied::Cols(cols.collect())),
             Self::Sense(sense) => solver.set_sense(sense).map(|()| Applied::Changed),

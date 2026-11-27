@@ -17,7 +17,7 @@ use culmen_core::{
 };
 use culmen_highs::{Highs, HighsError, HighsOptions};
 use culmen_testing::instances::assignment;
-use culmen_testing::mirror::{Faults, Mirror, MirrorError};
+use culmen_testing::mirror::{Call, Faults, Mirror, MirrorError};
 use culmen_testing::reference::{Reference, close, edit_plan, solve};
 use culmen_testing::strategy::{small_lp, small_qp, small_semi, with_edits};
 use culmen_testing::tolerance::Tolerances;
@@ -96,6 +96,34 @@ fn test_a_chain_of_edits_reaches_each_hand_worked_optimum() {
         solver.program().row(cut).entries().collect::<Vec<_>>(),
         [(x, 1.0), (y, 1.0), (z, 1.0)]
     );
+}
+
+#[test]
+fn test_coefficients_are_changed_added_and_taken_out_in_place() {
+    // Maximize x + y over x + y <= 4, x, y in [0, 3]: 4. With the row 2x + y <= 4 instead: 3.5 at (0.5, 3); with y
+    // taken out of the row: 5 at (2, 3); with y put back at 3, 2x + 3y <= 4: 2 at (2, 0) or (0, 4/3).
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(3));
+    let y = m.add_var(Var::continuous().upper(3));
+    let cap = m.add_constraint((x + y).leq(4.0));
+    m.maximize(x + y);
+    let mut solver = Solver::new(Mirror::new(Highs::new()), m.build().unwrap()).unwrap();
+    assert!(close(optimum(&mut solver), 4.0, 1e-9));
+    solver.set_coefficients([(cap, x, 2.0)]).unwrap();
+    assert!(close(optimum(&mut solver), 3.5, 1e-9));
+    solver.set_coefficients([(cap, y, 0.0)]).unwrap();
+    assert!(close(optimum(&mut solver), 5.0, 1e-9));
+    solver.set_coefficients([(cap, y, 3.0)]).unwrap();
+    assert!(close(optimum(&mut solver), 2.0, 1e-9));
+    // Every edit was in place: the program was loaded once.
+    let loads = solver
+        .backend()
+        .calls
+        .iter()
+        .filter(|call| matches!(call, Call::Load(_)))
+        .count();
+    assert_eq!(loads, 1);
+    assert_eq!(solver.backend().held(), Some(solver.program()));
 }
 
 #[test]

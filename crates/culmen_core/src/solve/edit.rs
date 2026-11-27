@@ -55,6 +55,11 @@ pub enum Edit {
         /// The columns, the program's last.
         cols: Cols,
     },
+    /// The coefficients of these entries of the constraint matrix changed, an entry set to zero taken out.
+    Coefficients {
+        /// The entries as `(row, col)`, ascending by row and then by column, each once.
+        entries: Vec<(Row, Col)>,
+    },
     /// The sense of the program's own objective was set.
     Sense,
     /// The offset of the program's own objective was set.
@@ -404,6 +409,40 @@ impl<B: Backend> Solver<B> {
         self.apply_row_bounds(bounds)
     }
 
+    /// Sets coefficients of the constraint matrix as `(row, col, value)`, all or none, the last value given for an
+    /// entry holding; zero takes an entry out: gurobipy's `m.chgCoeff(c, x, 2)` is
+    /// `solver.set_coefficients([(c, x, 2)])`.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Solver, Var};
+    /// use culmen_core::script::Script;
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous());
+    /// let y = m.add_var(Var::continuous());
+    /// let cap = m.add_constraint((x + y).leq(4));
+    /// let mut solver = Solver::new(Script::optimal(0.0, vec![0.0, 0.0]), m.build()?)?;
+    /// solver.set_coefficients([(cap, x, 2.0), (cap, y, 0.0)])?;
+    /// assert_eq!(solver.program().row(cap).entries().collect::<Vec<_>>(), [(x, 2.0)]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::UnknownRow`] or [`EditError::UnknownCol`] for an entry naming a row or column the program does
+    /// not have, [`EditError::NonFiniteCoefficient`] for a value that is NaN or infinite, all before the backend sees
+    /// the edit; [`EditError::Backend`] when the backend refuses it, or refuses the program the solver loads first
+    /// after an earlier failed edit.
+    pub fn set_coefficients<T: Into<f64>>(
+        &mut self,
+        coefficients: impl IntoIterator<Item = (Row, Col, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        self.apply_coefficients(latest(
+            coefficients
+                .into_iter()
+                .map(|(row, col, value)| ((row, col), value.into())),
+        ))
+    }
+
     /// Appends a row and returns it: a [`Constraint`](crate::Constraint), a named one as `(name, constraint)`, or a
     /// [`ProgramRow`], as [`NewRow`] lists and [`Model::add_constraint`](crate::Model::add_constraint) takes them.
     ///
@@ -608,6 +647,29 @@ impl<B: Backend> Solver<B> {
         self.set(bounds, Program::replace_row_bounds, edit, Undo::RowBounds)
     }
 
+    /// [`Solver::set_coefficients`] with each entry once.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::set_coefficients`].
+    fn apply_coefficients(&mut self, coefficients: BTreeMap<(Row, Col), f64>) -> Result<(), EditError<B::Error>> {
+        self.sync().map_err(EditError::Backend)?;
+        let (num_rows, num_cols) = (self.program.num_rows(), self.program.num_cols());
+        for (&(row, col), &value) in &coefficients {
+            if row.index() >= num_rows {
+                return Err(EditError::UnknownRow { row });
+            }
+            if col.index() >= num_cols {
+                return Err(EditError::UnknownCol { col });
+            }
+            if !value.is_finite() {
+                return Err(EditError::NonFiniteCoefficient { row, col, value });
+            }
+        }
+        let edit = |entries| Edit::Coefficients { entries };
+        self.set(coefficients, Program::replace_coefficient, edit, Undo::Coefficients)
+    }
+
     /// [`Solver::add_rows`] of rows as given.
     ///
     /// # Errors
@@ -778,6 +840,7 @@ impl Edit {
             Self::RowBounds { rows } => rows.is_empty(),
             Self::NewRows { rows } => rows.is_empty(),
             Self::NewCols { cols } => cols.is_empty(),
+            Self::Coefficients { entries } => entries.is_empty(),
             Self::Sense | Self::Offset | Self::Objective => false,
         }
     }
@@ -794,6 +857,8 @@ enum Undo {
     ColIntegrality(Vec<(Col, Integrality)>),
     /// These rows' bounds before.
     RowBounds(Vec<(Row, Bounds)>),
+    /// These entries' coefficients before, zero for none.
+    Coefficients(Vec<((Row, Col), f64)>),
     /// The sense before.
     Sense(Sense),
     /// The offset before.
@@ -832,6 +897,7 @@ impl Undo {
             Self::ColCosts(old) => restore(program, old, Program::replace_col_cost),
             Self::ColIntegrality(old) => restore(program, old, Program::replace_col_integrality),
             Self::RowBounds(old) => restore(program, old, Program::replace_row_bounds),
+            Self::Coefficients(old) => restore(program, old, Program::replace_coefficient),
             Self::Sense(sense) => {
                 program.replace_sense(sense);
             }

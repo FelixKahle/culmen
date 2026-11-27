@@ -477,6 +477,7 @@ Each everyday gurobipy move has one culmen call; the handles the model returns r
 | `m.getVarByName("x")`, `m.getConstrByName("cap")` | `program.col_named("x")`, `program.row_named("cap")` |
 | `m.getRow(c)`, `m.getCol(x)`, `m.getCoeff(c, x)` | `program.row(c)`, `program.col_entries(x)`, `program.coefficient(c, x)` |
 | `x.LB = 1`, `x.UB = 0`, `c.RHS = 4`, `x.Obj = 3`, `m.ModelSense = GRB.MAXIMIZE` (then re-solve) | `solver.set_col_lower([(x, 1)])`, `solver.set_col_upper([(x, 0)])`, `solver.set_row_upper([(c, 4)])` (on a `≤` row), `solver.set_col_costs([(x, 3)])`, `solver.set_sense(Sense::Maximize)`; `set_col_bounds([(x, bounds!(1.0, 4.0))])` sets both ends |
+| `m.chgCoeff(c, x, 2)` (then re-solve) | `solver.set_coefficients([(c, x, 2)])` |
 | `m.write("model.lp")` | `program.write_lp(File::create("model.lp")?)` |
 | `x.Start = 1` | `solver.run().start(vec![(x, 1.0)])` |
 | `m.cbLazy`, `m.cbCut`, `m.cbSetSolution` | a `LazyHandler`, `CutHandler` or `HeuristicHandler` on `solver.run()` ([Callbacks](callbacks.md)) |

@@ -51,6 +51,42 @@ impl Program {
         mem::replace(&mut self.row_bounds[row], bounds)
     }
 
+    /// Sets the coefficient of `col` in `row`, zero taking the entry out, and returns the coefficient it had, zero for
+    /// none; the row stays sorted by column.
+    ///
+    /// # Panics
+    ///
+    /// When the program has no row `row`.
+    pub(crate) fn replace_coefficient(&mut self, (row, col): (Row, Col), value: f64) -> f64 {
+        let (from, to) = (self.row_starts[row.index()], self.row_starts[row.index() + 1]);
+        let at = from + self.entry_cols[from..to].partition_point(|&c| c < col);
+        let held = at < to && self.entry_cols[at] == col;
+        let old = if held { self.entry_values[at] } else { 0.0 };
+        let shift: isize = match (held, value != 0.0) {
+            (true, true) => {
+                self.entry_values[at] = value;
+                0
+            }
+            (true, false) => {
+                self.entry_cols.remove(at);
+                self.entry_values.remove(at);
+                -1
+            }
+            (false, true) => {
+                self.entry_cols.insert(at, col);
+                self.entry_values.insert(at, value);
+                1
+            }
+            (false, false) => 0,
+        };
+        for start in &mut self.row_starts[row.index() + 1..] {
+            *start = start
+                .checked_add_signed(shift)
+                .expect("Program: a row start moves within the entries");
+        }
+        old
+    }
+
     /// Sets the sense of the program's own objective and returns the sense it had.
     pub(crate) const fn replace_sense(&mut self, sense: Sense) -> Sense {
         mem::replace(&mut self.sense, sense)
@@ -228,6 +264,26 @@ mod tests {
             [(Col::new(0), 1.0), (Col::new(3), 1.0)]
         );
         program.truncate(2, 2);
+        assert_eq!(program, before);
+    }
+
+    #[test]
+    fn test_replacing_coefficients_and_putting_them_back_restores_the_program() {
+        let before = program();
+        let mut program = before.clone();
+        let (x, y) = (Col::new(0), Col::new(1));
+        let (cap, free) = (Row::new(0), Row::new(1));
+        assert_eq!(program.replace_coefficient((free, y), 5.0), 0.0);
+        assert_eq!(program.replace_coefficient((cap, x), 0.0), 1.0);
+        assert_eq!(program.replace_coefficient((cap, y), -2.0), 1.0);
+        assert_eq!(program.row(cap).entries().collect::<Vec<_>>(), [(y, -2.0)]);
+        assert_eq!(program.row(free).entries().collect::<Vec<_>>(), [(x, -1.0), (y, 5.0)]);
+        assert_eq!(program.replace_coefficient((free, x), 0.0), -1.0);
+        assert_eq!(program.row(free).entries().collect::<Vec<_>>(), [(y, 5.0)]);
+        program.replace_coefficient((free, x), -1.0);
+        program.replace_coefficient((free, y), 0.0);
+        program.replace_coefficient((cap, y), 1.0);
+        program.replace_coefficient((cap, x), 1.0);
         assert_eq!(program, before);
     }
 

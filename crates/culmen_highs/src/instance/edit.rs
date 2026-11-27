@@ -6,7 +6,7 @@
 
 use culmen_core::{Bounds, Col, Cols, Integrality, Program, Row, Rows};
 use highs_sys::{
-    Highs_addCols, Highs_addRows, Highs_changeColsBoundsBySet, Highs_changeColsCostBySet,
+    Highs_addCols, Highs_addRows, Highs_changeCoeff, Highs_changeColsBoundsBySet, Highs_changeColsCostBySet,
     Highs_changeColsIntegralityByRange, Highs_changeColsIntegralityBySet, Highs_changeObjectiveOffset,
     Highs_changeObjectiveSense, Highs_changeRowsBoundsBySet, HighsInt,
 };
@@ -124,6 +124,37 @@ impl Instance {
             )
         };
         edited(status, "Highs_changeRowsBoundsBySet")
+    }
+
+    /// Sets the coefficients of `entries` of the model HiGHS holds to theirs in `program`, one `Highs_changeCoeff`
+    /// each; HiGHS takes an entry set to zero out of its matrix.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::TooLarge`] for an index beyond HiGHS's 32-bit indices, [`HighsError::Edit`] when HiGHS refuses
+    /// a change, such as a value of at least its `large_matrix_value`; the entries before it are changed then.
+    ///
+    /// # Panics
+    ///
+    /// When `entries` names a row or column `program` lacks.
+    pub(crate) fn change_coefficients(&mut self, program: &Program, entries: &[(Row, Col)]) -> Result<(), HighsError> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        for &(row, col) in entries {
+            let value = program.coefficient(row, col);
+            let (r, c) = (
+                index(row.index(), Dimension::Rows)?,
+                index(col.index(), Dimension::Columns)?,
+            );
+            debug_assert!(
+                row.index() < self.num_row() && self.holds(&[col]),
+                "Instance: an entry HiGHS's model lacks"
+            );
+            // SAFETY: the instance is live and borrowed exclusively; the call takes plain numbers, and HiGHS checks
+            // both indices against its model before it uses them, refusing the call otherwise.
+            let status = unsafe { Highs_changeCoeff(self.raw(), r, c, value) };
+            edited(status, "Highs_changeCoeff")?;
+        }
+        Ok(())
     }
 
     /// Sets the objective sense of the model HiGHS holds to `program`'s.
