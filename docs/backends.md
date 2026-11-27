@@ -36,13 +36,6 @@ pub trait LazyConstraints: Backend { type Lazy<'a>: LazyContext; }      // LazyH
 pub trait UserCuts: Backend { type Cut<'a>: CutContext; }               // CutHandler
 pub trait Heuristics: Backend { type Heuristic<'a>: HeuristicContext; } // HeuristicHandler
 pub trait Prices: Backend { type Price<'a>: PriceContext; }             // Pricer
-pub trait CustomConstraints: Backend {                                   // ConstraintHandler
-    type Check<'a>: CheckContext;
-    type Enforce<'a>: EnforceContext;
-    type Propagate<'a>: PropagateContext;
-    type Explain<'a>: ExplainContext;
-    type Presolve<'a>: PresolveContext;
-}
 pub trait Starts: Backend {
     fn set_start(&mut self, start: &Start) -> Result<(), Self::Error>;
 }
@@ -72,24 +65,11 @@ pub trait RelaxationAnalysis: Backend {
   on, and `Hooks::register_lazy` for code that drives a backend directly) exists only for a backend that has it.
   HiGHS implements `Heuristics` alone, so a lazy-constraint handler or a pricer for HiGHS does not compile instead of
   being ignored.
-- **Constraint handlers are a capability with five contexts.** A backend that runs a rule of the user's as a
-  constraint implements `CustomConstraints` and hands the handler a context per call: a point to `check`, a rejected
-  point at a node to `enforce`, a node's domain to `propagate`, an inferred bound to `explain`, and the global domain
-  to `presolve`. It reads `hooks.declaration()` once when a solve starts, calls `hooks.check(ctx)` on every point it
-  would accept and accepts none the handler rejects, calls `hooks.enforce(ctx)` only on a point `check` rejected, and
-  keeps only the reductions the declared `Locks` allow. Its enforcement and propagation contexts record the handler's
-  actions in a `NodeActions` (made with the solve's `Involved` columns), which refuses what every backend refuses:
-  reducing, branching and cutting off in one call, a branching without children or with a child that narrows
-  nothing, a write to a column the declaration does not involve. After the handler returns the backend applies what
-  was recorded (`constraints()`, `tightenings()`, `children()`, `cutoff()`) and derives its solver's result from
-  that, so the handler never states a result code and a lying one cannot be written. What is the solver's alone (the
-  node's depth, cuts during enforcement, where a point came from) stays an inherent method of its own contexts.
 - **Hooks carry the callback and the handlers.** `solve` receives a `Hooks<'_, Self>` by value: a core-owned value
   with private fields that dispatches. The backend reads `hooks.events()` for the observational events to deliver and
-  `hooks.wants_lazy()`, `wants_cut()`, `wants_heuristic()`, `wants_price()` and `wants_constraint()` for the handlers
-  registered, and calls `hooks.log(ctx)`, `hooks.lazy(ctx)`, `hooks.price(ctx)` and so on; it never sees how they are
-  stored. What a backend gives up for a search handler it decides from `wants_*`, never from the events a callback
-  asks for. A wrapping
+  `hooks.wants_lazy()`, `wants_cut()`, `wants_heuristic()` and `wants_price()` for the handlers registered, and calls
+  `hooks.log(ctx)`, `hooks.lazy(ctx)`, `hooks.price(ctx)` and so on; it never sees how they are stored. What a backend
+  gives up for a search handler it decides from `wants_*`, never from the events a callback asks for. A wrapping
   backend hands its hooks to the backend it wraps through `Hooks::relay` and a `Relay` of its own, whose search methods
   carry their capability as a `where` clause, so one wrapper serves every inner backend.
 - **Model classes are declared.** A backend lists the classes it solves (`ModelClass::Lp`, `Milp`, `Qp`, `Miqp`)
@@ -147,8 +127,9 @@ pub trait RelaxationAnalysis: Backend {
   early, and keeps every added column for the rest of the solve.
 
 `Script`, the in-memory backend in culmen_core, delivers every generic event from a scripted list and has every
-search capability. Its tests drive lazy constraints, cuts, heuristic solutions, pricing, constraint handlers, native
-events, the observer, stops and panics without any solver. That is evidence that nothing in the core assumes HiGHS.
+search capability. Its tests drive
+lazy constraints, cuts, heuristic solutions, pricing, native events, the observer, stops and panics without any
+solver. That is evidence that nothing in the core assumes HiGHS.
 
 ## Model classes
 
@@ -205,7 +186,6 @@ backend declares or leaves out.
 | `UserCuts`: cut off a node relaxation | none, so not implemented | `GRB_CB_MIPNODE` with `MIPNODE_STATUS == OPTIMAL`: `GRBcbget(MIPNODE_REL)`, `GRBcbcut` | a separator (`SEPAEXECLP`): `SCIPgetSolVal` of the LP, `SCIPaddRow` and `SCIPaddPoolCut` |
 | `Heuristics`: supply a solution | `kHighsCallbackMipUserSolution`: `user_solution` + `user_has_solution`; partial via `Highs_setCallbackSparseSolution` + `Highs_repairCallbackSolution` | `GRB_CB_MIPNODE` (and `MIP`): `GRBcbsolution` (partial values allowed), `GRBcbusesolution` | a primal heuristic (`HEUREXEC`) before and after each node: `SCIPcreateOrigSol` (`SCIPcreateSol` in a solve that prices), `SCIPtrySolFree`; no partial solution during the search, so `ScipHeuristic` has no `supply_partial` |
 | `Prices`: answer a node LP's duals with columns | none, so not implemented | none: Gurobi 12 has no pricing callback | a pricer plugin, delayed and active only in a solve with a pricer, whose rows are then modifiable (`SCIPincludePricerBasic`, `SCIPactivatePricer`, `SCIPsetConsModifiable`): `PRICERREDCOST` and `PRICERFARKAS` read `SCIPgetDualsolLinear` or `SCIPgetDualfarkasLinear`, then `SCIPcreateVar`, `SCIPaddPricedVar` and `SCIPaddCoefLinear`; refused on a program with a quadratic objective |
-| `CustomConstraints`: a rule checked, enforced, propagated, explained and presolved by the handler | none, so not implemented | none: Gurobi 12's callbacks add lazy constraints and cuts but offer no propagation with explanations, so a Gurobi backend would implement `LazyConstraints` alone | not implemented by `culmen_scip`; SCIP offers what it needs as a constraint handler without constraints (`CONSCHECK`, `CONSENFOLP` / `CONSENFOPS` / `CONSENFORELAX`, `CONSLOCK`) beside a propagator (`PROPEXEC`, `PROPRESPROP`, `PROPPRESOL`) |
 | `NATIVE`: solver-only events | `kHighsCallbackMipGetCutPool` as `HighsNative::CutPool` (presolved-space cuts) | `GRB_CB_PRESOLVE`, `GRB_CB_MULTIOBJ`, `GRB_CB_IIS`, and `MIPNODE` node data beyond the relaxation | none in `culmen_scip`; any other event type (`SCIP_EVENTTYPE_*`), branching or node-selection data would fit |
 
 HiGHS's threading is handled inside culmen_highs. The MIP kinds come from its serial search loop. Logging may come

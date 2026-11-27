@@ -93,8 +93,8 @@ Whether a public type is `#[non_exhaustive]` follows from what a user does with 
   instead (`Backend::CLASSES`, `FEATURES`), which refuses what it does not list.
 - **An enum whose variants its meaning closes stays exhaustive**, so that code which must handle every case is
   checked to: `Sense`, `Integrality`, `Outcome`, `Objectives`, `Combination`, `PriceMode`, `Start`, `NewRow`,
-  `Side`, `Bound`, `Line`, `BasisStatus`, `LogLevel`, `ScriptStatus`, `Switch`, `OnOff`, `Verdict`, `Explained`,
-  `Lock`, `Locks`, `Candidates`, `NodeAction`, and `Unsupported`, which has no variant. A new variant there changes what every match must do, so it is a breaking change by design.
+  `Side`, `Bound`, `Line`, `BasisStatus`, `LogLevel`, `ScriptStatus`, `Switch`, `OnOff`, and `Unsupported`, which
+  has no variant. A new variant there changes what every match must do, so it is a breaking change by design.
 
 `culmen_testing` is not published and is used only inside the workspace, where a change and every match it breaks
 land in one commit; it follows the rules for structs and leaves its enums exhaustive.
@@ -107,23 +107,12 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
   and lists what it delivers in `Backend::EVENTS`. An event it cannot deliver takes `Unsupported`, an enum with no
   values, so a callback for it compiles everywhere and never runs on that backend. A callback only watches, so asking
   for every event costs a solver no reduction.
-- **What changes the search is a capability.** Lazy constraints, user cuts, heuristic solutions, pricing and
-  constraint handlers are traits a backend implements or leaves out (`LazyConstraints`, `UserCuts`, `Heuristics`,
-  `Prices`, `CustomConstraints`), each naming the contexts of its handler (`LazyHandler`, `CutHandler`,
-  `HeuristicHandler`, `Pricer`, `ConstraintHandler`). A handler is registered on the `Run`
+- **What changes the search is a capability.** Lazy constraints, user cuts, heuristic solutions and pricing are traits
+  a backend implements or leaves out (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`), each naming the context
+  of its handler (`LazyHandler`, `CutHandler`, `HeuristicHandler`, `Pricer`). A handler is registered on the `Run`
   of a solve only for a backend that has the capability, so a lazy constraint a solver would ignore, which would turn
   a relaxation's optimum into a wrong answer, does not compile, and a backend gives up a reduction for a handler only
   when one is registered.
-- **A rule of the user's is a constraint, and its result codes are honest.** A backend that implements
-  `CustomConstraints` runs a `ConstraintHandler`: a rule only the handler knows, which it checks, enforces,
-  propagates, explains and presolves. The handler never states a solver's result code: `check` answers with a
-  `Verdict`, `explain` with an `Explained`, and every other method acts through its context, whose actions a
-  `NodeActions` shared by every backend records and checks (reducing, branching and cutting off exclude each other,
-  a branching has children that each make progress, only declared columns are written). The backend derives what it
-  tells the solver from what was recorded and from what the solver reports happened, so a result that contradicts
-  the actions cannot be written; enforcement asks `check` first, so it never accepts a point the rule rejects. What
-  no type can check (that `check` is the rule, that reductions keep every accepted point, that an explanation
-  implies its bound, that the locks are complete) is stated as the handler's contract.
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
   `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the program, the
   same way for every backend. A class is a property of the program, which edits change, so it stays a run-time check.
