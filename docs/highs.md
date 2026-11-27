@@ -362,9 +362,8 @@ keeps the basis of its last solve:
 | Sense, offset | `Highs_changeObjectiveSense`, `Highs_changeObjectiveOffset`; with several objectives, `Highs_passLinearObjectives` again |
 | A replaced objective (`set_objective`) whose quadratic part stays as it was | The sense, the offset and every cost as above |
 
-Three edits load the program whole instead: a replaced objective whose quadratic part changed, rows added to a QP
-without rows, which HiGHS holds with a free row ([Quadratic programs](#quadratic-programs)), and any kind of edit a
-later culmen adds before this backend knows it. A new Hessian could be passed in place, but a QP without rows needs
+Two edits load the program whole instead: a replaced objective whose quadratic part changed, and rows added to a QP
+without rows, which HiGHS holds with a free row ([Quadratic programs](#quadratic-programs)). A new Hessian could be passed in place, but a QP without rows needs
 the free row added or dropped with it, so the load keeps that one rule in one place. A
 semi column whose upper bound would exceed `Highs::SEMI_UPPER_LIMIT` is refused with `HighsError::SemiUpper` before
 HiGHS sees the edit, but the refusal comes from the backend: the `Solver` then loads the program before the edit

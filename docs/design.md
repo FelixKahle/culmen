@@ -85,7 +85,7 @@ the scripted test backend and what only it needs; `culmen::backend` holds what o
 backend names (`Hooks`, `Relay`, `Edit`, `Priced`, `Watch`, `Found`, `Unsupported`, the `check_*` helpers). Each
 solver's own types are at the root of its crate, `culmen::highs` or `culmen::scip`, and a submodule holds only free
 functions whose names read right with it (`culmen::highs::files::read`). Nothing is re-exported a second time for
-convenience; the prelude, a glob of root items and the backend types, is the one exception.
+convenience; the prelude, a selection of root items and the backend types, is the one exception.
 
 ## Public types are exhaustive
 
@@ -181,7 +181,8 @@ block there carries a `// SAFETY:` comment saying why it is sound. The parts tha
 - **One instance, one owner.** A HiGHS instance is created with the `Highs` value that owns it and destroyed when
   that value drops, and every call that changes it borrows it mutably, so no two calls ever overlap on one instance.
   Destroying an instance also shuts down the HiGHS task scheduler of the destroying thread, so an instance dropped
-  while its thread is inside a run or a callback waits until that run ends and is destroyed then, on that thread.
+  while its thread is inside a run or a callback waits until a run ends on a thread that is then outside every run
+  and callback, and is destroyed there, which may be another thread than the one that dropped it.
 - **Callback data lives exactly as long as the run.** The data HiGHS's callback reaches lives on the stack of
   `solve`; it is installed just before HiGHS runs and uninstalled just after, before it is dropped, so no pointer
   outlives the run.

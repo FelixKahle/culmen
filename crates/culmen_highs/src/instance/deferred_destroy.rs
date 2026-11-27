@@ -4,8 +4,9 @@
 //! When a HiGHS instance is destroyed. Destroying one also shuts down the HiGHS task scheduler of the destroying
 //! thread, which HiGHS keeps per thread and not per instance, so an instance released while that thread is inside a
 //! run, or inside a callback on a HiGHS worker thread, would free the scheduler the run is still using. Such an
-//! instance waits until a run ends with its thread outside every other run and callback, and is destroyed then, on
-//! that thread; an instance released anywhere else is destroyed at once.
+//! instance waits, in one list for the whole process, until a run on any thread ends with that thread outside every
+//! other run and callback, and is destroyed then, on the thread whose run ended, which need not be the one that
+//! released it; an instance released anywhere else is destroyed at once.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -71,7 +72,7 @@ impl core::fmt::Debug for Handle {
 }
 
 /// Destroys the instance now when this thread is outside every run and callback; otherwise it waits for the end of a
-/// run.
+/// run, on any thread, that leaves its thread outside every run and callback.
 pub(super) fn release(handle: Handle) {
     if DEPTH.get() == 0 {
         drop(handle);
