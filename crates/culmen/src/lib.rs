@@ -212,7 +212,19 @@ mod docs {
     struct Backends;
 }
 
-/// What a model and a solve need, in one import.
+/// What nearly every program that models and solves names, in one import: `use culmen::prelude::*;`.
+///
+/// The prelude holds the modelling layer ([`Model`], [`Var`], [`LinExpr`], the literal macros, the families), the
+/// program's handles and the plain data a model or a solve passes around ([`Col`], [`Row`], [`Bounds`],
+/// [`Integrality`], [`NewCol`], the [`TiVec`] and [`TiSlice`] a solution's values come in), the solve ([`Solver`],
+/// [`Settings`], [`Outcome`], [`Solved`], [`Start`], the [`Stop`] and the [`Observer`]), and the backends enabled.
+/// Writing a callback or a search handler needs no further import: the prelude holds [`Callback`] and [`Events`], each
+/// handler trait with its capability trait, which a generic handler names in its bound, and every context trait, which
+/// must be in scope for a handler's calls on its context to resolve, with the [`PriceMode`] a pricer reads.
+///
+/// What only some programs name is not in it: the errors beyond [`SolveError`], the analyses and their capability
+/// traits (a `Solver`'s analysis methods resolve without them), the program's own building blocks such as
+/// [`ProgramPlan`], and the modules [`script`] and [`backend`].
 pub mod prelude {
     #[cfg(feature = "highs")]
     pub use culmen_highs::Highs;
@@ -222,15 +234,18 @@ pub mod prelude {
     pub use culmen_scip::Scip;
 
     pub use culmen_core::{
-        Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Event, Events, Improvement, IndexSet, LinExpr,
-        Linear, LogLine, Model, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Row, Sense,
-        Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap, absolute_gap,
-        bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
+        Backend, Bounds, Col, Constraint, ConstraintMap, Improvement, IndexSet, Integrality, LinExpr, Linear, LogLine,
+        Model, NewCol, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Row, Sense, Settings,
+        Solution, SolveError, Solved, Solver, Start, Stop, StopReason, TiSlice, TiVec, Tolerance, Var, VarMap,
+        absolute_gap, bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
     };
-    // A generic callback or handler calls its contexts through these traits.
+    // A callback names the events it asks for.
+    pub use culmen_core::{Callback, Event, Events};
+    // A generic callback or handler calls its context through these traits, which must be in scope for the calls to
+    // resolve; a pricer reads the mode of its round.
     pub use culmen_core::{
-        Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext,
-        SolutionContext,
+        Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, PriceMode,
+        ProgressContext, SolutionContext,
     };
     // The search capabilities a backend may have, and the handler each one takes.
     pub use culmen_core::{
