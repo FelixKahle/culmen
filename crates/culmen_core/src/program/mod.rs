@@ -20,7 +20,7 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 use typed_index_collections::{TiSlice, TiVec};
 
-pub use bounds::{Bound, Bounds, Integrality, InvalidBounds, Sense};
+pub use bounds::{Bounds, Integrality, InvalidBounds, Sense};
 pub use class::{ModelClass, ModelClasses, ModelClassesIter};
 pub use features::{ProgramFeature, ProgramFeatures, ProgramFeaturesIter};
 pub use ids::{Col, Cols, Row, Rows};

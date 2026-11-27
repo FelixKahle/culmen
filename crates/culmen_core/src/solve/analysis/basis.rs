@@ -9,8 +9,8 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 use typed_index_collections::TiVec;
 
-use super::{Line, Misfit, Table};
-use crate::{Bound, Col, Program, Row};
+use super::{Bound, Line, Misfit, Table};
+use crate::{Col, Program, Row};
 
 /// Where a column or row stands in a simplex basis; HiGHS's `kHighsBasisStatus*`.
 ///

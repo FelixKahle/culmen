@@ -91,10 +91,10 @@ pub use model::{
     Term, Values, Var, VarMap, product, set,
 };
 pub use program::{
-    Bound, Bounds, Col, Cols, FurtherObjectives, HessianEntries, Integrality, InvalidBounds, InvalidWeight,
-    LinearObjective, LpFileError, ModelClass, ModelClasses, ModelClassesIter, NewCol, ObjectiveId, Objectives, Program,
-    ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramFeaturesIter, ProgramPlan, ProgramRow,
-    QuadEntries, QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
+    Bounds, Col, Cols, FurtherObjectives, HessianEntries, Integrality, InvalidBounds, InvalidWeight, LinearObjective,
+    LpFileError, ModelClass, ModelClasses, ModelClassesIter, NewCol, ObjectiveId, Objectives, Program, ProgramColumn,
+    ProgramError, ProgramFeature, ProgramFeatures, ProgramFeaturesIter, ProgramPlan, ProgramRow, QuadEntries,
+    QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
 };
 pub use script::{
     Found, PriceRound, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote,
@@ -108,9 +108,9 @@ pub use solve::{
     Solved, Solver, Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, UserCuts, Watch, stop_fn,
 };
 pub use solve::{
-    Analysis, AnalysisError, Basis, BasisAnalysis, BasisStatus, DualAnalysis, Duals, Iis, IisAnalysis, InvalidPenalty,
-    Limit, Line, Misfit, Penalty, Ranged, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Side,
-    Starts, Table, Violation, Violations, Weights,
+    Analysis, AnalysisError, Basis, BasisAnalysis, BasisStatus, Bound, DualAnalysis, Duals, Iis, IisAnalysis,
+    InvalidPenalty, Limit, Line, Misfit, Penalty, Ranged, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis,
+    Relaxed, Side, Starts, Table, Violation, Violations, Weights,
 };
 pub use solve::{capability, context};
 pub use typed_index_collections::{TiSlice, TiVec};

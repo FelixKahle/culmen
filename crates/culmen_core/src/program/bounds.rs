@@ -341,38 +341,6 @@ impl TryFrom<BoundsForm> for Bounds {
     }
 }
 
-/// One end of an interval: of a column's or a row's bounds, as the analyses name it, or of a column's domain, as a
-/// constraint handler names it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum Bound {
-    /// The lower end.
-    Lower,
-    /// The upper end.
-    Upper,
-}
-
-impl Bound {
-    /// This end of `bounds`, infinite when the interval is open there.
-    #[must_use]
-    pub const fn of(self, bounds: Bounds) -> f64 {
-        match self {
-            Self::Lower => bounds.lower(),
-            Self::Upper => bounds.upper(),
-        }
-    }
-}
-
-/// `lower` or `upper`.
-impl fmt::Display for Bound {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Lower => "lower",
-            Self::Upper => "upper",
-        })
-    }
-}
-
 /// Which values in its bounds a column takes: any, only whole ones, or, for a semi-continuous or semi-integer
 /// column, zero as well.
 ///

@@ -19,8 +19,8 @@ mod start;
 mod watch;
 
 pub use analysis::{
-    Analysis, AnalysisError, Basis, BasisStatus, Duals, Iis, InvalidPenalty, Limit, Line, Misfit, Penalty, Ranged,
-    Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
+    Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit, Line, Misfit, Penalty,
+    Ranged, Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
 };
 pub use backend::{Backend, Callback};
 pub use capability::{
