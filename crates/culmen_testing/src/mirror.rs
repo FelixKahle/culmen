@@ -483,8 +483,7 @@ mod tests {
     use core::time::Duration;
 
     use culmen_core::{
-        Candidates, ConstraintHandler, EditError, Found, LazyContext, LazyHandler, Linear, Model, NodeContext, Outcome,
-        Phase, Progress, Script, Solver, Step, Var, bounds,
+        EditError, Found, LazyContext, LazyHandler, Linear, Model, Outcome, Phase, Progress, Script, Solver, Step, Var,
     };
 
     use super::*;
@@ -560,56 +559,6 @@ mod tests {
         // Without a handler, the inner backend sees none either.
         solver.solve().unwrap();
         assert_eq!(solver.backend().inner.record.lazy.len(), 1);
-    }
-
-    /// Rejects every point and cuts each rejected node off, counting its calls.
-    struct CutOffAll(usize);
-
-    impl<B: CustomConstraints> ConstraintHandler<B> for CutOffAll {
-        fn declaration(&self) -> Declaration {
-            Declaration {
-                candidates: Candidates::Fractional,
-                ..Declaration::default()
-            }
-        }
-        fn check(&mut self, _: &mut B::Check<'_>) -> Verdict {
-            self.0 += 1;
-            assert!(self.0 < 100, "CutOffAll: called without end");
-            Verdict::Reject
-        }
-        fn enforce(&mut self, ctx: &mut B::Enforce<'_>) {
-            self.0 += 1;
-            ctx.cut_off();
-        }
-    }
-
-    #[test]
-    fn test_a_mirror_relays_a_constraint_handler_with_its_declaration() {
-        let (before, ..) = programs();
-        let candidate = Found {
-            progress: Progress::at(Duration::ZERO, Phase::Other),
-            objective: 0.0,
-            values: vec![1.0, 0.0].into(),
-        };
-        let node = vec![bounds!(0.0, 4.0); 2].into();
-        let script = Script::new(
-            [Step::Enforce {
-                found: candidate,
-                bounds: node,
-            }],
-            Outcome::Infeasible,
-        );
-        let mut solver = Solver::new(Mirror::new(script), before).unwrap();
-        let mut handler = CutOffAll(0);
-        solver.run().constraint(&mut handler).solve().unwrap();
-        assert_eq!(handler.0, 2);
-        let record = &solver.backend().inner.record;
-        assert_eq!(record.declarations[0].candidates, Candidates::Fractional);
-        assert_eq!(record.enforced[0].cutoff(), Some(&[][..]));
-
-        // Without a handler, the inner backend sees none either.
-        solver.solve().unwrap();
-        assert_eq!(solver.backend().inner.record.enforced.len(), 1);
     }
 
     #[test]

@@ -237,7 +237,7 @@ pub struct CheckedChild {
 ///   ([`NodeActions::branch`]) and cutting off ([`NodeActions::cut_off`], [`NodeActions::cut_off_because`]) exclude
 ///   each other within one call. Reductions may follow each other; a branching is one call and follows nothing; a
 ///   cutoff may follow reductions or a branching and closes the node whatever they were, and nothing follows it. An
-///   action refused by this rule is [`ActionError::Exclusive`], whatever its arguments: the rule is checked first.
+///   action refused by this rule is [`ActionError::Exclusive`].
 /// - **All or nothing.** An action that is refused, by this rule or for its arguments, records nothing; one that is
 ///   accepted is recorded exactly as given, a branching as its checked children.
 /// - **Known and involved columns.** Every column named is one the problem holds; a tightening and a child's bound

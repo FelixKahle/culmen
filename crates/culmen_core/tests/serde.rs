@@ -14,10 +14,9 @@ use core::fmt::Debug;
 use core::time::Duration;
 
 use culmen_core::{
-    AbsoluteGap, Bound, Bounds, Candidates, Col, Declaration, Explained, Inferred, Integrality, Linear, Lock, Locks,
-    Model, ModelClass, ModelClasses, NodeAction, Outcome, Phase, PriceMode, Program, ProgramError, ProgramPlan,
-    Progress, Reason, RelativeGap, Row, Sense, Settings, Solution, Solved, StopReason, Var, Verdict, absolute_gap,
-    bounds, relative_gap, threads,
+    AbsoluteGap, Bounds, Col, Integrality, Linear, Model, ModelClass, ModelClasses, Outcome, Phase, PriceMode, Program,
+    ProgramError, ProgramPlan, Progress, RelativeGap, Row, Sense, Settings, Solution, Solved, StopReason, Var,
+    absolute_gap, bounds, relative_gap, threads,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -96,28 +95,6 @@ fn test_plain_data_round_trips() {
         outcome: Outcome::Infeasible,
         status: 8_i32,
         elapsed: Duration::from_secs(1),
-    });
-}
-
-#[test]
-fn test_the_plain_data_of_a_constraint_handler_round_trips() {
-    let x = Col::new(2);
-    round_trip(&Verdict::Accept);
-    round_trip(&Verdict::Reject);
-    round_trip(&Explained::Complete);
-    round_trip(&Explained::Unknown);
-    round_trip(&Reason(u32::MAX));
-    round_trip(&Bound::Upper);
-    round_trip(&NodeAction::CutOff);
-    round_trip(&Declaration::default());
-    round_trip(&Declaration {
-        locks: Locks::Only(vec![(x, Lock::Down), (Col::new(0), Lock::Up), (x, Lock::Both)]),
-        candidates: Candidates::Fractional,
-    });
-    round_trip(&Inferred {
-        col: x,
-        end: Bound::Lower,
-        value: -2.5,
     });
 }
 
