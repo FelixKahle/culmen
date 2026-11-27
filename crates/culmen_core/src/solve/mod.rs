@@ -266,7 +266,7 @@ impl<B: Backend> Solver<B> {
         let solved = self.backend.solve(settings, hooks.install(watch, &mut grow.priced));
         watch.finish();
         // The analyses would read the backend's answer for the program before the priced columns.
-        if grow.priced.cols().len() == 0 {
+        if grow.priced.cols().is_empty() {
             self.ended = solved.as_ref().ok().map(|s| Ended::of(&s.outcome));
         }
         drop(grow);
