@@ -66,6 +66,10 @@ pub fn assignment(products: usize, locations: usize, seed: u64, offset: f64) -> 
 /// Two columns in `[0, 1]` held to `x + y >= 1` and `x + y <= 1 - 1e-5`, integer or not, minimizing `x`: infeasible by
 /// `1e-5`, so infeasible to the solvers' default feasibility tolerances (`1e-6` and below) and feasible to `1e-4`.
 /// Integer, its one point a tolerance admits has `x + y = 1`.
+///
+/// # Panics
+///
+/// Never: the model is valid.
 #[must_use]
 pub fn infeasible_by_a_hair(integer: bool) -> Program {
     let mut m = Model::new();
@@ -83,6 +87,10 @@ pub fn infeasible_by_a_hair(integer: bool) -> Program {
 /// tolerance of `1e-3`, where the origin, objective zero, counts as optimal. The cost of `x` keeps the largest cost
 /// at one, so a solver that scales the objective to it leaves that reduced cost as it is, and no column has an upper
 /// bound, so the objective is bounded only through the row and only an LP proves the optimum.
+///
+/// # Panics
+///
+/// Never: the model is valid.
 #[must_use]
 pub fn flat_costs() -> Program {
     let mut m = Model::new();
