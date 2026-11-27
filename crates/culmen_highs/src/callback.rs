@@ -52,11 +52,12 @@ use highs_sys::{
     kHighsCallbackCallbackMipUserSolution, kHighsCallbackIpmInterrupt, kHighsCallbackLogging,
     kHighsCallbackMipGetCutPool, kHighsCallbackMipImprovingSolution, kHighsCallbackMipInterrupt,
     kHighsCallbackMipLogging, kHighsCallbackMipSolution, kHighsCallbackQpFirstFeasiblePoint, kHighsCallbackQpInterrupt,
-    kHighsCallbackSimplexInterrupt, kHighsStatusError,
+    kHighsCallbackSimplexInterrupt,
 };
 
 use crate::instance::{CallbackGuard, text};
-use crate::{CallStatus, Highs, Loaded};
+use crate::status::unlisted;
+use crate::{CallStatus, Highs, HighsCode, HighsError, Loaded};
 
 /// A caught panic's payload, resumed once the run has returned.
 pub(crate) type Payload = Box<dyn Any + Send>;
@@ -187,6 +188,8 @@ pub(crate) struct Hook<'a, 'h> {
     pub(crate) program: &'a Loaded,
     /// A panic a callback raised, held until the run returns.
     pub(crate) panic: Option<Payload>,
+    /// A value HiGHS passed that HiGHS 1.16 does not define, held until the run returns.
+    pub(crate) unlisted: Option<HighsError>,
     /// The last error line of HiGHS's log.
     pub(crate) last_error: Option<String>,
     /// The last solution a callback supplied, until HiGHS takes it or a better incumbent arrives.
@@ -202,6 +205,7 @@ impl fmt::Debug for Hook<'_, '_> {
             .field("start", &self.start)
             .field("program", &self.program)
             .field("panic", &self.panic)
+            .field("unlisted", &self.unlisted)
             .field("last_error", &self.last_error)
             .field("offered", &self.offered)
             .field("incumbent", &self.incumbent)
@@ -264,15 +268,16 @@ pub(crate) unsafe extern "C" fn trampoline(
     }
 }
 
-/// Hands the call to the run's callback, unless an earlier one panicked, and keeps a new panic for the run; whether
-/// the run must stop: the callback asked to interrupt it, or a callback of the run panicked.
+/// Hands the call to the run's callback, unless an earlier one panicked or HiGHS passed a value it does not define,
+/// and keeps a new panic for the run; whether the run must stop: the callback asked to interrupt it, a callback of
+/// the run panicked, or HiGHS passed such a value.
 ///
 /// # Safety
 ///
 /// `call` is a call of the trampoline whose contract holds.
 unsafe fn guarded(hook: &mut Hook<'_, '_>, call: &Call) -> bool {
     let mut interrupt = false;
-    if hook.panic.is_none() {
+    if hook.panic.is_none() && hook.unlisted.is_none() {
         let caught = catch_unwind(AssertUnwindSafe(|| {
             // SAFETY: the caller's contract for this call holds for `call`.
             unsafe { dispatch(hook, call, &mut interrupt) };
@@ -281,7 +286,7 @@ unsafe fn guarded(hook: &mut Hook<'_, '_>, call: &Call) -> bool {
             hook.panic = Some(payload);
         }
     }
-    interrupt || hook.panic.is_some()
+    interrupt || hook.panic.is_some() || hook.unlisted.is_some()
 }
 
 /// Asks HiGHS to stop the run, through the input record of an interrupt poll.
@@ -389,7 +394,13 @@ fn position(value: HighsInt) -> usize {
 unsafe fn log(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     // SAFETY: HiGHS passes the log line as a NUL-terminated string valid for the call.
     let text = unsafe { text(call.message) };
-    let log_type = HighsLogType::from_raw(field!(call, log_type));
+    let log_type = match HighsLogType::from_raw(field!(call, log_type)) {
+        Ok(log_type) => log_type,
+        Err(error) => {
+            hook.unlisted = Some(error);
+            return;
+        }
+    };
     if log_type == HighsLogType::Error {
         hook.last_error = Some(text.trim_end().to_owned());
     }
@@ -412,6 +423,13 @@ unsafe fn heuristic(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
         !call.data_in.is_null() && call.data_in.is_aligned(),
         "heuristic: HiGHS passed no usable input record"
     );
+    let origin = match HighsQueryOrigin::from_raw(field!(call, external_solution_query_origin)) {
+        Ok(origin) => origin,
+        Err(error) => {
+            hook.unlisted = Some(error);
+            return;
+        }
+    };
     // SAFETY: at the user-solution kind `data_in` is the call's valid, initialised input record, which HiGHS
     // neither reads nor writes until the callback returns.
     let record = UserSolution(unsafe { &mut *call.data_in });
@@ -420,7 +438,7 @@ unsafe fn heuristic(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
         offered: &mut hook.offered,
         elapsed,
         mip: mip_data(call),
-        origin: HighsQueryOrigin::from_raw(field!(call, external_solution_query_origin)),
+        origin,
         record,
     };
     hook.hooks.heuristic(&mut ctx);
@@ -616,9 +634,8 @@ fn finite(value: f64) -> Option<f64> {
     value.is_finite().then_some(value)
 }
 
-/// HiGHS's log type of a log line.
+/// HiGHS's log type of a log line: every value of `HighsLogType` in `lp_data/HConst.h` of HiGHS 1.16.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum HighsLogType {
     /// `kInfo`: the normal log.
     Info,
@@ -633,15 +650,20 @@ pub enum HighsLogType {
 }
 
 impl HighsLogType {
-    /// The type of HiGHS's number for it; an unknown number reads as info.
-    pub(crate) const fn from_raw(raw: c_int) -> Self {
-        match raw {
+    /// The type of HiGHS's number for it.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] for a number `HighsLogType` does not have.
+    pub(crate) const fn from_raw(raw: c_int) -> Result<Self, HighsError> {
+        Ok(match raw {
+            1 => Self::Info,
             2 => Self::Detailed,
             3 => Self::Verbose,
             4 => Self::Warning,
             5 => Self::Error,
-            _ => Self::Info,
-        }
+            _ => return Err(unlisted(HighsCode::LogType, raw)),
+        })
     }
 
     /// The generic level.
@@ -745,7 +767,6 @@ impl ProgressContext for HighsProgress {}
 
 /// Which solver polls.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum HighsPollSource {
     /// The simplex method: `kHighsCallbackSimplexInterrupt`.
     Simplex {
@@ -848,9 +869,9 @@ impl SolutionContext for HighsSolution<'_> {
     }
 }
 
-/// Where in the search HiGHS asks for a user solution: HiGHS's `ExternalMipSolutionQueryOrigin`.
+/// Where in the search HiGHS asks for a user solution: every value of `ExternalMipSolutionQueryOrigin` in
+/// `lp_data/HighsCallback.h` of HiGHS 1.16.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum HighsQueryOrigin {
     /// After the MIP solver is set up.
     AfterSetup,
@@ -858,14 +879,11 @@ pub enum HighsQueryOrigin {
     BeforeDive,
     /// During root-node evaluation.
     EvaluateRootNode(HighsRootNodePoint),
-    /// A value HiGHS 1.16 does not define.
-    Other(i32),
 }
 
 /// Where in the root-node evaluation HiGHS asks for a user solution: HiGHS's
 /// `kExternalMipSolutionQueryOriginEvaluateRootNode0` to `4`, in the order a root-node evaluation reaches them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
 pub enum HighsRootNodePoint {
     /// Before the root LP is solved: point 0.
     BeforeLp,
@@ -881,8 +899,12 @@ pub enum HighsRootNodePoint {
 
 impl HighsQueryOrigin {
     /// The origin of HiGHS's number for it.
-    pub(crate) const fn from_raw(raw: i32) -> Self {
-        match raw {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] for a number `ExternalMipSolutionQueryOrigin` does not have.
+    pub(crate) const fn from_raw(raw: i32) -> Result<Self, HighsError> {
+        Ok(match raw {
             0 => Self::AfterSetup,
             1 => Self::BeforeDive,
             2 => Self::EvaluateRootNode(HighsRootNodePoint::BeforeLp),
@@ -890,8 +912,8 @@ impl HighsQueryOrigin {
             4 => Self::EvaluateRootNode(HighsRootNodePoint::AfterSeparation),
             5 => Self::EvaluateRootNode(HighsRootNodePoint::AfterRens),
             6 => Self::EvaluateRootNode(HighsRootNodePoint::End),
-            other => Self::Other(other),
-        }
+            _ => return Err(unlisted(HighsCode::QueryOrigin, raw)),
+        })
     }
 }
 
@@ -1073,11 +1095,12 @@ impl UserSolution<'_> {
         // column named twice, or a value outside its column's bounds or integrality) leaves the solution HiGHS held
         // before, which a repair would complete again as if these entries were taken.
         match CallStatus::from_raw(status) {
-            CallStatus::Ok => Ok(()),
-            CallStatus::Warning => Err(ActionError::Refused(
+            Ok(CallStatus::Ok) => Ok(()),
+            Ok(CallStatus::Warning) => Err(ActionError::Refused(
                 "HiGHS refused the entries: a value lies outside its column's bounds or integrality".into(),
             )),
-            CallStatus::Error => Err(refused()),
+            Ok(CallStatus::Error) => Err(refused()),
+            Err(unlisted) => Err(ActionError::Refused(unlisted.to_string())),
         }
     }
 
@@ -1085,7 +1108,8 @@ impl UserSolution<'_> {
     ///
     /// # Errors
     ///
-    /// [`ActionError::Refused`] when HiGHS finds no feasible completion.
+    /// [`ActionError::Refused`] when HiGHS finds no feasible completion, or returns a status it does not define, which
+    /// the reason names.
     fn repair(&mut self) -> Result<(), ActionError> {
         debug_assert!(
             self.0.user_solution_size >= 0,
@@ -1094,10 +1118,11 @@ impl UserSolution<'_> {
         // SAFETY: the record is the call's input record, whose internal pointer HiGHS set to its own input. HiGHS
         // may log, which re-enters the trampoline on this thread and is not delivered.
         let status = unsafe { Highs_repairCallbackSolution(&raw mut *self.0) };
-        if status == kHighsStatusError {
-            return Err(ActionError::Refused("HiGHS found no feasible completion".into()));
+        match CallStatus::succeeded(status) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(ActionError::Refused("HiGHS found no feasible completion".into())),
+            Err(unlisted) => Err(ActionError::Refused(unlisted.to_string())),
         }
-        Ok(())
     }
 }
 
@@ -1161,7 +1186,6 @@ pub struct HighsCutPool {
 
 /// What only HiGHS reports, delivered as [`Event::Native`].
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum HighsNative {
     /// The cut pool after the root node.
     CutPool(HighsCutPool),
@@ -1175,8 +1199,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_every_query_origin_of_highs_has_its_own_variant() {
-        let origins: Vec<HighsQueryOrigin> = (0..=7).map(HighsQueryOrigin::from_raw).collect();
+    fn test_every_query_origin_of_highs_has_its_own_variant_and_any_other_number_is_an_error() {
+        let origins: Vec<HighsQueryOrigin> = (0..=6).map(|raw| HighsQueryOrigin::from_raw(raw).unwrap()).collect();
         assert_eq!(
             origins,
             [
@@ -1187,8 +1211,40 @@ mod tests {
                 HighsQueryOrigin::EvaluateRootNode(HighsRootNodePoint::AfterSeparation),
                 HighsQueryOrigin::EvaluateRootNode(HighsRootNodePoint::AfterRens),
                 HighsQueryOrigin::EvaluateRootNode(HighsRootNodePoint::End),
-                HighsQueryOrigin::Other(7),
             ]
         );
+        for raw in [-1, 7, i32::MAX] {
+            assert_eq!(
+                HighsQueryOrigin::from_raw(raw),
+                Err(HighsError::Unlisted {
+                    code: HighsCode::QueryOrigin,
+                    raw
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn test_every_log_type_of_highs_has_its_own_variant_and_any_other_number_is_an_error() {
+        let types: Vec<HighsLogType> = (1..=5).map(|raw| HighsLogType::from_raw(raw).unwrap()).collect();
+        assert_eq!(
+            types,
+            [
+                HighsLogType::Info,
+                HighsLogType::Detailed,
+                HighsLogType::Verbose,
+                HighsLogType::Warning,
+                HighsLogType::Error,
+            ]
+        );
+        for raw in [0, 6, -1] {
+            assert_eq!(
+                HighsLogType::from_raw(raw),
+                Err(HighsError::Unlisted {
+                    code: HighsCode::LogType,
+                    raw
+                })
+            );
+        }
     }
 }

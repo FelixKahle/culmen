@@ -31,9 +31,10 @@ const fn failed(analysis: Analysis) -> HighsError {
 ///
 /// # Errors
 ///
-/// When HiGHS reports no dual solution.
+/// When HiGHS reports no dual solution; [`HighsError::Unlisted`] when HiGHS returns a
+/// status it does not define.
 pub(crate) fn duals(highs: &Highs, program: &Program) -> Analyzed<Duals> {
-    let Some((cols, mut rows)) = highs.instance.duals() else {
+    let Some((cols, mut rows)) = highs.instance.duals()? else {
         return Err(failed(Analysis::Duals));
     };
     rows.truncate(program.num_rows());
@@ -47,9 +48,10 @@ pub(crate) fn duals(highs: &Highs, program: &Program) -> Analyzed<Duals> {
 ///
 /// # Errors
 ///
-/// When HiGHS reports a status outside `kHighsBasisStatus*`.
+/// When HiGHS reports a basis status outside `kHighsBasisStatus*`; [`HighsError::Unlisted`] when HiGHS returns a
+/// status it does not define.
 pub(crate) fn basis(highs: &Highs, program: &Program) -> Analyzed<Option<Basis>> {
-    let Some((cols, mut rows)) = highs.instance.basis() else {
+    let Some((cols, mut rows)) = highs.instance.basis()? else {
         return Ok(None);
     };
     rows.truncate(program.num_rows());
@@ -67,7 +69,8 @@ pub(crate) fn basis(highs: &Highs, program: &Program) -> Analyzed<Option<Basis>>
 ///
 /// # Errors
 ///
-/// When HiGHS refuses the basis, as a singular one.
+/// When HiGHS refuses the basis, as a singular one; [`HighsError::Unlisted`] when HiGHS returns a
+/// status it does not define.
 ///
 /// # Panics
 ///
@@ -75,10 +78,11 @@ pub(crate) fn basis(highs: &Highs, program: &Program) -> Analyzed<Option<Basis>>
 pub(crate) fn set_basis(highs: &mut Highs, basis: &Basis) -> Analyzed<()> {
     let cols: Vec<HighsInt> = basis.cols.iter().map(|&s| raw_status(s)).collect();
     let rows: Vec<HighsInt> = basis.rows.iter().map(|&s| raw_status(s)).collect();
-    match highs.instance.set_basis(&cols, &rows) {
-        crate::CallStatus::Error => Err(failed(Analysis::Basis)),
-        crate::CallStatus::Ok | crate::CallStatus::Warning => Ok(()),
-    }
+    highs
+        .instance
+        .set_basis(&cols, &rows)?
+        .then_some(())
+        .ok_or(failed(Analysis::Basis))
 }
 
 /// HiGHS's number of each basis status.
@@ -113,9 +117,10 @@ const fn raw_status(status: BasisStatus) -> HighsInt {
 ///
 /// # Errors
 ///
-/// When HiGHS refuses, as without a simplex basis.
+/// When HiGHS refuses, as without a simplex basis; [`HighsError::Unlisted`] when HiGHS returns a
+/// status it does not define.
 pub(crate) fn ranging(highs: &mut Highs, program: &Program) -> Analyzed<Ranging> {
-    let raw = highs.instance.ranging().ok_or(failed(Analysis::Ranging))?;
+    let raw = highs.instance.ranging()?.ok_or(failed(Analysis::Ranging))?;
     let n = program.num_cols();
     let pair = |down: &RangingRecord, up: &RangingRecord| -> Vec<Ranged> {
         (0..down.value.len())
@@ -163,12 +168,13 @@ fn line(index: HighsInt, n: usize) -> Option<Line> {
 ///
 /// # Errors
 ///
-/// When HiGHS fails to compute one.
+/// When HiGHS fails to compute one; [`HighsError::Unlisted`] when HiGHS returns a
+/// status it does not define.
 pub(crate) fn primal_ray(highs: &mut Highs, program: &Program) -> Analyzed<Option<TiVec<Col, f64>>> {
     if program.num_rows() == 0 {
         return Ok(column_ray(program));
     }
-    let ray = highs.instance.primal_ray().map_err(|_| failed(Analysis::Rays))?;
+    let ray = highs.instance.primal_ray()?;
     Ok(ray.map(TiVec::from))
 }
 
@@ -192,9 +198,10 @@ fn column_ray(program: &Program) -> Option<TiVec<Col, f64>> {
 ///
 /// # Errors
 ///
-/// When HiGHS fails to compute one.
+/// When HiGHS fails to compute one; [`HighsError::Unlisted`] when HiGHS returns a
+/// status it does not define.
 pub(crate) fn dual_ray(highs: &mut Highs) -> Analyzed<Option<TiVec<Row, f64>>> {
-    let ray = highs.instance.dual_ray().map_err(|_| failed(Analysis::Rays))?;
+    let ray = highs.instance.dual_ray()?;
     Ok(ray.map(TiVec::from))
 }
 
@@ -202,17 +209,18 @@ pub(crate) fn dual_ray(highs: &mut Highs) -> Analyzed<Option<TiVec<Row, f64>>> {
 ///
 /// # Errors
 ///
-/// When an option is refused, HiGHS fails, or it finds no IIS of a program it found infeasible.
+/// When an option is refused, HiGHS fails, or it finds no IIS of a program it found infeasible; [`HighsError::Unlisted`] when HiGHS returns a
+/// status it does not define.
 pub(crate) fn iis(highs: &mut Highs, program: &Program) -> Analyzed<Option<Iis>> {
     configure(&mut highs.instance, &highs.options, &Settings::new())?;
     highs
         .instance
         .set_option("iis_strategy", &OptionValue::Int(kHighsIisStrategyFromLpRowPriority))?;
-    let raw = highs.instance.iis().ok_or(failed(Analysis::Iis))?;
+    let raw = highs.instance.iis()?.ok_or(failed(Analysis::Iis))?;
     let iis = typed_iis(&raw, program);
     match (
         iis.cols.is_empty() && iis.rows.is_empty(),
-        highs.instance.model_status(),
+        highs.instance.model_status()?,
     ) {
         (false, _) => Ok(Some(iis)),
         (true, ModelStatus::Infeasible) => Err(failed(Analysis::Iis)),
@@ -278,7 +286,7 @@ pub(crate) fn relax(highs: &mut Highs, program: &Program, weights: &Weights) -> 
     let penalties = penalties(weights, highs.instance.num_row());
     let values = highs
         .instance
-        .feasibility_relaxation(&penalties)
+        .feasibility_relaxation(&penalties)?
         .ok_or(failed(Analysis::FeasibilityRelaxation))?;
     let relaxed = Relaxed { values: values.into() };
     Ok(meets_hard(&relaxed, program, weights).then_some(relaxed))

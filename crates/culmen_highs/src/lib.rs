@@ -114,7 +114,7 @@ use culmen_core::{
     Basis, BasisAnalysis, Col, DualAnalysis, Duals, Iis, IisAnalysis, Ranging, RangingAnalysis, RayAnalysis,
     RelaxationAnalysis, Relaxed, Row, Starts, TiVec, Weights,
 };
-pub use error::{Dimension, HighsError, UnsoundQp};
+pub use error::{Dimension, HighsCode, HighsError, UnsoundQp};
 pub use options::{
     EdgeWeight, HighsOption, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OptionValue, PresolveMode,
     ScaleStrategy, SimplexStrategy, Switch,
@@ -237,8 +237,9 @@ impl Loaded {
 #[derive(Debug)]
 struct Ran {
     elapsed: Duration,
-    run: CallStatus,
+    run: Result<CallStatus, HighsError>,
     panic: Option<Payload>,
+    unlisted: Option<HighsError>,
     last_error: Option<String>,
 }
 
@@ -283,7 +284,7 @@ impl Highs {
     /// change of costs, columns, sense or offset, since HiGHS 1.16 neither reads the own objective into them nor
     /// extends them. A replaced objective changes in place when its quadratic part stays as `before` held it, and
     /// loads the program whole when that part changed. A QP without rows carries a free row HiGHS needs (see
-    /// [`Padding`]); rows appended to it, and any edit this version does not know, load the program whole.
+    /// [`Padding`]); rows appended to it load the program whole.
     ///
     /// # Errors
     ///
@@ -297,23 +298,25 @@ impl Highs {
     /// model HiGHS holds changed as `edit` names.
     fn apply(&mut self, program: &Program, edit: &Edit, before: Option<&Loaded>) -> Result<(), HighsError> {
         match edit {
-            Edit::ColBounds { cols, .. } => {
+            Edit::ColBounds { cols } => {
                 check_semi_upper(program)?;
                 self.instance.change_col_bounds(program, cols)
             }
-            Edit::ColCosts { cols, .. } => {
+            Edit::ColCosts { cols } => {
                 self.instance.change_col_costs(program, cols)?;
                 self.pass_further_objectives(program)
             }
-            Edit::ColIntegrality { cols, .. } => {
+            Edit::ColIntegrality { cols } => {
                 check_semi_upper(program)?;
                 self.instance.change_col_integrality(program, cols)
             }
-            Edit::RowBounds { rows, .. } => self.instance.change_row_bounds(program, rows),
-            Edit::NewRows { rows, .. } if self.instance.num_row() + rows.len() == program.num_rows() => {
+            Edit::RowBounds { rows } => self.instance.change_row_bounds(program, rows),
+            Edit::NewRows { rows } if self.instance.num_row() + rows.len() == program.num_rows() => {
                 self.instance.add_rows(program, rows)
             }
-            Edit::NewCols { cols, .. } => {
+            // HiGHS holds the free row of a QP without rows (`Padding`), which the appended rows make needless.
+            Edit::NewRows { .. } => self.load(program),
+            Edit::NewCols { cols } => {
                 check_semi_upper(program)?;
                 self.instance.add_cols(program, cols)?;
                 self.pass_further_objectives(program)
@@ -333,7 +336,8 @@ impl Highs {
                 self.instance.change_col_costs(program, &cols)?;
                 self.pass_further_objectives(program)
             }
-            _ => self.load(program),
+            // A changed quadratic part has no call that sets it in place.
+            Edit::Objective => self.load(program),
         }
     }
 
@@ -355,18 +359,27 @@ impl Highs {
         })
     }
 
-    /// Reads HiGHS's account of the last run.
-    fn status(&self, loaded: &Loaded, run: CallStatus, last_error: Option<String>) -> HighsStatus {
+    /// Reads HiGHS's account of the last run; a solution status HiGHS does not report reads as none.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] for a model or solution status HiGHS 1.16 does not define.
+    fn status(&self, loaded: &Loaded, run: CallStatus, last_error: Option<String>) -> Result<HighsStatus, HighsError> {
         let count = |v: Option<i64>| u64::try_from(v.unwrap_or(0)).unwrap_or(0);
         let gap = self
             .instance
             .info_double(c"mip_gap")
             .filter(|g| loaded.is_mip && g.is_finite() && *g >= 0.0);
-        HighsStatus {
+        let solution = |name: &core::ffi::CStr| {
+            self.instance
+                .info_int(name)
+                .map_or(Ok(SolutionStatus::None), SolutionStatus::from_raw)
+        };
+        Ok(HighsStatus {
             run,
-            model: self.instance.model_status(),
-            primal: SolutionStatus::from_raw(self.instance.info_int(c"primal_solution_status").unwrap_or(0)),
-            dual: SolutionStatus::from_raw(self.instance.info_int(c"dual_solution_status").unwrap_or(0)),
+            model: self.instance.model_status()?,
+            primal: solution(c"primal_solution_status")?,
+            dual: solution(c"dual_solution_status")?,
             mip_gap: gap,
             simplex_iterations: count(self.instance.info_int(c"simplex_iteration_count").map(i64::from)),
             ipm_iterations: count(self.instance.info_int(c"ipm_iteration_count").map(i64::from)),
@@ -376,7 +389,7 @@ impl Highs {
                 .info_double(c"primal_dual_objective_error")
                 .filter(|e| e.is_finite() && *e >= 0.0),
             last_error,
-        }
+        })
     }
 
     /// The branch-and-bound nodes of the last run, `None` for a program without integer columns, which HiGHS solves
@@ -471,8 +484,7 @@ impl Highs {
             | ModelStatus::ModelError
             | ModelStatus::PresolveError
             | ModelStatus::SolveError
-            | ModelStatus::PostsolveError
-            | ModelStatus::Other(_) => Ending::Failed,
+            | ModelStatus::PostsolveError => Ending::Failed,
         }
     }
 
@@ -638,6 +650,7 @@ fn run_hooked(instance: &mut Instance, loaded: &Loaded, hooks: Hooks<'_, Highs>)
         start,
         program: loaded,
         panic: None,
+        unlisted: None,
         last_error: None,
         offered: None,
         incumbent: None,
@@ -657,6 +670,7 @@ fn run_hooked(instance: &mut Instance, loaded: &Loaded, hooks: Hooks<'_, Highs>)
         elapsed: start.elapsed(),
         run,
         panic: hook.panic,
+        unlisted: hook.unlisted,
         last_error: hook.last_error,
     }
 }
@@ -755,7 +769,8 @@ impl Backend for Highs {
     ///
     /// [`HighsError::NotLoaded`] before a load; the errors of [`HighsOptions`] and the settings;
     /// [`HighsError::Relaxation`] for a MIP when the options set `solve_relaxation`; [`HighsError::Run`] and
-    /// [`HighsError::UnsoundQp`] as the outcome is read.
+    /// [`HighsError::UnsoundQp`] as the outcome is read; [`HighsError::Unlisted`] when HiGHS passes or returns a value
+    /// HiGHS 1.16 does not define, after the run.
     fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<HighsStatus>, HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         configure(&mut self.instance, &self.options, settings)?;
@@ -770,7 +785,10 @@ impl Backend for Highs {
         if let Some(payload) = ran.panic {
             resume_unwind(payload);
         }
-        let status = self.status(loaded, ran.run, ran.last_error);
+        if let Some(error) = ran.unlisted {
+            return Err(error);
+        }
+        let status = self.status(loaded, ran.run?, ran.last_error)?;
         let (nodes, iterations) = self.work(loaded);
         let outcome = self.outcome(loaded, &status, nodes)?;
         Ok(Solved {

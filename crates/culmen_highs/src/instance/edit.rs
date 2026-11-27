@@ -292,11 +292,11 @@ fn ends(bounds: impl Iterator<Item = Bounds>) -> (Vec<f64>, Vec<f64>) {
 /// # Errors
 ///
 /// [`HighsError::Edit`] naming `call` when HiGHS reports an error; the C API returns no message with it.
+/// [`HighsError::Unlisted`] when `status` is no `kHighsStatus*` value.
 fn edited(status: HighsInt, call: &'static str) -> Result<(), HighsError> {
-    match CallStatus::from_raw(status) {
-        CallStatus::Error => Err(HighsError::Edit { call }),
-        CallStatus::Ok | CallStatus::Warning => Ok(()),
-    }
+    CallStatus::succeeded(status)?
+        .then_some(())
+        .ok_or(HighsError::Edit { call })
 }
 
 /// A program's last rows in the layout `Highs_addRows` reads: row-wise, starts relative to the first new row.

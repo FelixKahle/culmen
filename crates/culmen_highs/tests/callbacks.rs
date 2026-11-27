@@ -301,7 +301,6 @@ impl Callback<Highs> for Kinds {
                 assert!(pool.cuts.iter().all(|cut| cut.lower <= cut.upper));
                 self.cut_pools.push((pool.num_cols, entries.count()));
             }
-            _ => unreachable!("HiGHS 1.16 reports no other native event"),
         }
     }
 }

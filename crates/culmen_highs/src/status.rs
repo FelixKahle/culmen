@@ -12,17 +12,18 @@ use highs_sys::{
     kHighsModelStatusObjectiveTarget, kHighsModelStatusOptimal, kHighsModelStatusPostsolveError,
     kHighsModelStatusPresolveError, kHighsModelStatusSolutionLimit, kHighsModelStatusSolveError,
     kHighsModelStatusTimeLimit, kHighsModelStatusUnbounded, kHighsModelStatusUnboundedOrInfeasible,
-    kHighsModelStatusUnknown, kHighsSolutionStatusFeasible, kHighsSolutionStatusInfeasible, kHighsStatusOk,
-    kHighsStatusWarning,
+    kHighsModelStatusUnknown, kHighsSolutionStatusFeasible, kHighsSolutionStatusInfeasible, kHighsSolutionStatusNone,
+    kHighsStatusError, kHighsStatusOk, kHighsStatusWarning,
 };
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// HiGHS's model status at the end of a run: every value of `HighsModelStatus` in HiGHS 1.16.
+use crate::{HighsCode, HighsError};
+
+/// HiGHS's model status at the end of a run: every `kHighsModelStatus*` value of `highs_c_api.h` in HiGHS 1.16.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum ModelStatus {
     /// No status was set.
     NotSet,
@@ -64,18 +65,20 @@ pub enum ModelStatus {
     MemoryLimit,
     /// HiGHS interrupted itself, as a concurrent run does.
     HighsInterrupt,
-    /// A value HiGHS 1.16 does not define.
-    Other(i32),
 }
 
 impl ModelStatus {
     /// The status of HiGHS's number for it.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] for a number no `kHighsModelStatus*` constant has.
     #[expect(
         non_upper_case_globals,
         reason = "the patterns are HiGHS's constants under their C names"
     )]
-    pub(crate) const fn from_raw(raw: i32) -> Self {
-        match raw {
+    pub(crate) const fn from_raw(raw: i32) -> Result<Self, HighsError> {
+        Ok(match raw {
             kHighsModelStatusNotset => Self::NotSet,
             kHighsModelStatusLoadError => Self::LoadError,
             kHighsModelStatusModelError => Self::ModelError,
@@ -96,8 +99,8 @@ impl ModelStatus {
             kHighsModelStatusInterrupt => Self::Interrupt,
             kHighsModelStatusMemoryLimit => Self::MemoryLimit,
             kHighsModelStatusHighsInterrupt => Self::HighsInterrupt,
-            other => Self::Other(other),
-        }
+            _ => return Err(unlisted(HighsCode::ModelStatus, raw)),
+        })
     }
 }
 
@@ -106,7 +109,6 @@ impl ModelStatus {
 /// ```
 /// use culmen_highs::ModelStatus;
 /// assert_eq!(ModelStatus::TimeLimit.to_string(), "time limit reached");
-/// assert_eq!(ModelStatus::Other(42).to_string(), "model status 42");
 /// ```
 impl fmt::Display for ModelStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -131,16 +133,14 @@ impl fmt::Display for ModelStatus {
             Self::Interrupt => "interrupted by user",
             Self::MemoryLimit => "memory limit reached",
             Self::HighsInterrupt => "interrupted by HiGHS",
-            Self::Other(raw) => return write!(f, "model status {raw}"),
         };
         f.write_str(text)
     }
 }
 
-/// Whether a primal or dual solution exists: HiGHS's `kHighsSolutionStatus*`.
+/// Whether a primal or dual solution exists: every `kHighsSolutionStatus*` value of `highs_c_api.h` in HiGHS 1.16.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum SolutionStatus {
     /// There is none.
     None,
@@ -151,24 +151,28 @@ pub enum SolutionStatus {
 }
 
 impl SolutionStatus {
-    /// The status of HiGHS's number for it; an unknown number reads as none.
+    /// The status of HiGHS's number for it.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] for a number no `kHighsSolutionStatus*` constant has.
     #[expect(
         non_upper_case_globals,
         reason = "the patterns are HiGHS's constants under their C names"
     )]
-    pub(crate) const fn from_raw(raw: i32) -> Self {
-        match raw {
+    pub(crate) const fn from_raw(raw: i32) -> Result<Self, HighsError> {
+        Ok(match raw {
+            kHighsSolutionStatusNone => Self::None,
             kHighsSolutionStatusInfeasible => Self::Infeasible,
             kHighsSolutionStatusFeasible => Self::Feasible,
-            _ => Self::None,
-        }
+            _ => return Err(unlisted(HighsCode::SolutionStatus, raw)),
+        })
     }
 }
 
-/// What a HiGHS call returned: HiGHS's `kHighsStatus*`.
+/// What a HiGHS call returned: every `kHighsStatus*` value of `highs_c_api.h` in HiGHS 1.16.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum CallStatus {
     /// The call succeeded.
     Ok,
@@ -179,18 +183,41 @@ pub enum CallStatus {
 }
 
 impl CallStatus {
-    /// The status of HiGHS's number for it; an unknown number reads as an error.
+    /// The status of HiGHS's number for it.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] for a number no `kHighsStatus*` constant has.
     #[expect(
         non_upper_case_globals,
         reason = "the patterns are HiGHS's constants under their C names"
     )]
-    pub(crate) const fn from_raw(raw: i32) -> Self {
-        match raw {
+    pub(crate) const fn from_raw(raw: i32) -> Result<Self, HighsError> {
+        Ok(match raw {
+            kHighsStatusError => Self::Error,
             kHighsStatusOk => Self::Ok,
             kHighsStatusWarning => Self::Warning,
-            _ => Self::Error,
+            _ => return Err(unlisted(HighsCode::CallStatus, raw)),
+        })
+    }
+
+    /// Whether a call of the C API that returned `raw` succeeded, with or without a warning.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] for a number no `kHighsStatus*` constant has.
+    pub(crate) fn succeeded(raw: i32) -> Result<bool, HighsError> {
+        match Self::from_raw(raw) {
+            Ok(Self::Error) => Ok(false),
+            Ok(Self::Ok | Self::Warning) => Ok(true),
+            Err(error) => Err(error),
         }
     }
+}
+
+/// The error for `raw`, a value of `code` that HiGHS 1.16 does not define.
+pub(crate) const fn unlisted(code: HighsCode, raw: i32) -> HighsError {
+    HighsError::Unlisted { code, raw }
 }
 
 /// HiGHS's own account of a run, beside the generic [`Outcome`](culmen_core::Outcome).
@@ -223,4 +250,72 @@ pub struct HighsStatus {
     pub primal_dual_objective_error: Option<f64>,
     /// The last error line of HiGHS's log, if it wrote one.
     pub last_error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_every_model_status_of_highs_has_its_own_variant_and_any_other_number_is_an_error() {
+        let statuses: Vec<ModelStatus> = (0..=19).map(|raw| ModelStatus::from_raw(raw).unwrap()).collect();
+        let distinct: std::collections::HashSet<ModelStatus> = statuses.iter().copied().collect();
+        assert_eq!(distinct.len(), 20, "{statuses:?}");
+        assert_eq!(
+            ModelStatus::from_raw(kHighsModelStatusOptimal),
+            Ok(ModelStatus::Optimal)
+        );
+        for raw in [-1, 20, i32::MIN] {
+            assert_eq!(
+                ModelStatus::from_raw(raw),
+                Err(HighsError::Unlisted {
+                    code: HighsCode::ModelStatus,
+                    raw
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn test_every_solution_status_of_highs_has_its_own_variant_and_any_other_number_is_an_error() {
+        assert_eq!(
+            SolutionStatus::from_raw(kHighsSolutionStatusNone),
+            Ok(SolutionStatus::None)
+        );
+        assert_eq!(
+            SolutionStatus::from_raw(kHighsSolutionStatusInfeasible),
+            Ok(SolutionStatus::Infeasible)
+        );
+        assert_eq!(
+            SolutionStatus::from_raw(kHighsSolutionStatusFeasible),
+            Ok(SolutionStatus::Feasible)
+        );
+        for raw in [-1, 3] {
+            assert_eq!(
+                SolutionStatus::from_raw(raw),
+                Err(HighsError::Unlisted {
+                    code: HighsCode::SolutionStatus,
+                    raw
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn test_every_call_status_of_highs_has_its_own_variant_and_any_other_number_is_an_error() {
+        assert_eq!(CallStatus::from_raw(kHighsStatusError), Ok(CallStatus::Error));
+        assert_eq!(CallStatus::from_raw(kHighsStatusOk), Ok(CallStatus::Ok));
+        assert_eq!(CallStatus::from_raw(kHighsStatusWarning), Ok(CallStatus::Warning));
+        assert_eq!(CallStatus::succeeded(kHighsStatusError), Ok(false));
+        assert_eq!(CallStatus::succeeded(kHighsStatusOk), Ok(true));
+        assert_eq!(CallStatus::succeeded(kHighsStatusWarning), Ok(true));
+        for raw in [-2, 2] {
+            let error = HighsError::Unlisted {
+                code: HighsCode::CallStatus,
+                raw,
+            };
+            assert_eq!(CallStatus::from_raw(raw), Err(error.clone()));
+            assert_eq!(CallStatus::succeeded(raw), Err(error));
+        }
+    }
 }

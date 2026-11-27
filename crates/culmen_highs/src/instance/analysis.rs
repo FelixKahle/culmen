@@ -10,8 +10,13 @@ use highs_sys::{
     Highs_getRanging, Highs_getSolution, Highs_setBasis, HighsInt, kHighsSolutionStatusFeasible,
 };
 
+use culmen_core::Analysis;
+
 use super::Instance;
-use crate::CallStatus;
+use crate::{CallStatus, HighsError};
+
+/// One value per column and one per row of HiGHS's model.
+type PerLine<T> = (Vec<T>, Vec<T>);
 
 /// One direction of HiGHS's ranging of every column or row: HiGHS's `HighsRangingRecord`.
 #[derive(Debug)]
@@ -118,10 +123,14 @@ impl Instance {
 
     /// The column duals and row duals of the last run, one per column and per row of HiGHS's model; `None` unless
     /// HiGHS reports a feasible dual solution.
-    pub(crate) fn duals(&self) -> Option<(Vec<f64>, Vec<f64>)> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn duals(&self) -> Result<Option<PerLine<f64>>, HighsError> {
         // `Highs_getSolution` checks only the primal solution status, so the dual one is checked here.
         if self.info_int(c"dual_solution_status") != Some(kHighsSolutionStatusFeasible) {
-            return None;
+            return Ok(None);
         }
         let (mut cols, mut rows) = (vec![0.0; self.num_col()], vec![0.0; self.num_row()]);
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
@@ -138,26 +147,35 @@ impl Instance {
             )
         };
         // HiGHS refuses the call, and leaves the buffers unwritten, when its primal solution status is none.
-        (CallStatus::from_raw(status) != CallStatus::Error).then_some((cols, rows))
+        Ok(CallStatus::succeeded(status)?.then_some((cols, rows)))
     }
 
     /// The basis statuses of every column and row, as `kHighsBasisStatus*`; `None` when HiGHS holds no valid basis.
-    pub(crate) fn basis(&self) -> Option<(Vec<HighsInt>, Vec<HighsInt>)> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn basis(&self) -> Result<Option<PerLine<HighsInt>>, HighsError> {
         let (mut cols, mut rows) = (vec![0; self.num_col()], vec![0; self.num_row()]);
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live. HiGHS's basis holds one status per column and one per row of its model, which
         // is what the buffers have room for, and HiGHS writes nothing when the basis is not valid.
         let status = unsafe { Highs_getBasis(self.raw(), cols.as_mut_ptr(), rows.as_mut_ptr()) };
         // HiGHS refuses the call, and leaves the buffers unwritten, when its basis is not valid.
-        (CallStatus::from_raw(status) != CallStatus::Error).then_some((cols, rows))
+        Ok(CallStatus::succeeded(status)?.then_some((cols, rows)))
     }
 
-    /// Sets the basis the next run starts from, as `kHighsBasisStatus*` per column and per row.
+    /// Sets the basis the next run starts from, as `kHighsBasisStatus*` per column and per row; whether HiGHS took
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
     ///
     /// # Panics
     ///
     /// When the slices do not hold one status per column and per row of HiGHS's model.
-    pub(crate) fn set_basis(&mut self, cols: &[HighsInt], rows: &[HighsInt]) -> CallStatus {
+    pub(crate) fn set_basis(&mut self, cols: &[HighsInt], rows: &[HighsInt]) -> Result<bool, HighsError> {
         assert!(
             cols.len() == self.num_col() && rows.len() == self.num_row(),
             "Instance: the basis does not fit HiGHS's model"
@@ -165,11 +183,15 @@ impl Instance {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively, and HiGHS reads one status per column and per row
         // of its model, which the slices hold.
-        CallStatus::from_raw(unsafe { Highs_setBasis(self.raw(), cols.as_ptr(), rows.as_ptr()) })
+        CallStatus::succeeded(unsafe { Highs_setBasis(self.raw(), cols.as_ptr(), rows.as_ptr()) })
     }
 
     /// HiGHS's ranging of the last run; `None` when HiGHS refuses, as without an optimal simplex basis.
-    pub(crate) fn ranging(&mut self) -> Option<RawRanging> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn ranging(&mut self) -> Result<Option<RawRanging>, HighsError> {
         let (n, m) = (self.num_col(), self.num_row());
         let mut r = RawRanging::zeros(n, m);
         let (cu, cd, bu, bd) = (
@@ -192,13 +214,17 @@ impl Instance {
                 bd.0, bd.1, bd.2, bd.3, ru.0, ru.1, ru.2, ru.3, rd.0, rd.1, rd.2, rd.3,
             )
         };
-        (CallStatus::from_raw(status) != CallStatus::Error).then_some(r)
+        Ok(CallStatus::succeeded(status)?.then_some(r))
     }
 
-    /// HiGHS's primal ray, one value per column; `Ok(None)` when it has none, `Err` when the call fails.
+    /// HiGHS's primal ray, one value per column; `None` when it has none.
     ///
     /// HiGHS may run its simplex solver again to find one, which replaces the last run's result.
-    pub(crate) fn primal_ray(&mut self) -> Result<Option<Vec<f64>>, CallStatus> {
+    ///
+    /// # Errors
+    ///
+    /// As [`ray_result`] states.
+    pub(crate) fn primal_ray(&mut self) -> Result<Option<Vec<f64>>, HighsError> {
         let mut ray = vec![0.0; self.num_col()];
         let mut has: HighsInt = 0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
@@ -208,10 +234,14 @@ impl Instance {
         ray_result(status, has, ray)
     }
 
-    /// HiGHS's dual ray, one value per row; `Ok(None)` when it has none, `Err` when the call fails.
+    /// HiGHS's dual ray, one value per row; `None` when it has none.
     ///
     /// HiGHS may run its simplex solver again to find one, which replaces the last run's result.
-    pub(crate) fn dual_ray(&mut self) -> Result<Option<Vec<f64>>, CallStatus> {
+    ///
+    /// # Errors
+    ///
+    /// As [`ray_result`] states.
+    pub(crate) fn dual_ray(&mut self) -> Result<Option<Vec<f64>>, HighsError> {
         let mut ray = vec![0.0; self.num_row()];
         let mut has: HighsInt = 0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
@@ -224,9 +254,17 @@ impl Instance {
     /// HiGHS's IIS of the loaded model, computed under the instance's options; `None` when the call fails.
     ///
     /// HiGHS may run its simplex solver to find one, which replaces the last run's result.
-    pub(crate) fn iis(&mut self) -> Option<RawIis> {
-        let (n, m) = self.iis_size()?;
-        let (mut num_cols, mut num_rows) = (HighsInt::try_from(n).ok()?, HighsInt::try_from(m).ok()?);
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn iis(&mut self) -> Result<Option<RawIis>, HighsError> {
+        let Some((n, m)) = self.iis_size()? else {
+            return Ok(None);
+        };
+        let (Ok(mut num_cols), Ok(mut num_rows)) = (HighsInt::try_from(n), HighsInt::try_from(m)) else {
+            return Ok(None);
+        };
         let (mut col_index, mut col_bound, mut row_index, mut row_bound) =
             (vec![0; n], vec![0; n], vec![0; m], vec![0; m]);
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
@@ -245,15 +283,19 @@ impl Instance {
                 ptr::null_mut(), ptr::null_mut(),
             )
         };
-        (CallStatus::from_raw(status) != CallStatus::Error).then(|| RawIis {
+        Ok(CallStatus::succeeded(status)?.then(|| RawIis {
             cols: col_index.into_iter().zip(col_bound).collect(),
             rows: row_index.into_iter().zip(row_bound).collect(),
-        })
+        }))
     }
 
     /// Computes HiGHS's IIS, which HiGHS keeps until the model changes, and returns its numbers of columns and rows;
     /// `None` when the call fails.
-    fn iis_size(&mut self) -> Option<(usize, usize)> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    fn iis_size(&mut self) -> Result<Option<(usize, usize)>, HighsError> {
         let (mut num_cols, mut num_rows): (HighsInt, HighsInt) = (0, 0);
         let null = ptr::null_mut();
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
@@ -263,19 +305,23 @@ impl Instance {
         let status = unsafe {
             Highs_getIis(self.raw(), &raw mut num_cols, &raw mut num_rows, null, null, null, null, null, null)
         };
-        if CallStatus::from_raw(status) == CallStatus::Error {
-            return None;
+        if !CallStatus::succeeded(status)? {
+            return Ok(None);
         }
-        Some((usize::try_from(num_cols).ok()?, usize::try_from(num_rows).ok()?))
+        Ok(usize::try_from(num_cols).ok().zip(usize::try_from(num_rows).ok()))
     }
 
     /// Solves HiGHS's feasibility relaxation of the loaded model under `penalties` and returns the relaxed point,
     /// one value per column; `None` when the call fails.
     ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    ///
     /// # Panics
     ///
     /// When the penalties do not hold one entry per column bound and per row of HiGHS's model.
-    pub(crate) fn feasibility_relaxation(&mut self, penalties: &Penalties) -> Option<Vec<f64>> {
+    pub(crate) fn feasibility_relaxation(&mut self, penalties: &Penalties) -> Result<Option<Vec<f64>>, HighsError> {
         let (n, m) = (self.num_col(), self.num_row());
         assert!(
             penalties.lower.len() == n && penalties.upper.len() == n && penalties.rows.len() == m,
@@ -295,23 +341,25 @@ impl Instance {
                 penalties.rows.as_ptr(),
             )
         };
-        if CallStatus::from_raw(status) == CallStatus::Error {
-            return None;
+        if !CallStatus::succeeded(status)? {
+            return Ok(None);
         }
         // HiGHS restores the model after solving its elastic LP and, as after every call that changes the model,
         // resizes its solution to the model's columns, so the relaxed point is read as any primal solution is.
-        self.primal_values(n)
+        Ok(self.primal_values(n))
     }
 }
 
-/// A ray call's result: the ray when the call succeeded and HiGHS has one.
+/// A ray call's result: the ray when HiGHS has one.
 ///
 /// # Errors
 ///
-/// The call's status when it failed.
-fn ray_result(status: HighsInt, has: HighsInt, ray: Vec<f64>) -> Result<Option<Vec<f64>>, CallStatus> {
-    match CallStatus::from_raw(status) {
-        CallStatus::Error => Err(CallStatus::Error),
-        CallStatus::Ok | CallStatus::Warning => Ok((has != 0).then_some(ray)),
+/// [`HighsError::Analysis`] of the rays when the call failed, [`HighsError::Unlisted`] when it returned no
+/// `kHighsStatus*` value.
+fn ray_result(status: HighsInt, has: HighsInt, ray: Vec<f64>) -> Result<Option<Vec<f64>>, HighsError> {
+    if CallStatus::succeeded(status)? {
+        Ok((has != 0).then_some(ray))
+    } else {
+        Err(HighsError::Analysis(Analysis::Rays))
     }
 }

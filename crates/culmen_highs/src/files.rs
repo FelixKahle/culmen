@@ -40,8 +40,8 @@ use culmen_core::{
 };
 use highs_sys::{HighsInt, kHighsMaximumStringLength, kHighsObjSenseMaximize};
 
+use crate::HighsError;
 use crate::instance::{Instance, Line, Padding, RawModel, var_type};
-use crate::{CallStatus, HighsError};
 
 /// A model file format HiGHS reads and writes.
 ///
@@ -54,7 +54,6 @@ use crate::{CallStatus, HighsError};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
 pub enum ModelFormat {
     /// The MPS format, fixed or free, with HiGHS's `QUADOBJ` section for a quadratic objective.
     Mps,
@@ -113,13 +112,14 @@ pub fn read(path: impl AsRef<Path>) -> Result<Program, FileError> {
 /// [`FileError::Path`] for a path HiGHS cannot take, [`FileError::Io`] when the file cannot be read,
 /// [`FileError::Read`] when HiGHS cannot parse it; [`FileError::ColBounds`], [`FileError::RowBounds`],
 /// [`FileError::VarType`] or [`FileError::Program`] when its content is no valid program, such as a non-convex
-/// quadratic objective.
+/// quadratic objective; [`FileError::Highs`] holding [`HighsError::Unlisted`] when HiGHS returns a status it does not
+/// define.
 pub fn read_as(path: impl AsRef<Path>, format: ModelFormat) -> Result<Program, FileError> {
     let path = path.as_ref();
     let staged = Staged::to_read(path, format)?;
     let length = fs::metadata(staged.path()).map_err(|e| FileError::io(path, &e))?.len();
     let mut instance = Instance::new();
-    if instance.read_model(&c_path(staged.path())?) == CallStatus::Error {
+    if !instance.read_model(&c_path(staged.path())?).map_err(FileError::Highs)? {
         return Err(FileError::Read {
             path: path.to_owned(),
             format,
@@ -170,7 +170,8 @@ pub fn write(program: &Program, path: impl AsRef<Path>) -> Result<(), FileError>
 ///
 /// [`FileError::UnsupportedFeature`] for a program with further objectives, which neither format, as HiGHS writes it,
 /// keeps; [`FileError::Name`] for a name holding a NUL byte;
-/// [`FileError::Highs`] when HiGHS refuses the program, [`FileError::Path`] for a path HiGHS cannot take,
+/// [`FileError::Highs`] when HiGHS refuses the program or returns a status it does not define,
+/// [`FileError::Path`] for a path HiGHS cannot take,
 /// [`FileError::Write`] when HiGHS cannot write the file and [`FileError::Io`] when the file cannot be moved into
 /// place.
 pub fn write_as(program: &Program, path: impl AsRef<Path>, format: ModelFormat) -> Result<(), FileError> {
@@ -180,7 +181,10 @@ pub fn write_as(program: &Program, path: impl AsRef<Path>, format: ModelFormat) 
     instance.pass(program, Padding::Exact).map_err(FileError::Highs)?;
     pass_names(&mut instance, program)?;
     let staged = Staged::to_write(path, format);
-    if instance.write_model(&c_path(staged.path())?) == CallStatus::Error {
+    if !instance
+        .write_model(&c_path(staged.path())?)
+        .map_err(FileError::Highs)?
+    {
         return Err(FileError::Write {
             path: path.to_owned(),
             format,
@@ -448,7 +452,6 @@ impl Drop for Staged {
 
 /// Why a model file could not be read or written.
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum FileError {
     /// The path's extension names no format: neither `.mps` nor `.lp`.
     Extension {

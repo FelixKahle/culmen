@@ -11,7 +11,6 @@ use crate::{ModelStatus, OptionValue};
 
 /// Why loading or solving with HiGHS failed.
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum HighsError {
     /// A solve was asked for before a program was loaded.
     NotLoaded,
@@ -95,11 +94,51 @@ pub enum HighsError {
     /// its optimum would be reported as the program's; refused before HiGHS runs. Relaxing is the program's to state:
     /// [`Solver::set_col_integrality`](culmen_core::Solver::set_col_integrality) makes the columns continuous.
     Relaxation,
+    /// HiGHS returned a value of one of its enumerations that HiGHS 1.16's headers do not define. The pinned HiGHS
+    /// returns only defined values, so this names a HiGHS other than the one `highs-sys` builds.
+    Unlisted {
+        /// The enumeration the value belongs to.
+        code: HighsCode,
+        /// The value.
+        raw: i32,
+    },
+}
+
+/// An enumeration of HiGHS 1.16 whose values the backend reads, named in [`HighsError::Unlisted`].
+///
+/// ```
+/// use culmen_highs::{HighsCode, HighsError};
+/// let error = HighsError::Unlisted { code: HighsCode::ModelStatus, raw: 42 };
+/// assert_eq!(error.to_string(), "HiGHS: model status 42 is no value HiGHS 1.16 defines");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HighsCode {
+    /// What a call of the C API returns, `kHighsStatus*` in `highs_c_api.h`: [`CallStatus`](crate::CallStatus).
+    CallStatus,
+    /// `kHighsModelStatus*` in `highs_c_api.h`: [`ModelStatus`](crate::ModelStatus).
+    ModelStatus,
+    /// `kHighsSolutionStatus*` in `highs_c_api.h`: [`SolutionStatus`](crate::SolutionStatus).
+    SolutionStatus,
+    /// `HighsLogType` in `lp_data/HConst.h`: [`HighsLogType`](crate::HighsLogType).
+    LogType,
+    /// `ExternalMipSolutionQueryOrigin` in `lp_data/HighsCallback.h`: [`HighsQueryOrigin`](crate::HighsQueryOrigin).
+    QueryOrigin,
+}
+
+impl fmt::Display for HighsCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::CallStatus => "call status",
+            Self::ModelStatus => "model status",
+            Self::SolutionStatus => "solution status",
+            Self::LogType => "log type",
+            Self::QueryOrigin => "query origin",
+        })
+    }
 }
 
 /// Why the backend does not trust the ending HiGHS's QP solver reported.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum UnsoundQp {
     /// HiGHS reported an optimum whose relative primal-dual objective error exceeds the options'
     /// [`qp_objective_error`](crate::HighsOptions::qp_objective_error); the point need not be feasible.
@@ -156,6 +195,7 @@ impl fmt::Display for HighsError {
                 f,
                 "HiGHS: the option `solve_relaxation` would report a MIP's continuous relaxation as its optimum"
             ),
+            Self::Unlisted { code, raw } => write!(f, "HiGHS: {code} {raw} is no value HiGHS 1.16 defines"),
         }
     }
 }
@@ -169,7 +209,6 @@ impl core::error::Error for HighsError {}
 /// assert_eq!(Dimension::Entries.to_string(), "entries");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Dimension {
     /// The columns.
     Columns,
