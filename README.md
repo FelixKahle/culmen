@@ -331,8 +331,8 @@ node of SCIP's search, and `lazy_constraints` cuts subtours off a round trip as 
 | [`culmen_macros`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_macros) | The modelling macros, which expand to `culmen_core`'s methods. |
 | [`culmen_testing`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_testing) | Dev-only: an exact reference solver, property-test strategies and hard instances. |
 
-`culmen_core::Script` is an in-memory backend that replays scripted events, for testing code that drives a solve
-without a solver.
+`culmen::script::Script` is an in-memory backend that replays scripted events, for testing code that drives a
+solve without a solver.
 
 ## Development
 

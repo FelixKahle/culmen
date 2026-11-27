@@ -24,7 +24,8 @@ pub(super) type HandStart<B> = fn(&mut Solver<B>, &Start) -> Result<(), SolveErr
 /// ```
 /// use core::time::Duration;
 /// use std::sync::atomic::AtomicBool;
-/// use culmen_core::{Model, Outcome, Script, Settings, Solver, Var, relative_gap};
+/// use culmen_core::{Model, Outcome, Settings, Solver, Var, relative_gap};
+/// use culmen_core::script::Script;
 ///
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::binary());

@@ -79,7 +79,8 @@ impl Step {
     /// one is registered.
     ///
     /// ```
-    /// use culmen_core::{Event, Step};
+    /// use culmen_core::Event;
+    /// use culmen_core::script::Step;
     /// assert_eq!(Step::Note("presolve done".to_owned()).event(), Some(Event::Native));
     /// ```
     #[must_use]
@@ -140,7 +141,8 @@ pub struct PriceRound {
 ///
 /// ```
 /// use core::time::Duration;
-/// use culmen_core::{Model, Outcome, Phase, Progress, Script, Solver, Step, StopReason, Var};
+/// use culmen_core::{Model, Outcome, Phase, Progress, Solver, StopReason, Var};
+/// use culmen_core::script::{Script, Step};
 /// use std::sync::atomic::AtomicBool;
 ///
 /// let mut m = Model::new();

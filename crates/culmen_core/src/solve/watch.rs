@@ -160,7 +160,8 @@ impl<O: Observer + ?Sized> Observer for &mut O {
 /// ```
 /// use core::time::Duration;
 /// use std::sync::atomic::AtomicBool;
-/// use culmen_core::{Backend, Hooks, Model, Outcome, Phase, Progress, Script, Settings, Step, StopReason, Var, Watch};
+/// use culmen_core::{Backend, Hooks, Model, Outcome, Phase, Progress, Settings, StopReason, Var, Watch};
+/// use culmen_core::script::{Script, Step};
 ///
 /// let mut m = Model::new();
 /// m.add_var(Var::binary());

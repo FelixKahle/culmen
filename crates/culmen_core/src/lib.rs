@@ -78,7 +78,7 @@
 mod gap;
 mod model;
 mod program;
-mod script;
+pub mod script;
 #[cfg(feature = "serde")]
 pub mod serde_real;
 mod set;
@@ -96,10 +96,7 @@ pub use program::{
     ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramFeaturesIter, ProgramPlan, ProgramRow,
     QuadEntries, QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
 };
-pub use script::{
-    Found, PriceRound, Record, Script, ScriptCut, ScriptError, ScriptHeuristic, ScriptLazy, ScriptLog, ScriptNote,
-    ScriptPoll, ScriptPrice, ScriptProgress, ScriptSolution, ScriptStatus, Step,
-};
+pub use script::Found;
 pub use solve::{
     ActionError, AddedRow, Backend, Callback, Context, CutContext, CutHandler, Edit, EditError, Event, Events,
     EventsIter, HeuristicContext, HeuristicHandler, Heuristics, Hooks, Improvement, LazyConstraints, LazyContext,

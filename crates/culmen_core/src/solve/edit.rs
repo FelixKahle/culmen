@@ -366,7 +366,8 @@ impl<B: Backend> Solver<B> {
     /// Sets the sense of the program's own objective, so the next solve minimizes or maximizes it.
     ///
     /// ```
-    /// use culmen_core::{Linear, Model, Script, Sense, Solver, Var};
+    /// use culmen_core::{Linear, Model, Sense, Solver, Var};
+    /// use culmen_core::script::Script;
     /// let mut m = Model::new();
     /// let x = m.add_var(Var::continuous().upper(4));
     /// m.minimize(x);
@@ -410,7 +411,8 @@ impl<B: Backend> Solver<B> {
     /// constant becomes the offset, and the quadratic part becomes `objective`'s. Further objectives stay as they are.
     ///
     /// ```
-    /// use culmen_core::{Linear, Model, Script, Sense, Solver, Var};
+    /// use culmen_core::{Linear, Model, Sense, Solver, Var};
+    /// use culmen_core::script::Script;
     /// let mut m = Model::new();
     /// let x = m.add_var(Var::continuous().upper(4));
     /// let y = m.add_var(Var::continuous().upper(4));

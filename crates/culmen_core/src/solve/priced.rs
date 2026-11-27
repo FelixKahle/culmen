@@ -16,7 +16,8 @@ use crate::{ActionError, Col, Cols, ModelClass, ModelClasses, NewCol, Program};
 /// ([`Priced::into_cols`]).
 ///
 /// ```
-/// use culmen_core::{Backend, Col, Linear, Model, NewCol, Priced, Script, Var};
+/// use culmen_core::{Backend, Col, Linear, Model, NewCol, Priced, Var};
+/// use culmen_core::script::Script;
 ///
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::continuous());

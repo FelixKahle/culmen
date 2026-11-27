@@ -32,7 +32,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Found, Phase, Script, Step};
+use culmen::{Found, Phase};
+use culmen::script::{Script, Step};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
@@ -90,7 +91,8 @@ order), and the `text`. The solver writes its log in chunks; the observer receiv
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Found, LogLevel, Phase, Script, Step};
+use culmen::{Found, LogLevel, Phase};
+use culmen::script::{Script, Step};
 
 #[derive(Default)]
 struct Seen {
@@ -168,7 +170,8 @@ everything the solver offers beyond the traits ([HiGHS callback contexts](highs.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Phase, Script, ScriptStatus, Step};
+use culmen::Phase;
+use culmen::script::{Script, ScriptStatus, Step};
 
 /// Stops any backend's solve once it has run for a fixed time.
 struct Deadline(Duration);
@@ -251,7 +254,8 @@ activates its pricer for a pricer, never for a callback that asks for events.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Found, Phase, Script, Step};
+use culmen::{Found, Phase};
+use culmen::script::{Script, Step};
 
 /// Forbids taking both items, a conflict only the handler knows, on any backend that takes lazy constraints.
 struct NotBoth(Col, Col);
@@ -412,7 +416,8 @@ refuses to price a program with a quadratic objective.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceMode, Script, Step};
+use culmen::{NewCol, Phase, PriceMode};
+use culmen::script::{Script, Step};
 
 /// Adds every pattern of the pool, not added yet, that improves the node LP.
 struct Pool {
@@ -477,7 +482,8 @@ calls two of them at once.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Phase, Script, Step};
+use culmen::Phase;
+use culmen::script::{Script, Step};
 
 #[derive(Default)]
 struct CountPolls(usize);
@@ -535,11 +541,11 @@ needs no such type: the backend does not implement the trait, and a handler for 
 use culmen::prelude::*;
 
 assert_eq!(Highs::EVENTS, Events::ALL);
-assert!(culmen::Script::EVENTS.contains_all(Events::ALL));
+assert!(culmen::script::Script::EVENTS.contains_all(Events::ALL));
 
 /// Compiles only for a backend that takes lazy constraints.
 fn takes_lazy<B: LazyConstraints>() {}
-takes_lazy::<culmen::Script>();
+takes_lazy::<culmen::script::Script>();
 ```
 
 HiGHS 1.16 offers no lazy constraints, user cuts or pricing; see [Limitations](highs.md#limitations).

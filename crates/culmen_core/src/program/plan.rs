@@ -116,7 +116,8 @@ impl ProgramColumn {
 /// coefficient in every further objective is zero, and it has no quadratic term.
 ///
 /// ```
-/// use culmen_core::{Linear, Model, NewCol, Script, Solver, Var};
+/// use culmen_core::{Linear, Model, NewCol, Solver, Var};
+/// use culmen_core::script::Script;
 ///
 /// // Cover the demands a and b, one pattern each so far.
 /// let mut m = Model::new();

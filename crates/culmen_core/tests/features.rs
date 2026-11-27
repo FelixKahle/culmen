@@ -13,12 +13,13 @@ use core::fmt;
 use core::time::Duration;
 use std::collections::HashSet;
 
+use culmen_core::script::Script;
 use culmen_core::{
     Backend, Bound, Bounds, Col, Combination, Events, ExprPlace, Integrality, Line, Linear, LinearObjective, LoadError,
     LpFileError, Model, ModelClass, ModelClasses, ModelError, Objective, ObjectiveId, Objectives, Outcome, Program,
-    ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Relaxed, Script, Sense, Settings,
-    SolveError, Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Unsupported, Var, Violation,
-    Weight, Weighted, absolute_gap, bounds, relative_gap, weight,
+    ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Relaxed, Sense, Settings, SolveError,
+    Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Unsupported, Var, Violation, Weight, Weighted,
+    absolute_gap, bounds, relative_gap, weight,
 };
 use proptest::prelude::*;
 

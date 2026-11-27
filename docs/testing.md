@@ -7,7 +7,7 @@ of the plain data.
 
 ## The `Script` backend
 
-`culmen::Script` is an in-memory [backend](backends.md) that delivers a fixed list of `Step`s to the callback and the
+`culmen::script::Script` is an in-memory [backend](backends.md) that delivers a fixed list of `Step`s to the callback and the
 [search handlers](callbacks.md#search-handlers) and then ends with a fixed `Outcome`. It supports every event and has
 every search capability (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`), so it drives the whole callback
 layer, and it needs no native code; it runs under Miri.
@@ -60,7 +60,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Found, Phase, Script, ScriptStatus, Step};
+use culmen::{Found, Phase};
+use culmen::script::{Script, ScriptStatus, Step};
 
 /// The code under test: solve with a time limit and a stop, and return the best objective found.
 fn best_within<B: Backend>(
@@ -107,7 +108,8 @@ each event can be checked against the record. Here a lazy-constraint handler for
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{ActionError, AddedRow, Found, Phase, Script, Step};
+use culmen::{ActionError, AddedRow, Found, Phase};
+use culmen::script::{Script, Step};
 
 struct NotBoth {
     x: Col,
@@ -159,7 +161,8 @@ program the columns it added.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceMode, Script, Step};
+use culmen::{NewCol, Phase, PriceMode};
+use culmen::script::{Script, Step};
 
 /// Adds the pattern when it improves, else reports a bound and stops pricing.
 struct Pattern(NewCol);

@@ -16,11 +16,11 @@ use core::fmt;
 use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use culmen_core::script::{Script, ScriptError};
 use culmen_core::{
     Backend, Bounds, Col, Constraint, EditError, Events, Integrality, InvalidBounds, LinExpr, Linear, Model,
     ModelClass, ModelClasses, NewCol, NewRow, Outcome, Program, ProgramColumn, ProgramFeature, ProgramFeatures,
-    ProgramPlan, ProgramRow, Row, Script, ScriptError, Sense, Settings, SolveError, Solved, Solver, Term, Unsupported,
-    Var, bounds,
+    ProgramPlan, ProgramRow, Row, Sense, Settings, SolveError, Solved, Solver, Term, Unsupported, Var, bounds,
 };
 use culmen_testing::mirror::{Call, Edited, Faults, Mirror, MirrorError};
 use culmen_testing::op::{Applied, EditOp};

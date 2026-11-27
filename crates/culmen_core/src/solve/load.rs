@@ -14,7 +14,8 @@ use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 /// and [`Backend::FEATURES`](crate::Backend::FEATURES) before the backend sees the program.
 ///
 /// ```
-/// use culmen_core::{LoadError, Model, ModelClass, ModelClasses, Script, Solver, Var};
+/// use culmen_core::{LoadError, Model, ModelClass, ModelClasses, Solver, Var};
+/// use culmen_core::script::Script;
 ///
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::continuous());

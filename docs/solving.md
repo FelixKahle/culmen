@@ -463,7 +463,8 @@ are the program's from then on:
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceMode, Script, Step};
+use culmen::{NewCol, Phase, PriceMode};
+use culmen::script::{Script, Step};
 
 /// Prices one column in at every price step.
 struct OneMore;

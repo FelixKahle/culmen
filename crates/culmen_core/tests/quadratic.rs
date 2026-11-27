@@ -13,10 +13,11 @@ use core::fmt;
 use core::time::Duration;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use culmen_core::script::Script;
 use culmen_core::{
     Backend, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, ModelClasses, ModelError, ModelVar, Outcome,
-    Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Script, Sense, Settings, Solved,
-    Solver, Term, TiSlice, TiVec, Unsupported, Var,
+    Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Sense, Settings, Solved, Solver,
+    Term, TiSlice, TiVec, Unsupported, Var,
 };
 use proptest::prelude::*;
 

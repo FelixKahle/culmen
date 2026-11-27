@@ -49,7 +49,8 @@ use run::HandStart;
 /// A program loaded into a backend, solved as often as needed, each solve configured on its own [`Run`].
 ///
 /// ```
-/// use culmen_core::{Model, Outcome, Script, Solver, Var};
+/// use culmen_core::{Model, Outcome, Solver, Var};
+/// use culmen_core::script::Script;
 ///
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::binary());
@@ -210,7 +211,8 @@ impl<B: Backend> Solver<B> {
     ///
     /// ```
     /// use core::time::Duration;
-    /// use culmen_core::{Backend, Callback, Model, Outcome, Phase, Progress, Script, Solver, Step, Var};
+    /// use culmen_core::{Backend, Callback, Model, Outcome, Phase, Progress, Solver, Var};
+    /// use culmen_core::script::{Script, Step};
     ///
     /// /// Counts the polls a solve delivers.
     /// #[derive(Default)]
