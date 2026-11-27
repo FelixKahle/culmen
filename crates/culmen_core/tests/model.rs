@@ -264,6 +264,32 @@ fn test_operators_build_the_expected_terms() {
 }
 
 #[test]
+fn test_every_number_that_converts_into_f64_without_loss_scales_and_compares() {
+    let (x, y) = (Col::new(0), Col::new(1));
+    let (a, b, c, d, e, f) = (2u8, 2u16, 2u32, 2i8, 2i16, 2.0f32);
+    let doubled = 2.0 * x;
+    for scaled in [x * a, x * b, x * c, x * d, x * e, x * f, Term::from(x) * a] {
+        assert_eq!(scaled, doubled);
+    }
+    assert_eq!(x / c, x * 0.5);
+    let limit: u32 = 7;
+    assert_eq!(x.leq(limit), x.leq(7.0));
+    assert_eq!(x.geq(a), x.geq(2.0));
+    assert_eq!(x + c - d, x + 0.0);
+    assert_eq!((x + y) * e, 2.0 * x + 2.0 * y);
+    assert_eq!(LinExpr::from(f), LinExpr::from(2.0));
+    let mut sum = x + 1;
+    sum *= a;
+    sum /= b;
+    assert_eq!(sum, x + 1);
+    assert_eq!((x * y) * c, 2.0 * x * y);
+    assert_eq!((x * x + x) * f, 2.0 * (x * x) + 2.0 * x);
+    // An unsuffixed literal still infers through a method call on the product.
+    assert_eq!((2 * x).leq(4), (x * 2.0).leq(4.0));
+    assert_eq!((x + 2 * y).geq(1), (x + 2.0 * y).geq(1.0));
+}
+
+#[test]
 fn test_keyed_families_over_filtered_products() {
     let mut m = Model::new();
     let fits = |p: usize, l: char| !(p == 1 && l == 'b');

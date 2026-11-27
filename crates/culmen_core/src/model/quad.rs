@@ -335,20 +335,13 @@ impl Mul<LinExpr> for Term {
     }
 }
 
-impl Mul<f64> for QuadTerm {
+impl<S: Into<f64>> Mul<S> for QuadTerm {
     type Output = Self;
-    fn mul(self, rhs: f64) -> Self {
+    fn mul(self, rhs: S) -> Self {
         Self {
-            coefficient: self.coefficient * rhs,
+            coefficient: self.coefficient * rhs.into(),
             ..self
         }
-    }
-}
-
-impl Mul<i32> for QuadTerm {
-    type Output = Self;
-    fn mul(self, rhs: i32) -> Self {
-        self * f64::from(rhs)
     }
 }
 
@@ -366,20 +359,13 @@ impl Mul<QuadTerm> for i32 {
     }
 }
 
-impl Div<f64> for QuadTerm {
+impl<S: Into<f64>> Div<S> for QuadTerm {
     type Output = Self;
-    fn div(self, rhs: f64) -> Self {
+    fn div(self, rhs: S) -> Self {
         Self {
-            coefficient: self.coefficient / rhs,
+            coefficient: self.coefficient / rhs.into(),
             ..self
         }
-    }
-}
-
-impl Div<i32> for QuadTerm {
-    type Output = Self;
-    fn div(self, rhs: i32) -> Self {
-        self / f64::from(rhs)
     }
 }
 
@@ -390,32 +376,27 @@ impl Neg for QuadTerm {
     }
 }
 
-impl MulAssign<f64> for QuadExpr {
-    fn mul_assign(&mut self, rhs: f64) {
+impl<S: Into<f64>> MulAssign<S> for QuadExpr {
+    fn mul_assign(&mut self, rhs: S) {
+        let rhs = rhs.into();
         self.terms.iter_mut().for_each(|t| t.coefficient *= rhs);
         self.linear *= rhs;
     }
 }
 
-impl DivAssign<f64> for QuadExpr {
-    fn div_assign(&mut self, rhs: f64) {
+impl<S: Into<f64>> DivAssign<S> for QuadExpr {
+    fn div_assign(&mut self, rhs: S) {
+        let rhs = rhs.into();
         self.terms.iter_mut().for_each(|t| t.coefficient /= rhs);
         self.linear /= rhs;
     }
 }
 
-impl Mul<f64> for QuadExpr {
+impl<S: Into<f64>> Mul<S> for QuadExpr {
     type Output = Self;
-    fn mul(mut self, rhs: f64) -> Self {
+    fn mul(mut self, rhs: S) -> Self {
         self *= rhs;
         self
-    }
-}
-
-impl Mul<i32> for QuadExpr {
-    type Output = Self;
-    fn mul(self, rhs: i32) -> Self {
-        self * f64::from(rhs)
     }
 }
 
@@ -433,18 +414,11 @@ impl Mul<QuadExpr> for i32 {
     }
 }
 
-impl Div<f64> for QuadExpr {
+impl<S: Into<f64>> Div<S> for QuadExpr {
     type Output = Self;
-    fn div(mut self, rhs: f64) -> Self {
+    fn div(mut self, rhs: S) -> Self {
         self /= rhs;
         self
-    }
-}
-
-impl Div<i32> for QuadExpr {
-    type Output = Self;
-    fn div(self, rhs: i32) -> Self {
-        self / f64::from(rhs)
     }
 }
 
@@ -679,14 +653,15 @@ impl From<Term> for QuadExpr {
     }
 }
 
-impl From<f64> for QuadExpr {
-    fn from(constant: f64) -> Self {
-        constant.into_quad_expr()
-    }
+/// A number as a constant, for every primitive that converts into `f64` without loss.
+macro_rules! quad_numbers {
+    ($($number:ty),*) => {$(
+        impl From<$number> for QuadExpr {
+            fn from(constant: $number) -> Self {
+                constant.into_quad_expr()
+            }
+        }
+    )*};
 }
 
-impl From<i32> for QuadExpr {
-    fn from(constant: i32) -> Self {
-        constant.into_quad_expr()
-    }
-}
+quad_numbers!(i8, i16, i32, u8, u16, u32, f32, f64);
