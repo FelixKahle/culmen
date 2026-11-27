@@ -154,24 +154,13 @@ impl ToOption for Switch {
     }
 }
 
-/// Off or on: `ranging`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum OnOff {
-    /// Off.
-    Off,
-    /// On.
-    On,
-}
-
-impl ToOption for OnOff {
-    fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
-        let value = match self {
-            Self::Off => "off",
-            Self::On => "on",
-        };
-        Ok(OptionValue::from(value))
-    }
+/// A switch HiGHS takes as the string `"on"` or `"off"`, as `ranging`, from a `bool`.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "a typed option's conversion returns the result every other conversion returns"
+)]
+fn on_off(value: &bool, _: &'static str) -> Result<OptionValue, HighsError> {
+    Ok(OptionValue::from(if *value { "on" } else { "off" }))
 }
 
 /// The LP or QP solver: `solver`.
@@ -389,7 +378,13 @@ impl ToOption for PresolveMode {
 
 /// Declares the typed options: the struct, its field docs, and the list of `(name, value)` it sets.
 macro_rules! options {
-    ($($(#[$doc:meta])* $field:ident: $ty:ty = $name:literal,)*) => {
+    (@value $value:ident, $name:literal) => {
+        $value.to_option($name)
+    };
+    (@value $value:ident, $name:literal, $convert:path) => {
+        $convert($value, $name)
+    };
+    ($($(#[$doc:meta])* $field:ident: $ty:ty = $name:literal $(as $convert:path)?,)*) => {
         /// HiGHS's options for every solve of a [`Highs`](crate::Highs) backend.
         ///
         /// The commonly used options are typed fields, each named as HiGHS names it and `None` for HiGHS's default;
@@ -434,7 +429,7 @@ macro_rules! options {
             pub(crate) fn assignments(&self) -> Result<Vec<(&'static str, OptionValue)>, HighsError> {
                 let mut set = Vec::new();
                 $(if let Some(value) = &self.$field {
-                    set.push(($name, value.to_option($name)?));
+                    set.push(($name, options!(@value value, $name $(, $convert)?)?));
                 })*
                 Ok(set)
             }
@@ -452,7 +447,7 @@ options! {
     /// Whether to run crossover after an interior-point solve.
     run_crossover: Switch = "run_crossover",
     /// Whether to compute cost, bound and right-hand-side ranging.
-    ranging: OnOff = "ranging",
+    ranging: bool = "ranging" as on_off,
     /// The magnitude at which a cost counts as infinite.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     infinite_cost: f64 = "infinite_cost",
@@ -650,6 +645,19 @@ mod tests {
     }
 
     #[test]
+    fn test_ranging_is_highs_string_switch() {
+        let with = |ranging| {
+            HighsOptions {
+                ranging: Some(ranging),
+                ..HighsOptions::default()
+            }
+            .assignments()
+        };
+        assert_eq!(with(true), Ok(vec![("ranging", OptionValue::from("on"))]));
+        assert_eq!(with(false), Ok(vec![("ranging", OptionValue::from("off"))]));
+    }
+
+    #[test]
     fn test_highs_takes_every_choice_of_every_typed_option() {
         let mut every = Vec::new();
         for s in [Switch::Off, Switch::Choose, Switch::On] {
@@ -670,7 +678,7 @@ mod tests {
                 ..HighsOptions::default()
             });
         }
-        for r in [OnOff::Off, OnOff::On] {
+        for r in [false, true] {
             every.push(HighsOptions {
                 ranging: Some(r),
                 ..HighsOptions::default()

@@ -78,8 +78,8 @@ use culmen_core::{
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
 pub use options::{
-    EdgeWeight, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OnOff, OptionValue, PresolveMode, RawOption,
-    ScaleStrategy, SimplexStrategy, Switch,
+    EdgeWeight, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OptionValue, PresolveMode, RawOption, ScaleStrategy,
+    SimplexStrategy, Switch,
 };
 pub use status::{CallStatus, HighsStatus, ModelStatus, SolutionStatus};
 

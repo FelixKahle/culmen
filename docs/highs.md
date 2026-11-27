@@ -70,13 +70,13 @@ presolve, the node and solution limits and the console are set per solve, with t
 standing value across solves is an option by name, such as `.option("presolve", "off")` or
 `.option("time_limit", 30.0)`, which holds for every solve whose settings leave it unset.
 
-A field whose HiGHS option takes one of a few values is an enum:
+A switch HiGHS takes as `"on"` or `"off"`, as `ranging`, is a `bool`. A field whose HiGHS option takes one of a
+few values is an enum:
 
 | Type | Variants | Options |
 |---|---|---|
 | `Switch` | `Off`, `Choose`, `On` | `parallel`, `run_crossover` |
 | `PresolveMode` | `Choose`, `InitialSweep`, `Light`, `Full` | `presolve_mode` |
-| `OnOff` | `Off`, `On` | `ranging` |
 | `LpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo`, `Pdlp`, `Hipdlp`, `QpAsm` | `solver` |
 | `MipLpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo` | `mip_lp_solver` |
 | `MipIpmSolver` | `Choose`, `Ipm`, `Ipx`, `Hipo` | `mip_ipm_solver` |

@@ -93,7 +93,7 @@ Whether a public type is `#[non_exhaustive]` follows from what a user does with 
   instead (`Backend::CLASSES`, `FEATURES`), which refuses what it does not list.
 - **An enum whose variants its meaning closes stays exhaustive**, so that code which must handle every case is
   checked to: `Sense`, `Integrality`, `Outcome`, `Objectives`, `Combination`, `PriceMode`, `Start`, `NewRow`,
-  `Side`, `Bound`, `Line`, `BasisStatus`, `LogLevel`, `ScriptStatus`, `Switch`, `OnOff`, and `Unsupported`, which
+  `Side`, `Bound`, `Line`, `BasisStatus`, `LogLevel`, `ScriptStatus`, `Switch`, and `Unsupported`, which
   has no variant. A new variant there changes what every match must do, so it is a breaking change by design.
 
 `culmen_testing` is not published and is used only inside the workspace, where a change and every match it breaks
