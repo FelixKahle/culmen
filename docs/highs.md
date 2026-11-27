@@ -23,16 +23,13 @@ crate and needs no system install. The `Highs` backend is `Send` and can be move
 there ([Threads](#threads)).
 
 ```rust
-use std::time::Duration;
-
 use culmen::prelude::*;
 use culmen::highs::{HighsOptions, LpSolver, Switch};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = HighsOptions {
-        presolve: Some(Switch::Off),
+        parallel: Some(Switch::Off),
         mip_heuristic_effort: Some(0.2),
-        time_limit: Some(Duration::from_secs(10)),
         ..HighsOptions::default()
     };
 
@@ -57,23 +54,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Options
 
 `HighsOptions` is plain data. Each documented HiGHS option is a field named as HiGHS names it, `None` for HiGHS's
-default: `presolve`, `presolve_mode`, `solver`, `parallel`, `run_crossover`, `time_limit`, `ranging`, the tolerances
+default: `presolve_mode`, `solver`, `parallel`, `run_crossover`, `ranging`, the tolerances
 (`primal_feasibility_tolerance`, `dual_feasibility_tolerance`, `optimality_tolerance`, `kkt_tolerance`, …),
-`objective_bound` and `objective_target`, `random_seed`, `threads`, the simplex options (`simplex_strategy`,
-`simplex_scale_strategy`, the edge weights, the iteration and update limits), the logging options (`output_flag`,
-`log_to_console`, `log_file`), the MIP options (`mip_rel_gap`, `mip_abs_gap`, the node, leaf, stall and solution
-limits, the cut-pool limits, `mip_heuristic_effort` and each heuristic's switch, `mip_feasibility_tolerance`,
-`mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and tolerances, the active-set QP solver's
-`qp_iteration_limit` and `qp_nullspace_limit`, `allow_unbounded_or_infeasible` and
-`presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field. A `u64` field is a limit, and one beyond
-HiGHS's integers is HiGHS's largest integer, its "no limit"; a `u32` field is an exact integer, such as `random_seed`
-or `threads`, and one beyond HiGHS's integers is refused.
+`objective_bound` and `objective_target`, the simplex options (`simplex_strategy`, `simplex_scale_strategy`, the edge
+weights, the iteration and update limits, `simplex_max_concurrency`), the logging options (`output_flag`, `log_file`),
+the MIP options (the leaf and stall limits, the cut-pool limits, `mip_heuristic_effort` and each heuristic's switch,
+`mip_feasibility_tolerance`, `mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and
+tolerances, the active-set QP solver's `qp_iteration_limit` and `qp_nullspace_limit`, `allow_unbounded_or_infeasible`
+and `presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field. A `u64` field is a limit, and one
+beyond HiGHS's integers is HiGHS's largest integer, its "no limit"; a `u32` field is an exact integer, such as
+`simplex_max_concurrency`, and one beyond HiGHS's integers is refused.
+
+What [`Settings`](solving.md#settings) types has no field: the time limit, the gaps, the thread count, the seed,
+presolve, the node and solution limits and the console are set per solve, with the invariants their types hold. A
+standing value across solves is an option by name, such as `.option("presolve", "off")` or
+`.option("time_limit", 30.0)`, which holds for every solve whose settings leave it unset.
 
 A field whose HiGHS option takes one of a few values is an enum:
 
 | Type | Variants | Options |
 |---|---|---|
-| `Switch` | `Off`, `Choose`, `On` | `presolve`, `parallel`, `run_crossover` |
+| `Switch` | `Off`, `Choose`, `On` | `parallel`, `run_crossover` |
 | `PresolveMode` | `Choose`, `InitialSweep`, `Light`, `Full` | `presolve_mode` |
 | `OnOff` | `Off`, `On` | `ranging` |
 | `LpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo`, `Pdlp`, `Hipdlp`, `QpAsm` | `solver` |
@@ -112,7 +113,7 @@ Every solve sets HiGHS up from scratch, in this order:
 4. The solve's [`Settings`](solving.md#settings) apply.
 
 So a per-solve setting always wins over the backend's options, and an option set by name wins over a typed field
-for the same option. Nothing set on HiGHS carries over from one solve to the next except through `HighsOptions`.
+for the same option or over the default a setting left unset. Nothing set on HiGHS carries over from one solve to the next except through `HighsOptions`.
 The [Backends](backends.md#settings) page lists the HiGHS option each `Settings` field sets.
 
 HiGHS measures `time_limit` on a clock the backend restarts before every run, so each solve gets the full limit. A
@@ -198,7 +199,7 @@ more than the status:
   `1e-4` and an absolute gap of `1e-6`), and `Optimal` otherwise.
 - **`NodeLimit` or `SolutionLimit`.** HiGHS reports one status for its node, leaf and improving-solution limits. The
   backend reports `StopReason::NodeLimit` when the node limit HiGHS held for the run (`mip_max_nodes`, set in
-  `Settings`, a typed `HighsOptions` field or by name) was reached, and `StopReason::SolutionLimit` otherwise.
+  `Settings` or by name) was reached, and `StopReason::SolutionLimit` otherwise.
 
 An empty model, one without columns, is `Optimal` at its offset when every row admits an activity of zero, and
 `Infeasible` when a row such as `0 = 1` does not.
@@ -526,7 +527,7 @@ MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as 
 
 ```rust
 use culmen::prelude::*;
-use culmen::highs::{HighsHeuristic, HighsOptions, QueryOrigin, Switch};
+use culmen::highs::{HighsHeuristic, QueryOrigin};
 use culmen::{ActionError, TiVec};
 
 struct Start {
@@ -556,10 +557,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     start[take[1]] = 1.0;
     start[take[3]] = 1.0;
 
-    let options = HighsOptions { presolve: Some(Switch::Off), ..HighsOptions::default() };
-    let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
+    let mut solver = Solver::new(Highs::new(), m.build()?)?;
     let mut handler = Start { values: Some(start), supplied: Vec::new() };
-    let solved = solver.run().heuristic(&mut handler).solve()?;
+    let no_presolve = Settings { presolve: Some(false), ..Settings::new() };
+    let solved = solver.run().settings(no_presolve).heuristic(&mut handler).solve()?;
     assert_eq!(handler.supplied, [Ok(())]);
     assert_eq!(solved.outcome.objective(), Some(25.0));
     Ok(())

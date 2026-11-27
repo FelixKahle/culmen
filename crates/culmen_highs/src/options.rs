@@ -4,8 +4,6 @@
 //! HiGHS's options: the commonly used ones typed, any other by name.
 
 use core::fmt;
-use core::num::NonZeroU64;
-use core::time::Duration;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -105,13 +103,6 @@ impl ToOption for u64 {
     }
 }
 
-impl ToOption for NonZeroU64 {
-    /// A limit that cannot be zero, as [`u64`]'s.
-    fn to_option(&self, name: &'static str) -> Result<OptionValue, HighsError> {
-        self.get().to_option(name)
-    }
-}
-
 impl ToOption for f64 {
     fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
         Ok(OptionValue::Double(*self))
@@ -121,12 +112,6 @@ impl ToOption for f64 {
 impl ToOption for String {
     fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
         Ok(OptionValue::String(self.clone()))
-    }
-}
-
-impl ToOption for Duration {
-    fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
-        Ok(OptionValue::Double(self.as_secs_f64()))
     }
 }
 
@@ -409,7 +394,10 @@ macro_rules! options {
         ///
         /// The commonly used options are typed fields, each named as HiGHS names it and `None` for HiGHS's default;
         /// any other option is set by name through [`HighsOptions::option`], after the typed ones. The
-        /// [`Settings`](culmen_core::Settings) of a solve apply after both, so a per-solve limit always wins.
+        /// [`Settings`](culmen_core::Settings) of a solve apply after both, so a per-solve limit always wins. What
+        /// `Settings` types (the time limit, the gaps, threads, the seed, presolve, the node and solution limits, the
+        /// console) has no field here; set by HiGHS's name, such an option holds for every solve whose settings leave
+        /// it unset.
         ///
         /// An `f64` field is written in the form of [`culmen_core::serde_real`], so an infinity reads back.
         ///
@@ -418,13 +406,11 @@ macro_rules! options {
         /// [`HighsError::OutOfRange`].
         ///
         /// ```
-        /// use core::time::Duration;
-        /// use culmen_highs::{HighsOptions, OptionValue, Switch};
+        /// use culmen_highs::{HighsOptions, LpSolver, OptionValue};
         ///
         /// let options = HighsOptions {
-        ///     presolve: Some(Switch::Off),
+        ///     solver: Some(LpSolver::Simplex),
         ///     mip_heuristic_effort: Some(0.2),
-        ///     time_limit: Some(Duration::from_secs(10)),
         ///     ..HighsOptions::default()
         /// }
         /// .option("mip_pool_soft_limit", 5000);
@@ -457,8 +443,6 @@ macro_rules! options {
 }
 
 options! {
-    /// Whether to presolve.
-    presolve: Switch = "presolve",
     /// Which presolve rules HiGHS allows when it presolves.
     presolve_mode: PresolveMode = "presolve_mode",
     /// The LP or QP solver.
@@ -467,8 +451,6 @@ options! {
     parallel: Switch = "parallel",
     /// Whether to run crossover after an interior-point solve.
     run_crossover: Switch = "run_crossover",
-    /// The time limit.
-    time_limit: Duration = "time_limit",
     /// Whether to compute cost, bound and right-hand-side ranging.
     ranging: OnOff = "ranging",
     /// The magnitude at which a cost counts as infinite.
@@ -507,10 +489,6 @@ options! {
     /// The objective value at which a MIP stops.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     objective_target: f64 = "objective_target",
-    /// The random seed.
-    random_seed: u32 = "random_seed",
-    /// The number of threads; 0 lets HiGHS choose.
-    threads: u32 = "threads",
     /// The exponent of a power-of-two scaling of the objective.
     user_objective_scale: i32 = "user_objective_scale",
     /// The exponent of a power-of-two scaling of the bounds.
@@ -532,24 +510,18 @@ options! {
     /// Whether HiGHS writes a log at all. Every solve turns it on before applying these options, so `false` here
     /// silences log events and leaves [`HighsStatus::last_error`](crate::HighsStatus::last_error) empty.
     output_flag: bool = "output_flag",
-    /// Whether the log goes to standard output.
-    log_to_console: bool = "log_to_console",
     /// A file the log is written to.
     log_file: String = "log_file",
     /// Whether the MIP solver detects symmetry.
     mip_detect_symmetry: bool = "mip_detect_symmetry",
     /// Whether the MIP solver may restart.
     mip_allow_restart: bool = "mip_allow_restart",
-    /// The MIP node limit.
-    mip_max_nodes: u64 = "mip_max_nodes",
     /// The limit on nodes whose estimate exceeds the cutoff.
     mip_max_stall_nodes: u64 = "mip_max_stall_nodes",
     /// The node limit when completing a partial start.
     mip_max_start_nodes: u64 = "mip_max_start_nodes",
     /// The MIP leaf-node limit.
     mip_max_leaves: u64 = "mip_max_leaves",
-    /// The number of improving solutions after which a MIP stops; HiGHS takes no fewer than one.
-    mip_max_improving_sols: NonZeroU64 = "mip_max_improving_sols",
     /// Whether MIP presolve runs only at the root.
     mip_root_presolve_only: bool = "mip_root_presolve_only",
     /// The age at which dynamic LP rows leave the MIP relaxation.
@@ -582,12 +554,6 @@ options! {
     mip_heuristic_run_shifting: bool = "mip_heuristic_run_shifting",
     /// Whether cuts are separated at nodes other than the root.
     mip_allow_cut_separation_at_nodes: bool = "mip_allow_cut_separation_at_nodes",
-    /// The relative gap at which a MIP counts as solved.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    mip_rel_gap: f64 = "mip_rel_gap",
-    /// The absolute gap at which a MIP counts as solved.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    mip_abs_gap: f64 = "mip_abs_gap",
     /// The least time between two lines of the MIP log, in seconds.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     mip_min_logging_interval: f64 = "mip_min_logging_interval",
@@ -649,12 +615,12 @@ mod tests {
     const HIGHS_LARGEST: u64 = 2_147_483_647;
 
     #[test]
-    fn test_seeds_and_thread_counts_beyond_highs_integers_are_refused() {
-        let with = |seed, threads| {
+    fn test_exact_integers_beyond_highs_integers_are_refused_and_limits_are_none() {
+        let with = |concurrency, age| {
             HighsOptions {
-                random_seed: Some(seed),
-                threads: Some(threads),
-                mip_max_nodes: Some(u64::MAX),
+                simplex_max_concurrency: Some(concurrency),
+                mip_lp_age_limit: Some(age),
+                mip_max_leaves: Some(u64::MAX),
                 ..HighsOptions::default()
             }
             .assignments()
@@ -662,22 +628,22 @@ mod tests {
         assert_eq!(
             with(7, 2),
             Ok(vec![
-                ("random_seed", OptionValue::Int(7)),
-                ("threads", OptionValue::Int(2)),
-                ("mip_max_nodes", OptionValue::Int(2_147_483_647)),
+                ("simplex_max_concurrency", OptionValue::Int(7)),
+                ("mip_max_leaves", OptionValue::Int(2_147_483_647)),
+                ("mip_lp_age_limit", OptionValue::Int(2)),
             ])
         );
         assert_eq!(
             with(u32::MAX, 2),
             Err(HighsError::OutOfRange {
-                name: "random_seed",
+                name: "simplex_max_concurrency",
                 value: 4_294_967_295
             })
         );
         assert_eq!(
             with(7, 2_147_483_648),
             Err(HighsError::OutOfRange {
-                name: "threads",
+                name: "mip_lp_age_limit",
                 value: 2_147_483_648
             })
         );
@@ -688,7 +654,6 @@ mod tests {
         let mut every = Vec::new();
         for s in [Switch::Off, Switch::Choose, Switch::On] {
             every.push(HighsOptions {
-                presolve: Some(s),
                 parallel: Some(s),
                 run_crossover: Some(s),
                 ..HighsOptions::default()

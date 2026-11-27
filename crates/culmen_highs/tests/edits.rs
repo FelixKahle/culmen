@@ -15,7 +15,7 @@ use culmen_core::{
     Objective, Outcome, Program, ProgramColumn, ProgramPlan, Settings, Solution, SolveError, Solver, Var, bounds,
     relative_gap,
 };
-use culmen_highs::{Highs, HighsError, HighsOptions, Switch};
+use culmen_highs::{Highs, HighsError, HighsOptions};
 use culmen_testing::instances::assignment;
 use culmen_testing::mirror::{Faults, Mirror, MirrorError};
 use culmen_testing::reference::{Reference, close, edit_plan, solve};
@@ -272,10 +272,9 @@ fn relaxed_assignment() -> (Program, HighsOptions) {
     for column in &mut plan.columns {
         column.integrality = Integrality::Continuous;
     }
-    let options = HighsOptions {
-        presolve: Some(Switch::Off),
-        ..HighsOptions::default()
-    };
+    // Every solve of these tests runs without presolve, so the options hold it, by HiGHS's name, beside the
+    // settings of each solve.
+    let options = HighsOptions::default().option("presolve", "off");
     (plan.build().unwrap(), options)
 }
 

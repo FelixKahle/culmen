@@ -335,6 +335,14 @@ impl HeuristicHandler<Highs> for Shared<'_> {
 }
 
 /// Solves under `settings` with `kinds` as the callback and the heuristic handler.
+/// A solve without presolve, so HiGHS's MIP solver works on the program's own columns.
+fn no_presolve() -> Settings {
+    Settings {
+        presolve: Some(false),
+        ..Settings::new()
+    }
+}
+
 fn solve_kinds(
     solver: &mut Solver<Highs>,
     settings: Settings,
@@ -380,7 +388,6 @@ fn lp_problem() -> Program {
 #[test]
 fn test_simplex_poll_interrupts_an_lp() {
     let options = HighsOptions {
-        presolve: Some(Switch::Off),
         solver: Some(LpSolver::Simplex),
         ..HighsOptions::default()
     };
@@ -389,7 +396,7 @@ fn test_simplex_poll_interrupts_an_lp() {
         interrupt_at_first_poll: true,
         ..Kinds::default()
     };
-    let solved = solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
+    let solved = solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
     assert!(
         matches!(kinds.polls[0], PollSource::Simplex { .. }),
         "{:?}",
@@ -408,7 +415,6 @@ fn test_simplex_poll_interrupts_an_lp() {
 #[test]
 fn test_ipm_poll_interrupts_an_lp() {
     let options = HighsOptions {
-        presolve: Some(Switch::Off),
         solver: Some(LpSolver::Ipx),
         run_crossover: Some(Switch::Off),
         ..HighsOptions::default()
@@ -418,7 +424,7 @@ fn test_ipm_poll_interrupts_an_lp() {
         interrupt_at_first_poll: true,
         ..Kinds::default()
     };
-    let solved = solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
+    let solved = solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
     assert!(
         kinds.polls.iter().any(|p| matches!(p, PollSource::Ipm { .. })),
         "{:?}",
@@ -485,16 +491,12 @@ fn test_a_supplied_solution_becomes_the_first_incumbent() {
     let Outcome::Optimal(Solution { objective, values }) = optimum else {
         panic!("{optimum:?}")
     };
-    let options = HighsOptions {
-        presolve: Some(Switch::Off),
-        ..HighsOptions::default()
-    };
-    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
+    let mut solver = Solver::new(Highs::new(), program).unwrap();
     let mut kinds = Kinds {
         supply: Some(values.raw.clone()),
         ..Kinds::default()
     };
-    let solved = solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
+    let solved = solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
     assert_eq!(kinds.supplied, [Ok(())]);
     assert_eq!(
         kinds.incumbents.first().copied(),
@@ -509,17 +511,13 @@ fn test_a_supplied_solution_becomes_the_first_incumbent() {
 #[test]
 fn test_a_partial_solution_is_repaired_into_an_incumbent() {
     let (program, take) = knapsack();
-    let options = HighsOptions {
-        presolve: Some(Switch::Off),
-        ..HighsOptions::default()
-    };
-    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
+    let mut solver = Solver::new(Highs::new(), program).unwrap();
     let partial = vec![(take[0], 1.0), (take[1], 1.0)];
     let mut kinds = Kinds {
         supply_partial: vec![partial],
         ..Kinds::default()
     };
-    solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
+    solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
     assert_eq!(kinds.supplied, [Ok(())]);
     let first = *kinds.incumbents.first().unwrap();
     assert!(
@@ -533,11 +531,7 @@ fn test_partial_solutions_highs_ignores_are_refused_even_after_one_it_repaired()
     // HiGHS takes a partial solution only when it names each column once with a value its column admits; otherwise it
     // keeps the one it holds, which a repair then completes again.
     let (program, take) = knapsack();
-    let options = HighsOptions {
-        presolve: Some(Switch::Off),
-        ..HighsOptions::default()
-    };
-    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
+    let mut solver = Solver::new(Highs::new(), program).unwrap();
     let mut kinds = Kinds {
         supply_partial: vec![
             vec![(take[0], 1.0), (take[0], 1.0)],
@@ -549,7 +543,7 @@ fn test_partial_solutions_highs_ignores_are_refused_even_after_one_it_repaired()
         ],
         ..Kinds::default()
     };
-    solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
+    solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
     let refused = |reason: &str| Err(ActionError::Refused(reason.to_owned()));
     let infeasible = "HiGHS refused the entries: a value lies outside its column's bounds or integrality";
     assert_eq!(
@@ -572,13 +566,9 @@ fn test_a_partial_solution_without_a_completion_keeps_the_solution_supplied_befo
     // The optimum, items 1, 3 and 5 worth 25, supplied at the first query becomes the first incumbent, as long as a
     // partial solution without a completion after it leaves it in place: items 0, 1 and 4 weigh 16, over 12.
     let (program, take) = knapsack();
-    let options = HighsOptions {
-        presolve: Some(Switch::Off),
-        ..HighsOptions::default()
-    };
     let solve = |mut kinds: Kinds| {
-        let mut solver = Solver::new(Highs::with_options(options.clone()), program.clone()).unwrap();
-        solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
+        let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
+        solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
         (kinds.supplied, kinds.incumbents.first().copied())
     };
     let optimum = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
@@ -601,16 +591,12 @@ fn test_a_partial_solution_without_a_completion_keeps_the_solution_supplied_befo
 #[test]
 fn test_a_wrong_solution_is_refused_before_highs_sees_it() {
     let (program, _) = knapsack();
-    let options = HighsOptions {
-        presolve: Some(Switch::Off),
-        ..HighsOptions::default()
-    };
-    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
+    let mut solver = Solver::new(Highs::new(), program).unwrap();
     let mut kinds = Kinds {
         supply: Some(vec![1.0; 3]),
         ..Kinds::default()
     };
-    solve_kinds(&mut solver, Settings::new(), &mut kinds).unwrap();
+    solve_kinds(&mut solver, no_presolve(), &mut kinds).unwrap();
     assert_eq!(
         kinds.supplied,
         [Err(culmen_core::ActionError::Length { expected: 6, found: 3 })]

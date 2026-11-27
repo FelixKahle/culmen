@@ -99,8 +99,8 @@ const DEFAULT_ABSOLUTE_GAP: f64 = 1e-6;
 /// use culmen_core::{Backend, Configurable, Events, ModelClass};
 /// use culmen_highs::{Highs, HighsOptions, Switch};
 ///
-/// let highs = Highs::with_options(HighsOptions { presolve: Some(Switch::Off), ..HighsOptions::default() });
-/// assert_eq!(highs.options().presolve, Some(Switch::Off));
+/// let highs = Highs::with_options(HighsOptions { parallel: Some(Switch::Off), ..HighsOptions::default() });
+/// assert_eq!(highs.options().parallel, Some(Switch::Off));
 /// assert!(Highs::EVENTS.contains(Events::NATIVE));
 /// assert!(!Highs::CLASSES.contains(ModelClass::Miqp), "HiGHS 1.16 refuses to solve a MIQP");
 /// ```

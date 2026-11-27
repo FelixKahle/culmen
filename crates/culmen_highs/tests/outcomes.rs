@@ -281,17 +281,23 @@ fn test_a_seed_beyond_highs_integers_is_refused() {
     let solved = solver.run().settings(settings).solve();
     assert_eq!(solved.unwrap_err(), SolveError::Backend(refused.clone()));
 
-    let options = HighsOptions {
-        random_seed: Some(u32::MAX),
-        ..HighsOptions::default()
-    };
-    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
-    let solved = solver.solve();
-    assert_eq!(solved.unwrap_err(), SolveError::Backend(refused.clone()));
     assert_eq!(
         refused.to_string(),
         "HiGHS: option `random_seed` takes at most 2147483647, not 4294967295"
     );
+
+    // An exact integer field of the options is refused alike.
+    let options = HighsOptions {
+        simplex_max_concurrency: Some(u32::MAX),
+        ..HighsOptions::default()
+    };
+    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
+    let solved = solver.solve();
+    let refused = HighsError::OutOfRange {
+        name: "simplex_max_concurrency",
+        value: 4_294_967_295,
+    };
+    assert_eq!(solved.unwrap_err(), SolveError::Backend(refused));
 }
 
 #[cfg(feature = "serde")]
@@ -302,10 +308,9 @@ fn test_options_and_statuses_round_trip() {
         assert_eq!(&serde_json::from_str::<T>(&json).unwrap(), value, "{json}");
     }
     let options = HighsOptions {
-        presolve: Some(culmen_highs::Switch::Off),
+        parallel: Some(culmen_highs::Switch::Off),
         presolve_mode: Some(culmen_highs::PresolveMode::Light),
-        time_limit: Some(core::time::Duration::from_secs(3)),
-        mip_rel_gap: Some(0.01),
+        mip_heuristic_effort: Some(0.2),
         ..HighsOptions::default()
     }
     .option("mip_pool_soft_limit", 100)
@@ -370,10 +375,7 @@ fn test_a_solution_limit_ends_a_mip_with_a_solution() {
         .settings(limit)
         .solve()
         .unwrap();
-    let options = HighsOptions {
-        mip_max_improving_sols: Some(solutions!(1)),
-        ..HighsOptions::default()
-    };
+    let options = HighsOptions::default().option("mip_max_improving_sols", 1);
     let in_options = Solver::new(Highs::with_options(options), program)
         .unwrap()
         .solve()
@@ -421,17 +423,6 @@ fn test_a_node_limit_stops_a_mip_at_the_node_limit_however_it_is_set() {
         .solve()
         .unwrap();
     assert_eq!(stop_reason(&in_settings), StopReason::NodeLimit, "{in_settings:?}");
-    let typed = HighsOptions {
-        mip_max_nodes: Some(1),
-        ..HighsOptions::default()
-    };
-    let solved = Solver::new(Highs::with_options(typed), hard_mip())
-        .unwrap()
-        .run()
-        .time_limit(core::time::Duration::from_secs(60))
-        .solve()
-        .unwrap();
-    assert_eq!(stop_reason(&solved), StopReason::NodeLimit, "{solved:?}");
     let by_name = HighsOptions::default().option("mip_max_nodes", 1);
     let solved = Solver::new(Highs::with_options(by_name), hard_mip())
         .unwrap()
@@ -468,13 +459,17 @@ fn test_an_objective_bound_stops_the_dual_simplex_once_the_lp_cannot_beat_it() {
     }
     let bounded = HighsOptions {
         objective_bound: Some(1.0),
-        presolve: Some(culmen_highs::Switch::Off),
         solver: Some(culmen_highs::LpSolver::Simplex),
         simplex_strategy: Some(SimplexStrategy::Dual),
         ..HighsOptions::default()
     };
     let solved = Solver::new(Highs::with_options(bounded), plan.build().unwrap())
         .unwrap()
+        .run()
+        .settings(Settings {
+            presolve: Some(false),
+            ..Settings::new()
+        })
         .solve()
         .unwrap();
     assert_eq!(stop_reason(&solved), StopReason::ObjectiveLimit, "{solved:?}");

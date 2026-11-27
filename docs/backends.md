@@ -215,7 +215,7 @@ already allow a solver that calls back from other threads.
 | `console` | `log_to_console` (the log always reaches the callback) | `LogToConsole` (with `OutputFlag = 1`) | the message handler writes to standard output and standard error too (the log always reaches the callback) |
 
 Every backend also has typed options for the rest (`culmen_highs::HighsOptions` covers HiGHS's documented
-options as typed fields) and a raw name/value escape hatch (`HighsOptions::option`); `culmen_scip::ScipOptions` has
+options as typed fields, except those `Settings` types) and a raw name/value escape hatch (`HighsOptions::option`); `culmen_scip::ScipOptions` has
 SCIP's three emphasis settings as typed fields and every other parameter by name (`ScipOptions::param`, set with
 `SCIPsetIntParam` and friends). A Gurobi backend would do the same with `GRBsetintparam` / `GRBsetdblparam` /
 `GRBsetstrparam`.
