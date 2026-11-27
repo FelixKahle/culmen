@@ -506,8 +506,8 @@ impl Edit {
         match self {
             Self::ColBounds { cols } | Self::ColCosts { cols } | Self::ColIntegrality { cols } => cols.is_empty(),
             Self::RowBounds { rows } => rows.is_empty(),
-            Self::NewRows { rows } => rows.len() == 0,
-            Self::NewCols { cols } => cols.len() == 0,
+            Self::NewRows { rows } => rows.is_empty(),
+            Self::NewCols { cols } => cols.is_empty(),
         }
     }
 }

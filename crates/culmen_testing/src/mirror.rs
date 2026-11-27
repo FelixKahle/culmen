@@ -79,8 +79,8 @@ impl Edited {
             Edit::ColCosts { cols, .. } => Self::ColCosts(cols.clone()),
             Edit::ColIntegrality { cols, .. } => Self::ColIntegrality(cols.clone()),
             Edit::RowBounds { rows, .. } => Self::RowBounds(rows.clone()),
-            Edit::NewRows { rows, .. } => Self::NewRows(rows.clone().collect()),
-            Edit::NewCols { cols, .. } => Self::NewCols(cols.clone().collect()),
+            Edit::NewRows { rows, .. } => Self::NewRows(rows.into_iter().collect()),
+            Edit::NewCols { cols, .. } => Self::NewCols(cols.into_iter().collect()),
             other => Self::Other(format!("{other:?}")),
         }
     }

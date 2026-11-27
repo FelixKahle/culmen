@@ -66,7 +66,7 @@ A `Program` is read through methods; it has no public fields and no constructor 
 | `objectives()` | The further objectives and how they combine, an [`Objectives`](#several-objectives). |
 | `class()` | The [`ModelClass`](#model-classes): `Lp`, `Milp`, `Qp` or `Miqp`; `class().is_discrete()` says whether any column is integer, semi-continuous or semi-integer. |
 | `features()` | The [`ProgramFeatures`](#features) it uses beyond its class. |
-| `cols()`, `rows()` | Every `Col`, every `Row`, in order. |
+| `cols()`, `rows()` | Every `Col`, every `Row`, in order: a `Cols` or `Rows` run, the type `Solver::add_cols` and `add_rows` return too. It is an iterator that also answers `len()`, `is_empty()`, `contains(id)`, `start()` and `end()`, and a borrowed run iterates without being used up (`for col in &cols`). |
 | `columns()` | The columns' `ProgramColumn` data, indexed by `Col`: `program.columns()[x]`. |
 | `row_bounds()` | The rows' bounds, indexed by `Row`. |
 | `row(row)` | A [`RowView`](#row-views-and-iterators) of one row: its bounds, name and entries. |
