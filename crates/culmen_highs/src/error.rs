@@ -99,8 +99,8 @@ pub enum HighsError {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum UnsoundQp {
-    /// HiGHS reported an optimum whose relative primal-dual objective error exceeds
-    /// [`Highs::QP_OBJECTIVE_ERROR`](crate::Highs::QP_OBJECTIVE_ERROR); the point need not be feasible.
+    /// HiGHS reported an optimum whose relative primal-dual objective error exceeds the options'
+    /// [`qp_objective_error`](crate::HighsOptions::qp_objective_error); the point need not be feasible.
     ObjectiveError {
         /// HiGHS's relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`.
         error: f64,

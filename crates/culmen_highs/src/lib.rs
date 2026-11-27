@@ -70,7 +70,7 @@ pub use callback::{
 };
 use culmen_core::{
     Backend, Configurable, Edit, Events, Heuristics, Hooks, ModelClass, ModelClasses, Objectives, Outcome, Program,
-    ProgramFeatures, QuadObjective, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice,
+    ProgramFeatures, QuadObjective, RelativeGap, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice,
 };
 use culmen_core::{
     Basis, BasisAnalysis, Col, DualAnalysis, Duals, Iis, IisAnalysis, Ranging, RangingAnalysis, RayAnalysis,
@@ -205,14 +205,6 @@ struct Ran {
 }
 
 impl Highs {
-    /// The largest relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`, at which a QP optimum HiGHS
-    /// reports is taken as optimal; above it the solve fails with [`HighsError::UnsoundQp`].
-    ///
-    /// HiGHS's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
-    /// percent, and that point need not even be feasible: 1.15 did so after its iterates turned NaN, and 1.16 still
-    /// does on a small share of edited QPs. On random convex QPs its correct optima stay below `1e-6`.
-    pub const QP_OBJECTIVE_ERROR: f64 = 1e-5;
-
     /// The largest upper bound of a semi-continuous or semi-integer column HiGHS 1.16 solves as given
     /// (`kMaxSemiVariableUpper`); [`Backend::load`] refuses a semi column above it with [`HighsError::SemiUpper`].
     ///
@@ -338,8 +330,8 @@ impl Highs {
     /// # Errors
     ///
     /// [`HighsError::Run`] when HiGHS failed, or reports an optimum without a solution; [`HighsError::UnsoundQp`]
-    /// when it reports a QP optimal with a primal-dual objective error above [`Highs::QP_OBJECTIVE_ERROR`], or
-    /// unbounded although every column is bounded.
+    /// when it reports a QP optimal with a primal-dual objective error above the options'
+    /// [`qp_objective_error`](HighsOptions::qp_objective_error), or unbounded although every column is bounded.
     fn outcome(&self, loaded: &Loaded, status: &HighsStatus) -> Result<Outcome, HighsError> {
         if status.run == CallStatus::Error {
             return Err(run_failed(status));
@@ -347,7 +339,7 @@ impl Highs {
         let best = (status.primal == SolutionStatus::Feasible)
             .then(|| self.solution(loaded))
             .flatten();
-        if let Some(why) = unsound_qp(loaded, status, best.as_ref()) {
+        if let Some(why) = unsound_qp(loaded, status, best.as_ref(), self.options.qp_objective_error) {
             return Err(HighsError::UnsoundQp(why));
         }
         let bound = self.mip_bound(loaded);
@@ -449,10 +441,10 @@ impl Default for Highs {
     }
 }
 
-/// Why HiGHS's ending of a QP is not trusted: an optimum at a point `best` holding NaN, an optimum its own primal-dual
-/// objective error does not support, or unboundedness although every column is bounded; `None` for an LP or a trusted
+/// Why HiGHS's ending of a QP is not trusted: an optimum at a point `best` holding NaN, an optimum whose primal-dual
+/// objective error exceeds `limit`, or unboundedness although every column is bounded; `None` for an LP or a trusted
 /// ending.
-fn unsound_qp(loaded: &Loaded, status: &HighsStatus, best: Option<&Solution>) -> Option<UnsoundQp> {
+fn unsound_qp(loaded: &Loaded, status: &HighsStatus, best: Option<&Solution>, limit: RelativeGap) -> Option<UnsoundQp> {
     if loaded.quadratic.is_empty() {
         return None;
     }
@@ -461,7 +453,7 @@ fn unsound_qp(loaded: &Loaded, status: &HighsStatus, best: Option<&Solution>) ->
         ModelStatus::Optimal if not_a_number => Some(UnsoundQp::NotANumber),
         ModelStatus::Optimal => status
             .primal_dual_objective_error
-            .filter(|&error| error > Highs::QP_OBJECTIVE_ERROR)
+            .filter(|&error| error > limit.get())
             .map(|error| UnsoundQp::ObjectiveError { error }),
         ModelStatus::Unbounded => loaded.bounded.then_some(UnsoundQp::UnboundedInABox),
         _ => None,
@@ -848,6 +840,37 @@ mod tests {
         let values = [1.0, 2.0];
         assert_eq!(Loaded::of(&program).objective(&values), 12.0);
         assert_eq!(program.objective_value(TiSlice::from_ref(&values)), 12.0);
+    }
+
+    #[test]
+    fn test_a_qp_optimum_is_refused_above_the_options_objective_error_and_taken_below() {
+        let mut m = culmen_core::Model::new();
+        let x = m.add_var(culmen_core::Var::continuous());
+        m.minimize(x * x);
+        let loaded = Loaded::of(&m.build().unwrap());
+        let status = HighsStatus {
+            run: CallStatus::Ok,
+            model: ModelStatus::Optimal,
+            primal: SolutionStatus::Feasible,
+            dual: SolutionStatus::Feasible,
+            mip_gap: None,
+            mip_nodes: 0,
+            simplex_iterations: 0,
+            ipm_iterations: 0,
+            qp_iterations: 3,
+            primal_dual_objective_error: Some(2e-5),
+            last_error: None,
+        };
+        let default = HighsOptions::default().qp_objective_error;
+        assert_eq!(default, culmen_core::relative_gap!(1e-5));
+        assert_eq!(
+            unsound_qp(&loaded, &status, None, default),
+            Some(UnsoundQp::ObjectiveError { error: 2e-5 })
+        );
+        assert_eq!(
+            unsound_qp(&loaded, &status, None, culmen_core::relative_gap!(1e-4)),
+            None
+        );
     }
 
     #[test]

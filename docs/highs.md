@@ -257,8 +257,8 @@ trusted:
   every column is bounded: 1.15 did all three after its iterates turned NaN, and 1.16 still reports the second for some
   edited QPs, though it solves every one of 5000 random QPs of the tests. The backend fails such a solve with
   [`HighsError::UnsoundQp`](#errors): an optimum at a point holding NaN, an optimum whose relative primal-dual objective
-  error exceeds `Highs::QP_OBJECTIVE_ERROR`, `1e-5` (correct optima stay below `1e-6`), or unboundedness with every
-  column bounded. An `Optimal` outcome of a QP is therefore one HiGHS's own measures support.
+  error exceeds `HighsOptions::qp_objective_error`, `relative_gap!(1e-5)` unless set otherwise (correct optima stay
+  below `1e-6`; a badly scaled QP may need a looser threshold), or unboundedness with every column bounded. An `Optimal` outcome of a QP is therefore one HiGHS's own measures support.
 - **It may not terminate.** On a rare QP HiGHS 1.15's QP solver iterated without end, its memory growing; no test
   has seen 1.16 do so. A [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`,
   and a `Stop` as `Stopped { reason: Interrupted, .. }`; set one for any QP whose solve must end.

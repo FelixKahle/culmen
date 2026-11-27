@@ -8,6 +8,8 @@ use core::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use culmen_core::{RelativeGap, relative_gap};
+
 use crate::HighsError;
 
 /// An option value of one of HiGHS's four kinds.
@@ -412,12 +414,33 @@ macro_rules! options {
         /// assert_eq!(options.raw[0].name, "mip_pool_soft_limit");
         /// assert_eq!(options.raw[0].value, OptionValue::Int(5000));
         /// ```
-        #[derive(Clone, Debug, Default, PartialEq)]
+        #[derive(Clone, Debug, PartialEq)]
         #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
         pub struct HighsOptions {
             $($(#[$doc])* #[doc = concat!("\n\nHiGHS's `", $name, "`.")] pub $field: Option<$ty>,)*
             /// Further options by HiGHS's name, set in order after the typed ones.
             pub raw: Vec<RawOption>,
+            /// The largest relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`, at which a QP optimum
+            /// HiGHS reports is taken as optimal; above it the solve fails with
+            /// [`HighsError::UnsoundQp`](crate::HighsError::UnsoundQp). The backend's own threshold, not a HiGHS
+            /// option; `1e-5` by default.
+            ///
+            /// HiGHS's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
+            /// percent, and that point need not even be feasible: 1.15 did so after its iterates turned NaN, and 1.16
+            /// still does on a small share of edited QPs. On random convex QPs its correct optima stay below `1e-6`; a
+            /// badly scaled QP may need a looser threshold.
+            pub qp_objective_error: RelativeGap,
+        }
+
+        /// Every HiGHS option at HiGHS's default, and the default `qp_objective_error`.
+        impl Default for HighsOptions {
+            fn default() -> Self {
+                Self {
+                    $($field: None,)*
+                    raw: Vec::new(),
+                    qp_objective_error: relative_gap!(1e-5),
+                }
+            }
         }
 
         impl HighsOptions {
