@@ -116,8 +116,9 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
   a relaxation's optimum into a wrong answer, does not compile, and a backend gives up a reduction for a handler only
   when one is registered.
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
-  `Solver::new` refuses any other class with a typed `LoadError::UnsupportedClass` before the backend sees the program, the
-  same way for every backend. A class is a property of the program, which edits change, so it stays a run-time check.
+  `Solver::new` refuses any other class with a typed `LoadError::UnsupportedClass` before the backend sees the program,
+  the same way for every backend. A class is a property of the program, which edits change, so it stays a run-time
+  check.
 - **Capabilities of the backend are traits.** Taking a start and each analysis after a solve are traits a backend
   implements or leaves out (`Starts`, `DualAnalysis`, …), and the `Solver` methods that need one exist only for a
   backend that has it: `solver.duals()` on a backend without duals, or a start handed to a backend that takes none,
@@ -140,10 +141,10 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
 
 ## A solve never aborts
 
-A solve is something an application runs inside a service, so a defect in user code during a solve must not take
-the process down. A panic in an observer, a stop, a callback or a handler stops the solve as soon as the solver allows, and
-then continues unwinding out of `solve` on the caller's thread, where it can be caught. The backend stays usable.
-No profile sets `panic = "abort"`.
+A solve is something an application runs inside a service, so a defect in user code during a solve must not take the
+process down. A panic in an observer, a stop, a callback or a handler stops the solve as soon as the solver allows, and
+then continues unwinding out of `solve` on the caller's thread, where it can be caught. The backend stays usable. No
+profile sets `panic = "abort"`.
 
 The stop is cooperative: it is polled at the solver's poll points, and the solve ends with what it found, as an
 ordinary `Outcome::Stopped` with the best solution and bound.
@@ -169,8 +170,8 @@ block there carries a `// SAFETY:` comment saying why it is sound. The parts tha
 - **Only fields HiGHS sets are read.** For each callback kind, the trampoline reads only the fields HiGHS sets for
   it, and arrays only within the lengths HiGHS reports.
 
-The rustdoc of `culmen_highs::callback` states these arguments in full. SCIP's backend keeps the same rules with
-plugins in place of a trampoline:
+The documentation of `culmen_highs`'s private `callback` module (`crates/culmen_highs/src/callback.rs`) states these
+arguments in full. SCIP's backend keeps the same rules with plugins in place of a trampoline:
 
 - **One instance, one owner.** A SCIP instance and every variable and constraint it created are owned by one value,
   released and freed when it drops, on every path; its methods that change SCIP borrow it mutably.

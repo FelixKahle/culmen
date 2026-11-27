@@ -32,8 +32,8 @@ Depend on `culmen` only. It re-exports everything a model and a solve need; the 
 
 | Feature | Default | What it adds |
 |---|---|---|
-| `highs` | on | The HiGHS backend: `culmen::Highs`, and the whole backend crate as `culmen::highs`. |
-| `scip` | off | The SCIP backend: `culmen::Scip`, and the whole backend crate as `culmen::scip` (see [SCIP](scip.md)). |
+| `highs` | on | The HiGHS backend: the whole backend crate as `culmen::highs`, and `Highs` in the prelude. |
+| `scip` | off | The SCIP backend: the whole backend crate as `culmen::scip`, and `Scip` in the prelude (see [SCIP](scip.md)). |
 | `macros` | off | `variable!`, `constraint!`, `objective!` and `sum!` (see [Macros](macros.md)). |
 | `serde` | off | `Serialize` and `Deserialize` for the plain data, and for the options and statuses of each backend enabled (see [Serialization](testing.md#serialization)). |
 

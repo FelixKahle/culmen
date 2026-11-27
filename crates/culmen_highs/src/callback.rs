@@ -3,38 +3,7 @@
 
 //! Every HiGHS callback kind as a typed context, and the trampoline HiGHS calls.
 //!
-//! # Which kind becomes which event
-//!
-//! | HiGHS 1.16 callback | culmen event | context |
-//! |---|---|---|
-//! | `kHighsCallbackLogging` | [`Event::Log`] | [`HighsLog`] |
-//! | `kHighsCallbackSimplexInterrupt` | [`Event::Poll`] | [`HighsPoll`], [`HighsPollSource::Simplex`] |
-//! | `kHighsCallbackIpmInterrupt` | [`Event::Poll`] | [`HighsPoll`], [`HighsPollSource::Ipm`] |
-//! | `kHighsCallbackMipInterrupt` | [`Event::Poll`] | [`HighsPoll`], [`HighsPollSource::Mip`] |
-//! | `kHighsCallbackMipLogging` | [`Event::Progress`] | [`HighsProgress`] |
-//! | `kHighsCallbackMipSolution` | [`Event::Feasible`] | [`HighsSolution`] |
-//! | `kHighsCallbackMipImprovingSolution` | [`Event::Incumbent`] | [`HighsSolution`] |
-//! | `kHighsCallbackMipUserSolution` | the heuristic handler ([`Heuristics`](culmen_core::Heuristics)) | [`HighsHeuristic`] |
-//! | `kHighsCallbackMipGetCutPool` | [`Event::Native`] | [`HighsNative::CutPool`] |
-//! | `kHighsCallbackMipDefineLazyConstraints` | none | HiGHS 1.16 declares it and never calls it |
-//! | `kHighsCallbackQpFirstFeasiblePoint` | [`Event::Feasible`] | [`HighsSolution`], no [`HighsMipData`] |
-//! | `kHighsCallbackQpInterrupt` | [`Event::Poll`] | [`HighsPoll`], [`HighsPollSource::Qp`] |
-//!
-//! HiGHS has no user cuts and never calls its lazy-constraint callback, so the backend implements neither
-//! [`LazyConstraints`](culmen_core::LazyConstraints) nor [`UserCuts`](culmen_core::UserCuts), and a handler of either
-//! does not compile for it; HiGHS does not price either ([`Prices`](culmen_core::Prices)). An interrupt is honoured
-//! only at the four interrupt kinds, the only context with [`PollContext::interrupt`]; a solution is taken only at the
-//! user-solution kind, the only context with [`HeuristicContext::supply`], and started only for a solve with a
-//! heuristic handler.
-//!
-//! The QP solver's first feasible point is a feasible solution of the loaded program, so it is [`Event::Feasible`].
-//! HiGHS's active-set QP solver works on the incumbent model itself, unpresolved and unscaled (`callSolveQp` in
-//! `Highs.cpp`, `solveQpAsm` in `QpAsmWrapper.cpp`), so the point holds one value per loaded column. `solveqp` in
-//! `a_quass.cpp` reports it only after the starting-point computation left the QP's status unset: the point HiGHS's LP
-//! solver found for the constraints (the backend passes every QP with at least one row), or, for a QP without rows,
-//! the unconstrained minimizer clamped into the bounds.
-//! The point is never reported again as the solve improves it, so it is no incumbent. HiGHS reports no objective with
-//! it, so the trampoline values it on the loaded program.
+//! The crate documentation maps each HiGHS callback kind to its event and context.
 //!
 //! # Threads, and why the trampoline is sound
 //!

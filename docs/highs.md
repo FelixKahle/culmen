@@ -2,7 +2,7 @@
 
 `culmen_highs` is the HiGHS backend: HiGHS 1.16 through the `highs-sys` crate, with every HiGHS callback as a typed,
 safe context, HiGHS's commonly used options as typed fields, and every HiGHS status. With the default `highs` feature
-it is `culmen::highs`, and its backend type is also `culmen::Highs` and in the prelude.
+it is `culmen::highs`, and its backend type `culmen::highs::Highs` is also in the prelude.
 
 ## The backend
 

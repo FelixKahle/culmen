@@ -275,8 +275,8 @@ access**; its first build takes a few minutes more and about 500 MB of disk.
 
 | Feature | Default | What it adds |
 |---|---|---|
-| `highs` | yes | The HiGHS backend, as `culmen::Highs` and the module `culmen::highs`. |
-| `scip` | no | The SCIP backend, as `culmen::Scip` and the module `culmen::scip`: MIQPs, lazy constraints, user cuts and branch-and-price. |
+| `highs` | yes | The HiGHS backend, the module `culmen::highs`; `Highs` is in the prelude. |
+| `scip` | no | The SCIP backend, the module `culmen::scip`, with `Scip` in the prelude: MIQPs, lazy constraints, user cuts and branch-and-price. |
 | `macros` | no | `variable!`, `constraint!`, `objective!` and `sum!`. |
 | `serde` | no | Serialization of the plain data: programs (quadratic parts included), model classes, bounds, settings, outcomes, solutions, and the options and statuses of each backend enabled. |
 

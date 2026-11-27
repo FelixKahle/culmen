@@ -16,9 +16,9 @@ categories.workspace = true
 
 [features]
 default = ["highs"]
-# The HiGHS backend, `culmen::Highs`; builds HiGHS from source with cmake.
+# The HiGHS backend, `culmen::highs`; builds HiGHS from source with cmake.
 highs = ["dep:culmen_highs"]
-# The SCIP backend, `culmen::Scip`; downloads the SCIP sources from GitHub and builds SCIP and SoPlex with cmake, a
+# The SCIP backend, `culmen::scip`; downloads the SCIP sources from GitHub and builds SCIP and SoPlex with cmake, a
 # long first build, so it is not a default feature.
 scip = ["dep:culmen_scip"]
 # The modelling macros `variable!`, `constraint!`, `objective!` and `sum!`.

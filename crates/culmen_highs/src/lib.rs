@@ -6,7 +6,7 @@
 //!
 //! [`Highs`] implements [`Backend`]: load a [`Program`], solve it under [`Settings`], and HiGHS's callbacks reach a
 //! [`Callback<Highs>`](culmen_core::Callback) as the generic events of culmen_core, each with a HiGHS context type
-//! that offers what HiGHS reports beyond the generic traits ([`callback`] maps every kind). Of the search
+//! that offers what HiGHS reports beyond the generic traits ([Callbacks](#callbacks) maps every kind). Of the search
 //! capabilities it has [`Heuristics`]: a [`HeuristicHandler`](culmen_core::HeuristicHandler) supplies solutions at
 //! HiGHS's user-solution callback. HiGHS takes no lazy constraints and no user cuts and does not price, so a handler of
 //! those kinds does not compile for it. The generic path, a [`Run`](culmen_core::Run) with a stop and an observer,
@@ -37,6 +37,43 @@
 //! applies the backend's [`HighsOptions`] and then the solve's [`Settings`], so a per-solve setting always wins.
 //! HiGHS measures its time limit on a clock the backend restarts before every run.
 //!
+//! # Callbacks
+//!
+//! [`Highs::EVENTS`](Backend::EVENTS) is every observational event, each from a HiGHS callback kind, with a context of
+//! this crate's:
+//!
+//! | HiGHS 1.16 callback | Event or handler | Context |
+//! |---|---|---|
+//! | `kHighsCallbackLogging` | `Log` | [`HighsLog`] |
+//! | `kHighsCallbackSimplexInterrupt` | `Poll` | [`HighsPoll`], [`HighsPollSource::Simplex`] |
+//! | `kHighsCallbackIpmInterrupt` | `Poll` | [`HighsPoll`], [`HighsPollSource::Ipm`] |
+//! | `kHighsCallbackMipInterrupt` | `Poll` | [`HighsPoll`], [`HighsPollSource::Mip`] |
+//! | `kHighsCallbackMipLogging` | `Progress` | [`HighsProgress`] |
+//! | `kHighsCallbackMipSolution` | `Feasible` | [`HighsSolution`] |
+//! | `kHighsCallbackMipImprovingSolution` | `Incumbent` | [`HighsSolution`] |
+//! | `kHighsCallbackMipUserSolution` | [`HeuristicHandler`](culmen_core::HeuristicHandler) | [`HighsHeuristic`] |
+//! | `kHighsCallbackMipGetCutPool` | `Native` | [`HighsNative::CutPool`] |
+//! | `kHighsCallbackMipDefineLazyConstraints` | none | HiGHS 1.16 declares it and never calls it |
+//! | `kHighsCallbackQpFirstFeasiblePoint` | `Feasible` | [`HighsSolution`], no [`HighsMipData`] |
+//! | `kHighsCallbackQpInterrupt` | `Poll` | [`HighsPoll`], [`HighsPollSource::Qp`] |
+//!
+//! HiGHS has no user cuts and never calls its lazy-constraint callback, so the backend implements neither
+//! [`LazyConstraints`](culmen_core::LazyConstraints) nor [`UserCuts`](culmen_core::UserCuts), and a handler of either
+//! does not compile for it; HiGHS does not price either ([`Prices`](culmen_core::Prices)). An interrupt is honoured
+//! only at the four interrupt kinds, the only context with
+//! [`PollContext::interrupt`](culmen_core::PollContext::interrupt); a solution is taken only at the user-solution kind,
+//! the only context with [`HeuristicContext::supply`](culmen_core::HeuristicContext::supply), and started only for a
+//! solve with a heuristic handler.
+//!
+//! The QP solver's first feasible point is a feasible solution of the loaded program, so it is `Feasible`.
+//! HiGHS's active-set QP solver works on the incumbent model itself, unpresolved and unscaled (`callSolveQp` in
+//! `Highs.cpp`, `solveQpAsm` in `QpAsmWrapper.cpp`), so the point holds one value per loaded column. `solveqp` in
+//! `a_quass.cpp` reports it only after the starting-point computation left the QP's status unset: the point HiGHS's LP
+//! solver found for the constraints (the backend passes every QP with at least one row), or, for a QP without rows,
+//! the unconstrained minimizer clamped into the bounds.
+//! The point is never reported again as the solve improves it, so it is no incumbent. HiGHS reports no objective with
+//! it, so the trampoline values it on the loaded program.
+//!
 //! # Threads
 //!
 //! [`Highs`] is `Send`, so it can be moved to a worker thread to solve there. It is not `Sync`: HiGHS does not promise
@@ -51,7 +88,7 @@
 )]
 
 mod analysis;
-pub mod callback;
+mod callback;
 mod error;
 pub mod files;
 mod instance;
@@ -716,9 +753,9 @@ impl Backend for Highs {
     ///
     /// # Errors
     ///
-    /// [`HighsError::NotLoaded`] before a load; the errors of [`HighsOptions`] and the settings; [`HighsError::Relaxation`]
-    /// for a MIP when the options set `solve_relaxation`; [`HighsError::Run`] and [`HighsError::UnsoundQp`] as the
-    /// outcome is read.
+    /// [`HighsError::NotLoaded`] before a load; the errors of [`HighsOptions`] and the settings;
+    /// [`HighsError::Relaxation`] for a MIP when the options set `solve_relaxation`; [`HighsError::Run`] and
+    /// [`HighsError::UnsoundQp`] as the outcome is read.
     fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<HighsStatus>, HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         configure(&mut self.instance, &self.options, settings)?;

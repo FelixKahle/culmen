@@ -14,7 +14,7 @@ library as it is. The two exceptions are marked `ignore`: the outline of the `Ba
 
 | Crate | What it holds |
 |---|---|
-| `culmen` | The crate to depend on: re-exports `culmen_core` at its root, the HiGHS backend as `culmen::Highs` and `culmen::highs`, the SCIP backend as `culmen::Scip` and `culmen::scip`, the macros, and a `prelude`. |
+| `culmen` | The crate to depend on: re-exports `culmen_core` at its root, the HiGHS backend as `culmen::highs`, the SCIP backend as `culmen::scip`, the scripted test backend as `culmen::script`, what a backend author needs as `culmen::backend`, the macros, and a `prelude`. |
 | `culmen_core` | The program as data, the modelling layer, the backend seam and the solve API. It has no `unsafe` and no solver. |
 | `culmen_highs` | The HiGHS backend. With `culmen_scip`, the only crates with `unsafe`. |
 | `culmen_scip` | The SCIP backend, SCIP built from source. |

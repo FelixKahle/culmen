@@ -5,10 +5,17 @@
 //! solved on a switchable backend, with a live view of the search (best solution, bound, gap, solver log) and a
 //! cooperative stop.
 //!
-//! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as [`Highs`] (and the
-//! whole backend as [`highs`]) with the default `highs` feature, the SCIP backend as `Scip` (and the whole backend as
-//! `scip`) with the `scip` feature, and the modelling macros with the `macros` feature. [`prelude`] holds what a model
-//! and a solve need.
+//! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as the module [`highs`]
+//! with the default `highs` feature, the SCIP backend as the module `scip` with the `scip` feature, and the modelling
+//! macros with the `macros` feature. [`prelude`] holds what a model and a solve need, `Highs` and `Scip` among them.
+//!
+//! # Where an item lives
+//!
+//! Each item has one address, chosen by who names it. The root holds what code that models and solves names: the
+//! model and the program, [`Solver`] and [`Run`], settings, outcomes, the callback and handler traits, the context
+//! traits a handler calls, the capability traits a generic bound names ([`LazyConstraints`], [`DualAnalysis`], …),
+//! the analyses' data and the errors. [`script`] holds the scripted backend for tests, and [`backend`] what only code
+//! implementing or driving a backend names. Each solver's own types are in its module, [`highs`] or `scip`.
 //!
 //! # A model, two ways
 //!
@@ -144,14 +151,10 @@
 pub use culmen_core::*;
 #[cfg(feature = "highs")]
 pub use culmen_highs as highs;
-#[cfg(feature = "highs")]
-pub use culmen_highs::Highs;
 #[cfg(feature = "macros")]
 pub use culmen_macros::{constraint, objective, sum, variable};
 #[cfg(feature = "scip")]
 pub use culmen_scip as scip;
-#[cfg(feature = "scip")]
-pub use culmen_scip::Scip;
 
 /// The README and the user guide under `docs/`, compiled as doctests so every snippet in it stays true. A page whose
 /// snippets need a feature is included only with that feature.

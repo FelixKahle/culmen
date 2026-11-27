@@ -3,8 +3,8 @@
 `culmen_scip` is the SCIP backend: SCIP 10 with SoPlex as its LP solver, built from source through the `scip-sys`
 crate, with every SCIP status, SCIP's emphasis settings and parameters as typed options, and every generic callback
 event and every search handler delivered through SCIP plugins: lazy constraints, user cuts, heuristic solutions and
-pricing included. With the
-`scip` feature it is `culmen::scip`, and its backend type is also `culmen::Scip` and in the prelude.
+pricing included. With the `scip` feature it is `culmen::scip`, and its backend type `culmen::scip::Scip` is also in
+the prelude.
 
 SCIP is the backend for what HiGHS cannot do: a convex quadratic objective over integer columns (MIQP), constraints
 known only to a handler, cuts of your own, and column generation at every node of the search (branch-and-price).
