@@ -21,9 +21,8 @@ use serde::{Deserialize, Serialize};
 ///     .param("limits/maxorigsol", 5)
 ///     .param("lp/initalgorithm", 'd');
 /// assert_eq!(options.params.len(), 2);
-/// assert_eq!(options.enforcement_rounds, 10_000);
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ScipOptions {
     /// How hard SCIP's primal heuristics work (`SCIPsetHeuristics`); `None` keeps SCIP's defaults.
@@ -35,24 +34,6 @@ pub struct ScipOptions {
     pub separating: Option<Emphasis>,
     /// Parameters set by SCIP's names, in order, after the emphases.
     pub params: Vec<ScipParam>,
-    /// The most times a [`ConstraintHandler`](culmen_core::ConstraintHandler) is asked to enforce at one node before
-    /// the solve fails with [`ScipError::EnforcementStalled`](crate::ScipError::EnforcementStalled); 10 000 by
-    /// default. A handler that resolves a point by adding constraints is asked again at the node each time, so the
-    /// limit bounds a handler that keeps acting without resolving anything.
-    pub enforcement_rounds: u64,
-}
-
-/// SCIP's defaults, no parameter, and 10 000 enforcement rounds.
-impl Default for ScipOptions {
-    fn default() -> Self {
-        Self {
-            heuristics: None,
-            presolving: None,
-            separating: None,
-            params: Vec::new(),
-            enforcement_rounds: 10_000,
-        }
-    }
 }
 
 impl ScipOptions {

@@ -16,9 +16,8 @@
 //! not read back so, and the solution is then refused; SCIP checks a transformed solution against its transformed
 //! problem, which presolve derived from the program, so a solution it stores is feasible in the program.
 //!
-//! In a solve with a lazy-constraint or a constraint handler too, that handler must judge every solution SCIP stores,
-//! and it cannot while the heuristic handler runs; so there the supplied solutions are tried once the heuristic
-//! handler returns.
+//! In a solve with a lazy-constraint handler too, that handler must judge every solution SCIP stores, and it cannot
+//! while the heuristic handler runs; so there the supplied solutions are tried once the heuristic handler returns.
 
 use core::ffi::{c_char, c_uint};
 use core::ptr::{self, NonNull};
@@ -71,8 +70,8 @@ impl Context for ScipHeuristic<'_> {
 impl HeuristicContext for ScipHeuristic<'_> {
     /// SCIP checks the solution against the program, bounds and integrality included, and stores it when it is feasible
     /// and among the solutions it keeps (`limits/maxsol` of them), so a stored solution need not be the new incumbent.
-    /// In a solve with a lazy-constraint or a constraint handler too, SCIP tries the solution once this handler
-    /// returns, after that handler judged it, and `supply` returns `Ok` when it took it to try. In a solve with a
+    /// In a solve with a lazy-constraint handler too, SCIP tries the solution once this handler returns, after the
+    /// lazy-constraint handler judged it, and `supply` returns `Ok` when it took it to try. In a solve with a
     /// [`Pricer`](culmen_core::Pricer) too, the solution is checked against SCIP's transformed problem, and a
     /// solution presolve's fixings or aggregations cannot hold is refused.
     ///
@@ -286,7 +285,7 @@ impl Run<'_, '_> {
         let progress = self.progress(scip);
         let mut later = Vec::new();
         let mut found = false;
-        let defer = self.wants_lazy || self.constraint.is_some();
+        let defer = self.wants_lazy;
         let priced = self.priced_vars.borrow();
         let supplied = Supplied {
             cols: self.cols,

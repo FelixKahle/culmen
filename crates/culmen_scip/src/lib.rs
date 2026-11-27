@@ -163,12 +163,12 @@ use std::panic::resume_unwind;
 use std::time::Instant;
 
 pub use callback::{
-    CandidateSource, ScipCheck, ScipCut, ScipEnforce, ScipEvent, ScipExplain, ScipHeuristic, ScipLazy, ScipLog,
-    ScipPoll, ScipPresolve, ScipPrice, ScipProgress, ScipPropagate, ScipSolution,
+    CandidateSource, ScipCut, ScipEvent, ScipHeuristic, ScipLazy, ScipLog, ScipPoll, ScipPrice, ScipProgress,
+    ScipSolution,
 };
 use culmen_core::{
-    Backend, CustomConstraints, Declaration, Events, Heuristics, Hooks, LazyConstraints, Locks, ModelClasses, Outcome,
-    Prices, Program, Settings, Solved, Start, Starts, Unsupported, UserCuts,
+    Backend, Events, Heuristics, Hooks, LazyConstraints, ModelClasses, Outcome, Prices, Program, Settings, Solved,
+    Start, Starts, Unsupported, UserCuts,
 };
 pub use error::{Number, RetCode, ScipError};
 pub use options::{Emphasis, ParamValue, ScipOptions, ScipParam};
@@ -273,39 +273,21 @@ fn configure(instance: &mut Instance, options: &ScipOptions, settings: &Settings
 
 /// Sets what the handlers `hooks` hold need, after the options and settings, whatever events the callback asks for:
 /// for a lazy-constraint handler, no symmetry handling and no dual reductions, which reason about the constraints SCIP
-/// holds and not those a handler adds later; for a constraint handler declaring `declaration`, the same, no components
-/// presolver, which splits the problem without regard to the handler, and, for [`Locks::All`], no multi-aggregation;
-/// for a cut or a heuristic handler, the culmen separator or heuristic called at every node, even when an emphasis
-/// turned the separators or heuristics off; when `pricing`, the culmen pricer active, every row modifiable, the LP
-/// solver's presolving off, whose duals of a degenerate node LP need not price its columns out, SCIP's aggregation
-/// separator off, which cuts with the objective cutoff over the columns held, and the LP solver's objective limit off,
-/// so every node LP priced is solved to optimality; for a solve without pricing, the pricer inactive and no row
-/// modifiable.
+/// holds and not those a handler adds later; for a cut or a heuristic handler, the culmen separator or heuristic called
+/// at every node, even when an emphasis turned the separators or heuristics off; when `pricing`, the culmen pricer
+/// active, every row modifiable, the LP solver's presolving off, whose duals of a degenerate node LP need not price its
+/// columns out, SCIP's aggregation separator off, which cuts with the objective cutoff over the columns held, and the
+/// LP solver's objective limit off, so every node LP priced is solved to optimality; for a solve without pricing, the
+/// pricer inactive and no row modifiable.
 ///
 /// # Errors
 ///
 /// [`ScipError::Param`] when SCIP refuses a parameter, [`ScipError::Call`] when it refuses another call.
-fn configure_hooks(
-    instance: &mut Instance,
-    hooks: &Hooks<'_, Scip>,
-    declaration: Option<&Declaration>,
-    pricing: bool,
-) -> Result<(), ScipError> {
-    if hooks.wants_lazy() || declaration.is_some() {
+fn configure_hooks(instance: &mut Instance, hooks: &Hooks<'_, Scip>, pricing: bool) -> Result<(), ScipError> {
+    if hooks.wants_lazy() {
         instance.set_param("misc/usesymmetry", &ParamValue::Int(0))?;
         instance.set_param("misc/allowstrongdualreds", &ParamValue::Bool(false))?;
         instance.set_param("misc/allowweakdualreds", &ParamValue::Bool(false))?;
-    }
-    if let Some(declaration) = declaration {
-        // Symmetry handling and the components presolver see the constraints SCIP holds, not a handler's rule; dual
-        // reductions rest on the locks, which keep them sound only for a complete declaration, and stay off for
-        // either kind until a solve keeps them for `Locks::Only`.
-        instance.set_param("constraints/components/maxprerounds", &ParamValue::Int(0))?;
-        instance.set_param("constraints/components/propfreq", &ParamValue::Int(-1))?;
-        if declaration.locks == Locks::All {
-            // Every column stays one SCIP can write a bound of; `Locks::Only` marks the columns it lists instead.
-            instance.set_param("presolving/donotmultaggr", &ParamValue::Bool(true))?;
-        }
     }
     if hooks.wants_cut() {
         instance.set_param("separating/culmen/freq", &ParamValue::Int(1))?;
@@ -472,16 +454,10 @@ impl Backend for Scip {
         if pricing && instance.quadratic() {
             return Err(ScipError::PricingQuadratic);
         }
-        // The declaration is read once, before SCIP runs.
-        let declaration = hooks.wants_constraint().then(|| hooks.declaration()).flatten();
         configure(instance, &self.options, settings)?;
-        configure_hooks(instance, &hooks, declaration.as_ref(), pricing)?;
-        let setup = declaration.map(|declaration| callback::Setup {
-            locks: declaration.locks,
-            rounds: self.options.enforcement_rounds,
-        });
+        configure_hooks(instance, &hooks, pricing)?;
         let start = Instant::now();
-        let ran = instance.solve(hooks, priced, setup, start);
+        let ran = instance.solve(hooks, priced, start);
         let elapsed = start.elapsed();
         if let Some(payload) = ran.panic {
             resume_unwind(payload);
@@ -509,26 +485,6 @@ impl Backend for Scip {
 /// Lazy constraints through a constraint handler, checked and enforced after every other.
 impl LazyConstraints for Scip {
     type Lazy<'a> = ScipLazy<'a>;
-}
-
-/// Constraint handlers through SCIP's constraint handler `culmen-handler`, without constraints of its own, checked and
-/// enforced after every SCIP handler and before the lazy-constraint handler.
-///
-/// In this release SCIP asks [`check`](culmen_core::ConstraintHandler::check) and
-/// [`enforce`](culmen_core::ConstraintHandler::enforce), and an enforcement resolves a point by adding constraints or
-/// cutting the node off; tightening a bound, branching and cutting off with a conflict are refused with
-/// [`ActionError::Refused`](culmen_core::ActionError::Refused), and SCIP does not call
-/// [`propagate`](culmen_core::ConstraintHandler::propagate), [`explain`](culmen_core::ConstraintHandler::explain) or
-/// [`presolve`](culmen_core::ConstraintHandler::presolve) yet, so their contexts have no values.
-/// [`Candidates::Fractional`](culmen_core::Candidates::Fractional) is enforced as
-/// [`Candidates::Integral`](culmen_core::Candidates::Integral): the handler sees every point SCIP would accept, but no
-/// LP point with a fractional integer column.
-impl CustomConstraints for Scip {
-    type Check<'a> = ScipCheck<'a>;
-    type Enforce<'a> = ScipEnforce<'a>;
-    type Propagate<'a> = ScipPropagate<'a>;
-    type Explain<'a> = ScipExplain<'a>;
-    type Presolve<'a> = ScipPresolve<'a>;
 }
 
 /// User cuts through a separator on each node's LP solution.
@@ -826,119 +782,10 @@ mod tests {
         let var = instance.priced_vars()[0];
         // The column has no entry, so every lock on it is the lazy handler's: it may add a constraint on it.
         assert_eq!(instance.model_locks(var), (1, 1));
-        assert_eq!(instance.kept_locks(var), [(1, 1), (0, 0)]);
+        assert_eq!(instance.kept_locks(var), (1, 1));
         // The next solve frees the transformed problem, and the handler's unlock with it.
         scip.solve(&limited(), Hooks::new()).unwrap();
-        assert_eq!(scip.instance.as_ref().unwrap().kept_locks(var), [(0, 0), (0, 0)]);
-    }
-
-    /// Rejects nothing, counting its calls, with the declaration it is given.
-    struct Accepts(culmen_core::Declaration, usize);
-
-    impl culmen_core::ConstraintHandler<Scip> for Accepts {
-        fn declaration(&self) -> culmen_core::Declaration {
-            self.0.clone()
-        }
-        fn check(&mut self, _: &mut ScipCheck<'_>) -> culmen_core::Verdict {
-            self.1 += 1;
-            assert!(self.1 < 10_000, "Accepts: the constraint handler ran without end");
-            culmen_core::Verdict::Accept
-        }
-    }
-
-    fn declared(locks: Locks) -> culmen_core::Declaration {
-        culmen_core::Declaration {
-            locks,
-            ..culmen_core::Declaration::default()
-        }
-    }
-
-    /// The parameters a constraint handler sets: symmetry handling, the two dual reductions, multi-aggregation and the
-    /// components presolver.
-    type HandlerParams = (
-        Option<i32>,
-        Option<bool>,
-        Option<bool>,
-        Option<bool>,
-        Option<i32>,
-        Option<i32>,
-    );
-
-    fn handler_params(scip: &Scip) -> HandlerParams {
-        let instance = scip.instance.as_ref().unwrap();
-        (
-            instance.int_param(c"misc/usesymmetry"),
-            instance.bool_param(c"misc/allowstrongdualreds"),
-            instance.bool_param(c"misc/allowweakdualreds"),
-            instance.bool_param(c"presolving/donotmultaggr"),
-            instance.int_param(c"constraints/components/maxprerounds"),
-            instance.int_param(c"constraints/components/propfreq"),
-        )
-    }
-
-    #[test]
-    fn test_a_constraint_handler_turns_off_what_ignores_it_and_multi_aggregation_for_every_lock() {
-        let (mut scip, _) = one_column();
-        scip.solve(&limited(), Hooks::new()).unwrap();
-        let plain = handler_params(&scip);
-        assert_ne!(plain.0, Some(0), "{plain:?}");
-        assert_eq!((plain.1, plain.2, plain.3), (Some(true), Some(true), Some(false)));
-        // SCIP runs its components presolver in every round by default and never propagates with it.
-        assert_eq!((plain.4, plain.5), (Some(-1), Some(-1)));
-
-        // Every lock: no symmetry, no dual reduction, no multi-aggregation, no components.
-        let mut all = Accepts(declared(Locks::All), 0);
-        scip.solve(&limited(), Hooks::new().register_constraint(&mut all))
-            .unwrap();
-        assert_eq!(
-            handler_params(&scip),
-            (Some(0), Some(false), Some(false), Some(true), Some(0), Some(-1))
-        );
-        // Precise locks keep multi-aggregation, marking the columns they list instead; the dual reductions stay off
-        // until a solve keeps them for a precise declaration.
-        let mut only = Accepts(declared(Locks::Only(Vec::new())), 0);
-        scip.solve(&limited(), Hooks::new().register_constraint(&mut only))
-            .unwrap();
-        assert_eq!(
-            handler_params(&scip),
-            (Some(0), Some(false), Some(false), Some(false), Some(0), Some(-1))
-        );
-        // A solve without a handler is back to SCIP's defaults.
-        scip.solve(&limited(), Hooks::new()).unwrap();
-        assert_eq!(handler_params(&scip), plain);
-    }
-
-    #[test]
-    fn test_a_constraint_handler_locks_what_it_declares_and_every_priced_column_and_unlocks_them() {
-        let (mut scip, program) = maximize_one();
-        let x = culmen_core::Col::new(0);
-        for (locks, want) in [
-            (Locks::All, (1, 1)),
-            (Locks::Only(vec![(x, culmen_core::Lock::Up)]), (0, 1)),
-            (Locks::Only(vec![(x, culmen_core::Lock::Down)]), (1, 0)),
-            (Locks::Only(Vec::new()), (0, 0)),
-        ] {
-            let mut priced = Priced::new(&program, Scip::CLASSES);
-            let (mut pricer, mut handler) = (AddsOne::default(), Accepts(declared(locks.clone()), 0));
-            let hooks = Hooks::new()
-                .register_constraint(&mut handler)
-                .register_pricer(&mut pricer, &mut priced);
-            let solved = scip.solve(&limited(), hooks).unwrap();
-            assert_eq!(solved.outcome.objective(), Some(2.0), "{locks:?}");
-            let instance = scip.instance.as_ref().unwrap();
-            let transformed = instance.transformed_var(x);
-            assert_eq!(instance.kept_locks(transformed)[1], want, "{locks:?}");
-            // Every column is kept from multi-aggregation under every lock, the listed ones under precise locks.
-            let listed = !matches!(&locks, Locks::Only(cols) if cols.is_empty());
-            assert_eq!(instance.kept_from_multi_aggregation(transformed), listed, "{locks:?}");
-            // The priced column has no entry, so every lock on it is the handler's, both ways whatever it declared.
-            let var = instance.priced_vars()[0];
-            assert_eq!(instance.model_locks(var), (1, 1), "{locks:?}");
-            assert_eq!(instance.kept_locks(var), [(0, 0), (1, 1)], "{locks:?}");
-            scip.solve(&limited(), Hooks::new()).unwrap();
-            let instance = scip.instance.as_ref().unwrap();
-            assert_eq!(instance.kept_locks(var), [(0, 0), (0, 0)], "{locks:?}");
-        }
+        assert_eq!(scip.instance.as_ref().unwrap().kept_locks(var), (0, 0));
     }
 
     #[test]

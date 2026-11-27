@@ -33,13 +33,15 @@ use culmen_core::{ActionError, AddedRow, Col, Constraint, Context, LazyContext, 
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_CONSHDLR, SCIP_LOCKTYPE, SCIP_RESULT, SCIP_RETCODE, SCIP_Result_SCIP_CONSADDED,
     SCIP_Result_SCIP_CUTOFF, SCIP_Result_SCIP_FEASIBLE, SCIP_Result_SCIP_INFEASIBLE, SCIP_Retcode_SCIP_OKAY, SCIP_SOL,
-    SCIPconshdlrGetData, SCIPincludeConshdlrBasic, SCIPsetConshdlrCopy, SCIPsetConshdlrEnforelax, SCIPsolIsOriginal,
+    SCIPconshdlrGetData, SCIPgetNOrigVars, SCIPgetOrigVars, SCIPincludeConshdlrBasic, SCIPsetConshdlrCopy,
+    SCIPsetConshdlrEnforelax, SCIPsolIsOriginal,
 };
 
+use super::locks::Applied;
 use super::rows::{add_cons, checked, violates};
 use super::{CandidateSource, Delivered, Run, Slot, slot};
-use crate::ScipError;
 use crate::error::check;
+use crate::{RetCode, ScipError};
 
 /// After every constraint handler of SCIP's in enforcement and in checks; SCIP's own priorities stay above
 /// `-4_000_000`.
@@ -295,6 +297,39 @@ impl Run<'_, '_> {
     }
 }
 
+/// Locks every variable of the transformed problem `n` times both ways, through the original variables, which SCIP
+/// keeps from the transforming stage until the transformed problem is freed, and keeps the locks in `applied`.
+///
+/// # Errors
+///
+/// [`ScipError::Call`] when SCIP refuses a call.
+///
+/// # Safety
+///
+/// `scip` is a live instance from its transforming stage until it frees its transformed problem, not in its solved
+/// stage.
+unsafe fn lock_all(scip: *mut SCIP, applied: &Applied, n: c_int) -> Result<(), ScipError> {
+    // SAFETY: the instance is live in a stage where it holds its original variables.
+    let (vars, len) = unsafe { (SCIPgetOrigVars(scip), SCIPgetNOrigVars(scip)) };
+    let len = usize::try_from(len).unwrap_or(0);
+    if vars.is_null() || len == 0 {
+        return Ok(());
+    }
+    // SAFETY: SCIP's array of original variables holds `len` of them, unchanged during this call.
+    let vars = unsafe { core::slice::from_raw_parts(vars, len) };
+    for &var in vars {
+        // SAFETY: the instance is live and transformed, and `var` one of its original variables.
+        let var = unsafe { crate::columns::transformed(scip, var) }?;
+        let var = NonNull::new(var).ok_or(ScipError::Call {
+            call: "SCIPgetTransformedVar",
+            code: RetCode::InvalidData,
+        })?;
+        // SAFETY: as above; `var` is a transformed variable of the instance.
+        unsafe { applied.lock(scip, var, n, n) }?;
+    }
+    Ok(())
+}
+
 /// Includes the handler.
 ///
 /// # Errors
@@ -482,7 +517,7 @@ unsafe extern "C" fn conslock(
             return SCIP_Retcode_SCIP_OKAY;
         }
         // SAFETY: SCIP locks a transformed problem it holds, in its transforming stage.
-        unsafe { slot.lazy_locks.lock_all(scip, n) }
+        unsafe { lock_all(scip, &slot.lazy_locks, n) }
     } else {
         // SAFETY: SCIP unlocks a transformed problem it holds before it frees its variables.
         unsafe { slot.lazy_locks.unlock(scip) }
