@@ -53,7 +53,6 @@ const SOLFOUND: SCIP_EVENTTYPE = POORSOLFOUND | BESTSOLFOUND;
 
 /// The SCIP event a poll or a progress report comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum ScipEvent {
     /// A presolve round finished (`SCIP_EVENTTYPE_PRESOLVEROUND`).
     PresolveRound,

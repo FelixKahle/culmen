@@ -381,13 +381,17 @@ impl Instance {
     }
 
     /// SCIP's account of the last solve.
-    pub(crate) fn status(&self) -> ScipStatus {
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Unlisted`] for a status SCIP 10 does not define.
+    pub(crate) fn status(&self) -> Result<ScipStatus, ScipError> {
         // SAFETY: the instance is live; the getters read the statistics of the last solve.
         let (status, solutions_found) = unsafe { (SCIPgetStatus(self.raw()), SCIPgetNSolsFound(self.raw())) };
-        ScipStatus {
-            status: Status::from_raw(status),
+        Ok(ScipStatus {
+            status: Status::from_raw(status)?,
             solutions_found: u64::try_from(solutions_found).unwrap_or(0),
-        }
+        })
     }
 
     /// The best bound the last solve proved on the objective, offset included, in the program's sense; `None` when it

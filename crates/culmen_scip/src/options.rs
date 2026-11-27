@@ -51,7 +51,6 @@ impl ScipOptions {
 /// One of SCIP's emphasis settings for a group of plugins: SCIP's `SCIP_PARAMSETTING`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum Emphasis {
     /// SCIP's default parameters for the group.
     Default,
@@ -89,7 +88,6 @@ pub struct ScipParam {
 /// A parameter value of one of SCIP's six types.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum ParamValue {
     /// A `SCIP_Bool` parameter.
     Bool(bool),

@@ -171,7 +171,7 @@ use culmen_core::{
     Backend, Configurable, Event, Events, Heuristics, LazyConstraints, ModelClasses, Outcome, Prices, Program,
     Settings, Solved, Start, Starts, UserCuts,
 };
-pub use error::{Number, RetCode, ScipError};
+pub use error::{Number, RetCode, ScipCode, ScipError};
 pub use options::{Emphasis, ParamValue, ScipOptions, ScipParam};
 pub use status::{ScipStatus, Status};
 
@@ -436,7 +436,7 @@ impl Backend for Scip {
     /// the options and settings the module documentation lists; [`ScipError::Call`] when SCIP fails, or a call a plugin
     /// makes for the callback does; [`ScipError::Failed`] when SCIP ends with a status that proves nothing;
     /// [`ScipError::InfeasibleBest`] when SCIP's own check finds its best solution infeasible in the original problem,
-    /// which is then not reported.
+    /// which is then not reported; [`ScipError::Unlisted`] when SCIP returns a code or status SCIP 10 does not define.
     ///
     /// # Panics
     ///
@@ -457,7 +457,7 @@ impl Backend for Scip {
             resume_unwind(payload);
         }
         ran.result?;
-        let status = instance.status();
+        let status = instance.status()?;
         let best = instance.best();
         if let Some(best) = &best
             && !instance.best_feasible(pricing)?

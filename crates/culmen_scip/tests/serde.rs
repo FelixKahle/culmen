@@ -49,10 +49,10 @@ fn test_options_and_parameters_round_trip() {
 
 #[test]
 fn test_statuses_codes_and_versions_round_trip() {
-    for status in [Status::Optimal, Status::GapLimit, Status::Other(99)] {
+    for status in [Status::Optimal, Status::GapLimit, Status::RestartLimit] {
         round_trip(&status);
     }
-    for code in [RetCode::LpError, RetCode::Other(-42)] {
+    for code in [RetCode::LpError, RetCode::NotImplemented] {
         round_trip(&code);
     }
     round_trip(&ScipStatus {

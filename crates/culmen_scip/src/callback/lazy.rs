@@ -119,7 +119,6 @@ fn violates(scip: *mut SCIP, row: &AddedRow, values: &TiSlice<Col, f64>) -> bool
 
 /// Where a lazy-constraint candidate comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum ScipLazySource {
     /// A solution SCIP checks before storing it: a heuristic's, a start, a sub-SCIP's, a supplied one (`CONSCHECK`).
     Check,

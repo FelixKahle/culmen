@@ -63,7 +63,7 @@ impl Instance {
         let mut value = 0;
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
         let code = unsafe { scip_sys::SCIPgetIntParam(self.raw(), name.as_ptr(), &raw mut value) };
-        RetCode::from_raw(code).is_none().then_some(value)
+        matches!(RetCode::from_raw(code), Ok(None)).then_some(value)
     }
 
     /// The value of a `bool` parameter, `None` when SCIP knows no `bool` parameter of that name.
@@ -72,7 +72,7 @@ impl Instance {
         let mut value: c_uint = 0;
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one SCIP boolean to write.
         let code = unsafe { scip_sys::SCIPgetBoolParam(self.raw(), name.as_ptr(), &raw mut value) };
-        RetCode::from_raw(code).is_none().then_some(value != 0)
+        matches!(RetCode::from_raw(code), Ok(None)).then_some(value != 0)
     }
 
     /// Sets a parameter by SCIP's name.
@@ -81,7 +81,8 @@ impl Instance {
     ///
     /// [`ScipError::ParamName`] when the name holds a NUL byte, [`ScipError::ParamString`] when a string value does,
     /// [`ScipError::ParamChar`] for a character that is not ASCII, [`ScipError::Param`] when SCIP refuses the
-    /// parameter: an unknown name, a value of the wrong type or out of range.
+    /// parameter: an unknown name, a value of the wrong type or out of range; [`ScipError::Unlisted`] for a return
+    /// code SCIP 10 does not define.
     pub(crate) fn set_param(&mut self, name: &str, value: &ParamValue) -> Result<(), ScipError> {
         let c_name = CString::new(name).map_err(|_| ScipError::ParamName { name: name.to_owned() })?;
         let (raw, name_ptr) = (self.raw(), c_name.as_ptr());
@@ -114,7 +115,7 @@ impl Instance {
                 unsafe { SCIPsetStringParam(raw, name_ptr, c_value.as_ptr()) }
             }
         };
-        RetCode::from_raw(code).map_or(Ok(()), |code| {
+        RetCode::from_raw(code)?.map_or(Ok(()), |code| {
             Err(ScipError::Param {
                 name: name.to_owned(),
                 value: value.clone(),
