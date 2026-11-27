@@ -7,9 +7,8 @@ use core::fmt;
 use core::time::Duration;
 
 use crate::{
-    Backend, Callback, ConstraintHandler, CustomConstraints, CutHandler, HeuristicHandler, Heuristics, Hooks,
-    LazyConstraints, LazyHandler, Observer, Pricer, Prices, Settings, SolveError, Solved, Solver, Start, Starts, Stop,
-    UserCuts, Watch,
+    Backend, Callback, CutHandler, HeuristicHandler, Heuristics, Hooks, LazyConstraints, LazyHandler, Observer, Pricer,
+    Prices, Settings, SolveError, Solved, Solver, Start, Starts, Stop, UserCuts, Watch,
 };
 
 /// Checks a start against the solver's program and hands it to the backend; set only where `B` [`Starts`].
@@ -183,25 +182,6 @@ impl<'h, B: Prices> Run<'_, 'h, B> {
     /// Runs `pricer` at every node LP, to add columns that improve it; the solver appends them to its program.
     pub fn pricer(mut self, pricer: &'h mut impl Pricer<B>) -> Self {
         self.hooks = self.hooks.solver_pricer(pricer);
-        self
-    }
-}
-
-impl<'h, B: CustomConstraints> Run<'_, 'h, B> {
-    /// Runs `handler` as a constraint the solver checks, enforces, propagates, explains and presolves, replacing the
-    /// constraint handler registered before: one per solve.
-    pub fn constraint(mut self, handler: &'h mut impl ConstraintHandler<B>) -> Self {
-        self.hooks = self.hooks.register_constraint(handler);
-        self
-    }
-}
-
-impl<'h, B: CustomConstraints + UserCuts> Run<'_, 'h, B> {
-    /// Runs one `handler` both as a constraint and for node relaxations, as a constraint handler that also cuts off
-    /// fractional points, replacing the constraint and cut handlers registered before; a later [`Run::constraint`]
-    /// or [`Run::cut`] takes its role over.
-    pub fn constraint_and_cut(mut self, handler: &'h mut (impl ConstraintHandler<B> + CutHandler<B>)) -> Self {
-        self.hooks = self.hooks.register_constraint_and_cut(handler);
         self
     }
 }

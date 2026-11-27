@@ -6,7 +6,6 @@
 mod analysis;
 mod backend;
 pub mod capability;
-mod constraint;
 pub mod context;
 mod edit;
 mod events;
@@ -25,21 +24,16 @@ pub use analysis::{
 };
 pub use backend::{Backend, Callback};
 pub use capability::{
-    BasisAnalysis, CustomConstraints, DualAnalysis, Heuristics, IisAnalysis, LazyConstraints, Prices, RangingAnalysis,
-    RayAnalysis, RelaxationAnalysis, Starts, UserCuts,
-};
-pub use constraint::{
-    Candidates, CheckedChild, Child, Declaration, Explained, Inferred, Involved, Lock, Locks, NodeAction, NodeActions,
-    Reason, Verdict,
+    BasisAnalysis, DualAnalysis, Heuristics, IisAnalysis, LazyConstraints, Prices, RangingAnalysis, RayAnalysis,
+    RelaxationAnalysis, Starts, UserCuts,
 };
 pub use context::{
-    ActionError, AddedRow, CheckContext, Context, CutContext, EnforceContext, ExplainContext, HeuristicContext,
-    LazyContext, LogContext, NodeContext, PollContext, PresolveContext, PriceContext, PriceMode, ProgressContext,
-    PropagateContext, SolutionContext, Unsupported,
+    ActionError, AddedRow, Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext,
+    PriceMode, ProgressContext, SolutionContext, Unsupported,
 };
 pub use edit::{Edit, EditError, NewRow};
 pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
-pub use hooks::{ConstraintHandler, CutHandler, HeuristicHandler, Hooks, LazyHandler, Pricer, Relay};
+pub use hooks::{CutHandler, HeuristicHandler, Hooks, LazyHandler, Pricer, Relay};
 pub use load::LoadError;
 pub use outcome::{Outcome, Solution, Solved, StopReason};
 pub use priced::Priced;
