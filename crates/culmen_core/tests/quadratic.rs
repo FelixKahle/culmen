@@ -458,7 +458,11 @@ fn test_the_class_reads_integrality_and_the_objective_degree() {
     for class in ModelClasses::ALL {
         let degree = matches!(class, ModelClass::Qp | ModelClass::Miqp);
         let integer = matches!(class, ModelClass::Milp | ModelClass::Miqp);
-        assert_eq!((class.is_quadratic(), class.is_discrete()), (degree, integer), "{class}");
+        assert_eq!(
+            (class.is_quadratic(), class.is_discrete()),
+            (degree, integer),
+            "{class}"
+        );
     }
 }
 

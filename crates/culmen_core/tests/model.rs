@@ -320,6 +320,18 @@ fn test_keyed_families_are_read_by_a_borrowed_key() {
 }
 
 #[test]
+fn test_a_family_of_variables_is_made_from_bounds() {
+    let mut m = Model::new();
+    let flow = m.add_var_map(
+        ['a', 'b'],
+        |&k| if k == 'a' { bounds!(0.0, 1.0) } else { bounds!(0.0, 2.0) },
+    );
+    let program = m.build().unwrap();
+    assert_eq!(program.columns()[flow['b']].bounds, bounds!(0.0, 2.0));
+    assert_eq!(program.columns()[flow['a']].integrality, Integrality::Continuous);
+}
+
+#[test]
 #[should_panic(expected = "a key is inserted twice")]
 fn test_keyed_family_refuses_repeated_keys() {
     let mut m = Model::new();

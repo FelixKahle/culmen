@@ -229,12 +229,22 @@ impl Model {
         self.vars.push_and_get_key(var.into())
     }
 
-    /// Adds `count` variables, the `i`-th made by `var(i)`, and returns their columns in order.
-    pub fn add_vars(&mut self, count: usize, mut var: impl FnMut(usize) -> Var) -> Vec<Col> {
+    /// Adds `count` variables, the `i`-th made by `var(i)`, and returns their columns in order; like
+    /// [`Model::add_var`], the closure may return [`Bounds`] for a continuous variable in them.
+    ///
+    /// ```
+    /// use culmen_core::{Model, Var, bounds};
+    /// let mut m = Model::new();
+    /// let take = m.add_vars(3, |i| Var::binary().name(format!("take[{i}]")));
+    /// let flow = m.add_vars(2, |_| bounds!(0.0, 4.0));
+    /// assert_eq!((take.len(), m.build()?.columns()[flow[1]].bounds), (3, bounds!(0.0, 4.0)));
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    pub fn add_vars<V: Into<Var>>(&mut self, count: usize, mut var: impl FnMut(usize) -> V) -> Vec<Col> {
         (0..count).map(|i| self.add_var(var(i))).collect()
     }
 
-    /// Adds a variable per key, made by `var(&key)`, and returns them keyed.
+    /// Adds a variable per key, made by `var(&key)` as a [`Var`] or [`Bounds`], and returns them keyed.
     ///
     /// Filter the keys with the iterator, and key a two-index family with [`product`]:
     ///
@@ -253,10 +263,10 @@ impl Model {
     ///
     /// When `keys` repeats a key.
     #[track_caller]
-    pub fn add_var_map<K: Hash + Eq + Clone>(
+    pub fn add_var_map<K: Hash + Eq + Clone, V: Into<Var>>(
         &mut self,
         keys: impl IntoIterator<Item = K>,
-        mut var: impl FnMut(&K) -> Var,
+        mut var: impl FnMut(&K) -> V,
     ) -> VarMap<K> {
         let mut map = VarMap::new();
         for key in keys {

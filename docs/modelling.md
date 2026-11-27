@@ -29,7 +29,8 @@ fn main() -> Result<(), culmen::ModelError> {
 }
 ```
 
-`add_vars(count, f)` adds `count` variables, the `i`-th made by `f(i)`, and returns their columns in order.
+`add_vars(count, f)` adds `count` variables, the `i`-th made by `f(i)`, and returns their columns in order. Like
+`add_var`, the closure may return a `Var` or `Bounds`.
 
 ## Variables
 
@@ -345,7 +346,7 @@ fn main() -> Result<(), culmen::ModelError> {
 Most models index variables and constraints by domain keys: products, locations, pairs of them. A family keeps the
 handle of each key.
 
-- `m.add_var_map(keys, |key| var)` adds one variable per key and returns a `VarMap<K>`.
+- `m.add_var_map(keys, |key| var)` adds one variable per key, a `Var` or `Bounds`, and returns a `VarMap<K>`.
 - `m.add_constraint_map(keys, |key| (name, constraint))` adds one named constraint per key and returns a
   `ConstraintMap<K>`.
 
