@@ -166,8 +166,8 @@ pub use callback::{
     LazySource, ScipCut, ScipEvent, ScipHeuristic, ScipLazy, ScipLog, ScipPoll, ScipPrice, ScipProgress, ScipSolution,
 };
 use culmen_core::{
-    Backend, Events, Heuristics, Hooks, LazyConstraints, ModelClasses, Outcome, Prices, Program, Settings, Solved,
-    Start, Starts, Unsupported, UserCuts,
+    Backend, Configurable, Events, Heuristics, Hooks, LazyConstraints, ModelClasses, Outcome, Prices, Program,
+    Settings, Solved, Start, Starts, Unsupported, UserCuts,
 };
 pub use error::{Number, RetCode, ScipError};
 pub use options::{Emphasis, ParamValue, ScipOptions, ScipParam};
@@ -178,7 +178,7 @@ use instance::{Group, Instance};
 /// The SCIP backend: the options every solve applies and, once a program is loaded, the SCIP instance holding it.
 ///
 /// ```
-/// use culmen_core::{Backend, Events, ModelClass};
+/// use culmen_core::{Backend, Configurable, Events, ModelClass};
 /// use culmen_scip::{Emphasis, Scip, ScipOptions};
 ///
 /// let scip = Scip::with_options(ScipOptions { heuristics: Some(Emphasis::Off), ..ScipOptions::default() });
@@ -386,7 +386,6 @@ impl Backend for Scip {
     type Poll<'a> = ScipPoll<'a>;
     type Solution<'a> = ScipSolution<'a>;
     type Native<'a> = Unsupported;
-    type Options = ScipOptions;
 
     /// Every observational event, each from a plugin the instance includes (the module documentation lists them); no
     /// native event.
@@ -414,14 +413,6 @@ impl Backend for Scip {
     /// [`ScipError::BeyondInfinity`] for a finite number SCIP would read as infinite; [`ScipError::ColName`] or
     /// [`ScipError::RowName`] for a name holding a NUL byte; [`ScipError::Call`] when SCIP refuses a call. The
     /// backend then holds no program.
-    fn options(&self) -> &ScipOptions {
-        &self.options
-    }
-
-    fn options_mut(&mut self) -> &mut ScipOptions {
-        &mut self.options
-    }
-
     fn load(&mut self, program: &Program) -> Result<(), ScipError> {
         self.instance = None;
         refuse_unsupported(program)?;
@@ -478,6 +469,19 @@ impl Backend for Scip {
             status,
             elapsed,
         })
+    }
+}
+
+/// [`ScipOptions`], applied by every solve after resetting SCIP's parameters and before the solve's settings.
+impl Configurable for Scip {
+    type Options = ScipOptions;
+
+    fn options(&self) -> &ScipOptions {
+        &self.options
+    }
+
+    fn options_mut(&mut self) -> &mut ScipOptions {
+        &mut self.options
     }
 }
 

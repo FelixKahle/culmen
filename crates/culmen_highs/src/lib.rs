@@ -69,8 +69,8 @@ pub use callback::{
     MipData, PollSource, QueryOrigin, ReducedCol, RootNodePoint,
 };
 use culmen_core::{
-    Backend, Edit, Events, Heuristics, Hooks, ModelClass, ModelClasses, Objectives, Outcome, Program, ProgramFeatures,
-    QuadObjective, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice,
+    Backend, Configurable, Edit, Events, Heuristics, Hooks, ModelClass, ModelClasses, Objectives, Outcome, Program,
+    ProgramFeatures, QuadObjective, Sense, Settings, Solution, Solved, Start, StopReason, TiSlice,
 };
 use culmen_core::{
     Basis, BasisAnalysis, Col, DualAnalysis, Duals, Iis, IisAnalysis, Ranging, RangingAnalysis, RayAnalysis,
@@ -96,7 +96,7 @@ const DEFAULT_ABSOLUTE_GAP: f64 = 1e-6;
 /// The HiGHS backend: one HiGHS instance and the options every solve applies.
 ///
 /// ```
-/// use culmen_core::{Backend, Events, ModelClass};
+/// use culmen_core::{Backend, Configurable, Events, ModelClass};
 /// use culmen_highs::{Highs, HighsOptions, Switch};
 ///
 /// let highs = Highs::with_options(HighsOptions { presolve: Some(Switch::Off), ..HighsOptions::default() });
@@ -640,7 +640,6 @@ impl Backend for Highs {
     type Poll<'a> = HighsPoll<'a>;
     type Solution<'a> = HighsSolution<'a>;
     type Native<'a> = HighsNative;
-    type Options = HighsOptions;
 
     /// Every observational event.
     const EVENTS: Events = Events::ALL;
@@ -652,14 +651,6 @@ impl Backend for Highs {
     /// HiGHS 1.16 takes semi-continuous and semi-integer columns (up to [`Highs::SEMI_UPPER_LIMIT`]) and multiple
     /// linear objectives.
     const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
-
-    fn options(&self) -> &HighsOptions {
-        &self.options
-    }
-
-    fn options_mut(&mut self) -> &mut HighsOptions {
-        &mut self.options
-    }
 
     fn load(&mut self, program: &Program) -> Result<(), HighsError> {
         self.loaded = None;
@@ -713,6 +704,19 @@ impl Backend for Highs {
             status,
             elapsed: ran.elapsed,
         })
+    }
+}
+
+/// [`HighsOptions`], applied by every solve after resetting HiGHS's options and before the solve's settings.
+impl Configurable for Highs {
+    type Options = HighsOptions;
+
+    fn options(&self) -> &HighsOptions {
+        &self.options
+    }
+
+    fn options_mut(&mut self) -> &mut HighsOptions {
+        &mut self.options
     }
 }
 

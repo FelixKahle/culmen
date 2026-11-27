@@ -7,8 +7,8 @@
 use core::fmt;
 
 use culmen_core::{
-    Backend, Basis, BasisAnalysis, Callback, Col, DualAnalysis, Duals, Edit, Events, Heuristics, Hooks, Iis,
-    IisAnalysis, LazyConstraints, ModelClasses, Prices, Program, ProgramFeatures, ProgramPlan, Ranging,
+    Backend, Basis, BasisAnalysis, Callback, Col, Configurable, DualAnalysis, Duals, Edit, Events, Heuristics, Hooks,
+    Iis, IisAnalysis, LazyConstraints, ModelClasses, Prices, Program, ProgramFeatures, ProgramPlan, Ranging,
     RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Relay, Row, Settings, Solved, Start, Starts, TiVec,
     UserCuts, Weights,
 };
@@ -17,7 +17,7 @@ use culmen_core::{
 ///
 /// [`Mirror::held`] is the program the mirror holds: the last one a load or an edit accepted, `None` before any and
 /// after a failure, injected or not. A test asserts `held() == Some(solver.program())` to check that the solver and
-/// its backend agree. Its [`Options`](Backend::Options) are its [`Faults`], so a test sets the failures to inject
+/// its backend agree. Its [`Options`](Configurable::Options) are its [`Faults`], so a test sets the failures to inject
 /// between calls with `solver.options_mut()`; the inner backend's own options are set before the mirror wraps it.
 #[derive(Debug)]
 pub struct Mirror<B> {
@@ -290,19 +290,10 @@ impl<B: Backend> Backend for Mirror<B> {
     type Poll<'a> = B::Poll<'a>;
     type Solution<'a> = B::Solution<'a>;
     type Native<'a> = B::Native<'a>;
-    type Options = Faults;
 
     const EVENTS: Events = B::EVENTS;
     const CLASSES: ModelClasses = B::CLASSES;
     const FEATURES: ProgramFeatures = B::FEATURES;
-
-    fn options(&self) -> &Faults {
-        &self.faults
-    }
-
-    fn options_mut(&mut self) -> &mut Faults {
-        &mut self.faults
-    }
 
     fn load(&mut self, program: &Program) -> Result<(), Self::Error> {
         self.calls.push(Call::Load(program.clone()));
@@ -356,6 +347,19 @@ impl<B: Backend> Backend for Mirror<B> {
         self.inner
             .solve(settings, Hooks::relay(&mut forward, priced))
             .map_err(MirrorError::Inner)
+    }
+}
+
+/// The faults are the mirror's options, so a test changes them between calls through the `Solver`.
+impl<B: Backend> Configurable for Mirror<B> {
+    type Options = Faults;
+
+    fn options(&self) -> &Faults {
+        &self.faults
+    }
+
+    fn options_mut(&mut self) -> &mut Faults {
+        &mut self.faults
     }
 }
 

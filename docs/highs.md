@@ -12,7 +12,7 @@ it is `culmen::highs`, and its backend type is also `culmen::Highs` and in the p
 |---|---|
 | `Highs::new()` | A backend with HiGHS's default options. |
 | `Highs::with_options(options)` | A backend with the given `HighsOptions`. |
-| `options()`, `options_mut()` (`Backend`, `Options = HighsOptions`) | The options, to read or to change between solves; `solver.options_mut()` reaches them through a `Solver`. |
+| `options()`, `options_mut()` (`Configurable`, `Options = HighsOptions`) | The options, to read or to change between solves; `solver.options_mut()` reaches them through a `Solver`. |
 | `Highs::EVENTS` | Every observational event: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT` and `NATIVE`. |
 | Search capabilities | `Heuristics` alone ([Heuristic solutions](#heuristic-solutions)); no `LazyConstraints`, `UserCuts` or `Prices` ([Limitations](#limitations)). |
 | `Highs::CLASSES` | `Lp`, `Milp` and `Qp`; see [Quadratic programs](#quadratic-programs). |

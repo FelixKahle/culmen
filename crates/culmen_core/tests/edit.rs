@@ -613,7 +613,6 @@ impl<const MILP: bool> Backend for Plain<MILP> {
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
     type Native<'a> = Unsupported;
-    type Options = ();
 
     const EVENTS: Events = Events::NONE;
     const CLASSES: ModelClasses = if MILP {
@@ -621,14 +620,6 @@ impl<const MILP: bool> Backend for Plain<MILP> {
     } else {
         ModelClasses::of(&[ModelClass::Lp])
     };
-
-    fn options(&self) -> &() {
-        &()
-    }
-
-    fn options_mut(&mut self) -> &mut () {
-        Box::leak(Box::new(()))
-    }
 
     fn load(&mut self, _: &Program) -> Result<(), Never> {
         self.loads += 1;

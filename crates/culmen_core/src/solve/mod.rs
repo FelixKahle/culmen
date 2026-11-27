@@ -24,8 +24,8 @@ pub use analysis::{
 };
 pub use backend::{Backend, Callback};
 pub use capability::{
-    BasisAnalysis, DualAnalysis, Heuristics, IisAnalysis, LazyConstraints, Prices, RangingAnalysis, RayAnalysis,
-    RelaxationAnalysis, Starts, UserCuts,
+    BasisAnalysis, Configurable, DualAnalysis, Heuristics, IisAnalysis, LazyConstraints, Prices, RangingAnalysis,
+    RayAnalysis, RelaxationAnalysis, Starts, UserCuts,
 };
 pub use context::{
     ActionError, AddedRow, Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext,
@@ -188,18 +188,6 @@ impl<B: Backend> Solver<B> {
         &self.backend
     }
 
-    /// The backend's own options, which every solve applies before its settings.
-    #[must_use]
-    pub fn options(&self) -> &B::Options {
-        self.backend.options()
-    }
-
-    /// The backend's own options, to change between solves. The backend is reachable only through them, so the
-    /// program it holds stays the solver's.
-    pub fn options_mut(&mut self) -> &mut B::Options {
-        self.backend.options_mut()
-    }
-
     /// The backend and the program, taken apart. The backend holds the program unless an edit failed and so did the
     /// reload after it, a panic interrupted them, or the last solve priced columns.
     #[must_use]
@@ -296,6 +284,20 @@ impl<B: Backend> Solver<B> {
             self.synced = true;
         }
         Ok(())
+    }
+}
+
+impl<B: Configurable> Solver<B> {
+    /// The backend's own options, which every solve applies before its settings.
+    #[must_use]
+    pub fn options(&self) -> &B::Options {
+        self.backend.options()
+    }
+
+    /// The backend's own options, to change between solves. The backend is reachable mutably only through them, so
+    /// the program it holds stays the solver's.
+    pub fn options_mut(&mut self) -> &mut B::Options {
+        self.backend.options_mut()
     }
 }
 

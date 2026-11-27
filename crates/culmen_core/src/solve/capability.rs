@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a backend can do beyond [`Backend`]: the handlers that change its search, take a start, and the analyses
-//! after a solve.
+//! What a backend can do beyond [`Backend`]: options of its own, the handlers that change its search, take a start,
+//! and the analyses after a solve.
 //!
 //! Each capability is a trait a backend implements or does not, and each method that needs one, a
 //! [`Solver`](crate::Solver) method or a registration on [`Hooks`](crate::Hooks), exists only for a backend that has
@@ -25,10 +25,34 @@
 //! [`BasisAnalysis::basis`] after a solve, the rays after a solve that ended as they prove, a basis or weights that fit
 //! the program. Called otherwise, it may fail or give an unspecified result, never undefined behaviour.
 
+use core::fmt;
+
 use crate::{
     Backend, Basis, Col, CutContext, Duals, HeuristicContext, Iis, LazyContext, PriceContext, Program, Ranging,
     Relaxed, Row, Start, TiVec, Weights,
 };
+
+/// The backend has options of its own: what [`Settings`](crate::Settings) does not cover, kept by the backend and
+/// applied by every solve before the solve's settings.
+///
+/// [`Solver::options`](crate::Solver::options) and [`Solver::options_mut`](crate::Solver::options_mut) exist only for
+/// a backend with this capability; a backend without options implements nothing.
+///
+/// # Contract
+///
+/// Every [`Backend::solve`] applies the options as they are when it is called, and then its settings, which take
+/// precedence. Changing the options never changes the loaded program.
+#[diagnostic::on_unimplemented(message = "`{Self}` has no options of its own")]
+pub trait Configurable: Backend {
+    /// The backend's options.
+    type Options: fmt::Debug;
+
+    /// The options every solve applies.
+    fn options(&self) -> &Self::Options;
+
+    /// The options every solve applies, to change between solves.
+    fn options_mut(&mut self) -> &mut Self::Options;
+}
 
 /// The backend takes lazy constraints: it hands every candidate solution it would accept to a registered
 /// [`LazyHandler`](crate::LazyHandler), which may cut it off.

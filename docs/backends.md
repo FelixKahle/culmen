@@ -19,18 +19,20 @@ pub trait Backend: Sized {
     type Poll<'a>: PollContext;           // Events::POLL
     type Solution<'a>: SolutionContext;   // Events::FEASIBLE and Events::INCUMBENT
     type Native<'a>: Debug;               // Events::NATIVE: whatever only this solver reports
-    type Options: Debug;                  // the backend's own options, () for none
     const EVENTS: Events;                 // the observational events this backend delivers
     const CLASSES: ModelClasses;          // the model classes this backend solves
     const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // the semi columns and objectives it takes
     fn load(&mut self, program: &Program) -> Result<(), Self::Error>;
-    fn options(&self) -> &Self::Options;
-    fn options_mut(&mut self) -> &mut Self::Options; // what Solver::options_mut reaches, never the backend itself
     fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), Self::Error> { self.load(program) }
     fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<Self::Status>, Self::Error>;
 }
 
 // Capabilities beyond the seam, each a trait the backend implements or leaves out (culmen_core::capability).
+pub trait Configurable: Backend {         // options of its own; Solver::options and options_mut
+    type Options: Debug;
+    fn options(&self) -> &Self::Options;
+    fn options_mut(&mut self) -> &mut Self::Options; // what Solver::options_mut reaches, never the backend itself
+}
 // The search capabilities hold the context their handler receives.
 pub trait LazyConstraints: Backend { type Lazy<'a>: LazyContext; }      // LazyHandler
 pub trait UserCuts: Backend { type Cut<'a>: CutContext; }               // CutHandler
@@ -72,6 +74,10 @@ pub trait RelaxationAnalysis: Backend {
   gives up for a search handler it decides from `wants_*`, never from the events a callback asks for. A wrapping
   backend hands its hooks to the backend it wraps through `Hooks::relay` and a `Relay` of its own, whose search methods
   carry their capability as a `where` clause, so one wrapper serves every inner backend.
+- **Options are a capability.** A backend with options of its own implements `Configurable`, naming their type;
+  `Solver::options` and `Solver::options_mut` exist only for such a backend. HiGHS's are `HighsOptions` and SCIP's
+  `ScipOptions`; the `Script` has none and implements nothing, so `options_mut()` on a `Solver<Script>` does not
+  compile.
 - **Model classes are declared.** A backend lists the classes it solves (`ModelClass::Lp`, `Milp`, `Qp`, `Miqp`)
   in `Backend::CLASSES`. `Solver::new` reads it before `load`, for every backend alike, and refuses any other class
   with `LoadError::Unsupported { class, supported }`, so `load` never re-checks the class. Features beyond the class

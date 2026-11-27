@@ -241,10 +241,7 @@ impl<B: Prices, P: Pricer<B>> PriceSlot<B> for P {
 /// # impl Backend for Plain {
 /// #     type Error = std::io::Error; type Status = (); type Log<'a> = Unsupported; type Progress<'a> = Unsupported;
 /// #     type Poll<'a> = Unsupported; type Solution<'a> = Unsupported; type Native<'a> = Unsupported;
-/// #     type Options = ();
 /// #     const EVENTS: Events = Events::NONE; const CLASSES: ModelClasses = ModelClasses::ALL;
-/// #     fn options(&self) -> &() { &() }
-/// #     fn options_mut(&mut self) -> &mut () { Box::leak(Box::new(())) }
 /// #     fn load(&mut self, _: &Program) -> Result<(), Self::Error> { Ok(()) }
 /// #     fn solve(&mut self, _: &Settings, _: Hooks<'_, Self>) -> Result<Solved<()>, Self::Error> { unimplemented!() }
 /// # }

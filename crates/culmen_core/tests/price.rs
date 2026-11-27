@@ -713,18 +713,9 @@ impl Backend for SelfPricing {
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
     type Native<'a> = Unsupported;
-    type Options = bool;
 
     const EVENTS: Events = Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::ALL;
-
-    fn options(&self) -> &bool {
-        &self.prices
-    }
-
-    fn options_mut(&mut self) -> &mut bool {
-        &mut self.prices
-    }
 
     fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
         self.num_cols = program.num_cols();
@@ -747,6 +738,18 @@ impl Backend for SelfPricing {
             status: (),
             elapsed: Duration::ZERO,
         })
+    }
+}
+
+impl culmen_core::Configurable for SelfPricing {
+    type Options = bool;
+
+    fn options(&self) -> &bool {
+        &self.prices
+    }
+
+    fn options_mut(&mut self) -> &mut bool {
+        &mut self.prices
     }
 }
 

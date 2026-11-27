@@ -53,18 +53,9 @@ impl Backend for Canned {
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
     type Native<'a> = Unsupported;
-    type Options = bool;
 
     const EVENTS: culmen_core::Events = culmen_core::Events::NONE;
     const CLASSES: ModelClasses = ModelClasses::ALL;
-
-    fn options(&self) -> &bool {
-        &self.panics
-    }
-
-    fn options_mut(&mut self) -> &mut bool {
-        &mut self.panics
-    }
 
     fn load(&mut self, _: &Program) -> Result<(), ScriptError> {
         Ok(())
@@ -77,6 +68,18 @@ impl Backend for Canned {
             status: (),
             elapsed: Duration::ZERO,
         })
+    }
+}
+
+impl culmen_core::Configurable for Canned {
+    type Options = bool;
+
+    fn options(&self) -> &bool {
+        &self.panics
+    }
+
+    fn options_mut(&mut self) -> &mut bool {
+        &mut self.panics
     }
 }
 
