@@ -577,7 +577,7 @@ impl ScriptHeuristic<'_> {
     ///
     /// # Errors
     ///
-    /// [`ActionError::UnknownColumn`] or [`ActionError::NotFinite`] for an entry at fault.
+    /// [`ActionError::UnknownCol`] or [`ActionError::NonFinite`] for an entry at fault.
     pub fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
         check_entries(entries, self.num_cols)?;
         self.supplied.push(entries.to_vec());
@@ -682,7 +682,7 @@ impl PriceContext for ScriptPrice<'_> {
             return Err(ActionError::Refused("Script: a Farkas round takes no bound".to_owned()));
         }
         if !bound.is_finite() {
-            return Err(ActionError::NotFiniteBound { bound });
+            return Err(ActionError::NonFiniteBound { bound });
         }
         self.round.bound = Some(bound);
         Ok(())

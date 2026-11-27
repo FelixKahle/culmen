@@ -87,7 +87,7 @@ impl Weight {
     /// [`InvalidWeight`] when `value` is not finite or not above zero.
     pub const fn new(value: f64) -> Result<Self, InvalidWeight> {
         if !value.is_finite() {
-            Err(InvalidWeight::NotFinite)
+            Err(InvalidWeight::NonFinite)
         } else if value <= 0.0 {
             Err(InvalidWeight::NotPositive)
         } else {
@@ -112,7 +112,7 @@ impl Weight {
     pub const fn literal(value: f64) -> Self {
         match Self::new(value) {
             Ok(weight) => weight,
-            Err(InvalidWeight::NotFinite) => panic!("Weight: not a finite number"),
+            Err(InvalidWeight::NonFinite) => panic!("Weight: not a finite number"),
             Err(InvalidWeight::NotPositive) => panic!("Weight: not above zero"),
         }
     }
@@ -150,7 +150,7 @@ impl fmt::Display for Weight {
 #[non_exhaustive]
 pub enum InvalidWeight {
     /// The number is NaN or infinite.
-    NotFinite,
+    NonFinite,
     /// The number is zero or below.
     NotPositive,
 }
@@ -158,7 +158,7 @@ pub enum InvalidWeight {
 impl fmt::Display for InvalidWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotFinite => write!(f, "Weight: not a finite number"),
+            Self::NonFinite => write!(f, "Weight: not a finite number"),
             Self::NotPositive => write!(f, "Weight: not above zero"),
         }
     }

@@ -111,7 +111,7 @@ pub fn read(path: impl AsRef<Path>) -> Result<Program, FileError> {
 /// # Errors
 ///
 /// [`FileError::Path`] for a path HiGHS cannot take, [`FileError::Io`] when the file cannot be read,
-/// [`FileError::Read`] when HiGHS cannot parse it; [`FileError::ColumnBounds`], [`FileError::RowBounds`],
+/// [`FileError::Read`] when HiGHS cannot parse it; [`FileError::ColBounds`], [`FileError::RowBounds`],
 /// [`FileError::VarType`] or [`FileError::Program`] when its content is no valid program, such as a non-convex
 /// quadratic objective.
 pub fn read_as(path: impl AsRef<Path>, format: ModelFormat) -> Result<Program, FileError> {
@@ -168,7 +168,7 @@ pub fn write(program: &Program, path: impl AsRef<Path>) -> Result<(), FileError>
 ///
 /// # Errors
 ///
-/// [`FileError::Unsupported`] for a program with further objectives, which neither format, as HiGHS writes it,
+/// [`FileError::UnsupportedFeature`] for a program with further objectives, which neither format, as HiGHS writes it,
 /// keeps; [`FileError::Name`] for a name holding a NUL byte;
 /// [`FileError::Highs`] when HiGHS refuses the program, [`FileError::Path`] for a path HiGHS cannot take,
 /// [`FileError::Write`] when HiGHS cannot write the file and [`FileError::Io`] when the file cannot be moved into
@@ -193,10 +193,10 @@ pub fn write_as(program: &Program, path: impl AsRef<Path>, format: ModelFormat) 
 ///
 /// # Errors
 ///
-/// [`FileError::Unsupported`] as [`write_as`] states.
+/// [`FileError::UnsupportedFeature`] as [`write_as`] states.
 fn writable(program: &Program, format: ModelFormat) -> Result<(), FileError> {
     if program.objectives().are_several() {
-        return Err(FileError::Unsupported {
+        return Err(FileError::UnsupportedFeature {
             format,
             feature: ProgramFeature::MultipleObjectives,
         });
@@ -246,7 +246,7 @@ unsafe fn names(instance: &Instance, line: Line, count: usize, buffer: &mut [u8]
 ///
 /// # Errors
 ///
-/// [`FileError::ColumnBounds`], [`FileError::RowBounds`], [`FileError::VarType`] or [`FileError::Program`].
+/// [`FileError::ColBounds`], [`FileError::RowBounds`], [`FileError::VarType`] or [`FileError::Program`].
 pub(crate) fn program_of(
     model: &RawModel,
     col_names: Vec<Option<String>>,
@@ -272,7 +272,7 @@ pub(crate) fn program_of(
 ///
 /// # Errors
 ///
-/// [`FileError::ColumnBounds`] or [`FileError::VarType`] for the first column at fault.
+/// [`FileError::ColBounds`] or [`FileError::VarType`] for the first column at fault.
 fn columns_of(model: &RawModel, names: Vec<Option<String>>) -> Result<TiVec<Col, ProgramColumn>, FileError> {
     let parts = model
         .costs
@@ -285,7 +285,7 @@ fn columns_of(model: &RawModel, names: Vec<Option<String>>) -> Result<TiVec<Col,
         .enumerate()
         .map(|(i, ((((&cost, &lower), &upper), &raw), name))| {
             let col = Col::new(i);
-            let bounds = Bounds::new(lower, upper).map_err(|source| FileError::ColumnBounds { col, source })?;
+            let bounds = Bounds::new(lower, upper).map_err(|source| FileError::ColBounds { col, source })?;
             let integrality = integrality_of(raw).ok_or(FileError::VarType { col, raw })?;
             Ok(ProgramColumn {
                 cost,
@@ -482,7 +482,7 @@ pub enum FileError {
         format: ModelFormat,
     },
     /// A column's bounds in the file are no interval.
-    ColumnBounds {
+    ColBounds {
         /// The column, in the order HiGHS read them.
         col: Col,
         /// What is wrong with its bounds.
@@ -505,7 +505,7 @@ pub enum FileError {
     /// The file's content fails a program's checks.
     Program(ProgramError),
     /// The format, as HiGHS writes it, loses a feature the program uses.
-    Unsupported {
+    UnsupportedFeature {
         /// The format.
         format: ModelFormat,
         /// The feature it loses.
@@ -540,11 +540,11 @@ impl fmt::Display for FileError {
             Self::Write { path, format } => {
                 write!(f, "model file: HiGHS could not write {} as {format}", path.display())
             }
-            Self::ColumnBounds { col, source } => write!(f, "model file: {col:?} has invalid bounds: {source}"),
+            Self::ColBounds { col, source } => write!(f, "model file: {col:?} has invalid bounds: {source}"),
             Self::RowBounds { row, source } => write!(f, "model file: {row:?} has invalid bounds: {source}"),
             Self::VarType { col, raw } => write!(f, "model file: {col:?} has the unknown variable type {raw}"),
             Self::Program(error) => write!(f, "model file: the content is no valid program: {error}"),
-            Self::Unsupported { format, feature } => {
+            Self::UnsupportedFeature { format, feature } => {
                 write!(f, "model file: HiGHS's {format} writer loses {feature}")
             }
             Self::Name { name } => write!(f, "model file: the name {name:?} holds a NUL byte"),
@@ -556,7 +556,7 @@ impl fmt::Display for FileError {
 impl core::error::Error for FileError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::ColumnBounds { source, .. } | Self::RowBounds { source, .. } => Some(source),
+            Self::ColBounds { source, .. } | Self::RowBounds { source, .. } => Some(source),
             Self::Program(error) => Some(error),
             Self::Highs(error) => Some(error),
             _ => None,

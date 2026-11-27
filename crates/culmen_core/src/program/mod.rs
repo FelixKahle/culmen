@@ -446,7 +446,7 @@ pub(crate) const fn semi_bounds(bounds: Bounds) -> bool {
 /// # Errors
 ///
 /// [`ProgramError::QuadraticWithObjectives`], or for the first further objective at fault
-/// [`ProgramError::NonFiniteObjectiveOffset`], [`ProgramError::UnknownObjectiveColumn`] or
+/// [`ProgramError::NonFiniteObjectiveOffset`], [`ProgramError::UnknownObjectiveCol`] or
 /// [`ProgramError::NonFiniteObjectiveCoefficient`].
 fn check_objectives(plan: &ProgramPlan) -> Result<(), ProgramError> {
     let quadratic = QuadObjective::from_terms(plan.quadratic.iter().copied());
@@ -479,7 +479,7 @@ impl BadTerm<Col> {
     /// The error of a row holding this term.
     const fn in_row(self, row: Row) -> ProgramError {
         match self {
-            Self::Unknown(col) => ProgramError::UnknownColumn { row, col },
+            Self::Unknown(col) => ProgramError::UnknownCol { row, col },
             Self::NonFinite(col, value) => ProgramError::NonFiniteCoefficient { row, col, value },
         }
     }
@@ -487,7 +487,7 @@ impl BadTerm<Col> {
     /// The error of a further objective holding this term.
     const fn in_objective(self, objective: ObjectiveId) -> ProgramError {
         match self {
-            Self::Unknown(col) => ProgramError::UnknownObjectiveColumn { objective, col },
+            Self::Unknown(col) => ProgramError::UnknownObjectiveCol { objective, col },
             Self::NonFinite(col, value) => ProgramError::NonFiniteObjectiveCoefficient { objective, col, value },
         }
     }
@@ -515,13 +515,13 @@ pub(crate) fn bad_term<I: Copy + Ord + Into<usize>>(terms: &[(I, f64)], count: u
 ///
 /// # Errors
 ///
-/// [`ProgramError::UnknownQuadColumn`] or [`ProgramError::NonFiniteQuadCoefficient`] for the first defective term, as
+/// [`ProgramError::UnknownQuadCol`] or [`ProgramError::NonFiniteQuadCoefficient`] for the first defective term, as
 /// given or merged, a square whose Hessian value overflows included, or [`ProgramError::NonConvexObjective`].
 fn check_quadratic(plan: &ProgramPlan) -> Result<(), ProgramError> {
     let num_cols = plan.columns.len();
     plan.quadratic.iter().try_for_each(|&(first, second, value)| {
         match [first, second].into_iter().find(|col| col.index() >= num_cols) {
-            Some(col) => Err(ProgramError::UnknownQuadColumn { col }),
+            Some(col) => Err(ProgramError::UnknownQuadCol { col }),
             None => finite_quad(first, second, value),
         }
     })?;
@@ -614,14 +614,14 @@ pub enum ProgramError {
         value: f64,
     },
     /// A row's term names a column the plan does not have.
-    UnknownColumn {
+    UnknownCol {
         /// The row.
         row: Row,
         /// The column named.
         col: Col,
     },
     /// A quadratic term names a column the plan does not have.
-    UnknownQuadColumn {
+    UnknownQuadCol {
         /// The column named.
         col: Col,
     },
@@ -668,7 +668,7 @@ pub enum ProgramError {
         value: f64,
     },
     /// A further objective's term names a column the plan does not have.
-    UnknownObjectiveColumn {
+    UnknownObjectiveCol {
         /// The objective.
         objective: ObjectiveId,
         /// The column named.
@@ -689,10 +689,10 @@ impl fmt::Display for ProgramError {
                     "Program: the coefficient {value} of {col:?} in {row:?} is not finite"
                 )
             }
-            Self::UnknownColumn { row, col } => {
+            Self::UnknownCol { row, col } => {
                 write!(f, "Program: {row:?} names {col:?}, which the plan does not have")
             }
-            Self::UnknownQuadColumn { col } => {
+            Self::UnknownQuadCol { col } => {
                 write!(
                     f,
                     "Program: a quadratic term names {col:?}, which the plan does not have"
@@ -729,7 +729,7 @@ impl fmt::Display for ProgramError {
                 f,
                 "Program: the coefficient {value} of {col:?} in {objective:?} is not finite"
             ),
-            Self::UnknownObjectiveColumn { objective, col } => {
+            Self::UnknownObjectiveCol { objective, col } => {
                 write!(f, "Program: {objective:?} names {col:?}, which the plan does not have")
             }
             Self::QuadraticWithObjectives => {

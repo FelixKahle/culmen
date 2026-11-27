@@ -79,7 +79,7 @@ impl Priced {
     fn check(&self, col: Col, column: &NewCol) -> Result<ModelClass, ActionError> {
         let NewCol { column: data, entries } = column;
         if !data.cost.is_finite() {
-            return Err(ActionError::NotFinite { col });
+            return Err(ActionError::NonFinite { col });
         }
         let class = if data.integrality.is_discrete() {
             self.class.with_integer()
@@ -100,7 +100,7 @@ impl Priced {
         }
         match bad_term(entries, self.num_rows) {
             Some(BadTerm::Unknown(row)) => Err(ActionError::UnknownRow { row }),
-            Some(BadTerm::NonFinite(row, _)) => Err(ActionError::NotFiniteEntry { row, col }),
+            Some(BadTerm::NonFinite(row, _)) => Err(ActionError::NonFiniteEntry { row, col }),
             None => Ok(class),
         }
     }

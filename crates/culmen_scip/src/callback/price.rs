@@ -210,7 +210,7 @@ impl PriceContext for ScipPrice<'_> {
     }
     /// # Errors
     ///
-    /// [`ActionError::NotFiniteBound`] for a NaN or infinite bound, [`ActionError::Refused`] in
+    /// [`ActionError::NonFiniteBound`] for a NaN or infinite bound, [`ActionError::Refused`] in
     /// [`PriceMode::Farkas`], which takes no bound, or for a bound SCIP reads as infinite.
     fn report_bound(&mut self, bound: f64) -> Result<(), ActionError> {
         if matches!(self.mode, PriceMode::Farkas) {
@@ -219,7 +219,7 @@ impl PriceContext for ScipPrice<'_> {
             ));
         }
         if !bound.is_finite() {
-            return Err(ActionError::NotFiniteBound { bound });
+            return Err(ActionError::NonFiniteBound { bound });
         }
         if bound.abs() >= self.infinity {
             return Err(ActionError::Refused(format!(

@@ -340,11 +340,11 @@ fn test_a_start_that_does_not_fit_is_refused_typed() {
     );
     assert_eq!(
         refused(&mut solver, Start::Sparse(vec![(Col::new(40), 1.0)])),
-        StartError::UnknownColumn { col: Col::new(40) }
+        StartError::UnknownCol { col: Col::new(40) }
     );
     assert_eq!(
         refused(&mut solver, Start::Sparse(vec![(Col::new(1), f64::INFINITY)])),
-        StartError::NotFinite {
+        StartError::NonFinite {
             col: Col::new(1),
             value: f64::INFINITY
         }

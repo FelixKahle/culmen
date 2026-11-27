@@ -509,7 +509,7 @@ heuristics. A solve with a heuristic handler calls the heuristic at every node, 
 own off.
 
 - `ctx.supply(&values)` offers a value for every column. The values are checked first: one finite value per column,
-  or `ActionError::Length` or `ActionError::NotFinite`. The solution becomes an original solution of SCIP's
+  or `ActionError::Length` or `ActionError::NonFinite`. The solution becomes an original solution of SCIP's
   (`SCIPcreateOrigSol`), the epigraph's variable set to the quadratic part's value, and SCIP tries it at once
   (`SCIPtrySolFree`): it checks it against the program, bounds and integrality included, and stores it if it is
   feasible and among the solutions it keeps (`limits/maxsol`). A solution SCIP does not store is

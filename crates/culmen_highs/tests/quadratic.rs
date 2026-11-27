@@ -311,7 +311,7 @@ fn test_a_miqp_is_refused_before_highs_sees_it() {
     let error = Solver::new(Highs::new(), program).unwrap_err();
     assert_eq!(
         error,
-        LoadError::Unsupported {
+        LoadError::UnsupportedClass {
             class: ModelClass::Miqp,
             supported: Highs::CLASSES,
         }

@@ -166,7 +166,7 @@ pub enum EditError<E> {
         bounds: Bounds,
     },
     /// The backend does not solve the class the edited program would have.
-    Unsupported {
+    UnsupportedClass {
         /// The class the edited program would have.
         class: ModelClass,
         /// The classes the backend solves.
@@ -202,7 +202,7 @@ impl<E: fmt::Display> fmt::Display for EditError<E> {
                 f,
                 "Solver: the semi column {col:?} would have the bounds {bounds}, not 0 < lower <= upper < +inf"
             ),
-            Self::Unsupported { class, supported } => {
+            Self::UnsupportedClass { class, supported } => {
                 write!(f, "Solver: the backend solves {supported}, not a {class}")
             }
             Self::UnsupportedFeature { feature, supported } => {
@@ -223,7 +223,7 @@ impl<E: core::error::Error + 'static> core::error::Error for EditError<E> {
             | Self::NonFiniteCost { .. }
             | Self::NonFiniteCoefficient { .. }
             | Self::SemiBounds { .. }
-            | Self::Unsupported { .. }
+            | Self::UnsupportedClass { .. }
             | Self::UnsupportedFeature { .. } => None,
         }
     }
@@ -268,7 +268,7 @@ impl<B: Backend> Solver<B> {
     /// # Errors
     ///
     /// [`EditError::UnknownCol`] for a column the program does not have, [`EditError::SemiBounds`] for a column made
-    /// semi whose bounds a semi column may not have, [`EditError::Unsupported`] or [`EditError::UnsupportedFeature`]
+    /// semi whose bounds a semi column may not have, [`EditError::UnsupportedClass`] or [`EditError::UnsupportedFeature`]
     /// when the backend does not solve the class or take a feature the edited program would have, all before the
     /// backend sees the edit; [`EditError::Backend`] when the backend refuses it, or refuses the program the solver
     /// loads first after an earlier failed edit.
@@ -337,7 +337,7 @@ impl<B: Backend> Solver<B> {
     /// [`EditError::UnknownRow`] for an entry naming a row the program does not have, [`EditError::NonFiniteCost`]
     /// for a cost that is NaN or infinite, [`EditError::NonFiniteCoefficient`] for a coefficient that is NaN or
     /// infinite as given or added up, [`EditError::SemiBounds`] for a semi column whose bounds a semi column may not
-    /// have, [`EditError::Unsupported`] or [`EditError::UnsupportedFeature`] when the backend does not solve the
+    /// have, [`EditError::UnsupportedClass`] or [`EditError::UnsupportedFeature`] when the backend does not solve the
     /// class or take a feature the edited program would have, all before the backend sees the edit;
     /// [`EditError::Backend`] when the backend refuses it, or refuses the program the solver loads first after an
     /// earlier failed edit.
@@ -541,7 +541,7 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Errors
     ///
-    /// [`EditError::Unsupported`] or [`EditError::UnsupportedFeature`].
+    /// [`EditError::UnsupportedClass`] or [`EditError::UnsupportedFeature`].
     fn supports(&self, integralities: impl Iterator<Item = Integrality> + Clone) -> Result<(), EditError<B::Error>> {
         let class = self.program.class_with(integralities.clone());
         Ok(lack::<B>(class, self.program.features_with(integralities))?)

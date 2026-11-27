@@ -85,7 +85,7 @@ impl fmt::Display for ModelClass {
 /// A set of [`ModelClass`]es: what a [`Backend`](crate::Backend) solves ([`Backend::CLASSES`]).
 ///
 /// [`Solver::new`](crate::Solver::new) loads a [`Program`](super::Program) only into a backend whose set contains its
-/// class, and refuses any other with [`LoadError::Unsupported`](crate::LoadError::Unsupported).
+/// class, and refuses any other with [`LoadError::UnsupportedClass`](crate::LoadError::UnsupportedClass).
 ///
 /// [`Backend::CLASSES`]: crate::Backend::CLASSES
 ///

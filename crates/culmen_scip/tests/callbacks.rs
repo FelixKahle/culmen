@@ -434,7 +434,7 @@ fn test_an_invalid_lazy_constraint_is_refused_typed() {
             .outcome,
     );
     assert_eq!(best.objective, 6.0, "nothing refused is added");
-    assert_eq!(bad.1[0], ActionError::UnknownColumn { col: Col::new(7) });
+    assert_eq!(bad.1[0], ActionError::UnknownCol { col: Col::new(7) });
     assert!(
         matches!(&bad.1[1], ActionError::Refused(reason) if reason.contains("infinite")),
         "{:?}",

@@ -8,7 +8,7 @@ beside the backend's own status. This page covers all three. Watching and stoppi
 ## `Solver`
 
 `Solver::new(backend, program)` loads `program` into `backend`. It fails with a
-[`LoadError`](#model-classes-and-refusal): `Unsupported` when the backend does not solve the program's class and
+[`LoadError`](#model-classes-and-refusal): `UnsupportedClass` when the backend does not solve the program's class and
 `UnsupportedFeature` when it does not take a feature the program uses, both before the backend sees it, or `Backend`
 with the backend's own error when the backend refuses the program. A `Solver` can then solve as often as needed,
 each solve configured on its own.
@@ -66,7 +66,7 @@ The same holds for [features](program.md#features): every backend declares the f
 other before `load`. `Highs` takes every feature; `Scip` takes none, so it refuses semi columns and further
 objectives; `Script` takes every feature.
 
-The refusal is typed: `LoadError<E>` is `Unsupported { class, supported }`, naming the program's class and the backend's
+The refusal is typed: `LoadError<E>` is `UnsupportedClass { class, supported }`, naming the program's class and the backend's
 set, `UnsupportedFeature { feature, supported }`, naming the first feature the backend lacks and its set, or
 `Backend(E)` with the backend's own error. It displays all three, and `Error::source` is the backend's error.
 
@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(program.class(), ModelClass::Miqp);
 
     let error = Solver::new(Highs::new(), program).unwrap_err();
-    assert_eq!(error, LoadError::Unsupported { class: ModelClass::Miqp, supported: Highs::CLASSES });
+    assert_eq!(error, LoadError::UnsupportedClass { class: ModelClass::Miqp, supported: Highs::CLASSES });
     assert_eq!(error.to_string(), "Solver: the backend solves {LP, MILP, QP}, not a MIQP");
 
     // Without the integer column it is a QP, which HiGHS solves.
@@ -138,9 +138,9 @@ do until an edit.
 | Variant | When |
 |---|---|
 | `Start(StartError::Length { expected, found })` | A full start holds another number of values than the program has columns. |
-| `Start(StartError::UnknownColumn { col })` | A sparse start names a column the program does not have. |
-| `Start(StartError::RepeatedColumn { col })` | A sparse start names a column twice. |
-| `Start(StartError::NotFinite { col, value })` | A value is NaN or infinite. |
+| `Start(StartError::UnknownCol { col })` | A sparse start names a column the program does not have. |
+| `Start(StartError::RepeatedCol { col })` | A sparse start names a column twice. |
+| `Start(StartError::NonFinite { col, value })` | A value is NaN or infinite. |
 
 ```rust
 use culmen::prelude::*;
@@ -170,7 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(first.0, Some(21.0));
 
     let error = solver.run().start(vec![(take[1], 1.0), (take[1], 0.0)]).solve().unwrap_err();
-    assert_eq!(error, SolveError::Start(StartError::RepeatedColumn { col: take[1] }));
+    assert_eq!(error, SolveError::Start(StartError::RepeatedCol { col: take[1] }));
     Ok(())
 }
 ```
@@ -261,7 +261,7 @@ use culmen::{InvalidRelativeGap, RelativeGap};
 
 let read_from_config = -0.5;
 assert_eq!(RelativeGap::try_from(read_from_config), Err(InvalidRelativeGap::Negative));
-assert_eq!(RelativeGap::new(f64::NAN), Err(InvalidRelativeGap::NotFinite));
+assert_eq!(RelativeGap::new(f64::NAN), Err(InvalidRelativeGap::NonFinite));
 assert_eq!(InvalidRelativeGap::Negative.to_string(), "RelativeGap: below zero");
 ```
 

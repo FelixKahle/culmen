@@ -157,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 HiGHS 1.16 solves LPs, MILPs and convex QPs, not QPs with integer columns: `Solver::new` refuses a MIQP on HiGHS
-with `LoadError::Unsupported`. SCIP, with the `scip` feature, solves all four classes.
+with `LoadError::UnsupportedClass`. SCIP, with the `scip` feature, solves all four classes.
 
 ## SCIP: lazy constraints and pricing
 

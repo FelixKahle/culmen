@@ -207,7 +207,7 @@ fn test_further_objectives_are_checked() {
     let (x, id) = (Col::new(0), ObjectiveId::new(1));
     assert_eq!(
         further(vec![(Col::new(1), 1.0)], 0.0).build(),
-        Err(ProgramError::UnknownObjectiveColumn {
+        Err(ProgramError::UnknownObjectiveCol {
             objective: id,
             col: Col::new(1)
         })
@@ -279,7 +279,7 @@ fn test_the_lp_file_lists_semi_columns_and_refuses_several_objectives() {
          General\n y\nSemi-Continuous\n x\n y\nEnd\n"
     );
     let several = two_stage().0.build().unwrap();
-    let refused = LpFileError::Unsupported {
+    let refused = LpFileError::UnsupportedFeature {
         feature: ProgramFeature::MultipleObjectives,
     };
     assert_eq!(several.to_lp_string(), Err(refused));
@@ -425,15 +425,15 @@ fn test_a_start_is_checked_against_the_program_and_handed_over() {
     );
     assert_eq!(
         refused(&mut solver, vec![(Col::new(2), 1.0)].into()),
-        StartError::UnknownColumn { col: Col::new(2) }
+        StartError::UnknownCol { col: Col::new(2) }
     );
     assert_eq!(
         refused(&mut solver, vec![(x, 2.0), (x, 3.0)].into()),
-        StartError::RepeatedColumn { col: x }
+        StartError::RepeatedCol { col: x }
     );
     assert_eq!(
         refused(&mut solver, vec![(y, f64::INFINITY)].into()),
-        StartError::NotFinite {
+        StartError::NonFinite {
             col: y,
             value: f64::INFINITY
         }
@@ -444,14 +444,14 @@ fn test_a_start_is_checked_against_the_program_and_handed_over() {
         "no refused start reaches the backend"
     );
     assert_eq!(
-        StartError::RepeatedColumn { col: x }.to_string(),
+        StartError::RepeatedCol { col: x }.to_string(),
         "Start: Col(0) is given twice"
     );
 }
 
 #[test]
 fn test_tolerance_and_weight_hold_their_invariants() {
-    assert_eq!(Weight::new(f64::NAN), Err(culmen_core::InvalidWeight::NotFinite));
+    assert_eq!(Weight::new(f64::NAN), Err(culmen_core::InvalidWeight::NonFinite));
     assert_eq!(Weight::new(-1.0), Err(culmen_core::InvalidWeight::NotPositive));
     assert_eq!(Weight::try_from(0.25).map(f64::from), Ok(0.25));
     let absolute_only = Tolerance {

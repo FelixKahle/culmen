@@ -196,7 +196,7 @@ fn test_an_integer_column_in_a_qp_is_refused_as_a_miqp() {
     m.minimize((x - 1) * (x - 1));
     let program = m.build().unwrap();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-    let miqp = EditError::Unsupported {
+    let miqp = EditError::UnsupportedClass {
         class: ModelClass::Miqp,
         supported: Highs::CLASSES,
     };

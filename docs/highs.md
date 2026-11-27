@@ -208,7 +208,7 @@ An empty model, one without columns, is `Optimal` at its offset when every row a
 
 HiGHS 1.16 solves LPs, MILPs and convex QPs, so `Highs::CLASSES` is `{LP, MILP, QP}`. It refuses a QP with integer
 columns when it runs ("Cannot solve MIQP problems with HiGHS"), so a MIQP is refused by
-[`Solver::new`](solving.md#model-classes-and-refusal) with `LoadError::Unsupported` before HiGHS sees it; SCIP
+[`Solver::new`](solving.md#model-classes-and-refusal) with `LoadError::UnsupportedClass` before HiGHS sees it; SCIP
 [solves it](scip.md#quadratic-programs).
 
 The backend passes the quadratic part as HiGHS reads it, the lower triangle of the Hessian `H` of `½ xᵀHx` column by
@@ -339,10 +339,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `Io { path, kind }` | The file system failed, as for a missing file. |
 | `Read { path, format }` | HiGHS could not parse the file in the format. |
 | `Write { path, format }` | HiGHS could not write the file. |
-| `ColumnBounds { col, source }`, `RowBounds { row, source }` | Bounds in the file are no interval. |
+| `ColBounds { col, source }`, `RowBounds { row, source }` | Bounds in the file are no interval. |
 | `VarType { col, raw }` | A column has a HiGHS variable type with no `Integrality`. |
 | `Program(ProgramError)` | The content fails a program's checks, such as a non-convex objective. |
-| `Unsupported { format, feature }` | The format, as HiGHS writes it, loses a feature: further objectives, in either format, since neither reader takes them. |
+| `UnsupportedFeature { format, feature }` | The format, as HiGHS writes it, loses a feature: further objectives, in either format, since neither reader takes them. |
 | `Name { name }` | A name holds a NUL byte. |
 | `Highs(HighsError)` | HiGHS refused the program. |
 
@@ -514,7 +514,7 @@ during root-node evaluation, `point` a `RootNodePoint` naming HiGHS's numbered p
 HiGHS 1.16 does not define.
 
 - `ctx.supply(&values)` offers a value for every column. The values are checked first: one finite value per column,
-  or `ActionError::Length` or `ActionError::NotFinite`. HiGHS then checks the solution against the model and keeps
+  or `ActionError::Length` or `ActionError::NonFinite`. HiGHS then checks the solution against the model and keeps
   it as its incumbent if it is feasible and better.
 - `ctx.supply_partial(&entries)`, an inherent method of `HighsHeuristic` since not every solver completes a partial
   solution, offers values for some columns, and HiGHS completes them into a feasible solution if it can. It returns `ActionError::Refused` for no entries, for a column named twice, for a value outside its

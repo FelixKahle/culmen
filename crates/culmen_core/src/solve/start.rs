@@ -31,7 +31,7 @@ use crate::Col;
 ///
 /// let sparse = Start::from(vec![(Col::new(2), 2.5), (Col::new(0), 1.0)]);
 /// assert_eq!(sparse.entries().collect::<Vec<_>>(), [(Col::new(2), 2.5), (Col::new(0), 1.0)]);
-/// assert_eq!(sparse.check(2), Err(StartError::UnknownColumn { col: Col::new(2) }));
+/// assert_eq!(sparse.check(2), Err(StartError::UnknownCol { col: Col::new(2) }));
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -48,8 +48,8 @@ impl Start {
     ///
     /// # Errors
     ///
-    /// [`StartError::Length`] for a full start of another length, else [`StartError::UnknownColumn`],
-    /// [`StartError::RepeatedColumn`] or [`StartError::NotFinite`] for the first entry at fault.
+    /// [`StartError::Length`] for a full start of another length, else [`StartError::UnknownCol`],
+    /// [`StartError::RepeatedCol`] or [`StartError::NonFinite`] for the first entry at fault.
     pub fn check(&self, num_cols: usize) -> Result<(), StartError> {
         if let Self::Full(values) = self
             && values.len() != num_cols
@@ -62,11 +62,11 @@ impl Start {
         let mut seen = HashSet::new();
         self.entries().try_for_each(|(col, value)| {
             if col.index() >= num_cols {
-                Err(StartError::UnknownColumn { col })
+                Err(StartError::UnknownCol { col })
             } else if !seen.insert(col) {
-                Err(StartError::RepeatedColumn { col })
+                Err(StartError::RepeatedCol { col })
             } else if !value.is_finite() {
-                Err(StartError::NotFinite { col, value })
+                Err(StartError::NonFinite { col, value })
             } else {
                 Ok(())
             }
@@ -154,17 +154,17 @@ pub enum StartError {
         found: usize,
     },
     /// A sparse start names a column the program does not have.
-    UnknownColumn {
+    UnknownCol {
         /// The column named.
         col: Col,
     },
     /// A sparse start names a column twice.
-    RepeatedColumn {
+    RepeatedCol {
         /// The column named again.
         col: Col,
     },
     /// A value is NaN or infinite.
-    NotFinite {
+    NonFinite {
         /// The column of the value.
         col: Col,
         /// The value given.
@@ -178,9 +178,9 @@ impl fmt::Display for StartError {
             Self::Length { expected, found } => {
                 write!(f, "Start: {found} values given for {expected} columns")
             }
-            Self::UnknownColumn { col } => write!(f, "Start: {col:?} is not a column of the program"),
-            Self::RepeatedColumn { col } => write!(f, "Start: {col:?} is given twice"),
-            Self::NotFinite { col, value } => write!(f, "Start: the value {value} of {col:?} is not finite"),
+            Self::UnknownCol { col } => write!(f, "Start: {col:?} is not a column of the program"),
+            Self::RepeatedCol { col } => write!(f, "Start: {col:?} is given twice"),
+            Self::NonFinite { col, value } => write!(f, "Start: the value {value} of {col:?} is not finite"),
         }
     }
 }
@@ -195,7 +195,7 @@ impl core::error::Error for StartError {}
 /// ```
 /// use culmen_core::{Col, SolveError, StartError};
 ///
-/// let error = SolveError::<std::io::Error>::Start(StartError::RepeatedColumn { col: Col::new(1) });
+/// let error = SolveError::<std::io::Error>::Start(StartError::RepeatedCol { col: Col::new(1) });
 /// assert_eq!(error.to_string(), "Solver: the start is refused: Start: Col(1) is given twice");
 /// ```
 #[derive(Clone, Debug, PartialEq)]

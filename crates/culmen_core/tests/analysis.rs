@@ -585,7 +585,7 @@ proptest! {
 fn test_a_penalty_literal_and_its_refusals() {
     const ONE: Penalty = penalty!(1.0);
     assert_eq!(ONE.get(), 1.0);
-    assert_eq!(Penalty::try_from(f64::INFINITY), Err(InvalidPenalty::NotFinite));
+    assert_eq!(Penalty::try_from(f64::INFINITY), Err(InvalidPenalty::NonFinite));
     assert_eq!(InvalidPenalty::Negative.to_string(), "Penalty: below zero");
 }
 

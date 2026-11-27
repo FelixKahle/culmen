@@ -559,7 +559,7 @@ fn test_every_edit_error_displays_its_sentence_and_its_source() {
             false,
         ),
         (
-            EditError::Unsupported {
+            EditError::UnsupportedClass {
                 class: ModelClass::Milp,
                 supported: ModelClasses::of(&[ModelClass::Lp]),
             },
@@ -647,7 +647,7 @@ fn test_the_default_edit_reloads_the_whole_program() {
 fn test_an_lp_backend_refuses_an_integer_column_before_it_sees_the_edit() {
     let (program, _, y, ..) = base();
     let mut solver = Solver::new(Plain::<false>::default(), program.clone()).unwrap();
-    let milp = EditError::Unsupported {
+    let milp = EditError::UnsupportedClass {
         class: ModelClass::Milp,
         supported: ModelClasses::of(&[ModelClass::Lp]),
     };

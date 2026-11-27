@@ -382,9 +382,9 @@ fn test_a_refused_column_names_its_fault_and_takes_no_id() {
         adds.results,
         [
             Err(ActionError::UnknownRow { row: Row::new(m) }),
-            Err(ActionError::NotFinite { col }),
-            Err(ActionError::NotFiniteEntry { row: r0, col }),
-            Err(ActionError::NotFiniteEntry { row: r0, col }),
+            Err(ActionError::NonFinite { col }),
+            Err(ActionError::NonFiniteEntry { row: r0, col }),
+            Err(ActionError::NonFiniteEntry { row: r0, col }),
             Err(ActionError::ExcludesZero {
                 col,
                 bounds: bounds!(1.0, 2.0)
@@ -475,7 +475,7 @@ fn test_an_event_after_pricing_counts_the_priced_columns() {
     assert_eq!(pricer.0, [Col::new(n)]);
     assert_eq!(
         lazy.results,
-        [Ok(()), Err(ActionError::UnknownColumn { col: Col::new(n + 1) })]
+        [Ok(()), Err(ActionError::UnknownCol { col: Col::new(n + 1) })]
     );
 }
 
@@ -615,7 +615,7 @@ fn test_a_bound_and_an_early_stop_are_recorded_and_farkas_takes_neither() {
         "{:?}",
         bounding.0
     );
-    assert!(matches!(bounding.0[2], Err(ActionError::NotFiniteBound { bound }) if bound.is_nan()));
+    assert!(matches!(bounding.0[2], Err(ActionError::NonFiniteBound { bound }) if bound.is_nan()));
     assert_eq!(bounding.0[3..], [Ok(()), Ok(())]);
     let rounds = &solver.backend().record.priced;
     assert_eq!(rounds.len(), 2);
@@ -802,7 +802,7 @@ fn test_the_new_action_errors_name_their_fault() {
             "callback action: Row(2) is not a row of the program",
         ),
         (
-            ActionError::NotFiniteEntry { row, col },
+            ActionError::NonFiniteEntry { row, col },
             "callback action: the coefficient of Col(4) in Row(2) is not finite",
         ),
         (
@@ -820,7 +820,7 @@ fn test_the_new_action_errors_name_their_fault() {
             "callback action: the priced column Col(4) is SemiInteger, which pricing or the backend does not allow",
         ),
         (
-            ActionError::NotFiniteBound { bound: f64::INFINITY },
+            ActionError::NonFiniteBound { bound: f64::INFINITY },
             "callback action: the bound inf is not finite",
         ),
     ];

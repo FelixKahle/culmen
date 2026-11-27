@@ -192,7 +192,7 @@ impl LazyHandler<Script> for Everything<'_> {
         ctx.add_lazy(x.leq(0.0)).unwrap();
         assert_eq!(
             ctx.add_lazy(Col::new(5).leq(0.0)),
-            Err(ActionError::UnknownColumn { col: Col::new(5) })
+            Err(ActionError::UnknownCol { col: Col::new(5) })
         );
         self.push(format!("lazy {}", ctx.objective()));
     }
@@ -216,7 +216,7 @@ impl HeuristicHandler<Script> for Everything<'_> {
         assert_eq!(ctx.supply(&short), Err(ActionError::Length { expected: 2, found: 1 }));
         assert_eq!(
             ctx.supply_partial(&[(Col::new(0), f64::NAN)]),
-            Err(ActionError::NotFinite { col: Col::new(0) })
+            Err(ActionError::NonFinite { col: Col::new(0) })
         );
         self.push("heuristic".to_owned());
     }
@@ -434,7 +434,7 @@ fn test_an_action_error_on_invalid_bounds_names_them_as_its_source() {
         Some(InvalidBounds::NotANumber.to_string())
     );
     assert!(ActionError::Refused("no".to_owned()).source().is_none());
-    assert!(ActionError::NotFinite { col: Col::new(0) }.source().is_none());
+    assert!(ActionError::NonFinite { col: Col::new(0) }.source().is_none());
 }
 
 #[test]
@@ -622,7 +622,7 @@ fn test_a_callbacks_row_is_checked_with_its_coefficients_added_up() {
     let twice = (1e308 * x + 1e308 * x).leq(1.0);
     assert_eq!(
         culmen_core::context::check_constraint(&twice, 1),
-        Err(ActionError::NotFinite { col: x })
+        Err(ActionError::NonFinite { col: x })
     );
     // Terms that cancel are fine: the row is `0 x <= 1`.
     let cancel = (1e308 * x - 1e308 * x).leq(1.0);

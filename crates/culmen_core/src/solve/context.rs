@@ -146,9 +146,9 @@ pub trait PriceContext: Context {
     ///
     /// # Errors
     ///
-    /// [`ActionError::NotFinite`] for a cost that is NaN or infinite, [`ActionError::Integrality`] for a semi column
+    /// [`ActionError::NonFinite`] for a cost that is NaN or infinite, [`ActionError::Integrality`] for a semi column
     /// or an integrality the backend's classes do not allow beside the program's, [`ActionError::ExcludesZero`] for
-    /// bounds that do not hold zero, [`ActionError::UnknownRow`] or [`ActionError::NotFiniteEntry`] for an entry at
+    /// bounds that do not hold zero, [`ActionError::UnknownRow`] or [`ActionError::NonFiniteEntry`] for an entry at
     /// fault; [`ActionError::Refused`] when the solver refuses it.
     fn add_col(&mut self, column: NewCol) -> Result<Col, ActionError>;
     /// Ends pricing at this node after this round and has the solver branch; the node LP's value is then no bound
@@ -165,7 +165,7 @@ pub trait PriceContext: Context {
     ///
     /// # Errors
     ///
-    /// [`ActionError::NotFiniteBound`] for a NaN or infinite bound; [`ActionError::Refused`] in
+    /// [`ActionError::NonFiniteBound`] for a NaN or infinite bound; [`ActionError::Refused`] in
     /// [`PriceMode::Farkas`], or when the solver refuses it.
     fn report_bound(&mut self, bound: f64) -> Result<(), ActionError>;
 
@@ -253,12 +253,12 @@ pub enum ActionError {
         found: usize,
     },
     /// An entry names a column the problem does not have.
-    UnknownColumn {
+    UnknownCol {
         /// The column named.
         col: Col,
     },
     /// A value or coefficient is NaN or infinite.
-    NotFinite {
+    NonFinite {
         /// The column it belongs to.
         col: Col,
     },
@@ -270,7 +270,7 @@ pub enum ActionError {
         row: Row,
     },
     /// A coefficient of a new column is NaN or infinite, as given or once its repeated entries were added up.
-    NotFiniteEntry {
+    NonFiniteEntry {
         /// The row of the coefficient.
         row: Row,
         /// The new column.
@@ -291,7 +291,7 @@ pub enum ActionError {
         integrality: Integrality,
     },
     /// A reported bound is NaN or infinite.
-    NotFiniteBound {
+    NonFiniteBound {
         /// The bound reported.
         bound: f64,
     },
@@ -305,11 +305,11 @@ impl fmt::Display for ActionError {
             Self::Length { expected, found } => {
                 write!(f, "callback action: {found} values given for {expected} columns")
             }
-            Self::UnknownColumn { col } => write!(f, "callback action: {col:?} is not a column of the problem"),
-            Self::NotFinite { col } => write!(f, "callback action: the number for {col:?} is not finite"),
+            Self::UnknownCol { col } => write!(f, "callback action: {col:?} is not a column of the problem"),
+            Self::NonFinite { col } => write!(f, "callback action: the number for {col:?} is not finite"),
             Self::Bounds(error) => write!(f, "callback action: {error}"),
             Self::UnknownRow { row } => write!(f, "callback action: {row:?} is not a row of the program"),
-            Self::NotFiniteEntry { row, col } => {
+            Self::NonFiniteEntry { row, col } => {
                 write!(
                     f,
                     "callback action: the coefficient of {col:?} in {row:?} is not finite"
@@ -324,7 +324,7 @@ impl fmt::Display for ActionError {
                 "callback action: the priced column {col:?} is {integrality:?}, which pricing or the backend does not \
                  allow"
             ),
-            Self::NotFiniteBound { bound } => write!(f, "callback action: the bound {bound} is not finite"),
+            Self::NonFiniteBound { bound } => write!(f, "callback action: the bound {bound} is not finite"),
             Self::Refused(reason) => write!(f, "callback action: the solver refused it: {reason}"),
         }
     }
@@ -336,13 +336,13 @@ impl core::error::Error for ActionError {
         match self {
             Self::Bounds(error) => Some(error),
             Self::Length { .. }
-            | Self::UnknownColumn { .. }
-            | Self::NotFinite { .. }
+            | Self::UnknownCol { .. }
+            | Self::NonFinite { .. }
             | Self::UnknownRow { .. }
-            | Self::NotFiniteEntry { .. }
+            | Self::NonFiniteEntry { .. }
             | Self::ExcludesZero { .. }
             | Self::Integrality { .. }
-            | Self::NotFiniteBound { .. }
+            | Self::NonFiniteBound { .. }
             | Self::Refused(_) => None,
         }
     }
@@ -354,7 +354,7 @@ impl core::error::Error for ActionError {
 ///
 /// # Errors
 ///
-/// [`ActionError::Length`] or [`ActionError::NotFinite`].
+/// [`ActionError::Length`] or [`ActionError::NonFinite`].
 pub fn check_solution(values: &TiSlice<Col, f64>, num_cols: usize) -> Result<(), ActionError> {
     if values.len() != num_cols {
         return Err(ActionError::Length {
@@ -363,7 +363,7 @@ pub fn check_solution(values: &TiSlice<Col, f64>, num_cols: usize) -> Result<(),
         });
     }
     match values.iter_enumerated().find(|(_, v)| !v.is_finite()) {
-        Some((col, _)) => Err(ActionError::NotFinite { col }),
+        Some((col, _)) => Err(ActionError::NonFinite { col }),
         None => Ok(()),
     }
 }
@@ -372,14 +372,14 @@ pub fn check_solution(values: &TiSlice<Col, f64>, num_cols: usize) -> Result<(),
 ///
 /// # Errors
 ///
-/// [`ActionError::UnknownColumn`] or [`ActionError::NotFinite`].
+/// [`ActionError::UnknownCol`] or [`ActionError::NonFinite`].
 pub fn check_entries(entries: &[(Col, f64)], num_cols: usize) -> Result<(), ActionError> {
     for &(col, value) in entries {
         if col.index() >= num_cols {
-            return Err(ActionError::UnknownColumn { col });
+            return Err(ActionError::UnknownCol { col });
         }
         if !value.is_finite() {
-            return Err(ActionError::NotFinite { col });
+            return Err(ActionError::NonFinite { col });
         }
     }
     Ok(())
@@ -400,12 +400,12 @@ pub struct AddedRow {
 ///
 /// # Errors
 ///
-/// [`ActionError::UnknownColumn`], [`ActionError::NotFinite`] or [`ActionError::Bounds`].
+/// [`ActionError::UnknownCol`], [`ActionError::NonFinite`] or [`ActionError::Bounds`].
 pub fn check_constraint(constraint: &Constraint, num_cols: usize) -> Result<AddedRow, ActionError> {
     let terms = constraint.row_terms();
     match bad_term(&terms, num_cols) {
-        Some(BadTerm::Unknown(col)) => return Err(ActionError::UnknownColumn { col }),
-        Some(BadTerm::NonFinite(col, _)) => return Err(ActionError::NotFinite { col }),
+        Some(BadTerm::Unknown(col)) => return Err(ActionError::UnknownCol { col }),
+        Some(BadTerm::NonFinite(col, _)) => return Err(ActionError::NonFinite { col }),
         None => {}
     }
     let bounds = constraint.row_bounds().map_err(ActionError::Bounds)?;

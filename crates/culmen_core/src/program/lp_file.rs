@@ -45,7 +45,7 @@ impl Program {
     ///
     /// # Errors
     ///
-    /// [`LpFileError::Unsupported`] for a program with [`ProgramFeature::MultipleObjectives`]: CPLEX's multi-objective
+    /// [`LpFileError::UnsupportedFeature`] for a program with [`ProgramFeature::MultipleObjectives`]: CPLEX's multi-objective
     /// sections combine tolerances otherwise than [`Tolerance`](super::Tolerance) states, and HiGHS cannot read them.
     pub fn to_lp_string(&self) -> Result<String, LpFileError> {
         let mut out = String::new();
@@ -57,11 +57,11 @@ impl Program {
     ///
     /// # Errors
     ///
-    /// [`LpFileError::Unsupported`] as [`Program::to_lp_string`] states, before anything is written;
+    /// [`LpFileError::UnsupportedFeature`] as [`Program::to_lp_string`] states, before anything is written;
     /// [`LpFileError::Write`] for the writer's error.
     pub fn write_lp(&self, out: &mut impl fmt::Write) -> Result<(), LpFileError> {
         if self.objectives.are_several() {
-            return Err(LpFileError::Unsupported {
+            return Err(LpFileError::UnsupportedFeature {
                 feature: ProgramFeature::MultipleObjectives,
             });
         }
@@ -360,7 +360,7 @@ fn label(name: Option<&str>, prefix: char, index: usize) -> String {
 #[non_exhaustive]
 pub enum LpFileError {
     /// The program uses a feature the LP file format as written here cannot state.
-    Unsupported {
+    UnsupportedFeature {
         /// The feature.
         feature: ProgramFeature,
     },
@@ -377,7 +377,7 @@ impl From<fmt::Error> for LpFileError {
 impl fmt::Display for LpFileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported { feature } => write!(f, "LP file: a program with {feature} cannot be written"),
+            Self::UnsupportedFeature { feature } => write!(f, "LP file: a program with {feature} cannot be written"),
             Self::Write(error) => write!(f, "LP file: the writer failed: {error}"),
         }
     }
@@ -386,7 +386,7 @@ impl fmt::Display for LpFileError {
 impl core::error::Error for LpFileError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::Unsupported { .. } => None,
+            Self::UnsupportedFeature { .. } => None,
             Self::Write(error) => Some(error),
         }
     }

@@ -39,7 +39,7 @@ impl Penalty {
     /// [`InvalidPenalty`] when `value` is not finite or below zero.
     pub const fn new(value: f64) -> Result<Self, InvalidPenalty> {
         if !value.is_finite() {
-            Err(InvalidPenalty::NotFinite)
+            Err(InvalidPenalty::NonFinite)
         } else if value < 0.0 {
             Err(InvalidPenalty::Negative)
         } else {
@@ -64,7 +64,7 @@ impl Penalty {
     pub const fn literal(value: f64) -> Self {
         match Self::new(value) {
             Ok(penalty) => penalty,
-            Err(InvalidPenalty::NotFinite) => panic!("Penalty: not a finite number"),
+            Err(InvalidPenalty::NonFinite) => panic!("Penalty: not a finite number"),
             Err(InvalidPenalty::Negative) => panic!("Penalty: below zero"),
         }
     }
@@ -95,7 +95,7 @@ impl fmt::Display for Penalty {
 #[non_exhaustive]
 pub enum InvalidPenalty {
     /// The number is NaN or infinite.
-    NotFinite,
+    NonFinite,
     /// The number is below zero.
     Negative,
 }
@@ -103,7 +103,7 @@ pub enum InvalidPenalty {
 impl fmt::Display for InvalidPenalty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotFinite => write!(f, "Penalty: not a finite number"),
+            Self::NonFinite => write!(f, "Penalty: not a finite number"),
             Self::Negative => write!(f, "Penalty: below zero"),
         }
     }

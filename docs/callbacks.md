@@ -330,14 +330,14 @@ An action returns `Err(ActionError)` when it is refused:
 | Variant | Why |
 |---|---|
 | `Length { expected, found }` | A full solution holds the wrong number of values. |
-| `UnknownColumn { col }` | An entry names a column the problem does not have. |
-| `NotFinite { col }` | A value or coefficient is NaN or infinite. |
+| `UnknownCol { col }` | An entry names a column the problem does not have. |
+| `NonFinite { col }` | A value or coefficient is NaN or infinite. |
 | `Bounds(InvalidBounds)` | A constraint's bounds are invalid after its constant moved into them; `Error::source` is the `InvalidBounds`. |
 | `UnknownRow { row }` | An entry of a new column names a row the program does not have. |
-| `NotFiniteEntry { row, col }` | A coefficient of a new column is NaN or infinite, as given or once its repeated entries were added up. |
+| `NonFiniteEntry { row, col }` | A coefficient of a new column is NaN or infinite, as given or once its repeated entries were added up. |
 | `ExcludesZero { col, bounds }` | A priced column's bounds do not hold zero. |
 | `Integrality { col, integrality }` | A priced column is semi, or of an integrality the backend's classes do not allow beside the program's. |
-| `NotFiniteBound { bound }` | A reported bound is NaN or infinite. |
+| `NonFiniteBound { bound }` | A reported bound is NaN or infinite. |
 | `Refused(reason)` | The solver refused the action, for the reason given. |
 
 ## Pricing

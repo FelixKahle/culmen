@@ -365,7 +365,7 @@ fn test_the_plan_checks_its_quadratic_terms() {
     plan.quadratic = vec![(x, Col::new(5), 1.0)];
     assert_eq!(
         plan.clone().build(),
-        Err(ProgramError::UnknownQuadColumn { col: Col::new(5) })
+        Err(ProgramError::UnknownQuadCol { col: Col::new(5) })
     );
     plan.quadratic = vec![(x, y, f64::INFINITY)];
     assert_eq!(
@@ -563,7 +563,7 @@ fn test_a_class_outside_the_backend_set_is_refused_before_load() {
     let error = Solver::new(LinearOnly, m.build().unwrap()).unwrap_err();
     assert_eq!(
         error,
-        LoadError::Unsupported {
+        LoadError::UnsupportedClass {
             class: ModelClass::Qp,
             supported: LinearOnly::CLASSES
         }

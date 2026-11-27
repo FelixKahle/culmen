@@ -212,7 +212,7 @@ fn test_what_a_format_loses_is_refused() {
     for format in [ModelFormat::Mps, ModelFormat::Lp] {
         assert_eq!(
             files::write_as(&several, &path.0, format),
-            Err(FileError::Unsupported {
+            Err(FileError::UnsupportedFeature {
                 format,
                 feature: ProgramFeature::MultipleObjectives
             })
@@ -322,7 +322,7 @@ fn test_bounds_in_a_file_that_are_no_interval_are_refused() {
     assert!(
         matches!(
             files::read(&columns.0),
-            Err(FileError::ColumnBounds {
+            Err(FileError::ColBounds {
                 source: culmen_core::InvalidBounds::Empty { .. },
                 ..
             })

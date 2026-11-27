@@ -142,7 +142,7 @@ fn lack<B: Backend>(class: ModelClass, features: ProgramFeatures) -> Result<(), 
 impl<E> From<Lack> for LoadError<E> {
     fn from(lack: Lack) -> Self {
         match lack {
-            Lack::Class { class, supported } => Self::Unsupported { class, supported },
+            Lack::Class { class, supported } => Self::UnsupportedClass { class, supported },
             Lack::Feature { feature, supported } => Self::UnsupportedFeature { feature, supported },
         }
     }
@@ -151,7 +151,7 @@ impl<E> From<Lack> for LoadError<E> {
 impl<E> From<Lack> for EditError<E> {
     fn from(lack: Lack) -> Self {
         match lack {
-            Lack::Class { class, supported } => Self::Unsupported { class, supported },
+            Lack::Class { class, supported } => Self::UnsupportedClass { class, supported },
             Lack::Feature { feature, supported } => Self::UnsupportedFeature { feature, supported },
         }
     }
@@ -162,7 +162,7 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Errors
     ///
-    /// [`LoadError::Unsupported`] when [`Backend::CLASSES`] lacks the program's [`class`](Program::class), else
+    /// [`LoadError::UnsupportedClass`] when [`Backend::CLASSES`] lacks the program's [`class`](Program::class), else
     /// [`LoadError::UnsupportedFeature`] when [`Backend::FEATURES`] lacks one of its [`features`](Program::features),
     /// both before the backend sees it; [`LoadError::Backend`] when the backend refuses the program.
     pub fn new(mut backend: B, program: Program) -> Result<Self, LoadError<B::Error>> {

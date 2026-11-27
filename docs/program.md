@@ -393,7 +393,7 @@ while debugging:
 - Integer and semi-integer columns are listed under `General`, semi-continuous and semi-integer ones under
   `Semi-Continuous`: a column in both is semi-integer, as CPLEX and HiGHS read it. Bounds equal to the format's
   default `0 ..` are not written.
-- A program with further objectives is refused with `LpFileError::Unsupported { feature: MultipleObjectives }`, before
+- A program with further objectives is refused with `LpFileError::UnsupportedFeature { feature: MultipleObjectives }`, before
   anything is written: CPLEX's multi-objective sections combine tolerances otherwise than `Tolerance` does, and
   HiGHS cannot read them. `LpFileError::Write` carries the writer's own error.
 - A quadratic part is written doubled in the format's brackets halved: `x² + 2xy` as `[ 2 x ^ 2 + 2 x * y ] / 2`.
@@ -437,14 +437,14 @@ other check: their types already guarantee them. Otherwise it returns a `Program
 | `NonFiniteOffset { value }` | `Program: the objective offset {value} is not finite` |
 | `NonFiniteCost { col, value }` | `Program: the cost {value} of {col:?} is not finite` |
 | `NonFiniteCoefficient { row, col, value }` | `Program: the coefficient {value} of {col:?} in {row:?} is not finite` |
-| `UnknownColumn { row, col }` | `Program: {row:?} names {col:?}, which the plan does not have` |
-| `UnknownQuadColumn { col }` | `Program: a quadratic term names {col:?}, which the plan does not have` |
+| `UnknownCol { row, col }` | `Program: {row:?} names {col:?}, which the plan does not have` |
+| `UnknownQuadCol { col }` | `Program: a quadratic term names {col:?}, which the plan does not have` |
 | `NonFiniteQuadCoefficient { first, second, value }` | `Program: the quadratic coefficient {value} of {first:?} · {second:?} is not finite` |
 | `NonConvexObjective { sense, col }` | `Program: the quadratic objective is not convex in the block of {col:?}`, or `not concave` to maximize |
 | `SemiBounds { col, bounds }` | `Program: the semi column {col:?} has the bounds {bounds}, not 0 < lower <= upper < +inf` |
 | `NonFiniteObjectiveOffset { objective, value }` | `Program: the offset {value} of {objective:?} is not finite` |
 | `NonFiniteObjectiveCoefficient { objective, col, value }` | `Program: the coefficient {value} of {col:?} in {objective:?} is not finite` |
-| `UnknownObjectiveColumn { objective, col }` | `Program: {objective:?} names {col:?}, which the plan does not have` |
+| `UnknownObjectiveCol { objective, col }` | `Program: {objective:?} names {col:?}, which the plan does not have` |
 | `QuadraticWithObjectives` | `Program: the objective has a quadratic part beside further objectives` |
 
 ```rust
@@ -453,7 +453,7 @@ use culmen::{Col, ProgramColumn, ProgramError, ProgramPlan, Row, bounds};
 let mut plan = ProgramPlan::new();
 let x = plan.col(ProgramColumn::binary(1.0));
 plan.row(bounds!(0.0, 1.0), [(x, 1.0), (Col::new(7), 1.0)]);
-assert_eq!(plan.build(), Err(ProgramError::UnknownColumn { row: Row::new(0), col: Col::new(7) }));
+assert_eq!(plan.build(), Err(ProgramError::UnknownCol { row: Row::new(0), col: Col::new(7) }));
 ```
 
 A model reports the same defects as a [`ModelError`](modelling.md#building-and-modelerror), in the model's own names.

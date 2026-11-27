@@ -69,7 +69,7 @@ fn test_plan_names_the_first_defect() {
     plan.rows[r].terms = vec![(Col::new(7), 1.0)];
     assert_eq!(
         plan.clone().build(),
-        Err(ProgramError::UnknownColumn {
+        Err(ProgramError::UnknownCol {
             row: r,
             col: Col::new(7)
         })

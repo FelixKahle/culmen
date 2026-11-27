@@ -114,7 +114,7 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
   a relaxation's optimum into a wrong answer, does not compile, and a backend gives up a reduction for a handler only
   when one is registered.
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
-  `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the program, the
+  `Solver::new` refuses any other class with a typed `LoadError::UnsupportedClass` before the backend sees the program, the
   same way for every backend. A class is a property of the program, which edits change, so it stays a run-time check.
 - **Capabilities of the backend are traits.** Taking a start and each analysis after a solve are traits a backend
   implements or leaves out (`Starts`, `DualAnalysis`, …), and the `Solver` methods that need one exist only for a

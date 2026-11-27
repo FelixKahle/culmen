@@ -995,7 +995,7 @@ impl HighsHeuristic<'_> {
     ///
     /// # Errors
     ///
-    /// [`ActionError::UnknownColumn`] or [`ActionError::NotFinite`] for an entry at fault;
+    /// [`ActionError::UnknownCol`] or [`ActionError::NonFinite`] for an entry at fault;
     /// [`ActionError::Refused`] for no entry, a column named twice, or a completion HiGHS does not find.
     pub fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
         let num_cols = self.program.num_cols();

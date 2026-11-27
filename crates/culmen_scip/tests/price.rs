@@ -984,7 +984,7 @@ fn test_scip_refuses_a_column_it_cannot_hold_before_it_takes_an_id() {
         "{:?}",
         callback.results
     );
-    assert!(matches!(callback.bound, Some(Err(ActionError::NotFiniteBound { .. }))));
+    assert!(matches!(callback.bound, Some(Err(ActionError::NonFiniteBound { .. }))));
     assert!(
         matches!(&callback.beyond, Some(Err(ActionError::Refused(reason))) if reason.contains("infinite")),
         "{:?}",

@@ -80,7 +80,7 @@ pub trait RelaxationAnalysis: Backend {
   compile.
 - **Model classes are declared.** A backend lists the classes it solves (`ModelClass::Lp`, `Milp`, `Qp`, `Miqp`)
   in `Backend::CLASSES`. `Solver::new` reads it before `load`, for every backend alike, and refuses any other class
-  with `LoadError::Unsupported { class, supported }`, so `load` never re-checks the class. Features beyond the class
+  with `LoadError::UnsupportedClass { class, supported }`, so `load` never re-checks the class. Features beyond the class
   (semi columns, multiple objectives) are declared alike in `Backend::FEATURES` and refused with
   `LoadError::UnsupportedFeature`. Classes and features are properties of a program, which edits change, so they
   stay run-time refusals.
