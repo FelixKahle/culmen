@@ -304,6 +304,9 @@ it runs as a doctest, but for the two marked `ignore`:
 
 The API reference is the rustdoc: `cargo doc --open -p culmen`.
 
+What changed in each release, and how code written for the one before moves over, is in the
+[changelog](https://github.com/FelixKahle/culmen/blob/main/CHANGELOG.md).
+
 ## Examples
 
 ```text
