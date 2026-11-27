@@ -451,7 +451,38 @@ A name is optional on every variable and constraint. It appears in [`ModelError`
 messages, in solver logs, and in [LP files](program.md#lp-files); an unnamed variable is shown by its column, `Col(3)`,
 and an unnamed constraint by its row. `m.var_name(col)` and `m.constraint_name(row)` read a name back, `None` when
 there is none or the model has no such handle; `program.columns()[col].name` and `program.row(row).name()` read it from
-the built program. Names need not be unique.
+the built program, and `program.col_named(name)` and `program.row_named(name)` find the first column or row of a
+name. Names need not be unique.
+
+## Coming from gurobipy
+
+Each everyday gurobipy move has one culmen call; the handles the model returns read and edit everything after.
+
+| gurobipy | culmen |
+|---|---|
+| `m.addVar(lb=0, ub=4, vtype=GRB.INTEGER, name="n")` | `m.add_var(Var::integer().upper(4).name("n"))` |
+| `m.addVars(I, J, vtype=GRB.BINARY, name="x")` | `m.add_var_map(product(&I, &J), \|(i, j)\| Var::binary().name(..))`, or `variable!(m, x[i in I, j in J], Bin)` |
+| `m.addConstr(x + y <= 4, name="cap")` | `m.add_constraint(("cap", (x + y).leq(4)))`, or `constraint!(m, cap, x + y <= 4)` |
+| `m.addConstrs((.. for i in I), name="c")` | `m.add_constraint_map(I, \|&i\| (format!("c[{i}]"), ..))`, or `constraint!(m, c[i in I], ..)` |
+| `quicksum(..)`, `x.sum("*", j)` | `LinExpr::sum(..)`, `sum!(x[i, j] for i in I)` |
+| `m.setObjective(e, GRB.MAXIMIZE)` | `m.maximize(e)`, `m.set_objective(Sense::Maximize, e)` |
+| `m.setObjectiveN(e, index, priority, weight, abstol, reltol)` | `m.add_stage(Objective::minimize(e), tolerance)` or `m.add_weighted(Objective::minimize(e), weight)` |
+| `m.optimize()` | `let mut solver = Solver::new(Highs::new(), m.build()?)?; let solved = solver.solve()?;` |
+| `m.Params.TimeLimit = 10` | `solver.run().time_limit(Duration::from_secs(10)).solve()?` |
+| `m.status`, `x.X`, `m.ObjVal`, `m.ObjBound` | `solved.outcome`, `solution.values[x]`, `outcome.objective()`, `outcome.bound()` |
+| `m.Runtime`, `m.NodeCount`, `m.IterCount` | `solved.elapsed`, `solved.nodes`, `solved.iterations` |
+| `c.Pi`, `x.RC` | `solver.duals()?.rows[c]`, `.cols[x]` |
+| `m.getVarByName("x")`, `m.getConstrByName("cap")` | `program.col_named("x")`, `program.row_named("cap")` |
+| `m.getRow(c)`, `m.getCol(x)`, `m.getCoeff(c, x)` | `program.row(c)`, `program.col_entries(x)`, `program.coefficient(c, x)` |
+| `x.LB = 1`, `x.Obj = 3`, `m.ModelSense = GRB.MAXIMIZE` (then re-solve) | `solver.set_col_bounds([(x, ..)])`, `solver.set_col_costs([(x, 3)])`, `solver.set_sense(Sense::Maximize)` |
+| `m.write("model.lp")` | `program.write_lp(File::create("model.lp")?)` |
+| `x.Start = 1` | `solver.run().start(vec![(x, 1.0)])` |
+| `m.cbLazy`, `m.cbCut`, `m.cbSetSolution` | a `LazyHandler`, `CutHandler` or `HeuristicHandler` on `solver.run()` ([Callbacks](callbacks.md)) |
+| `m.computeIIS()`, `m.feasRelax(..)` | `solver.iis()`, `solver.feasibility_relaxation(&weights)` ([Analysis](analysis.md)) |
+
+Comparisons are methods (`leq`, `geq`, `equals`, `between`) or the `constraint!` macro, since Rust's `<=` returns a
+`bool`. Indicator, SOS, piecewise-linear and other general constraints, a solution pool and parameter tuning have
+no culmen form yet.
 
 ## Building and `ModelError`
 
