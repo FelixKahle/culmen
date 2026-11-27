@@ -334,17 +334,63 @@ fn test_the_lp_file_lists_semi_columns_and_refuses_several_objectives() {
          General\n y\nSemi-Continuous\n x\n y\nEnd\n"
     );
     let several = two_stage().0.build().unwrap();
-    let refused = LpFileError::UnsupportedFeature {
-        feature: ProgramFeature::MultipleObjectives,
+    let refused = |result: Result<_, LpFileError>| {
+        matches!(
+            result,
+            Err(LpFileError::UnsupportedFeature {
+                feature: ProgramFeature::MultipleObjectives
+            })
+        )
     };
-    assert_eq!(several.to_lp_string(), Err(refused));
-    let mut out = String::new();
-    assert_eq!(several.write_lp(&mut out), Err(refused));
-    assert_eq!(out, "", "nothing is written");
+    assert!(refused(several.to_lp_string().map(drop)));
+    let mut out = Vec::new();
+    assert!(refused(several.write_lp(&mut out)));
+    assert_eq!(out, b"", "nothing is written");
     assert_eq!(
-        refused.to_string(),
+        several.write_lp(&mut out).unwrap_err().to_string(),
         "LP file: a program with multiple objectives cannot be written"
     );
+}
+
+/// A writer that takes `room` bytes and fails after.
+struct Full {
+    room: usize,
+    taken: Vec<u8>,
+}
+
+impl std::io::Write for Full {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.room == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::StorageFull, "full"));
+        }
+        let n = bytes.len().min(self.room);
+        self.room -= n;
+        self.taken.extend_from_slice(&bytes[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn test_an_lp_file_is_written_to_an_io_writer_whose_error_it_reports() {
+    let program = semi().0.build().unwrap();
+    let text = program.to_lp_string().unwrap();
+    let mut file = Vec::new();
+    program.write_lp(&mut file).unwrap();
+    assert_eq!(String::from_utf8(file).unwrap(), text);
+
+    let mut full = Full {
+        room: 10,
+        taken: Vec::new(),
+    };
+    let Err(LpFileError::Write(error)) = program.write_lp(&mut full) else {
+        panic!("a full writer fails the write")
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+    assert_eq!(full.taken, text.as_bytes()[..10]);
 }
 
 #[test]

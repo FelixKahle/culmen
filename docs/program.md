@@ -380,8 +380,8 @@ fn main() -> Result<(), culmen::ModelError> {
 ## LP files
 
 `program.to_lp_string()` writes the program in the CPLEX LP file format, a `Result<String, LpFileError>`, and
-`program.write_lp(&mut out)` writes it into any `fmt::Write`. The output is for reading by eye or by another solver
-while debugging:
+`program.write_lp(out)` writes it to any `io::Write`, such as `File::create("model.lp")?` or a `&mut Vec<u8>`,
+through a buffer it flushes. The output is for reading by eye or by another solver while debugging:
 
 - Names are reduced to the characters the format allows, and a name that is one of the format's keywords (`max`,
   `sos`, `end`, …, in any case) is prefixed `_`. An unnamed column is written `x<index>` and an unnamed row
@@ -395,7 +395,7 @@ while debugging:
   default `0 ..` are not written.
 - A program with further objectives is refused with `LpFileError::UnsupportedFeature { feature: MultipleObjectives }`, before
   anything is written: CPLEX's multi-objective sections combine tolerances otherwise than `Tolerance` does, and
-  HiGHS cannot read them. `LpFileError::Write` carries the writer's own error.
+  HiGHS cannot read them. `LpFileError::Write` carries the writer's own `io::Error`.
 - A quadratic part is written doubled in the format's brackets halved: `x² + 2xy` as `[ 2 x ^ 2 + 2 x * y ] / 2`.
   HiGHS reads it back as the same objective.
 

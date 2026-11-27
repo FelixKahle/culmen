@@ -6,6 +6,7 @@
 use core::fmt;
 
 use std::collections::HashSet;
+use std::io;
 
 use typed_index_collections::TiVec;
 
@@ -48,23 +49,76 @@ impl Program {
     /// [`LpFileError::UnsupportedFeature`] for a program with [`ProgramFeature::MultipleObjectives`]: CPLEX's multi-objective
     /// sections combine tolerances otherwise than [`Tolerance`](super::Tolerance) states, and HiGHS cannot read them.
     pub fn to_lp_string(&self) -> Result<String, LpFileError> {
+        self.writable()?;
         let mut out = String::new();
-        self.write_lp(&mut out)?;
+        self.write_text(&mut out)
+            .map_err(|error| LpFileError::Write(io::Error::other(error)))?;
         Ok(out)
     }
 
-    /// Writes the program in the CPLEX LP file format, as [`Program::to_lp_string`] describes.
+    /// Writes the program in the CPLEX LP file format to `out`, as [`Program::to_lp_string`] describes: a file, a
+    /// socket, a `Vec<u8>`, or `&mut` any of them. The text goes through a buffer, which is flushed before it returns.
+    ///
+    /// ```
+    /// use culmen_core::{ProgramColumn, ProgramPlan, bounds};
+    ///
+    /// let mut plan = ProgramPlan::new();
+    /// let x = plan.col(ProgramColumn::binary().cost(3));
+    /// plan.row((bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]));
+    /// let mut out = Vec::new();
+    /// plan.build()?.write_lp(&mut out)?;
+    /// assert!(out.starts_with(b"Minimize\n obj: 3 x0\n"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///
     /// [`LpFileError::UnsupportedFeature`] as [`Program::to_lp_string`] states, before anything is written;
-    /// [`LpFileError::Write`] for the writer's error.
-    pub fn write_lp(&self, out: &mut impl fmt::Write) -> Result<(), LpFileError> {
+    /// [`LpFileError::Write`] for the writer's error, after which `out` may hold part of the file.
+    pub fn write_lp(&self, mut out: impl io::Write) -> Result<(), LpFileError> {
+        self.write_lp_to(&mut out)
+    }
+
+    /// [`Program::write_lp`] to a writer named once.
+    ///
+    /// # Errors
+    ///
+    /// As [`Program::write_lp`].
+    fn write_lp_to(&self, out: &mut dyn io::Write) -> Result<(), LpFileError> {
+        self.writable()?;
+        let mut text = IoText {
+            out: io::BufWriter::new(out),
+            error: None,
+        };
+        // A write fails only when the writer did, whose error the adapter kept.
+        let written = self
+            .write_text(&mut text)
+            .map_err(|error| text.error.take().unwrap_or_else(|| io::Error::other(error)));
+        written
+            .and_then(|()| io::Write::flush(&mut text.out))
+            .map_err(LpFileError::Write)
+    }
+
+    /// Checks that the format as written here can state the program.
+    ///
+    /// # Errors
+    ///
+    /// [`LpFileError::UnsupportedFeature`] for a program with [`ProgramFeature::MultipleObjectives`].
+    fn writable(&self) -> Result<(), LpFileError> {
         if self.objectives.are_several() {
             return Err(LpFileError::UnsupportedFeature {
                 feature: ProgramFeature::MultipleObjectives,
             });
         }
+        Ok(())
+    }
+
+    /// Writes the program, which [`Program::writable`] accepts, as text.
+    ///
+    /// # Errors
+    ///
+    /// The writer's error.
+    fn write_text(&self, out: &mut impl fmt::Write) -> fmt::Result {
         let labels = Labels::of(self);
         self.write_objective(out, &labels)?;
         out.write_str("Subject To\n")?;
@@ -72,8 +126,7 @@ impl Program {
         self.write_bounds(out, &labels)?;
         self.write_section(out, &labels, "General", Integrality::is_integral)?;
         self.write_section(out, &labels, "Semi-Continuous", Integrality::is_semi)?;
-        out.write_str("End\n")?;
-        Ok(())
+        out.write_str("End\n")
     }
 
     /// Writes a section listing the columns whose integrality `listed` picks, unless it lists none.
@@ -355,8 +408,23 @@ fn label(name: Option<&str>, prefix: char, index: usize) -> String {
     out
 }
 
-/// Why [`Program::write_lp`] wrote no LP file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Text written to an [`io::Write`], keeping the writer's error, which [`fmt::Error`] cannot carry.
+struct IoText<W: io::Write> {
+    out: W,
+    error: Option<io::Error>,
+}
+
+impl<W: io::Write> fmt::Write for IoText<W> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        self.out.write_all(text.as_bytes()).map_err(|error| {
+            self.error = Some(error);
+            fmt::Error
+        })
+    }
+}
+
+/// Why [`Program::write_lp`] or [`Program::to_lp_string`] wrote no LP file.
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum LpFileError {
     /// The program uses a feature the LP file format as written here cannot state.
@@ -365,13 +433,7 @@ pub enum LpFileError {
         feature: ProgramFeature,
     },
     /// The writer failed.
-    Write(fmt::Error),
-}
-
-impl From<fmt::Error> for LpFileError {
-    fn from(error: fmt::Error) -> Self {
-        Self::Write(error)
-    }
+    Write(io::Error),
 }
 
 impl fmt::Display for LpFileError {
