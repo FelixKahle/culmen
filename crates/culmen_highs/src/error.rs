@@ -33,12 +33,14 @@ pub enum HighsError {
         /// The value refused.
         value: OptionValue,
     },
-    /// An exact integer setting, such as a seed or a thread count, exceeds HiGHS's largest integer, `i32::MAX`.
+    /// An exact integer setting, such as a seed or a thread count, exceeds HiGHS's largest integer.
     OutOfRange {
         /// HiGHS's name of the option.
         name: &'static str,
         /// The value given.
         value: u64,
+        /// The largest value the option takes, HiGHS's largest integer, `i32::MAX`.
+        max: u64,
     },
     /// An option name holds a NUL byte, which HiGHS's C strings cannot carry.
     OptionName {
@@ -132,8 +134,8 @@ impl fmt::Display for HighsError {
             Self::TooLarge { what, count } => write!(f, "HiGHS: {count} {what} exceed HiGHS's 32-bit indices"),
             Self::Load => write!(f, "HiGHS: the program was refused"),
             Self::Option { name, value } => write!(f, "HiGHS: option `{name}` refused the value {value}"),
-            Self::OutOfRange { name, value } => {
-                write!(f, "HiGHS: option `{name}` takes at most {}, not {value}", i32::MAX)
+            Self::OutOfRange { name, value, max } => {
+                write!(f, "HiGHS: option `{name}` takes at most {max}, not {value}")
             }
             Self::OptionName { name } => write!(f, "HiGHS: option name {name:?} holds a NUL byte"),
             Self::OptionString { name } => write!(f, "HiGHS: the value of option `{name}` holds a NUL byte"),

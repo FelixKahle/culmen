@@ -78,8 +78,8 @@ use culmen_core::{
 };
 pub use error::{Dimension, HighsError, UnsoundQp};
 pub use options::{
-    EdgeWeight, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OptionValue, PresolveMode, RawOption, ScaleStrategy,
-    SimplexStrategy, Switch,
+    EdgeWeight, HighsOption, HighsOptions, LpSolver, MipIpmSolver, MipLpSolver, OptionValue, PresolveMode,
+    ScaleStrategy, SimplexStrategy, Switch,
 };
 pub use status::{CallStatus, HighsStatus, ModelStatus, SolutionStatus};
 
@@ -540,7 +540,7 @@ fn configure(instance: &mut Instance, options: &HighsOptions, settings: &Setting
     for (name, value) in typed {
         instance.set_option(name, &value)?;
     }
-    for RawOption { name, value } in &options.raw {
+    for HighsOption { name, value } in &options.options {
         instance.set_option(name, value)?;
     }
     for (name, value) in settings {
@@ -934,14 +934,16 @@ mod tests {
             with(largest + 1, 1),
             Err(HighsError::OutOfRange {
                 name: "random_seed",
-                value: 2_147_483_648
+                value: 2_147_483_648,
+                max: 2_147_483_647,
             })
         );
         assert_eq!(
             with(1, usize::MAX),
             Err(HighsError::OutOfRange {
                 name: "threads",
-                value: u64::MAX
+                value: u64::MAX,
+                max: 2_147_483_647,
             })
         );
     }

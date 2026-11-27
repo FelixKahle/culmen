@@ -130,7 +130,11 @@ pub(crate) fn limit(value: u64) -> OptionValue {
 pub(crate) fn exact(name: &'static str, value: u64) -> Result<OptionValue, HighsError> {
     i32::try_from(value)
         .map(OptionValue::Int)
-        .map_err(|_| HighsError::OutOfRange { name, value })
+        .map_err(|_| HighsError::OutOfRange {
+            name,
+            value,
+            max: i32::MAX.unsigned_abs().into(),
+        })
 }
 
 /// Off, on, or HiGHS's choice: `presolve`, `parallel`, `run_crossover`.
@@ -411,15 +415,15 @@ macro_rules! options {
         ///     ..HighsOptions::default()
         /// }
         /// .option("mip_pool_soft_limit", 5000);
-        /// assert_eq!(options.raw[0].name, "mip_pool_soft_limit");
-        /// assert_eq!(options.raw[0].value, OptionValue::Int(5000));
+        /// assert_eq!(options.options[0].name, "mip_pool_soft_limit");
+        /// assert_eq!(options.options[0].value, OptionValue::Int(5000));
         /// ```
         #[derive(Clone, Debug, PartialEq)]
         #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
         pub struct HighsOptions {
             $($(#[$doc])* #[doc = concat!("\n\nHiGHS's `", $name, "`.")] pub $field: Option<$ty>,)*
             /// Further options by HiGHS's name, set in order after the typed ones.
-            pub raw: Vec<RawOption>,
+            pub options: Vec<HighsOption>,
             /// The largest relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`, at which a QP optimum
             /// HiGHS reports is taken as optimal; above it the solve fails with
             /// [`HighsError::UnsoundQp`](crate::HighsError::UnsoundQp). The backend's own threshold, not a HiGHS
@@ -437,7 +441,7 @@ macro_rules! options {
             fn default() -> Self {
                 Self {
                     $($field: None,)*
-                    raw: Vec::new(),
+                    options: Vec::new(),
                     qp_objective_error: relative_gap!(1e-5),
                 }
             }
@@ -604,7 +608,7 @@ impl HighsOptions {
     /// Adds an option by HiGHS's name, set after the typed ones and every earlier one.
     #[must_use]
     pub fn option(mut self, name: impl Into<String>, value: impl Into<OptionValue>) -> Self {
-        self.raw.push(RawOption {
+        self.options.push(HighsOption {
             name: name.into(),
             value: value.into(),
         });
@@ -615,7 +619,7 @@ impl HighsOptions {
 /// An option set by HiGHS's name, beside the typed fields of [`HighsOptions`].
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct RawOption {
+pub struct HighsOption {
     /// HiGHS's name of the option.
     pub name: String,
     /// The value set.
@@ -655,14 +659,16 @@ mod tests {
             with(u32::MAX, 2),
             Err(HighsError::OutOfRange {
                 name: "simplex_max_concurrency",
-                value: 4_294_967_295
+                value: 4_294_967_295,
+                max: 2_147_483_647,
             })
         );
         assert_eq!(
             with(7, 2_147_483_648),
             Err(HighsError::OutOfRange {
                 name: "mip_lp_age_limit",
-                value: 2_147_483_648
+                value: 2_147_483_648,
+                max: 2_147_483_647,
             })
         );
     }
@@ -805,7 +811,7 @@ mod tests {
             if value <= HIGHS_LARGEST {
                 prop_assert_eq!(kept, Ok(OptionValue::Int(i32::try_from(value).unwrap())));
             } else {
-                prop_assert_eq!(kept, Err(HighsError::OutOfRange { name: "random_seed", value }));
+                prop_assert_eq!(kept, Err(HighsError::OutOfRange { name: "random_seed", value, max: HIGHS_LARGEST }));
             }
         }
 

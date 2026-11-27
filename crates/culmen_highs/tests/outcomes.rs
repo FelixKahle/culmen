@@ -13,7 +13,7 @@ use culmen_core::{
     threads,
 };
 use culmen_highs::{
-    CallStatus, Dimension, Highs, HighsError, HighsOptions, ModelStatus, OptionValue, RawOption, SimplexStrategy,
+    CallStatus, Dimension, Highs, HighsError, HighsOption, HighsOptions, ModelStatus, OptionValue, SimplexStrategy,
     SolutionStatus, Version,
 };
 
@@ -137,7 +137,7 @@ fn test_options_are_applied_and_refused_by_name() {
     let mut solver = Solver::new(Highs::with_options(options), program.clone()).unwrap();
     assert!(matches!(solver.solve().unwrap().outcome, Outcome::Optimal(_)));
 
-    solver.options_mut().raw.push(RawOption {
+    solver.options_mut().options.push(HighsOption {
         name: "no_such_option".to_owned(),
         value: OptionValue::Int(1),
     });
@@ -276,6 +276,7 @@ fn test_a_seed_beyond_highs_integers_is_refused() {
     let refused = HighsError::OutOfRange {
         name: "random_seed",
         value: 4_294_967_295,
+        max: 2_147_483_647,
     };
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let solved = solver.run().settings(settings).solve();
@@ -296,6 +297,7 @@ fn test_a_seed_beyond_highs_integers_is_refused() {
     let refused = HighsError::OutOfRange {
         name: "simplex_max_concurrency",
         value: 4_294_967_295,
+        max: 2_147_483_647,
     };
     assert_eq!(solved.unwrap_err(), SolveError::Backend(refused));
 }
@@ -316,7 +318,7 @@ fn test_options_and_statuses_round_trip() {
     .option("mip_pool_soft_limit", 100)
     .option("log_file", "highs.log");
     round_trip(&options);
-    round_trip(&options.raw[1]);
+    round_trip(&options.options[1]);
     let mut solver = Solver::new(Highs::new(), infeasible(true).build().unwrap()).unwrap();
     let solved = solver.solve().unwrap();
     round_trip(&solved.status);

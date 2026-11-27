@@ -85,7 +85,7 @@ few values is an enum:
 | `EdgeWeight` | `Choose`, `Dantzig`, `Devex`, `SteepestEdge` | `simplex_dual_edge_weight_strategy`, `simplex_primal_edge_weight_strategy` |
 
 **Options by name.** Any other HiGHS option is set by its name with `HighsOptions::option(name, value)`, which
-appends a `RawOption { name, value }` to the `raw` field. The value is an `OptionValue`, one of HiGHS's four kinds
+appends a `HighsOption { name, value }` to the `options` field. The value is an `OptionValue`, one of HiGHS's four kinds
 (`Bool`, `Int`, `Double`, `String`), converted from a `bool`, `i32`, `f64`, `&str` or `String`. HiGHS checks the
 name and the value when the solve applies them; an unknown name or a value of the wrong kind or range is a
 [`HighsError::Option`](#errors). One option is refused for a MIP however it is set: `solve_relaxation`, which has
@@ -99,7 +99,7 @@ use culmen::highs::HighsOptions;
 let options = HighsOptions::default()
     .option("mip_pool_soft_limit", 5000)
     .option("log_file", "highs.log");
-assert_eq!(options.raw.len(), 2);
+assert_eq!(options.options.len(), 2);
 ```
 
 ## How options and settings layer
@@ -395,7 +395,7 @@ from.
 | `Edit { call }` | HiGHS refused an edit of its model; `call` names the C function ([Editing a loaded program](#editing-a-loaded-program)). |
 | `OptionName { name }` | An option name holds a NUL byte, which HiGHS's C strings cannot carry. |
 | `OptionString { name }` | A string option's value holds a NUL byte. |
-| `OutOfRange { name, value }` | An exact integer setting or option (a seed, a thread count, a `u32` field of `HighsOptions`) is above `i32::MAX`, beyond HiGHS's integers. |
+| `OutOfRange { name, value, max }` | An exact integer setting or option (a seed, a thread count, a `u32` field of `HighsOptions`) is above `max`, `i32::MAX`, beyond HiGHS's integers. |
 | `Run { status, message }` | The run failed, as a thread-count conflict makes it; `message` is HiGHS's last error line. |
 | `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `NotANumber`, `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
 | `Analysis(Analysis)` | HiGHS refused or failed an analysis, as a basis it finds singular ([Analysis](analysis.md#highs)). |
