@@ -57,8 +57,10 @@ say what was refused. Code never writes `.unwrap()` to make a literal.
 ## Plain data and sealed values
 
 A type without an invariant is plain data with `pub` fields and no getters: `ProgramPlan`, `ProgramColumn`,
-`Constraint`, `LinExpr`, `Settings`, `Solution`, `Progress`, `HighsOptions`, `HighsStatus`. You build them with struct
-literals and `..Default::default()`, read and change their fields directly, and match on them.
+`NewCol`, `Constraint`, `LinExpr`, `Settings`, `Solution`, `Progress`, `HighsOptions`, `HighsStatus`. You build them
+with struct literals and `..Default::default()`, read and change their fields directly, and match on them. A column is
+also built by chaining from its integrality (`ProgramColumn::integer().cost(1)`, `NewCol::continuous().entry(row,
+2)`), as a `Var` is, since a literal would spell out the defaults its integrality already names.
 
 A type with an invariant keeps its fields private behind a checked constructor: `Bounds`, `Program`, the gaps. Their
 fields cannot be written from outside, not even all at once:
