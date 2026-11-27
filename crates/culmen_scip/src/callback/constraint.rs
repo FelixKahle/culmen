@@ -17,10 +17,6 @@
 //! - `CONSLOCK` locks the columns the declaration involves, as [`Locks`] says, and every column a pricer adds both
 //!   ways as it is created; the unlock undoes exactly those locks.
 //!
-//! `propagate` and `explain` are asked by culmen's propagator, not by this plugin: SCIP resolves a constraint
-//! handler's inference only through a constraint object (`cons.c:7493-7550`), which a handler without constraints
-//! has none of, and a propagator's inference through the propagator alone (`prop.c:739-784`).
-//!
 //! # SCIP's result, derived from what happened
 //!
 //! The handler names no result code; the plugin derives it, first matching row first:
@@ -32,10 +28,8 @@
 //! | a handler enforcing before rejected the point | `FEASIBLE`, without asking: the point is no candidate |
 //! | the handler is busy with an outer call | `INFEASIBLE` |
 //! | `check` accepts | `FEASIBLE` |
-//! | `enforce` cut the node off, plainly or naming the bounds SCIP's conflict analysis is handed first | `CUTOFF` |
-//! | a tightening of `enforce` emptied a domain, as SCIP reports it | `CUTOFF` |
-//! | `enforce` added a constraint not added before that the point violates by SCIP's tolerance (its tightenings are applied too) | `CONSADDED` |
-//! | a tightening of `enforce` moved a bound, as SCIP reports it | `REDUCEDDOM` |
+//! | `enforce` cut the node off | `CUTOFF` |
+//! | `enforce` added a constraint not added before that the point violates by SCIP's tolerance | `CONSADDED` |
 //! | nothing changed, and SCIP can resolve the point: an integer variable is unfixed, the node is pure integer without an active pricer, the node has no LP yet, or the solve is stopping | `INFEASIBLE` |
 //! | nothing changed, and SCIP cannot | the solve fails with [`ScipError::UnresolvedRejection`] |
 //!
@@ -52,22 +46,21 @@ use core::convert::Infallible;
 use core::ffi::{c_int, c_uint};
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
-use std::collections::HashMap;
 
 use culmen_core::{
-    ActionError, AddedRow, Bound, Bounds, CheckContext, Child, Col, Constraint, Context, EnforceContext, Involved,
-    Lock, Locks, NodeAction, NodeActions, NodeContext, PresolveContext, Progress, Reason, TiSlice, Verdict,
+    ActionError, AddedRow, Bound, Bounds, CheckContext, Child, Col, Constraint, Context, EnforceContext,
+    ExplainContext, Inferred, Involved, Lock, Locks, NodeAction, NodeActions, NodeContext, PresolveContext, Progress,
+    PropagateContext, Reason, TiSlice, Verdict,
 };
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_CONSHDLR, SCIP_LOCKTYPE, SCIP_RESULT, SCIP_RETCODE, SCIP_Result_SCIP_CONSADDED,
     SCIP_Result_SCIP_CUTOFF, SCIP_Result_SCIP_DIDNOTRUN, SCIP_Result_SCIP_FEASIBLE, SCIP_Result_SCIP_INFEASIBLE,
-    SCIP_Result_SCIP_REDUCEDDOM, SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_VAR, SCIPconshdlrGetData, SCIPgetFocusNode,
-    SCIPgetNActivePricers, SCIPgetNContVars, SCIPgetNPseudoBranchCands, SCIPgetNRuns, SCIPhasCurrentNodeLP,
-    SCIPincludeConshdlrBasic, SCIPisStopped, SCIPmarkDoNotMultaggrVar, SCIPnodeGetNumber, SCIPsetConshdlrCopy,
-    SCIPsetConshdlrEnforelax,
+    SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_VAR, SCIPcomputeVarLbLocal, SCIPcomputeVarUbLocal, SCIPconshdlrGetData,
+    SCIPgetDepth, SCIPgetFocusNode, SCIPgetNActivePricers, SCIPgetNContVars, SCIPgetNPseudoBranchCands, SCIPgetNRuns,
+    SCIPhasCurrentNodeLP, SCIPincludeConshdlrBasic, SCIPisStopped, SCIPmarkDoNotMultaggrVar, SCIPnodeGetNumber,
+    SCIPsetConshdlrCopy, SCIPsetConshdlrEnforelax,
 };
 
-use super::node::{Node, Settled, admit};
 use super::rows::{add_cons, checked, violates};
 use super::{CandidateSource, Delivered, Run, Slot, slot};
 use crate::columns::Columns;
@@ -91,8 +84,7 @@ pub(crate) struct Setup {
 #[derive(Debug)]
 pub(super) struct Active {
     locks: Locks,
-    /// The columns the handler may write.
-    pub(super) involved: Involved,
+    involved: Involved,
     /// The most enforcement rounds at one node.
     rounds: u64,
     /// The node the handler was last asked to enforce at, as SCIP's run and node number, and how often it was asked
@@ -100,10 +92,6 @@ pub(super) struct Active {
     enforced: Cell<(c_int, i64, u64)>,
     /// Every constraint the handler added to SCIP's problem in this solve, so one added again changes nothing.
     added: RefCell<Vec<AddedRow>>,
-    /// The column of each transformed variable mapped so far, which an explanation maps SCIP's variable back by: the
-    /// program's columns in order, then each priced one, as many as `mapped` counts.
-    vars: RefCell<HashMap<NonNull<SCIP_VAR>, Col>>,
-    mapped: Cell<usize>,
 }
 
 impl Active {
@@ -115,42 +103,7 @@ impl Active {
             rounds: setup.rounds,
             enforced: Cell::new((0, -1, 0)),
             added: RefCell::default(),
-            vars: RefCell::default(),
-            mapped: Cell::new(0),
         }
-    }
-
-    /// The column whose transformed variable is `var`, among the program's columns `cols` and the priced ones
-    /// `priced`; `None` for another variable. SCIP hands an explanation back the variable a tightening named
-    /// (`tree.c:1989`), which is the column's transformed one, and a transformed variable stays the same until SCIP
-    /// frees its problem, after the run.
-    ///
-    /// # Errors
-    ///
-    /// [`ScipError::Call`] when SCIP holds no transformed variable for a column.
-    ///
-    /// # Safety
-    ///
-    /// `scip` is the live instance holding `cols` and `priced`, transformed.
-    pub(super) unsafe fn column_of(
-        &self,
-        scip: *mut SCIP,
-        cols: Columns<'_>,
-        priced: &[NonNull<SCIP_VAR>],
-        var: *mut SCIP_VAR,
-    ) -> Result<Option<Col>, ScipError> {
-        let mut map = self.vars.borrow_mut();
-        let total = cols.len() + priced.len();
-        for k in self.mapped.get()..total {
-            let col = Col::new(k);
-            // SAFETY: the caller's contract; the column is one of the problem's.
-            let transformed = unsafe { cols.transformed(scip, col, priced) }?;
-            if let Some(transformed) = NonNull::new(transformed) {
-                map.insert(transformed, col);
-            }
-        }
-        self.mapped.set(total);
-        Ok(NonNull::new(var).and_then(|var| map.get(&var).copied()))
     }
 }
 
@@ -189,20 +142,25 @@ impl CheckContext for ScipCheck<'_> {
 /// A node's point the constraint handler's `check` rejected, to resolve: the plugin's `CONSENFOLP`, `CONSENFOPS` or
 /// `CONSENFORELAX`.
 ///
-/// SCIP takes the actions once the handler returns: a constraint ([`EnforceContext::add_constraint`]), added to its
-/// problem for the rest of the solve; a tightening ([`NodeContext::tighten`]), at this node and below, and at the root
-/// for the rest of the solve, with a reason through culmen's propagator, which answers SCIP's conflict analysis with
-/// the handler's [`explain`](culmen_core::ConstraintHandler::explain); a cutoff, plain or with the bounds that make the
-/// node infeasible, which SCIP's conflict analysis may learn a conflict from ([`NodeContext::cut_off_because`]).
-/// [`EnforceContext::branch`] is refused with [`ActionError::Refused`], as children of a handler's own are not wired
-/// yet.
+/// SCIP takes the actions once the handler returns. In this release SCIP takes a constraint
+/// ([`EnforceContext::add_constraint`]), added to its problem for the rest of the solve, and a plain cutoff
+/// ([`NodeContext::cut_off`]); [`NodeContext::tighten`], [`NodeContext::cut_off_because`] and
+/// [`EnforceContext::branch`] are refused with [`ActionError::Refused`], as their SCIP facilities (bound changes
+/// through culmen's propagator, conflict analysis, children of the handler's own) are not wired yet.
 #[derive(Debug)]
 pub struct ScipEnforce<'a> {
+    scip: *mut SCIP,
     progress: Progress,
     objective: f64,
     candidate: &'a TiSlice<Col, f64>,
     source: CandidateSource,
-    node: Node<'a>,
+    cols: Columns<'a>,
+    /// The variables of the columns priced so far.
+    priced: &'a [NonNull<SCIP_VAR>],
+    infinity: f64,
+    /// The columns the handler may write.
+    involved: &'a Involved,
+    actions: NodeActions,
 }
 
 impl ScipEnforce<'_> {
@@ -213,11 +171,30 @@ impl ScipEnforce<'_> {
         self.source
     }
 
-    /// The node's depth in SCIP's search tree, zero at the root, where a tightening holds for the rest of the solve.
+    /// The node's depth in SCIP's search tree, zero at the root.
     #[must_use]
     pub fn depth(&self) -> u32 {
-        self.node.depth()
+        // SAFETY: the context lives during an enforcement of the live instance, solving, where SCIP reports the depth.
+        u32::try_from(unsafe { SCIPgetDepth(self.scip) }).unwrap_or(0)
     }
+
+    /// Refuses an action of kind `action` the actions recorded exclude, as [`NodeActions`] would.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Exclusive`].
+    fn admit(&self, action: NodeAction) -> Result<(), ActionError> {
+        match (self.actions.action(), action) {
+            (None, _) | (Some(NodeAction::Reduce), NodeAction::Reduce | NodeAction::CutOff) => Ok(()),
+            (Some(NodeAction::Branch), NodeAction::CutOff) => Ok(()),
+            (Some(after), action) => Err(ActionError::Exclusive { action, after }),
+        }
+    }
+}
+
+/// The refusal of an action whose SCIP facility a later release wires.
+fn not_wired(what: &str) -> ActionError {
+    ActionError::Refused(format!("{what} is not wired to SCIP in this release"))
 }
 
 impl Context for ScipEnforce<'_> {
@@ -239,27 +216,59 @@ impl NodeContext for ScipEnforce<'_> {
     /// The local bounds of the variable SCIP holds for the column at this node; for a column presolve
     /// multi-aggregated, the bounds its aggregation's variables give.
     fn bounds(&self, col: Col) -> Option<Bounds> {
-        self.node.bounds(col)
+        if col.index() >= self.candidate.len() {
+            return None;
+        }
+        // SAFETY: the context lives during an enforcement of the live instance holding the columns, solving.
+        let var = unsafe { self.cols.transformed(self.scip, col, self.priced) }.ok()?;
+        // SAFETY: as above; `var` is a variable of the transformed problem, whose local bounds SCIP computes.
+        let (lower, upper) = unsafe {
+            (
+                SCIPcomputeVarLbLocal(self.scip, var),
+                SCIPcomputeVarUbLocal(self.scip, var),
+            )
+        };
+        let end = |value: f64| {
+            if value.abs() >= self.infinity {
+                value.signum() * f64::INFINITY
+            } else {
+                value
+            }
+        };
+        Bounds::new(end(lower), end(upper)).ok()
     }
 
-    /// SCIP narrows the column once the handler returns, with a reason as an inference of culmen's propagator.
+    /// Refused in this release, after the checks every backend makes: SCIP takes a bound change of a handler through
+    /// culmen's propagator, which is not wired yet.
     ///
     /// # Errors
     ///
-    /// Besides the errors the trait states, [`ActionError::Refused`] for an end SCIP would read as infinite, or a
-    /// column presolve multi-aggregated, whose bounds SCIP cannot change.
+    /// [`ActionError::Exclusive`], [`ActionError::UnknownColumn`] or [`ActionError::NotInvolved`] as the trait
+    /// states; otherwise [`ActionError::Refused`].
     fn tighten(&mut self, col: Col, bounds: Bounds, reason: Option<Reason>) -> Result<(), ActionError> {
-        self.node.tighten(col, bounds, reason)
+        let _ = (bounds, reason);
+        self.admit(NodeAction::Reduce)?;
+        self.involved.check(col, self.candidate.len())?;
+        Err(not_wired("tightening a bound during enforcement"))
     }
 
     fn cut_off(&mut self) {
-        self.node.cut_off();
+        self.actions.cut_off();
     }
 
-    /// SCIP cuts the node off once the handler returns, after handing the named bounds at the node to its conflict
-    /// analysis as valid everywhere in the tree, when SCIP analyses conflicts there (never at the root).
+    /// Refused in this release, after the checks every backend makes: SCIP learns a conflict from the bounds named
+    /// through its conflict analysis, which is not wired yet. A plain [`NodeContext::cut_off`] is taken.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Exclusive`] or [`ActionError::UnknownColumn`] as the trait states; otherwise
+    /// [`ActionError::Refused`].
     fn cut_off_because(&mut self, reasons: &[(Col, Bound)]) -> Result<(), ActionError> {
-        self.node.cut_off_because(reasons)
+        self.admit(NodeAction::CutOff)?;
+        if let Some(&(col, _)) = reasons.iter().find(|(col, _)| col.index() >= self.candidate.len()) {
+            return Err(ActionError::UnknownColumn { col });
+        }
+        Err(not_wired("cutting off with a conflict"))
     }
 }
 
@@ -272,9 +281,9 @@ impl EnforceContext for ScipEnforce<'_> {
     /// Besides the errors the trait states, [`ActionError::Refused`] for a number SCIP would read as infinite, or
     /// more terms than SCIP's `int` counts.
     fn add_constraint(&mut self, constraint: Constraint) -> Result<(), ActionError> {
-        admit(&self.node.actions, NodeAction::Reduce)?;
-        checked(&constraint, self.candidate.len(), self.node.infinity)?;
-        self.node.actions.add_constraint(&constraint)
+        self.admit(NodeAction::Reduce)?;
+        checked(&constraint, self.candidate.len(), self.infinity)?;
+        self.actions.add_constraint(&constraint)
     }
 
     /// Refused in this release, after the checks every backend makes: SCIP takes children of a handler's own, which
@@ -285,10 +294,70 @@ impl EnforceContext for ScipEnforce<'_> {
     /// [`ActionError::Exclusive`] after any other action; otherwise [`ActionError::Refused`].
     fn branch(&mut self, children: Vec<Child>) -> Result<(), ActionError> {
         let _ = children;
-        admit(&self.node.actions, NodeAction::Branch)?;
-        Err(ActionError::Refused(
-            "branching into children of the handler's own is not wired to SCIP in this release".to_owned(),
-        ))
+        self.admit(NodeAction::Branch)?;
+        Err(not_wired("branching into children of the handler's own"))
+    }
+}
+
+/// The context of a node's domain to narrow. SCIP does not call a constraint handler's
+/// [`propagate`](culmen_core::ConstraintHandler::propagate) in this release, as culmen's propagator is not wired yet,
+/// so no value of it exists.
+#[derive(Debug)]
+pub struct ScipPropagate<'a> {
+    never: Infallible,
+    life: PhantomData<&'a ()>,
+}
+
+impl Context for ScipPropagate<'_> {
+    fn progress(&self) -> Progress {
+        match self.never {}
+    }
+}
+
+impl NodeContext for ScipPropagate<'_> {
+    fn bounds(&self, _: Col) -> Option<Bounds> {
+        match self.never {}
+    }
+    fn tighten(&mut self, _: Col, _: Bounds, _: Option<Reason>) -> Result<(), ActionError> {
+        match self.never {}
+    }
+    fn cut_off(&mut self) {
+        match self.never {}
+    }
+    fn cut_off_because(&mut self, _: &[(Col, Bound)]) -> Result<(), ActionError> {
+        match self.never {}
+    }
+}
+
+impl PropagateContext for ScipPropagate<'_> {}
+
+/// The context of an inferred bound to explain. SCIP does not call a constraint handler's
+/// [`explain`](culmen_core::ConstraintHandler::explain) in this release, as no bound is tightened with a reason yet,
+/// so no value of it exists.
+#[derive(Debug)]
+pub struct ScipExplain<'a> {
+    never: Infallible,
+    life: PhantomData<&'a ()>,
+}
+
+impl Context for ScipExplain<'_> {
+    fn progress(&self) -> Progress {
+        match self.never {}
+    }
+}
+
+impl ExplainContext for ScipExplain<'_> {
+    fn inferred(&self) -> Inferred {
+        match self.never {}
+    }
+    fn reason(&self) -> Reason {
+        match self.never {}
+    }
+    fn bounds_before(&self, _: Col) -> Option<Bounds> {
+        match self.never {}
+    }
+    fn because(&mut self, _: Col, _: Bound) -> Result<(), ActionError> {
+        match self.never {}
     }
 }
 
@@ -458,19 +527,22 @@ impl Run<'_, '_> {
         let progress = self.progress(scip);
         let priced = self.priced_vars.borrow();
         let mut ctx = ScipEnforce {
+            scip,
             progress,
             objective,
             candidate,
             source,
-            node: Node::new(scip, self.cols, &priced, self.infinity, &active.involved),
+            cols: self.cols,
+            priced: &priced,
+            infinity: self.infinity,
+            involved: &active.involved,
+            actions: NodeActions::new(&active.involved, candidate.len()),
         };
         let delivered = self.deliver(scip, |hooks| hooks.enforce(&mut ctx));
-        (delivered == Delivered::Ran).then_some(ctx.node.actions)
+        (delivered == Delivered::Ran).then_some(ctx.actions)
     }
 
-    /// Hands SCIP the actions an enforcement recorded and derives SCIP's result from what happened: a cutoff or an
-    /// emptied domain cuts the node off; a new constraint the point violates asks SCIP to solve again; a bound SCIP
-    /// moved reduces the domain; otherwise the point stays rejected.
+    /// Hands SCIP the actions an enforcement recorded and derives SCIP's result from what happened.
     ///
     /// # Errors
     ///
@@ -487,42 +559,9 @@ impl Run<'_, '_> {
         active: &Active,
         actions: &NodeActions,
     ) -> Result<SCIP_RESULT, ScipError> {
-        // SAFETY: the caller's contract; the actions were recorded at this node.
-        let settled = unsafe { self.settle(scip, actions) }?;
-        if settled == Settled::CutOff {
+        if actions.cutoff().is_some() {
             return Ok(SCIP_Result_SCIP_CUTOFF);
         }
-        // SAFETY: as above.
-        if unsafe { self.add_new(scip, values, active, actions) }? {
-            return Ok(SCIP_Result_SCIP_CONSADDED);
-        }
-        if settled == Settled::Reduced {
-            return Ok(SCIP_Result_SCIP_REDUCEDDOM);
-        }
-        // SAFETY: as above.
-        if unsafe { unresolvable(scip) } {
-            return Err(ScipError::UnresolvedRejection);
-        }
-        Ok(SCIP_Result_SCIP_INFEASIBLE)
-    }
-
-    /// Adds to SCIP every constraint the actions record that the handler did not add before in this solve; whether
-    /// one of them is violated by the point `values` by SCIP's tolerance.
-    ///
-    /// # Errors
-    ///
-    /// [`ScipError::Call`] when SCIP refuses a call.
-    ///
-    /// # Safety
-    ///
-    /// As [`Run::apply_actions`].
-    unsafe fn add_new(
-        &self,
-        scip: *mut SCIP,
-        values: &TiSlice<Col, f64>,
-        active: &Active,
-        actions: &NodeActions,
-    ) -> Result<bool, ScipError> {
         let mut violated = false;
         for row in actions.constraints() {
             if active.added.borrow().contains(row) {
@@ -543,7 +582,14 @@ impl Run<'_, '_> {
             active.added.borrow_mut().push(row.clone());
             violated |= violates(scip, row, values);
         }
-        Ok(violated)
+        if violated {
+            return Ok(SCIP_Result_SCIP_CONSADDED);
+        }
+        // SAFETY: as above.
+        if unsafe { unresolvable(scip) } {
+            return Err(ScipError::UnresolvedRejection);
+        }
+        Ok(SCIP_Result_SCIP_INFEASIBLE)
     }
 
     /// Locks what the declaration involves for a transformed problem SCIP creates: every variable both ways for
