@@ -65,8 +65,13 @@ impl Program {
     ///
     /// # Panics
     ///
-    /// When `objective` holds fewer costs than the program has columns.
+    /// When `objective` does not hold one cost per column of the program.
     pub(crate) fn replace_objective(&mut self, objective: OwnObjective) -> OwnObjective {
+        assert_eq!(
+            objective.costs.len(),
+            self.num_cols(),
+            "Program::replace_objective: the objective holds one cost per column"
+        );
         let costs = self
             .columns
             .iter_mut()
@@ -224,5 +229,17 @@ mod tests {
         );
         program.truncate(2, 2);
         assert_eq!(program, before);
+    }
+
+    #[test]
+    #[should_panic(expected = "one cost per column")]
+    fn test_replacing_the_objective_with_too_few_costs_panics() {
+        let mut program = program();
+        program.replace_objective(OwnObjective {
+            sense: Sense::Minimize,
+            costs: TiVec::from(vec![1.0]),
+            offset: 0.0,
+            quadratic: QuadObjective::default(),
+        });
     }
 }
