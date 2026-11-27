@@ -296,7 +296,7 @@ fn main() -> Result<(), culmen::ModelError> {
     let mut m = Model::new();
     let x = m.add_var(Var::semi_continuous().bounds(1, 4));
     m.maximize(x);
-    m.add_objective(Objective::minimize(x));
+    m.add_stage(Objective::minimize(x), Tolerance::EXACT);
     let features = m.build()?.features();
     assert_eq!(features, ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::MultipleObjectives]));
     assert_eq!(features.to_string(), "{semi-continuous columns, multiple objectives}");

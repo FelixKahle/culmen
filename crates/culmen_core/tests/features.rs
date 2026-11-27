@@ -95,15 +95,25 @@ fn test_a_semi_column_needs_bounds_that_exclude_zero() {
     );
 }
 
-/// Maximize `x + y` over `x + y <= 10`, `x <= 6`; then minimize `2y - 1`.
-fn two_stage() -> (Model, Col, Col, ObjectiveId) {
+/// Maximize `x + y` over `x + y <= 10`, `x <= 6`; then minimize `2y - 1`, as a stage or with the weight 2.
+fn two_objectives(blended: bool) -> (Model, Col, Col, ObjectiveId) {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(6).name("x"));
     let y = m.add_var(Var::continuous().upper(10).name("y"));
     m.add_constraint((x + y).leq(10));
     m.maximize(x + y);
-    let second = m.add_objective(Objective::minimize(y + y - 1).weight(weight!(2.0)));
+    let objective = Objective::minimize(y + y - 1);
+    let second = if blended {
+        m.add_weighted(objective, weight!(2.0))
+    } else {
+        m.add_stage(objective, Tolerance::EXACT)
+    };
     (m, x, y, second)
+}
+
+/// [`two_objectives`] lexicographic.
+fn two_stage() -> (Model, Col, Col, ObjectiveId) {
+    two_objectives(false)
 }
 
 #[test]
@@ -138,7 +148,7 @@ fn test_a_model_builds_its_further_objectives_lexicographic_or_blended() {
         TiVec::<ObjectiveId, f64>::from(vec![10.0, 7.0])
     );
 
-    m.set_combination(Combination::Blended);
+    let (mut m, ..) = two_objectives(true);
     m.set_objective_weight(weight!(0.5));
     assert_eq!(
         m.build().unwrap().objectives(),
@@ -236,9 +246,54 @@ fn test_further_objectives_are_checked() {
 }
 
 #[test]
+fn test_a_model_refuses_stages_beside_weighted_objectives_naming_the_first_of_the_other_kind() {
+    let (mut m, x, ..) = two_stage();
+    let weighted = m.add_weighted(Objective::maximize(x), weight!(1.0));
+    let mixed = ModelError::MixedObjectives {
+        objective: weighted,
+        combination: Combination::Lexicographic,
+    };
+    assert_eq!(m.build().unwrap_err(), mixed);
+    assert_eq!(
+        mixed.to_string(),
+        "Model: ObjectiveId(2) is weighted, but the objectives before it are stages of a lexicographic solve"
+    );
+
+    // The model's own objective ranked first decides, so a stage after it is the one at fault.
+    let (mut m, _, _, second) = two_stage();
+    m.set_objective_weight(weight!(2.0));
+    assert_eq!(
+        m.build().unwrap_err(),
+        ModelError::MixedObjectives {
+            objective: second,
+            combination: Combination::Blended,
+        }
+    );
+
+    // A tolerance on the model's own objective after weighted ones is at fault itself only when ranked first, so the
+    // weighted objective that follows it is named.
+    let (mut m, _, _, second) = two_objectives(true);
+    m.set_objective_tolerance(Tolerance::EXACT);
+    assert_eq!(
+        m.build().unwrap_err(),
+        ModelError::MixedObjectives {
+            objective: second,
+            combination: Combination::Lexicographic,
+        }
+    );
+
+    // Without a further objective the own objective's rank is never used, and nothing is mixed.
+    let mut single = Model::new();
+    let z = single.add_var(Var::continuous().upper(1));
+    single.minimize(z);
+    single.set_objective_weight(weight!(3.0));
+    assert_eq!(single.build().unwrap().objectives(), &Objectives::Single);
+}
+
+#[test]
 fn test_a_model_names_the_further_objective_at_fault() {
     let (mut m, x, _, _) = two_stage();
-    let third = m.add_objective(Objective::maximize(f64::NAN * x));
+    let third = m.add_stage(Objective::maximize(f64::NAN * x), Tolerance::EXACT);
     let Err(ModelError::FurtherCoefficient { objective, var, value }) = m.build() else {
         panic!("a NaN coefficient is refused")
     };
@@ -246,7 +301,7 @@ fn test_a_model_names_the_further_objective_at_fault() {
     assert!(value.is_nan());
 
     let (mut m, x, _, _) = two_stage();
-    let third = m.add_objective(Objective::maximize(x + f64::INFINITY));
+    let third = m.add_stage(Objective::maximize(x + f64::INFINITY), Tolerance::EXACT);
     assert_eq!(
         m.build().unwrap_err(),
         ModelError::FurtherConstant {
@@ -256,7 +311,7 @@ fn test_a_model_names_the_further_objective_at_fault() {
     );
 
     let (mut m, _, _, _) = two_stage();
-    let third = m.add_objective(Objective::maximize(Col::new(9)));
+    let third = m.add_stage(Objective::maximize(Col::new(9)), Tolerance::EXACT);
     assert_eq!(
         m.build().unwrap_err(),
         ModelError::UnknownVar {
@@ -602,9 +657,9 @@ mod serde_round_trips {
         round_trip(&Start::Sparse(vec![(Col::new(1), 2.5)]));
         round_trip(&semi().0.build().unwrap());
         round_trip(&ProgramPlan::from(semi().0.build().unwrap()));
-        let (mut m, ..) = two_stage();
+        let (m, ..) = two_stage();
         round_trip(&m.build().unwrap());
-        m.set_combination(Combination::Blended);
+        let (m, ..) = two_objectives(true);
         round_trip(&m.build().unwrap());
         round_trip(&ProgramPlan::from(m.build().unwrap()));
     }

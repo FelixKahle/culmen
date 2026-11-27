@@ -10,9 +10,9 @@
 )]
 
 use culmen_core::{
-    Analysis, AnalysisError, Col, Combination, Improvement, LinExpr, Linear, LoadError, Misfit, Model, ModelClass,
-    Objective, ObjectiveId, Observer, Outcome, Program, ProgramFeature, Solution, SolveError, Solver, Start,
-    StartError, TiSlice, TiVec, Tolerance, Var, Weights, absolute_gap, penalty, relative_gap, weight,
+    Analysis, AnalysisError, Col, Improvement, LinExpr, Linear, LoadError, Misfit, Model, ModelClass, Objective,
+    ObjectiveId, Observer, Outcome, Program, ProgramFeature, Solution, SolveError, Solver, Start, StartError, TiSlice,
+    TiVec, Tolerance, Var, Weights, absolute_gap, penalty, relative_gap, weight,
 };
 use culmen_highs::{Highs, HighsError};
 use culmen_testing::reference::{self, close};
@@ -93,7 +93,7 @@ fn two_stage() -> (Model, Col, Col, ObjectiveId) {
     let y = m.add_var(Var::continuous().upper(10));
     m.add_constraint((x + y).leq(10));
     m.maximize(x + y);
-    let second = m.add_objective(Objective::minimize(y));
+    let second = m.add_stage(Objective::minimize(y), Tolerance::EXACT);
     (m, x, y, second)
 }
 
@@ -143,7 +143,7 @@ fn test_lexicographic_objectives_of_a_mip() {
     let y = m.add_var(Var::integer().upper(5));
     m.add_constraint((x + y).leq(7));
     m.maximize(x + y);
-    m.add_objective(Objective::maximize(x - y));
+    m.add_stage(Objective::maximize(x - y), Tolerance::EXACT);
     let best = optimum(&m.build().unwrap());
     assert_eq!(
         (best.values[x].round(), best.values[y].round(), best.objective),
@@ -156,7 +156,7 @@ fn test_lexicographic_objectives_of_a_mip() {
     let y = m2.add_var(Var::integer().upper(5));
     m2.add_constraint((x + y).leq(7));
     m2.maximize(x + y);
-    m2.add_objective(Objective::minimize(x - y));
+    m2.add_stage(Objective::minimize(x - y), Tolerance::EXACT);
     let best = optimum(&m2.build().unwrap());
     assert_eq!((best.values[x].round(), best.values[y].round()), (2.0, 5.0));
 }
@@ -176,9 +176,8 @@ fn test_blended_objectives_minimize_their_signed_weighted_sum() {
         let y = m.add_var(Var::continuous().upper(10));
         m.add_constraint((x + y).leq(10));
         m.maximize(x + y);
-        m.add_objective(Objective::minimize(y).weight(second));
+        m.add_weighted(Objective::minimize(y), second);
         m.set_objective_weight(first);
-        m.set_combination(Combination::Blended);
         let best = optimum(&m.build().unwrap());
         assert!(
             close(best.values[x], 6.0, 1e-9) && close(best.values[y], expected_y, 1e-9),

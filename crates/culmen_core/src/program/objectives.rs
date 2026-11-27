@@ -17,7 +17,8 @@ use crate::{AbsoluteGap, RelativeGap};
 /// An objective of a [`Program`](super::Program): [`ObjectiveId::FIRST`] is the program's own, and the further
 /// objectives of its [`Objectives`] follow in order from `ObjectiveId::new(1)`.
 ///
-/// A plain `Copy` index like [`Col`]; [`Model::add_objective`](crate::Model::add_objective) hands it out.
+/// A plain `Copy` index like [`Col`]; [`Model::add_stage`](crate::Model::add_stage) and
+/// [`Model::add_weighted`](crate::Model::add_weighted) hand it out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(transparent))]
 pub struct ObjectiveId(usize);

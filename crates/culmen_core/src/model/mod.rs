@@ -19,6 +19,7 @@ pub use expr::{Constraint, LinExpr, Linear, Term};
 pub use keyed::{
     ConstraintMap, Handles, IndexSet, Keyed, KeyedIter, Keys, Members, Product, Values, VarMap, product, set,
 };
+use objective::Rank;
 pub use objective::{Combination, Objective};
 pub use quad::{QuadExpr, QuadTerm, Quadratic, Summand};
 
@@ -244,10 +245,10 @@ pub struct Model {
     rows: TiVec<Row, NewRow>,
     sense: Sense,
     objective: QuadExpr,
-    further: Vec<Objective>,
-    combination: Combination,
-    first_tolerance: Tolerance,
-    first_weight: Weight,
+    /// The further objectives, each with its rank.
+    further: Vec<(Objective, Rank)>,
+    /// The rank of the model's own objective; `None` until set, when the further objectives' rank decides.
+    first: Option<Rank>,
 }
 
 impl Model {
@@ -260,9 +261,7 @@ impl Model {
             sense: Sense::Minimize,
             objective: QuadExpr::new(),
             further: Vec::new(),
-            combination: Combination::Lexicographic,
-            first_tolerance: Tolerance::EXACT,
-            first_weight: Weight::ONE,
+            first: None,
         }
     }
 
@@ -401,14 +400,16 @@ impl Model {
         self.set_objective(Sense::Maximize, objective);
     }
 
-    /// Adds a further linear objective and returns its id; the model's own objective is [`ObjectiveId::FIRST`] and
-    /// the further ones follow in the order added.
+    /// Adds a further linear objective as the next stage of a lexicographic solve and returns its id; the model's own
+    /// objective is [`ObjectiveId::FIRST`] and the further ones follow in the order added.
     ///
-    /// With a further objective the model's objectives combine as [`Model::set_combination`] says, lexicographically
-    /// unless set otherwise, and its own objective must be linear.
+    /// The objectives are optimized one after another in that order, and `tolerance` says how far the later stages
+    /// may move this one from the optimum its stage finds: [`Tolerance::EXACT`] for not at all. The model's own
+    /// objective must then be linear, and every further objective a stage: [`Model::build`] refuses a model that
+    /// also has a weighted objective.
     ///
     /// ```
-    /// use culmen_core::{Linear, Model, Objective, Objectives, TiSlice, Var};
+    /// use culmen_core::{Linear, Model, Objective, Objectives, TiSlice, Tolerance, Var};
     ///
     /// // Least cost first; among the cheapest plans, the least emissions.
     /// let mut m = Model::new();
@@ -416,31 +417,53 @@ impl Model {
     /// let gas = m.add_var(Var::continuous());
     /// m.add_constraint((coal + gas).geq(10));
     /// m.minimize(2.0 * coal + 2.0 * gas);
-    /// let co2 = m.add_objective(Objective::minimize(3.0 * coal + gas));
+    /// let co2 = m.add_stage(Objective::minimize(3.0 * coal + gas), Tolerance::EXACT);
     /// let program = m.build()?;
     /// assert!(matches!(program.objectives(), Objectives::Lexicographic { then, .. } if then.len() == 1));
     /// assert_eq!(program.objective_values(TiSlice::from_ref(&[0.0, 10.0]))[co2], 10.0);
     /// # Ok::<(), culmen_core::ModelError>(())
     /// ```
-    pub fn add_objective(&mut self, objective: Objective) -> ObjectiveId {
-        self.further.push(objective);
+    pub fn add_stage(&mut self, objective: Objective, tolerance: Tolerance) -> ObjectiveId {
+        self.push_further(objective, Rank::Tolerance(tolerance))
+    }
+
+    /// Adds a further linear objective to a blend with `weight` and returns its id, numbered as
+    /// [`Model::add_stage`] numbers it.
+    ///
+    /// The blend minimizes the sum of every objective times its weight, signed by its sense: plus to minimize, minus
+    /// to maximize. The model's own objective must then be linear, and every further objective weighted:
+    /// [`Model::build`] refuses a model that also has a stage.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Objective, Objectives, Var, weight};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous().upper(4));
+    /// m.maximize(x);
+    /// m.set_objective_weight(weight!(2.0));
+    /// m.add_weighted(Objective::minimize(3.0 * x), weight!(0.5));
+    /// assert!(matches!(m.build()?.objectives(), Objectives::Blended { with, .. } if with.len() == 1));
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    pub fn add_weighted(&mut self, objective: Objective, weight: Weight) -> ObjectiveId {
+        self.push_further(objective, Rank::Weight(weight))
+    }
+
+    /// Appends a further objective and returns its id.
+    fn push_further(&mut self, objective: Objective, rank: Rank) -> ObjectiveId {
+        self.further.push((objective, rank));
         ObjectiveId::new(self.further.len())
     }
 
-    /// How the objectives combine once there is a further one; [`Combination::Lexicographic`] until set.
-    pub const fn set_combination(&mut self, combination: Combination) {
-        self.combination = combination;
-    }
-
     /// How far later stages of a lexicographic solve may move the model's own objective from its optimum;
-    /// [`Tolerance::EXACT`] until set.
+    /// [`Tolerance::EXACT`] until set. [`Model::build`] refuses it beside weighted objectives.
     pub const fn set_objective_tolerance(&mut self, tolerance: Tolerance) {
-        self.first_tolerance = tolerance;
+        self.first = Some(Rank::Tolerance(tolerance));
     }
 
-    /// The weight of the model's own objective in a blend; [`Weight::ONE`] until set.
+    /// The weight of the model's own objective in a blend; [`Weight::ONE`] until set. [`Model::build`] refuses it
+    /// beside stages.
     pub const fn set_objective_weight(&mut self, weight: Weight) {
-        self.first_weight = weight;
+        self.first = Some(Rank::Weight(weight));
     }
 
     /// The number of variables.
@@ -477,8 +500,8 @@ impl Model {
     /// [`ModelError`] naming the first variable, constraint or objective at fault: invalid bounds, a semi variable
     /// whose bounds are not `lower ..= upper` with `0 < lower` and `upper` finite, a non-finite objective or
     /// constraint coefficient or constant, a handle the model did not hand out, a quadratic objective that is not
-    /// convex to minimize or concave to maximize, as [`Program::CONVEXITY_TOLERANCE`] states, or a quadratic
-    /// objective beside further objectives.
+    /// convex to minimize or concave to maximize, as [`Program::CONVEXITY_TOLERANCE`] states, a quadratic objective
+    /// beside further objectives, or stages beside weighted objectives.
     pub fn build(&self) -> Result<Program, ModelError> {
         let mut plan = ProgramPlan {
             sense: self.sense,
@@ -530,41 +553,84 @@ impl Model {
         })
     }
 
-    /// The further objectives, checked, combined as the model's [`Combination`] says.
+    /// The further objectives, checked, combined as their ranks say.
     ///
     /// # Errors
     ///
-    /// [`ModelError::UnknownVar`], [`ModelError::FurtherCoefficient`] or [`ModelError::FurtherConstant`] for the first
-    /// further objective at fault.
+    /// [`ModelError::MixedObjectives`] for the first objective whose rank belongs to the other combination than the
+    /// first ranked objective's, else [`ModelError::UnknownVar`], [`ModelError::FurtherCoefficient`] or
+    /// [`ModelError::FurtherConstant`] for the first further objective at fault.
     fn build_objectives(&self) -> Result<Objectives, ModelError> {
-        let built: Vec<(LinearObjective, &Objective)> = self
+        let Some(combination) = self.combination()? else {
+            return Ok(Objectives::Single);
+        };
+        let built: Vec<(LinearObjective, Rank)> = self
             .further
             .iter()
             .zip(1..)
-            .map(|(objective, index)| Ok((self.build_further(ObjectiveId::new(index), objective)?, objective)))
+            .map(|((objective, rank), index)| Ok((self.build_further(ObjectiveId::new(index), objective)?, *rank)))
             .collect::<Result<_, ModelError>>()?;
-        Ok(match self.combination {
+        // Every rank belongs to `combination`, as `combination` checked.
+        Ok(match combination {
             Combination::Lexicographic => Objectives::Lexicographic {
-                first: self.first_tolerance,
+                first: match self.first {
+                    Some(Rank::Tolerance(tolerance)) => tolerance,
+                    Some(Rank::Weight(_)) | None => Tolerance::EXACT,
+                },
                 then: built
                     .into_iter()
-                    .map(|(objective, given)| Stage {
+                    .map(|(objective, rank)| Stage {
                         objective,
-                        tolerance: given.tolerance,
+                        tolerance: match rank {
+                            Rank::Tolerance(tolerance) => tolerance,
+                            Rank::Weight(_) => Tolerance::EXACT,
+                        },
                     })
                     .collect(),
             },
             Combination::Blended => Objectives::Blended {
-                first: self.first_weight,
+                first: match self.first {
+                    Some(Rank::Weight(weight)) => weight,
+                    Some(Rank::Tolerance(_)) | None => Weight::ONE,
+                },
                 with: built
                     .into_iter()
-                    .map(|(objective, given)| Weighted {
+                    .map(|(objective, rank)| Weighted {
                         objective,
-                        weight: given.weight,
+                        weight: match rank {
+                            Rank::Weight(weight) => weight,
+                            Rank::Tolerance(_) => Weight::ONE,
+                        },
                     })
                     .collect(),
             },
         })
+    }
+
+    /// How the objectives combine: as the first ranked objective's rank says, `None` without a further objective.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelError::MixedObjectives`] for the first objective whose rank belongs to the other combination.
+    fn combination(&self) -> Result<Option<Combination>, ModelError> {
+        if self.further.is_empty() {
+            return Ok(None);
+        }
+        let ranks = self.first.into_iter().map(|rank| (ObjectiveId::FIRST, rank));
+        let mut ranks = ranks.chain(
+            self.further
+                .iter()
+                .zip(1..)
+                .map(|((_, rank), i)| (ObjectiveId::new(i), *rank)),
+        );
+        // A further objective exists, so there is a first rank.
+        let combination = ranks
+            .next()
+            .map_or(Combination::Lexicographic, |(_, rank)| rank.combination());
+        match ranks.find(|(_, rank)| rank.combination() != combination) {
+            Some((objective, _)) => Err(ModelError::MixedObjectives { objective, combination }),
+            None => Ok(Some(combination)),
+        }
     }
 
     /// One further objective as plan data, each column once, every coefficient and the constant finite.

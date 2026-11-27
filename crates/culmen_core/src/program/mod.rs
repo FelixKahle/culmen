@@ -169,13 +169,13 @@ impl Program {
     /// What the program uses beyond its [`class`](Program::class): semi columns and multiple objectives.
     ///
     /// ```
-    /// use culmen_core::{Model, Objective, ProgramFeature, ProgramFeatures, Var};
+    /// use culmen_core::{Model, Objective, ProgramFeature, ProgramFeatures, Tolerance, Var};
     ///
     /// let mut m = Model::new();
     /// let x = m.add_var(Var::semi_continuous().bounds(2, 10));
     /// m.minimize(x);
     /// assert_eq!(m.build()?.features(), ProgramFeature::SemiContinuous.into());
-    /// m.add_objective(Objective::maximize(x));
+    /// m.add_stage(Objective::maximize(x), Tolerance::EXACT);
     /// let both = ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::MultipleObjectives]);
     /// assert_eq!(m.build()?.features(), both);
     /// # Ok::<(), culmen_core::ModelError>(())

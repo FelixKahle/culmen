@@ -12,8 +12,8 @@
 
 use culmen_core::{
     Analysis, AnalysisError, Backend, Bounds, Col, EditError, Integrality, LinExpr, Linear, Model, ModelClass, NewCol,
-    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Settings, Solution, SolveError, Solver, Var, bounds,
-    relative_gap,
+    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Settings, Solution, SolveError, Solver, Tolerance, Var,
+    bounds, relative_gap,
 };
 use culmen_highs::{Highs, HighsError, HighsOptions};
 use culmen_testing::instances::assignment;
@@ -134,7 +134,7 @@ fn test_adding_a_column_beside_further_objectives_solves() {
     let x = m.add_var(Var::continuous().upper(1));
     let y = m.add_var(Var::continuous().upper(1));
     m.minimize(x + y);
-    m.add_objective(Objective::maximize(x));
+    m.add_stage(Objective::maximize(x), Tolerance::EXACT);
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
     assert!(close(optimum(&mut solver), 0.0, 1e-9));
 

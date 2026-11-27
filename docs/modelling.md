@@ -302,19 +302,23 @@ fn main() -> Result<(), ModelError> {
 
 ## Several objectives
 
-`m.add_objective(objective)` adds a further linear objective and returns its `ObjectiveId`; the model's own
-objective, set by `minimize` and its kin, is `ObjectiveId::FIRST`, and further ones follow in the order added. An
-`Objective` is built like a `Var`: `Objective::minimize(expr)` or `Objective::maximize(expr)`, then `.tolerance(..)`
-and `.weight(..)`. How the objectives combine is `m.set_combination(..)`:
+A further linear objective is added with its rank, which says how the model's objectives combine:
 
-- `Combination::Lexicographic` (the default): the model's own objective first, then each further one in order,
-  each over the points that keep every earlier objective within its `Tolerance` of the optimum its stage found. The
-  order is the priority. A `Tolerance` allows `min(absolute, relative · |f*|)` from an optimum `f*`, leaving out an
-  absent part; `Tolerance::EXACT`, the default, allows nothing. `m.set_objective_tolerance(..)` sets the own
-  objective's.
-- `Combination::Blended`: one objective, `Σ s · w · f` over every objective `f` with its `Weight` `w` and `s` one to
-  minimize and minus one to maximize, is minimized. `Weight::ONE` is the default; `m.set_objective_weight(..)` sets
-  the own objective's.
+- `m.add_stage(objective, tolerance)` adds the next stage of a lexicographic solve: the model's own objective first,
+  then each stage in order, each over the points that keep every earlier objective within its `Tolerance` of the
+  optimum its stage found. The order is the priority. A `Tolerance` allows `min(absolute, relative · |f*|)` from an
+  optimum `f*`, leaving out an absent part; `Tolerance::EXACT` allows nothing. `m.set_objective_tolerance(..)` sets
+  the own objective's, `Tolerance::EXACT` until set.
+- `m.add_weighted(objective, weight)` adds a part of a blend: one objective, `Σ s · w · f` over every objective `f`
+  with its `Weight` `w` and `s` one to minimize and minus one to maximize, is minimized.
+  `m.set_objective_weight(..)` sets the own objective's, `Weight::ONE` until set.
+
+Each returns the objective's `ObjectiveId`; the model's own objective, set by `minimize` and its kin, is
+`ObjectiveId::FIRST`, and further ones follow in the order added. An `Objective` is its sense and expression,
+`Objective::minimize(expr)` or `Objective::maximize(expr)`. A stage has no weight and a weighted objective no
+tolerance, so neither can be given where it would go unused; a model that ranks some objectives one way and some the
+other is refused by `build` with `ModelError::MixedObjectives`, naming the first objective ranked unlike the first
+ranked one.
 
 The objectives are linear: beside a further objective, `build` refuses a quadratic term in the own objective with
 `ModelError::QuadraticWithObjectives`. The program records them as its [`Objectives`](program.md#several-objectives),
@@ -323,25 +327,28 @@ objective's value, indexed by `ObjectiveId`.
 
 ```rust
 use culmen::prelude::*;
-use culmen::{Combination, ObjectiveId};
+use culmen::{Combination, ModelError, ObjectiveId};
 
-fn main() -> Result<(), culmen::ModelError> {
+fn main() -> Result<(), ModelError> {
     // Serve at least 10 units at the least cost; among the cheapest plans, the least emissions.
     let mut m = Model::new();
     let coal = m.add_var(Var::continuous().name("coal"));
     let gas = m.add_var(Var::continuous().upper(6).name("gas"));
     m.add_constraint((coal + gas).geq(10));
     m.minimize(2 * coal + 2 * gas);
-    let co2 = m.add_objective(Objective::minimize(3 * coal + gas));
+    let co2 = m.add_stage(Objective::minimize(3 * coal + gas), Tolerance::EXACT);
     let program = m.build()?;
     let values = program.objective_values(culmen::TiSlice::from_ref(&[4.0, 6.0]));
     assert_eq!((values[ObjectiveId::FIRST], values[co2]), (20.0, 18.0));
 
-    // Allow the cost to rise by up to 1 for the emissions' sake, or blend the two at a price of 0.5 per unit.
+    // Allow the cost to rise by up to 1 for the emissions' sake.
     m.set_objective_tolerance(Tolerance { absolute: Some(absolute_gap!(1.0)), relative: None });
-    m.set_combination(Combination::Blended);
-    m.set_objective_weight(weight!(2.0));
     assert!(m.build().is_ok());
+
+    // A weighted objective beside the stage is refused.
+    let noise = m.add_weighted(Objective::minimize(coal), weight!(0.5));
+    let mixed = ModelError::MixedObjectives { objective: noise, combination: Combination::Lexicographic };
+    assert_eq!(m.build().unwrap_err(), mixed);
     Ok(())
 }
 ```

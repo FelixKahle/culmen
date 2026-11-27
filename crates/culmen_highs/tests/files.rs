@@ -14,7 +14,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use culmen_core::{
-    Bounds, Integrality, Linear, Model, Objective, Outcome, Program, ProgramError, ProgramFeature, Sense, Solver, Var,
+    Bounds, Integrality, Linear, Model, Objective, Outcome, Program, ProgramError, ProgramFeature, Sense, Solver,
+    Tolerance, Var,
 };
 use culmen_highs::Highs;
 use culmen_highs::files::{self, FileError, ModelFormat};
@@ -206,7 +207,7 @@ fn test_what_a_format_loses_is_refused() {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(5));
     m.maximize(x);
-    m.add_objective(Objective::minimize(x));
+    m.add_stage(Objective::minimize(x), Tolerance::EXACT);
     let several = m.build().unwrap();
     let path = TempPath::new("lp");
     for format in [ModelFormat::Mps, ModelFormat::Lp] {

@@ -145,7 +145,8 @@ fn main() -> Result<(), culmen::ModelError> {
 ```
 
 Further objectives ([Several objectives](modelling.md#several-objectives)) have no macro form. Add them with
-`m.add_objective`, whose expression `sum!` writes as well: `m.add_objective(Objective::minimize(sum!(..)))`.
+`m.add_stage` or `m.add_weighted`, whose expression `sum!` writes as well:
+`m.add_stage(Objective::minimize(sum!(..)), Tolerance::EXACT)`.
 
 ## `sum!`
 

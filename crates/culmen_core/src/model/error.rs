@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use crate::{Bounds, Col, InvalidBounds, ObjectiveId, Row, Sense};
+use crate::{Bounds, Col, Combination, InvalidBounds, ObjectiveId, Row, Sense};
 
 /// A variable of a [`Model`](crate::Model): its column and the name the model gave it.
 ///
@@ -165,6 +165,17 @@ pub enum ModelError {
     },
     /// The model's own objective has a quadratic term beside further objectives, which need it linear.
     QuadraticWithObjectives,
+    /// An objective is ranked for the other combination than the objectives before it: a weight in a lexicographic
+    /// solve or a tolerance in a blend, given by [`Model::add_weighted`](crate::Model::add_weighted) and
+    /// [`Model::set_objective_weight`](crate::Model::set_objective_weight) or by
+    /// [`Model::add_stage`](crate::Model::add_stage) and
+    /// [`Model::set_objective_tolerance`](crate::Model::set_objective_tolerance).
+    MixedObjectives {
+        /// The first objective ranked for the other combination.
+        objective: ObjectiveId,
+        /// The combination of the first ranked objective, which the objectives before this one keep.
+        combination: Combination,
+    },
 }
 
 impl fmt::Display for ModelError {
@@ -225,6 +236,20 @@ impl fmt::Display for ModelError {
             Self::QuadraticWithObjectives => {
                 write!(f, "Model: the objective has a quadratic term beside further objectives")
             }
+            Self::MixedObjectives {
+                objective,
+                combination: Combination::Lexicographic,
+            } => write!(
+                f,
+                "Model: {objective:?} is weighted, but the objectives before it are stages of a lexicographic solve"
+            ),
+            Self::MixedObjectives {
+                objective,
+                combination: Combination::Blended,
+            } => write!(
+                f,
+                "Model: {objective:?} is a stage with a tolerance, but the objectives before it are weighted in a blend"
+            ),
         }
     }
 }
