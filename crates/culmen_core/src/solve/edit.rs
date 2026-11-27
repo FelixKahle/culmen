@@ -20,44 +20,37 @@ use crate::{
 
 /// What one edit changed in a [`Solver`]'s program; the new values are read from the program.
 ///
-/// Only a [`Solver`] makes one, so its ids are the edited program's, sorted ascending, each once, and new rows and
-/// columns follow every one before them. [`Backend::edit`] receives it beside the edited program and matches it as
-/// `Edit::ColBounds { cols, .. }`; the enum is non-exhaustive, so a later version may add to it.
+/// The edit a [`Solver`] hands to [`Backend::edit`] names ids of the edited program, sorted ascending, each once, and
+/// new rows and columns that follow every one before them. A backend receives it beside the edited program and
+/// matches every variant, so a variant a later version adds is a compile error in the backend, not a silent reload.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Edit {
     /// The bounds of these columns changed.
-    #[non_exhaustive]
     ColBounds {
         /// The columns, ascending, each once.
         cols: Vec<Col>,
     },
     /// The costs of these columns in the program's own objective changed.
-    #[non_exhaustive]
     ColCosts {
         /// The columns, ascending, each once.
         cols: Vec<Col>,
     },
     /// The integrality of these columns changed.
-    #[non_exhaustive]
     ColIntegrality {
         /// The columns, ascending, each once.
         cols: Vec<Col>,
     },
     /// The bounds of these rows changed.
-    #[non_exhaustive]
     RowBounds {
         /// The rows, ascending, each once.
         rows: Vec<Row>,
     },
     /// These rows were appended.
-    #[non_exhaustive]
     NewRows {
         /// The rows, the program's last.
         rows: Rows,
     },
     /// These columns were appended, with their entries in the rows before them.
-    #[non_exhaustive]
     NewCols {
         /// The columns, the program's last.
         cols: Cols,
@@ -84,7 +77,6 @@ pub enum Edit {
 /// assert_eq!(error.to_string(), "Solver: the program has no Col(7)");
 /// ```
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum EditError<E> {
     /// A column the program does not have: an edit's target or a new row's term.
     UnknownCol {

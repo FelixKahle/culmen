@@ -29,7 +29,6 @@ use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum LoadError<E> {
     /// The backend does not solve the program's class.
     UnsupportedClass {

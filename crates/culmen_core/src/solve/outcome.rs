@@ -122,7 +122,6 @@ impl Outcome {
 /// Why a solve stopped before proving optimality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum StopReason {
     /// The time limit ran out.
     TimeLimit,

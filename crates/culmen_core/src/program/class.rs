@@ -12,8 +12,7 @@ use serde::{Deserialize, Serialize};
 /// a quadratic part. Its constraints are linear in every class.
 ///
 /// [`Program::class`](super::Program::class) computes it, and a backend declares the classes it solves in
-/// [`Backend::CLASSES`](crate::Backend::CLASSES). The enum is non-exhaustive: a class of quadratic constraints
-/// would be a new variant, and a backend that does not declare it refuses it.
+/// [`Backend::CLASSES`](crate::Backend::CLASSES).
 ///
 /// ```
 /// use culmen_core::ModelClass;
@@ -23,7 +22,6 @@ use serde::{Deserialize, Serialize};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum ModelClass {
     /// A linear program: continuous columns, a linear objective.
     Lp,

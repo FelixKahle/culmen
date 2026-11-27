@@ -56,7 +56,6 @@ impl fmt::Display for ModelConstraint {
 
 /// Where in a [`Model`](crate::Model) an expression stands.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum ExprPlace {
     /// The objective.
     Objective,
@@ -78,7 +77,6 @@ impl fmt::Display for ExprPlace {
 
 /// Why a [`Model`](crate::Model) could not be built; each names the variable or constraint at fault.
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum ModelError {
     /// A variable's bounds are invalid.
     VarBounds {

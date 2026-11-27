@@ -74,24 +74,21 @@ pub enum Edited {
     Offset,
     /// [`Edit::Objective`].
     Objective,
-    /// A kind this mirror does not know, by its `Debug` form.
-    Other(String),
 }
 
 impl Edited {
     /// The owned form of `edit`.
     fn of(edit: &Edit) -> Self {
         match edit {
-            Edit::ColBounds { cols, .. } => Self::ColBounds(cols.clone()),
-            Edit::ColCosts { cols, .. } => Self::ColCosts(cols.clone()),
-            Edit::ColIntegrality { cols, .. } => Self::ColIntegrality(cols.clone()),
-            Edit::RowBounds { rows, .. } => Self::RowBounds(rows.clone()),
-            Edit::NewRows { rows, .. } => Self::NewRows(rows.into_iter().collect()),
-            Edit::NewCols { cols, .. } => Self::NewCols(cols.into_iter().collect()),
+            Edit::ColBounds { cols } => Self::ColBounds(cols.clone()),
+            Edit::ColCosts { cols } => Self::ColCosts(cols.clone()),
+            Edit::ColIntegrality { cols } => Self::ColIntegrality(cols.clone()),
+            Edit::RowBounds { rows } => Self::RowBounds(rows.clone()),
+            Edit::NewRows { rows } => Self::NewRows(rows.into_iter().collect()),
+            Edit::NewCols { cols } => Self::NewCols(cols.into_iter().collect()),
             Edit::Sense => Self::Sense,
             Edit::Offset => Self::Offset,
             Edit::Objective => Self::Objective,
-            other => Self::Other(format!("{other:?}")),
         }
     }
 }
@@ -199,7 +196,7 @@ fn changed_only_as_named(before: &Program, after: &Program, edit: &Edited) -> bo
                 column.cost = new.cost;
             }
         }
-        Edited::Other(_) => return true,
+        // A guard above failed: the ids are unsorted, repeated or beyond the program.
         _ => return false,
     }
     expected == got

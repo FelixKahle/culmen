@@ -148,7 +148,6 @@ impl fmt::Display for Weight {
 
 /// Why [`Weight::new`] refused a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum InvalidWeight {
     /// The number is NaN or infinite.
     NonFinite,

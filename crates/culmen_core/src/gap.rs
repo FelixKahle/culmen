@@ -90,7 +90,6 @@ impl fmt::Display for RelativeGap {
 
 /// Why [`RelativeGap::new`] refused a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum InvalidRelativeGap {
     /// The number is NaN or infinite.
     NonFinite,
@@ -191,7 +190,6 @@ impl fmt::Display for AbsoluteGap {
 
 /// Why [`AbsoluteGap::new`] refused a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum InvalidAbsoluteGap {
     /// The number is NaN or infinite.
     NonFinite,

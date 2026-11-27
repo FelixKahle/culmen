@@ -22,7 +22,6 @@ use serde::{Deserialize, Serialize};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum ProgramFeature {
     /// A column of [`Integrality::SemiContinuous`](super::Integrality::SemiContinuous).
     SemiContinuous,

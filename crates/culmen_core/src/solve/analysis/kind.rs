@@ -14,7 +14,7 @@ use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 ///
 /// A backend provides an analysis by implementing its trait, such as [`DualAnalysis`](crate::DualAnalysis); each
 /// analysis is defined only for the [`classes`](Analysis::classes) of program where its mathematics holds. It names the
-/// analysis in an [`AnalysisError`](crate::AnalysisError). The enum is non-exhaustive: a new analysis is a new variant.
+/// analysis in an [`AnalysisError`](crate::AnalysisError).
 ///
 /// ```
 /// use culmen_core::{Analysis, ModelClass};
@@ -24,7 +24,6 @@ use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum Analysis {
     /// Row duals and reduced costs of an optimal continuous program: [`Solver::duals`](crate::Solver::duals).
     Duals,

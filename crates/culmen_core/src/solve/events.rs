@@ -113,7 +113,6 @@ crate::set::element_set!(Events, EventsIter, Event, u8, "events", "{:?}");
 /// The phase of a solve an event comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum Phase {
     /// Presolve.
     Presolve,

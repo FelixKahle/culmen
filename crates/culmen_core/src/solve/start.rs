@@ -144,7 +144,6 @@ impl FusedIterator for StartEntries<'_> {}
 
 /// Why [`Start::check`] refused a start.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum StartError {
     /// A full start holds another number of values than the program has columns.
     Length {
@@ -199,7 +198,6 @@ impl core::error::Error for StartError {}
 /// assert_eq!(error.to_string(), "Solver: the start is refused: Start: Col(1) is given twice");
 /// ```
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum SolveError<E> {
     /// The start does not fit the program.
     Start(StartError),

@@ -21,7 +21,6 @@ use crate::{Col, ModelClass, Program, ProgramFeature};
 /// assert_eq!(error.to_string(), "Solver: duals are defined for {LP, QP}, not a MILP");
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum AnalysisError<E> {
     /// The analysis is not defined for the program's class.
     Class {
@@ -111,7 +110,6 @@ impl<E> From<Misfit> for AnalysisError<E> {
 /// assert_eq!(misfit.to_string(), "the basis has 3 row statuses for 2 rows");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Misfit {
     /// A table holds the wrong number of entries.
     Length {
@@ -171,7 +169,6 @@ impl core::error::Error for Misfit {}
 
 /// A per-column or per-row table an analysis takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Table {
     /// [`Basis::cols`](crate::Basis::cols).
     BasisCols,

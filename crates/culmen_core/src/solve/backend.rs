@@ -77,8 +77,9 @@ pub trait Backend: Sized {
     /// Changes the loaded program into `program`, which is the loaded program changed as `edit` names.
     ///
     /// The default loads `program` whole: always correct, and without any warm start. A backend overrides it to change
-    /// its model in place and keep its warm start, and falls back to [`Backend::load`] for any [`Edit`] it does not
-    /// handle, since the enum is non-exhaustive.
+    /// its model in place and keep its warm start. The override matches every variant of [`Edit`] by name, with no
+    /// wildcard arm, and calls [`Backend::load`] explicitly for each one it does not change in place, so a variant a
+    /// later version of culmen adds fails to compile in the backend instead of loading silently.
     ///
     /// # Errors
     ///

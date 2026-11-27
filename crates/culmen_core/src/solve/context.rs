@@ -243,7 +243,6 @@ impl SolutionContext for Unsupported {
 
 /// Why a callback's action was refused.
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum ActionError {
     /// A full solution holds the wrong number of values.
     Length {

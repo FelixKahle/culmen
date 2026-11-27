@@ -18,7 +18,6 @@ use crate::{
 
 /// One event a [`Script`] delivers, in the generic terms of [`Callback`](crate::Callback) and the search handlers.
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum Step {
     /// A log chunk.
     Log {
@@ -326,7 +325,6 @@ pub enum ScriptStatus {
 
 /// Why a [`Script`] refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum ScriptError {
     /// A solve was asked for before any program was loaded.
     NotLoaded,

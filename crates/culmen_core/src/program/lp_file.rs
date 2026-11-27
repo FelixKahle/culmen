@@ -425,7 +425,6 @@ impl<W: io::Write> fmt::Write for IoText<W> {
 
 /// Why [`Program::write_lp`] or [`Program::to_lp_string`] wrote no LP file.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum LpFileError {
     /// The program uses a feature the LP file format as written here cannot state.
     UnsupportedFeature {
