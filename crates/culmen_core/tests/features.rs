@@ -13,20 +13,22 @@ use core::fmt;
 use core::time::Duration;
 use std::collections::HashSet;
 
+use culmen_core::backend::Unsupported;
+use culmen_core::script::Script;
 use culmen_core::{
-    Backend, Bound, Bounds, Callback, Col, Combination, Events, ExprPlace, Integrality, Line, Linear, LinearObjective,
-    LoadError, LpFileError, Model, ModelClass, ModelClasses, ModelError, Objective, ObjectiveId, Objectives, Outcome,
-    Program, ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Relaxed, Request, Script,
-    Sense, Settings, SolveError, Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Unsupported, Var,
-    Violation, Weight, Weighted, absolute_gap, bounds, relative_gap, weight,
+    Backend, Bound, Bounds, Col, Combination, Events, ExprPlace, Integrality, Line, Linear, LinearObjective, LoadError,
+    LpFileError, Model, ModelClass, ModelClasses, ModelError, Objective, ObjectiveId, Objectives, Outcome, Program,
+    ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramPlan, Relaxed, Sense, Settings, SolveError,
+    Solved, Solver, Stage, Start, StartError, TiSlice, TiVec, Tolerance, Var, Violation, Weight, Weighted,
+    absolute_gap, bounds, relative_gap, weight,
 };
 use proptest::prelude::*;
 
 /// Minimize `x + y` over `x + y >= 1` with `x` semi-continuous in `[2, 10]` and `y` semi-integer in `[1.5, 4]`.
 fn semi() -> (Model, Col, Col) {
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10).name("x"));
-    let y = m.add_var(Var::semi_integer().bounds(1.5, 4).name("y"));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)).name("x"));
+    let y = m.add_var(Var::semi_integer().bounds(bounds!(1.5, 4.0)).name("y"));
     m.add_constraint((x + y).geq(1));
     m.minimize(x + y);
     (m, x, y)
@@ -37,7 +39,7 @@ fn test_a_semi_program_is_mixed_integer_and_uses_its_features() {
     let (mut m, x, y) = semi();
     let program = m.build().unwrap();
     assert_eq!(program.class(), ModelClass::Milp);
-    assert!(program.is_mip());
+    assert!(program.class().is_discrete());
     assert_eq!(
         program.features(),
         ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::SemiInteger])
@@ -72,18 +74,18 @@ fn test_a_semi_column_needs_bounds_that_exclude_zero() {
     for (lower, upper) in [(0.0, 4.0), (-1.0, 4.0), (1.0, f64::INFINITY)] {
         let bounds = Bounds::new(lower, upper).unwrap();
         let mut plan = ProgramPlan::new();
-        let x = plan.col(ProgramColumn::semi_continuous(1.0, bounds));
+        let x = plan.col(ProgramColumn::semi_continuous().cost(1.0).bounds(bounds));
         assert_eq!(plan.build(), Err(ProgramError::SemiBounds { col: x, bounds }));
 
         let mut m = Model::new();
-        let y = m.add_var(Var::semi_integer().bounds(lower, upper).name("y"));
+        let y = m.add_var(Var::semi_integer().lower(lower).upper(upper).name("y"));
         let Err(ModelError::SemiBounds { var, bounds: refused }) = m.build() else {
             panic!("the semi variable in {bounds} is refused")
         };
         assert_eq!((var.col, var.name.as_deref(), refused), (y, Some("y"), bounds));
     }
     let mut plan = ProgramPlan::new();
-    plan.col(ProgramColumn::semi_integer(0.0, bounds!(1e-9, 1e9)));
+    plan.col(ProgramColumn::semi_integer().bounds(bounds!(1e-9, 1e9)));
     assert!(plan.build().is_ok());
     assert_eq!(
         ProgramError::SemiBounds {
@@ -95,15 +97,25 @@ fn test_a_semi_column_needs_bounds_that_exclude_zero() {
     );
 }
 
-/// Maximize `x + y` over `x + y <= 10`, `x <= 6`; then minimize `2y - 1`.
-fn two_stage() -> (Model, Col, Col, ObjectiveId) {
+/// Maximize `x + y` over `x + y <= 10`, `x <= 6`; then minimize `2y - 1`, as a stage or with the weight 2.
+fn two_objectives(blended: bool) -> (Model, Col, Col, ObjectiveId) {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(6).name("x"));
     let y = m.add_var(Var::continuous().upper(10).name("y"));
     m.add_constraint((x + y).leq(10));
     m.maximize(x + y);
-    let second = m.add_objective(Objective::minimize(y + y - 1).weight(weight!(2.0)));
+    let objective = Objective::minimize(y + y - 1);
+    let second = if blended {
+        m.add_weighted(objective, weight!(2.0))
+    } else {
+        m.add_stage(objective, Tolerance::EXACT)
+    };
     (m, x, y, second)
+}
+
+/// [`two_objectives`] lexicographic.
+fn two_stage() -> (Model, Col, Col, ObjectiveId) {
+    two_objectives(false)
 }
 
 #[test]
@@ -138,7 +150,7 @@ fn test_a_model_builds_its_further_objectives_lexicographic_or_blended() {
         TiVec::<ObjectiveId, f64>::from(vec![10.0, 7.0])
     );
 
-    m.set_combination(Combination::Blended);
+    let (mut m, ..) = two_objectives(true);
     m.set_objective_weight(weight!(0.5));
     assert_eq!(
         m.build().unwrap().objectives(),
@@ -156,8 +168,8 @@ fn test_a_model_builds_its_further_objectives_lexicographic_or_blended() {
 #[test]
 fn test_further_objectives_are_canonical_in_a_program() {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
+    let y = plan.col(ProgramColumn::continuous());
     plan.objectives = Objectives::Blended {
         first: Weight::ONE,
         with: vec![Weighted {
@@ -190,7 +202,7 @@ fn test_further_objectives_are_canonical_in_a_program() {
 fn test_further_objectives_are_checked() {
     let further = |terms: Vec<(Col, f64)>, offset: f64| {
         let mut plan = ProgramPlan::new();
-        plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+        plan.col(ProgramColumn::continuous().cost(1.0));
         plan.objectives = Objectives::Lexicographic {
             first: Tolerance::EXACT,
             then: vec![Stage {
@@ -207,7 +219,7 @@ fn test_further_objectives_are_checked() {
     let (x, id) = (Col::new(0), ObjectiveId::new(1));
     assert_eq!(
         further(vec![(Col::new(1), 1.0)], 0.0).build(),
-        Err(ProgramError::UnknownObjectiveColumn {
+        Err(ProgramError::UnknownObjectiveCol {
             objective: id,
             col: Col::new(1)
         })
@@ -236,9 +248,79 @@ fn test_further_objectives_are_checked() {
 }
 
 #[test]
+fn test_a_model_refuses_stages_beside_weighted_objectives_naming_the_first_of_the_other_kind() {
+    let (mut m, x, ..) = two_stage();
+    let weighted = m.add_weighted(Objective::maximize(x), weight!(1.0));
+    let mixed = ModelError::MixedObjectives {
+        objective: weighted,
+        combination: Combination::Lexicographic,
+    };
+    assert_eq!(m.build().unwrap_err(), mixed);
+    assert_eq!(
+        mixed.to_string(),
+        "Model: ObjectiveId(2) is weighted, but the objectives before it are stages of a lexicographic solve"
+    );
+
+    // The model's own objective ranked first decides, so a stage after it is the one at fault.
+    let (mut m, _, _, second) = two_stage();
+    m.set_objective_weight(weight!(2.0));
+    assert_eq!(
+        m.build().unwrap_err(),
+        ModelError::MixedObjectives {
+            objective: second,
+            combination: Combination::Blended,
+        }
+    );
+
+    // A tolerance on the model's own objective after weighted ones is at fault itself only when ranked first, so the
+    // weighted objective that follows it is named.
+    let (mut m, _, _, second) = two_objectives(true);
+    m.set_objective_tolerance(Tolerance::EXACT);
+    assert_eq!(
+        m.build().unwrap_err(),
+        ModelError::MixedObjectives {
+            objective: second,
+            combination: Combination::Lexicographic,
+        }
+    );
+}
+
+#[test]
+fn test_a_model_refuses_a_rank_of_its_own_objective_without_a_further_one() {
+    let mut single = Model::new();
+    let z = single.add_var(Var::continuous().upper(1));
+    single.minimize(z);
+    assert_eq!(single.build().unwrap().objectives(), &Objectives::Single);
+
+    single.set_objective_weight(weight!(3.0));
+    let alone = ModelError::RankAlone {
+        combination: Combination::Blended,
+    };
+    assert_eq!(single.build().unwrap_err(), alone);
+    assert_eq!(
+        alone.to_string(),
+        "Model: the model's own objective has a weight, but no further objective is blended with it"
+    );
+
+    single.set_objective_tolerance(Tolerance::EXACT);
+    let alone = ModelError::RankAlone {
+        combination: Combination::Lexicographic,
+    };
+    assert_eq!(single.build().unwrap_err(), alone);
+    assert_eq!(
+        alone.to_string(),
+        "Model: the model's own objective has a tolerance, but no further objective is a stage after it"
+    );
+
+    // A further objective of the rank's kind gives the rank its use.
+    single.add_stage(Objective::minimize(-z), Tolerance::EXACT);
+    assert!(single.build().is_ok());
+}
+
+#[test]
 fn test_a_model_names_the_further_objective_at_fault() {
     let (mut m, x, _, _) = two_stage();
-    let third = m.add_objective(Objective::maximize(f64::NAN * x));
+    let third = m.add_stage(Objective::maximize(f64::NAN * x), Tolerance::EXACT);
     let Err(ModelError::FurtherCoefficient { objective, var, value }) = m.build() else {
         panic!("a NaN coefficient is refused")
     };
@@ -246,7 +328,7 @@ fn test_a_model_names_the_further_objective_at_fault() {
     assert!(value.is_nan());
 
     let (mut m, x, _, _) = two_stage();
-    let third = m.add_objective(Objective::maximize(x + f64::INFINITY));
+    let third = m.add_stage(Objective::maximize(x + f64::INFINITY), Tolerance::EXACT);
     assert_eq!(
         m.build().unwrap_err(),
         ModelError::FurtherConstant {
@@ -256,7 +338,7 @@ fn test_a_model_names_the_further_objective_at_fault() {
     );
 
     let (mut m, _, _, _) = two_stage();
-    let third = m.add_objective(Objective::maximize(Col::new(9)));
+    let third = m.add_stage(Objective::maximize(Col::new(9)), Tolerance::EXACT);
     assert_eq!(
         m.build().unwrap_err(),
         ModelError::UnknownVar {
@@ -279,41 +361,94 @@ fn test_the_lp_file_lists_semi_columns_and_refuses_several_objectives() {
          General\n y\nSemi-Continuous\n x\n y\nEnd\n"
     );
     let several = two_stage().0.build().unwrap();
-    let refused = LpFileError::Unsupported {
-        feature: ProgramFeature::MultipleObjectives,
+    let refused = |result: Result<_, LpFileError>| {
+        matches!(
+            result,
+            Err(LpFileError::UnsupportedFeature {
+                feature: ProgramFeature::MultipleObjectives
+            })
+        )
     };
-    assert_eq!(several.to_lp_string(), Err(refused));
-    let mut out = String::new();
-    assert_eq!(several.write_lp(&mut out), Err(refused));
-    assert_eq!(out, "", "nothing is written");
+    assert!(refused(several.to_lp_string().map(drop)));
+    let mut out = Vec::new();
+    assert!(refused(several.write_lp(&mut out)));
+    assert_eq!(out, b"", "nothing is written");
     assert_eq!(
-        refused.to_string(),
+        several.write_lp(&mut out).unwrap_err().to_string(),
         "LP file: a program with multiple objectives cannot be written"
     );
+}
+
+/// A writer that takes `room` bytes and fails after.
+struct Full {
+    room: usize,
+    taken: Vec<u8>,
+}
+
+impl std::io::Write for Full {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.room == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::StorageFull, "full"));
+        }
+        let n = bytes.len().min(self.room);
+        self.room -= n;
+        self.taken.extend_from_slice(&bytes[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn test_an_lp_file_is_written_to_an_io_writer_whose_error_it_reports() {
+    let program = semi().0.build().unwrap();
+    let text = program.to_lp_string().unwrap();
+    let mut file = Vec::new();
+    program.write_lp(&mut file).unwrap();
+    assert_eq!(String::from_utf8(file).unwrap(), text);
+
+    let mut full = Full {
+        room: 10,
+        taken: Vec::new(),
+    };
+    let Err(LpFileError::Write(error)) = program.write_lp(&mut full) else {
+        panic!("a full writer fails the write")
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+    assert_eq!(full.taken, text.as_bytes()[..10]);
 }
 
 #[test]
 fn test_feature_sets_are_sets() {
     let semi = ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::SemiInteger]);
     let mut all = semi;
-    all |= ProgramFeature::MultipleObjectives.into();
-    all.extend([ProgramFeature::StartSolution]);
+    all.extend([ProgramFeature::MultipleObjectives]);
     assert_eq!(all, ProgramFeatures::ALL);
-    assert_eq!(all.len(), 4);
+    assert_eq!(all.len(), 3);
     assert!(all.contains_all(semi) && !semi.contains_all(all));
     assert_eq!(all & semi, semi);
     assert_eq!(
-        all.difference(semi).iter().rev().collect::<Vec<_>>(),
-        [ProgramFeature::StartSolution, ProgramFeature::MultipleObjectives]
+        all.iter().rev().collect::<Vec<_>>(),
+        [
+            ProgramFeature::MultipleObjectives,
+            ProgramFeature::SemiInteger,
+            ProgramFeature::SemiContinuous
+        ]
     );
-    assert_eq!(all.iter().len(), 4);
+    assert_eq!(
+        all.difference(semi).iter().collect::<Vec<_>>(),
+        [ProgramFeature::MultipleObjectives]
+    );
+    assert_eq!(all.iter().len(), 3);
     assert!(ProgramFeatures::NONE.is_empty());
     assert_eq!(ProgramFeatures::default(), ProgramFeatures::NONE);
     assert_eq!(format!("{:?}", ProgramFeatures::NONE), "ProgramFeatures()");
     assert_eq!(ProgramFeatures::NONE.to_string(), "{}");
     assert_eq!(
         all.to_string(),
-        "{semi-continuous columns, semi-integer columns, multiple objectives, a start solution}"
+        "{semi-continuous columns, semi-integer columns, multiple objectives}"
     );
 }
 
@@ -342,10 +477,6 @@ impl Backend for Plain {
     type Progress<'a> = Unsupported;
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = Unsupported;
-    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: Events = Events::NONE;
@@ -356,16 +487,13 @@ impl Backend for Plain {
         Ok(())
     }
 
-    fn solve(
-        &mut self,
-        _: &Settings,
-        _: &mut dyn Callback<Self>,
-        _: &mut culmen_core::Priced,
-    ) -> Result<Solved<()>, Never> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::backend::Hooks<'_, Self>) -> Result<Solved<()>, Never> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),
             elapsed: Duration::ZERO,
+            nodes: None,
+            iterations: None,
         })
     }
 }
@@ -398,14 +526,10 @@ fn test_a_backend_without_a_feature_refuses_it_before_it_sees_it() {
     plain.maximize(z);
     let mut solver = Solver::new(Plain::default(), plain.build().unwrap()).unwrap();
     assert_eq!(solver.backend().loads, 1);
-    assert_eq!(
-        solver.solve(Request::new().start(vec![(z, 1.0)])).unwrap_err(),
-        SolveError::UnsupportedFeature {
-            feature: ProgramFeature::StartSolution,
-            supported: ProgramFeatures::NONE
-        }
+    assert!(
+        solver.solve().is_ok(),
+        "a backend without `Starts` solves, and takes no start"
     );
-    assert!(solver.solve(Request::new()).is_ok());
 }
 
 #[test]
@@ -413,15 +537,15 @@ fn test_a_start_is_checked_against_the_program_and_handed_over() {
     let (m, x, y) = semi();
     let mut solver = Solver::new(Script::optimal(2.0, vec![2.0, 0.0]), m.build().unwrap()).unwrap();
     let full = TiVec::<Col, f64>::from(vec![2.0, 0.0]);
-    solver.solve(Request::new().start(full.clone())).unwrap();
-    solver.solve(Request::new().start(vec![(y, 2.0)])).unwrap();
-    solver.solve(Request::new()).unwrap();
+    solver.run().start(full.clone()).solve().unwrap();
+    solver.run().start(vec![(y, 2.0)]).solve().unwrap();
+    solver.solve().unwrap();
     assert_eq!(
         solver.backend().record.starts,
         [Start::Full(full), Start::Sparse(vec![(y, 2.0)])]
     );
 
-    let refused = |solver: &mut Solver<Script>, start: Start| match solver.solve(Request::new().start(start)) {
+    let refused = |solver: &mut Solver<Script>, start: Start| match solver.run().start(start).solve() {
         Err(SolveError::Start(error)) => error,
         other => panic!("{other:?}"),
     };
@@ -431,15 +555,15 @@ fn test_a_start_is_checked_against_the_program_and_handed_over() {
     );
     assert_eq!(
         refused(&mut solver, vec![(Col::new(2), 1.0)].into()),
-        StartError::UnknownColumn { col: Col::new(2) }
+        StartError::UnknownCol { col: Col::new(2) }
     );
     assert_eq!(
         refused(&mut solver, vec![(x, 2.0), (x, 3.0)].into()),
-        StartError::RepeatedColumn { col: x }
+        StartError::RepeatedCol { col: x }
     );
     assert_eq!(
         refused(&mut solver, vec![(y, f64::INFINITY)].into()),
-        StartError::NotFinite {
+        StartError::NonFinite {
             col: y,
             value: f64::INFINITY
         }
@@ -450,14 +574,14 @@ fn test_a_start_is_checked_against_the_program_and_handed_over() {
         "no refused start reaches the backend"
     );
     assert_eq!(
-        StartError::RepeatedColumn { col: x }.to_string(),
+        StartError::RepeatedCol { col: x }.to_string(),
         "Start: Col(0) is given twice"
     );
 }
 
 #[test]
 fn test_tolerance_and_weight_hold_their_invariants() {
-    assert_eq!(Weight::new(f64::NAN), Err(culmen_core::InvalidWeight::NotFinite));
+    assert_eq!(Weight::new(f64::NAN), Err(culmen_core::InvalidWeight::NonFinite));
     assert_eq!(Weight::new(-1.0), Err(culmen_core::InvalidWeight::NotPositive));
     assert_eq!(Weight::try_from(0.25).map(f64::from), Ok(0.25));
     let absolute_only = Tolerance {
@@ -478,10 +602,10 @@ fn featured() -> impl Strategy<Value = ProgramPlan> {
     let column = (0u8..4).prop_map(|kind| {
         let bounds = bounds!(1.0, 3.0);
         match kind {
-            0 => ProgramColumn::continuous(1.0, bounds),
-            1 => ProgramColumn::integer(1.0, bounds),
-            2 => ProgramColumn::semi_continuous(1.0, bounds),
-            _ => ProgramColumn::semi_integer(1.0, bounds),
+            0 => ProgramColumn::continuous().cost(1.0).bounds(bounds),
+            1 => ProgramColumn::integer().cost(1.0).bounds(bounds),
+            2 => ProgramColumn::semi_continuous().cost(1.0).bounds(bounds),
+            _ => ProgramColumn::semi_integer().cost(1.0).bounds(bounds),
         }
     });
     (prop::collection::vec(column, 0..5), 0usize..3, any::<bool>()).prop_map(|(columns, further, blended)| {
@@ -591,7 +715,7 @@ mod serde_round_trips {
     fn test_the_new_plain_data_round_trips() {
         round_trip(&Integrality::SemiContinuous);
         round_trip(&Integrality::SemiInteger);
-        round_trip(&ProgramFeature::StartSolution);
+        round_trip(&ProgramFeature::MultipleObjectives);
         round_trip(&ProgramFeatures::of(&[
             ProgramFeature::SemiInteger,
             ProgramFeature::MultipleObjectives,
@@ -606,9 +730,9 @@ mod serde_round_trips {
         round_trip(&Start::Sparse(vec![(Col::new(1), 2.5)]));
         round_trip(&semi().0.build().unwrap());
         round_trip(&ProgramPlan::from(semi().0.build().unwrap()));
-        let (mut m, ..) = two_stage();
+        let (m, ..) = two_stage();
         round_trip(&m.build().unwrap());
-        m.set_combination(Combination::Blended);
+        let (m, ..) = two_objectives(true);
         round_trip(&m.build().unwrap());
         round_trip(&ProgramPlan::from(m.build().unwrap()));
     }

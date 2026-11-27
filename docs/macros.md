@@ -10,7 +10,7 @@ Turn on the `macros` feature of `culmen`:
 
 ```toml
 [dependencies]
-culmen = { version = "0.4", features = ["macros"] }
+culmen = { version = "0.5", features = ["macros"] }
 ```
 
 The macros are then in `culmen::prelude` and at `culmen::variable` and so on. They work from a crate that depends on
@@ -145,7 +145,8 @@ fn main() -> Result<(), culmen::ModelError> {
 ```
 
 Further objectives ([Several objectives](modelling.md#several-objectives)) have no macro form. Add them with
-`m.add_objective`, whose expression `sum!` writes as well: `m.add_objective(Objective::minimize(sum!(..)))`.
+`m.add_stage` or `m.add_weighted`, whose expression `sum!` writes as well:
+`m.add_stage(Objective::minimize(sum!(..)), Tolerance::EXACT)`.
 
 ## `sum!`
 
@@ -225,12 +226,12 @@ Each form beside the calls it writes:
 |---|---|
 | `variable!(m, x)` | `let x = m.add_var(Var::continuous().name("x"));` |
 | `variable!(m, 0 <= y <= 9, Int)` | `let y = m.add_var(Var::integer().lower(0).upper(9).name("y"));` |
-| `variable!(m, z == 2.5, Free)` | `let z = m.add_var(Var::free().bounds(2.5, 2.5).name("z"));` |
+| `variable!(m, z == 2.5, Free)` | `let z = m.add_var(Var::free().lower(2.5).upper(2.5).name("z"));` |
 | `variable!(m, x[i in I, j in J if f(i, j)], Bin)` | `let x = m.add_var_map(keys, \|&(i, j)\| Var::binary().name(format!("x[{i},{j}]")));` with `keys` the filtered pairs |
 | `constraint!(e <= f)` | `Linear::leq(e, f)`; also `geq`, `equals` |
 | `constraint!(lo <= e <= hi)` | `Linear::between(e, lo, hi)` |
 | `constraint!(m, e == f)` | `m.add_constraint(Linear::equals(e, f))` |
-| `constraint!(m, c, e >= f)` | `let c = m.add_named_constraint("c", Linear::geq(e, f));` |
+| `constraint!(m, c, e >= f)` | `let c = m.add_constraint(("c", Linear::geq(e, f)));` |
 | `constraint!(m, c[i in I], e <= f)` | `let c = m.add_constraint_map(keys, \|&i\| (format!("c[{i}]"), Linear::leq(e, f)));` |
 | `objective!(m, Min, e)` | `m.set_objective(Sense::Minimize, e)` |
 | `sum!(e for i in I, j in J if g)` | a `LinExpr` (linear `e`) or `QuadExpr` (quadratic `e`), each `e` added with `Summand::add_into` in nested `for` loops |

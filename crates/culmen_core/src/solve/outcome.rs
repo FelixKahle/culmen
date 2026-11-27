@@ -81,6 +81,33 @@ impl Outcome {
         self.solution().map(|solution| solution.objective)
     }
 
+    /// The best objective bound proved, offset included: the optimum's own objective for [`Outcome::Optimal`], the
+    /// bound a gap or a stop proved, and `None` when none was proved or the outcome proves no finite bound
+    /// (infeasible or unbounded).
+    ///
+    /// With [`Outcome::objective`] it gives the gap a solve left, as gurobipy's `ObjVal` and `ObjBound` do.
+    ///
+    /// ```
+    /// use culmen_core::{Outcome, Solution, StopReason};
+    ///
+    /// let best = Solution { objective: 4.5, values: vec![1.0].into() };
+    /// assert_eq!(Outcome::Optimal(best.clone()).bound(), Some(4.5));
+    /// let gap = Outcome::GapReached { solution: best.clone(), bound: 4.25 };
+    /// assert_eq!((gap.objective(), gap.bound()), (Some(4.5), Some(4.25)));
+    /// let stopped = Outcome::Stopped { reason: StopReason::TimeLimit, best: Some(best), bound: None };
+    /// assert_eq!(stopped.bound(), None);
+    /// assert_eq!(Outcome::Unbounded.bound(), None);
+    /// ```
+    #[must_use]
+    pub const fn bound(&self) -> Option<f64> {
+        match self {
+            Self::Optimal(solution) => Some(solution.objective),
+            Self::GapReached { bound, .. } => Some(*bound),
+            Self::Stopped { bound, .. } => *bound,
+            Self::Infeasible | Self::Unbounded | Self::InfeasibleOrUnbounded => None,
+        }
+    }
+
     /// The best solution found, by value.
     #[must_use]
     pub fn into_solution(self) -> Option<Solution> {
@@ -95,11 +122,10 @@ impl Outcome {
 /// Why a solve stopped before proving optimality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum StopReason {
     /// The time limit ran out.
     TimeLimit,
-    /// A callback interrupted the solve, as the [`Stop`](crate::Stop) of a [`Request`](crate::Request) does.
+    /// A callback interrupted the solve, as the [`Stop`](crate::Stop) of a [`Run`](crate::Run) does.
     Interrupted,
     /// The node limit was reached.
     NodeLimit,
@@ -115,7 +141,7 @@ pub enum StopReason {
     Other,
 }
 
-/// A finished solve: its outcome, the backend's own status for diagnostics, and the time it took.
+/// A finished solve: its outcome, the backend's own status for diagnostics, the time it took and the work it did.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Solved<S> {
@@ -125,4 +151,10 @@ pub struct Solved<S> {
     pub status: S,
     /// The wall-clock time of the solve.
     pub elapsed: Duration,
+    /// The number of branch-and-bound nodes the solve explored; `None` when it ran no branch and bound, as a backend
+    /// that solves an LP without a search tree, or the backend does not count them.
+    pub nodes: Option<u64>,
+    /// The number of iterations of the LP and QP algorithms the solve ran (simplex, interior point and any other),
+    /// summed over every node; `None` when the backend does not count them.
+    pub iterations: Option<u64>,
 }

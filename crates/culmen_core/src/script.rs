@@ -8,16 +8,15 @@ use core::time::Duration;
 
 use typed_index_collections::{TiSlice, TiVec};
 
-use crate::solve::context::{check_constraint, check_entries, check_solution};
+use crate::backend::{AddedRow, Hooks, Priced, check_constraint, check_entries, check_solution};
 use crate::{
-    ActionError, AddedRow, Analyses, Backend, Callback, Col, Cols, Constraint, CutContext, Events, HeuristicContext,
-    LazyContext, LogContext, LogLevel, ModelClasses, NewCol, Outcome, Phase, PollContext, PriceContext, PriceMode,
-    Priced, Program, ProgramFeatures, Progress, ProgressContext, Row, Sense, Settings, Solution, SolutionContext,
-    Solved, Start, StopReason,
+    ActionError, Backend, Col, Cols, Constraint, Context, CutContext, Event, Events, HeuristicContext, Heuristics,
+    LazyConstraints, LazyContext, LogContext, LogLevel, ModelClasses, NewCol, Outcome, Phase, PollContext,
+    PriceContext, PriceMode, Prices, Program, ProgramFeatures, Progress, ProgressContext, Row, Sense, Settings,
+    Solution, SolutionContext, Solved, Start, Starts, StopReason, UserCuts,
 };
 
-/// A solution found during a solve, with where the solve stood when it was found: what a [`Script`] step reports, and
-/// what a backend may keep of a solution it delivers to a callback later.
+/// A solution a [`Step`] reports, with where the solve stood when it was found.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Found {
     /// Where the solve stands.
@@ -28,9 +27,8 @@ pub struct Found {
     pub values: TiVec<Col, f64>,
 }
 
-/// One event a [`Script`] delivers, in the generic terms of [`Callback`].
+/// One event a [`Script`] delivers, in the generic terms of [`Callback`](crate::Callback) and the search handlers.
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum Step {
     /// A log chunk.
     Log {
@@ -49,18 +47,18 @@ pub enum Step {
     Feasible(Found),
     /// A new incumbent.
     Incumbent(Found),
-    /// A candidate solution offered for lazy constraints.
+    /// A candidate solution offered to the lazy-constraint handler.
     Lazy(Found),
-    /// A node relaxation offered for cuts.
+    /// A node relaxation offered to the cut handler.
     Cut {
         /// Where the solve stands.
         progress: Progress,
         /// One value per column.
         relaxation: TiVec<Col, f64>,
     },
-    /// A chance to supply a heuristic solution.
+    /// A chance for the heuristic handler to supply a solution.
     Heuristic(Progress),
-    /// A node LP offered for pricing.
+    /// A node LP offered to the pricer.
     Price {
         /// Where the solve stands.
         progress: Progress,
@@ -74,31 +72,30 @@ pub enum Step {
 }
 
 impl Step {
-    /// The kind of event the step is delivered as; `None` for [`Step::Price`], which is delivered to a callback that
-    /// [`prices`](crate::Callback::prices) whatever events it asks for.
+    /// The kind of observational event the step is delivered as; `None` for a search step ([`Step::Lazy`],
+    /// [`Step::Cut`], [`Step::Heuristic`], [`Step::Price`]), which is delivered to the handler of its kind whenever
+    /// one is registered.
     ///
     /// ```
-    /// use culmen_core::{Events, Step};
-    /// assert_eq!(Step::Note("presolve done".to_owned()).event(), Some(Events::NATIVE));
+    /// use culmen_core::Event;
+    /// use culmen_core::script::Step;
+    /// assert_eq!(Step::Note("presolve done".to_owned()).event(), Some(Event::Native));
     /// ```
     #[must_use]
-    pub const fn event(&self) -> Option<Events> {
+    pub const fn event(&self) -> Option<Event> {
         Some(match self {
-            Self::Log { .. } => Events::LOG,
-            Self::Progress(_) => Events::PROGRESS,
-            Self::Poll(_) => Events::POLL,
-            Self::Feasible(_) => Events::FEASIBLE,
-            Self::Incumbent(_) => Events::INCUMBENT,
-            Self::Lazy(_) => Events::LAZY,
-            Self::Cut { .. } => Events::CUT,
-            Self::Heuristic(_) => Events::HEURISTIC,
-            Self::Price { .. } => return None,
-            Self::Note(_) => Events::NATIVE,
+            Self::Log { .. } => Event::Log,
+            Self::Progress(_) => Event::Progress,
+            Self::Poll(_) => Event::Poll,
+            Self::Feasible(_) => Event::Feasible,
+            Self::Incumbent(_) => Event::Incumbent,
+            Self::Lazy(_) | Self::Cut { .. } | Self::Heuristic(_) | Self::Price { .. } => return None,
+            Self::Note(_) => Event::Native,
         })
     }
 }
 
-/// What callbacks did during a [`Script`]'s solves.
+/// What callbacks and handlers did during a [`Script`]'s solves.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Record {
     /// The settings of each solve, in order.
@@ -111,11 +108,11 @@ pub struct Record {
     pub supplied: Vec<Vec<(Col, f64)>>,
     /// The starts handed over, as checked, one per solve that had one.
     pub starts: Vec<Start>,
-    /// One round per price step whose callback ran and returned, in order; the columns themselves are the program's.
+    /// One round per price step whose pricer ran and returned, in order; the columns themselves are the program's.
     pub priced: Vec<PriceRound>,
 }
 
-/// What a callback did at one [`Step::Price`].
+/// What a pricer did at one [`Step::Price`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct PriceRound {
     /// The columns it added, in order; the program holds them after the solve.
@@ -126,20 +123,24 @@ pub struct PriceRound {
     pub early: bool,
 }
 
-/// A backend that delivers a fixed list of [`Step`]s to the callback and then ends with a fixed [`Outcome`].
+/// A backend that delivers a fixed list of [`Step`]s to the callback and the handlers and then ends with a fixed
+/// [`Outcome`].
 ///
-/// It supports every generic event and prices, loads every [`ModelClass`](crate::ModelClass) and takes every
-/// [`ProgramFeature`](crate::ProgramFeature), recording each start in [`Record::starts`], since it replays rather
-/// than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
+/// It supports every generic event and has every search capability ([`LazyConstraints`], [`UserCuts`],
+/// [`Heuristics`], [`Prices`]), loads every [`ModelClass`](crate::ModelClass) and takes every
+/// [`ProgramFeature`](crate::ProgramFeature) and start, recording each start in [`Record::starts`], since it replays
+/// rather than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
 /// interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent and the last bound
-/// reported before. The outcome and the elapsed time count every step, whichever events the
-/// callback asks for. A price step's columns are checked and numbered by the solve's [`Priced`], and every later step
-/// counts them; the scripted points and outcome are taken as given, so they hold one value per column the solve
-/// would have.
+/// reported before. A solve reports as its work the last node and iteration counts its steps' progress carried. The
+/// outcome, the elapsed time and the work count every step, whichever events the callback asks for and
+/// whichever handlers are registered. A price step's columns are checked and numbered by the solve's [`Priced`], and
+/// every later step counts them; the scripted points and outcome are taken as given, so they hold one value per
+/// column the solve would have.
 ///
 /// ```
 /// use core::time::Duration;
-/// use culmen_core::{Model, Outcome, Phase, Progress, Request, Script, Solver, Step, StopReason, Var};
+/// use culmen_core::{Model, Outcome, Phase, Progress, Solver, StopReason, Var};
+/// use culmen_core::script::{Script, Step};
 /// use std::sync::atomic::AtomicBool;
 ///
 /// let mut m = Model::new();
@@ -149,7 +150,7 @@ pub struct PriceRound {
 /// let mut solver = Solver::new(script, m.build()?)?;
 ///
 /// let stop = AtomicBool::new(true);
-/// let solved = solver.solve(Request::new().stop(&stop))?;
+/// let solved = solver.run().stop(&stop).solve()?;
 /// assert_eq!(solved.outcome, Outcome::Stopped { reason: StopReason::Interrupted, best: None, bound: None });
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -159,6 +160,8 @@ pub struct Script {
     end: Outcome,
     /// The loaded program's sense; `None` before a load.
     sense: Option<Sense>,
+    /// The number of columns of the loaded program.
+    num_cols: usize,
     /// What callbacks did, across every solve.
     pub record: Record,
 }
@@ -171,6 +174,7 @@ impl Script {
             steps: steps.into(),
             end,
             sense: None,
+            num_cols: 0,
             record: Record::default(),
         }
     }
@@ -187,74 +191,93 @@ impl Script {
         )
     }
 
-    /// Delivers one step: the solve's state sees it whatever the callback asks for, and the callback gets it only
-    /// when it asks for its kind, or, for a price step, when it prices.
+    /// Delivers one step: the solve's state sees it whatever the hooks ask for, and the hooks get it only when they
+    /// ask for its kind, or, for a search step, when a handler of its kind is registered.
     ///
     /// # Panics
     ///
-    /// When the callback panics.
-    fn deliver(&mut self, index: usize, callback: &mut dyn Callback<Self>, run: &mut Run, priced: &mut Priced) {
+    /// When a callback or handler panics.
+    fn deliver(&mut self, index: usize, hooks: &mut Hooks<'_, Self>, run: &mut Run, priced: Option<&mut Priced>) {
         let step = &self.steps[index];
         run.observe(step);
-        let wanted = step
-            .event()
-            .map_or_else(|| callback.prices(), |event| callback.events().contains(event));
+        let wanted = match step {
+            Step::Lazy(_) => hooks.wants_lazy(),
+            Step::Cut { .. } => hooks.wants_cut(),
+            Step::Heuristic(_) => hooks.wants_heuristic(),
+            Step::Price { .. } => priced.is_some(),
+            _ => step.event().is_some_and(|event| hooks.events().contains(event)),
+        };
         if wanted {
             let sense = self.sense.unwrap_or_default();
-            dispatch(step, callback, run, &mut self.record, priced, sense);
+            let num_cols = priced.as_deref().map_or(self.num_cols, Priced::num_cols);
+            let state = State {
+                run,
+                record: &mut self.record,
+                num_cols,
+                sense,
+            };
+            dispatch(step, hooks, state, priced);
         }
     }
 }
 
-/// Calls the callback's method for a step, with the step's context.
+/// What a step's context reaches beyond the step.
+struct State<'a> {
+    run: &'a mut Run,
+    record: &'a mut Record,
+    /// The number of columns the problem holds, the columns priced so far included.
+    num_cols: usize,
+    sense: Sense,
+}
+
+/// Hands a step to the hooks, with the step's context.
 ///
 /// # Panics
 ///
-/// When the callback panics.
-fn dispatch(
-    step: &Step,
-    callback: &mut dyn Callback<Script>,
-    run: &mut Run,
-    record: &mut Record,
-    priced: &mut Priced,
-    sense: Sense,
-) {
-    let num_cols = priced.num_cols();
+/// When a callback or handler panics, and for a price step without `priced`.
+fn dispatch(step: &Step, hooks: &mut Hooks<'_, Script>, state: State<'_>, priced: Option<&mut Priced>) {
+    let State {
+        run,
+        record,
+        num_cols,
+        sense,
+    } = state;
     match step {
-        Step::Log { elapsed, level, text } => callback.log(&mut ScriptLog {
+        Step::Log { elapsed, level, text } => hooks.log(&mut ScriptLog {
             text,
             level: *level,
             elapsed: *elapsed,
         }),
-        Step::Progress(progress) => callback.progress(&mut ScriptProgress { progress: *progress }),
-        Step::Poll(progress) => callback.poll(&mut ScriptPoll {
+        Step::Progress(progress) => hooks.progress(&mut ScriptProgress { progress: *progress }),
+        Step::Poll(progress) => hooks.poll(&mut ScriptPoll {
             progress: *progress,
             interrupted: &mut run.interrupted,
         }),
-        Step::Feasible(found) => callback.feasible(&mut ScriptSolution { found }),
-        Step::Incumbent(found) => callback.incumbent(&mut ScriptSolution { found }),
-        Step::Lazy(found) => callback.lazy(&mut ScriptLazy {
+        Step::Feasible(found) => hooks.feasible(&mut ScriptSolution { found }),
+        Step::Incumbent(found) => hooks.incumbent(&mut ScriptSolution { found }),
+        Step::Lazy(found) => hooks.lazy(&mut ScriptLazy {
             found,
             num_cols,
             added: &mut record.lazy,
         }),
-        Step::Cut { progress, relaxation } => callback.cut(&mut ScriptCut {
+        Step::Cut { progress, relaxation } => hooks.cut(&mut ScriptCut {
             progress: *progress,
             relaxation,
             num_cols,
             added: &mut record.cuts,
         }),
-        Step::Heuristic(progress) => callback.heuristic(&mut ScriptHeuristic {
+        Step::Heuristic(progress) => hooks.heuristic(&mut ScriptHeuristic {
             progress: *progress,
             num_cols,
             supplied: &mut record.supplied,
         }),
         Step::Price { progress, mode, duals } => {
+            let priced = priced.expect("Script: a price step is delivered only with the solve's sink");
             let mut ctx = ScriptPrice::new(*progress, *mode, duals, sense, priced);
-            callback.price(&mut ctx);
+            hooks.price(&mut ctx);
             record.priced.push(ctx.round);
         }
-        Step::Note(text) => callback.native(&mut ScriptNote { text }),
+        Step::Note(text) => hooks.native(&mut ScriptNote { text }),
     }
 }
 
@@ -265,6 +288,8 @@ struct Run {
     best: Option<Solution>,
     bound: Option<f64>,
     elapsed: Duration,
+    nodes: Option<u64>,
+    iterations: Option<u64>,
 }
 
 impl Run {
@@ -291,6 +316,8 @@ impl Run {
 
     fn advance(&mut self, progress: &Progress) {
         self.bound = progress.bound.or(self.bound);
+        self.nodes = progress.nodes.or(self.nodes);
+        self.iterations = progress.iterations.or(self.iterations);
         self.elapsed = self.elapsed.max(progress.elapsed);
     }
 }
@@ -309,7 +336,6 @@ pub enum ScriptStatus {
 
 /// Why a [`Script`] refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum ScriptError {
     /// A solve was asked for before any program was loaded.
     NotLoaded,
@@ -332,47 +358,29 @@ impl Backend for Script {
     type Progress<'a> = ScriptProgress;
     type Poll<'a> = ScriptPoll<'a>;
     type Solution<'a> = ScriptSolution<'a>;
-    type Lazy<'a> = ScriptLazy<'a>;
-    type Cut<'a> = ScriptCut<'a>;
-    type Heuristic<'a> = ScriptHeuristic<'a>;
-    type Price<'a> = ScriptPrice<'a>;
     type Native<'a> = ScriptNote<'a>;
 
     const EVENTS: Events = Events::ALL;
-    const PRICES: bool = true;
     const CLASSES: ModelClasses = ModelClasses::ALL;
-    /// A script replays events and an outcome; it has no duals, basis or other analysis to report honestly.
-    const ANALYSES: Analyses = Analyses::NONE;
     const FEATURES: ProgramFeatures = ProgramFeatures::ALL;
 
     fn load(&mut self, program: &Program) -> Result<(), ScriptError> {
         self.sense = Some(program.sense());
+        self.num_cols = program.num_cols();
         Ok(())
     }
 
-    fn set_start(&mut self, start: &Start) -> Result<(), ScriptError> {
+    /// Replays the steps; in a solve with a pricer, the lengths a lazy constraint, a cut or a heuristic solution is
+    /// checked against are the sink's, so they count the columns priced before.
+    fn solve(&mut self, settings: &Settings, mut hooks: Hooks<'_, Self>) -> Result<Solved<ScriptStatus>, ScriptError> {
         if self.sense.is_none() {
             return Err(ScriptError::NotLoaded);
         }
-        self.record.starts.push(start.clone());
-        Ok(())
-    }
-
-    /// Replays the steps; the lengths a lazy constraint, a cut or a heuristic solution is checked against are
-    /// `priced`'s, so they count the columns priced before.
-    fn solve(
-        &mut self,
-        settings: &Settings,
-        callback: &mut dyn Callback<Self>,
-        priced: &mut Priced,
-    ) -> Result<Solved<ScriptStatus>, ScriptError> {
-        if self.sense.is_none() {
-            return Err(ScriptError::NotLoaded);
-        }
+        let mut priced = hooks.take_priced();
         self.record.settings.push(settings.clone());
         let mut run = Run::default();
         for index in 0..self.steps.len() {
-            self.deliver(index, callback, &mut run, priced);
+            self.deliver(index, &mut hooks, &mut run, priced.as_deref_mut());
             if run.interrupted {
                 let outcome = Outcome::Stopped {
                     reason: StopReason::Interrupted,
@@ -383,6 +391,8 @@ impl Backend for Script {
                     outcome,
                     status: ScriptStatus::Interrupted { step: index },
                     elapsed: run.elapsed,
+                    nodes: run.nodes,
+                    iterations: run.iterations,
                 });
             }
         }
@@ -390,7 +400,45 @@ impl Backend for Script {
             outcome: self.end.clone(),
             status: ScriptStatus::Finished,
             elapsed: run.elapsed,
+            nodes: run.nodes,
+            iterations: run.iterations,
         })
+    }
+}
+
+/// A script hands every candidate of a [`Step::Lazy`] to the handler, and records the constraints it adds in
+/// [`Record::lazy`].
+impl LazyConstraints for Script {
+    type Lazy<'a> = ScriptLazy<'a>;
+}
+
+/// A script hands every relaxation of a [`Step::Cut`] to the handler, and records the cuts it adds in
+/// [`Record::cuts`].
+impl UserCuts for Script {
+    type Cut<'a> = ScriptCut<'a>;
+}
+
+/// A script asks the handler at every [`Step::Heuristic`], and records the solutions it supplies in
+/// [`Record::supplied`].
+impl Heuristics for Script {
+    type Heuristic<'a> = ScriptHeuristic<'a>;
+}
+
+/// A script hands every node LP of a [`Step::Price`] to the pricer, numbers the columns it adds in the solve's sink,
+/// and records each round in [`Record::priced`].
+impl Prices for Script {
+    type Price<'a> = ScriptPrice<'a>;
+}
+
+/// A script records every start in [`Record::starts`]. It implements no analysis trait: it replays events and an
+/// outcome, and has no duals, basis or other analysis to report honestly.
+impl Starts for Script {
+    fn set_start(&mut self, start: &Start) -> Result<(), ScriptError> {
+        if self.sense.is_none() {
+            return Err(ScriptError::NotLoaded);
+        }
+        self.record.starts.push(start.clone());
+        Ok(())
     }
 }
 
@@ -402,15 +450,18 @@ pub struct ScriptLog<'a> {
     elapsed: Duration,
 }
 
+impl Context for ScriptLog<'_> {
+    fn progress(&self) -> Progress {
+        Progress::at(self.elapsed, Phase::Other)
+    }
+}
+
 impl LogContext for ScriptLog<'_> {
     fn text(&self) -> &str {
         self.text
     }
     fn level(&self) -> LogLevel {
         self.level
-    }
-    fn progress(&self) -> Progress {
-        Progress::at(self.elapsed, Phase::Other)
     }
 }
 
@@ -420,11 +471,13 @@ pub struct ScriptProgress {
     progress: Progress,
 }
 
-impl ProgressContext for ScriptProgress {
+impl Context for ScriptProgress {
     fn progress(&self) -> Progress {
         self.progress
     }
 }
+
+impl ProgressContext for ScriptProgress {}
 
 /// The poll context of a [`Script`].
 #[derive(Debug)]
@@ -433,10 +486,13 @@ pub struct ScriptPoll<'a> {
     interrupted: &'a mut bool,
 }
 
-impl PollContext for ScriptPoll<'_> {
+impl Context for ScriptPoll<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
+
+impl PollContext for ScriptPoll<'_> {
     fn interrupt(&mut self) {
         *self.interrupted = true;
     }
@@ -448,10 +504,13 @@ pub struct ScriptSolution<'a> {
     found: &'a Found,
 }
 
-impl SolutionContext for ScriptSolution<'_> {
+impl Context for ScriptSolution<'_> {
     fn progress(&self) -> Progress {
         self.found.progress
     }
+}
+
+impl SolutionContext for ScriptSolution<'_> {
     fn objective(&self) -> f64 {
         self.found.objective
     }
@@ -468,10 +527,13 @@ pub struct ScriptLazy<'a> {
     added: &'a mut Vec<AddedRow>,
 }
 
-impl LazyContext for ScriptLazy<'_> {
+impl Context for ScriptLazy<'_> {
     fn progress(&self) -> Progress {
         self.found.progress
     }
+}
+
+impl LazyContext for ScriptLazy<'_> {
     fn objective(&self) -> f64 {
         self.found.objective
     }
@@ -493,10 +555,13 @@ pub struct ScriptCut<'a> {
     added: &'a mut Vec<AddedRow>,
 }
 
-impl CutContext for ScriptCut<'_> {
+impl Context for ScriptCut<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
+
+impl CutContext for ScriptCut<'_> {
     fn relaxation(&self) -> &TiSlice<Col, f64> {
         self.relaxation
     }
@@ -506,7 +571,7 @@ impl CutContext for ScriptCut<'_> {
     }
 }
 
-/// The heuristic context of a [`Script`]: supplied solutions are checked and recorded.
+/// The heuristic context of a [`Script`]: supplied solutions, full or partial, are checked and recorded.
 #[derive(Debug)]
 pub struct ScriptHeuristic<'a> {
     progress: Progress,
@@ -514,25 +579,38 @@ pub struct ScriptHeuristic<'a> {
     supplied: &'a mut Vec<Vec<(Col, f64)>>,
 }
 
-impl HeuristicContext for ScriptHeuristic<'_> {
-    fn progress(&self) -> Progress {
-        self.progress
-    }
-    fn supply(&mut self, values: &TiSlice<Col, f64>) -> Result<(), ActionError> {
-        check_solution(values, self.num_cols)?;
-        self.supplied
-            .push(values.iter_enumerated().map(|(col, &v)| (col, v)).collect());
-        Ok(())
-    }
-    fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
+impl ScriptHeuristic<'_> {
+    /// Offers values for some columns, which the script checks and records as given, standing in for a solver that
+    /// completes a partial solution.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::UnknownCol`] or [`ActionError::NonFinite`] for an entry at fault.
+    pub fn supply_partial(&mut self, entries: &[(Col, f64)]) -> Result<(), ActionError> {
         check_entries(entries, self.num_cols)?;
         self.supplied.push(entries.to_vec());
         Ok(())
     }
 }
 
+impl Context for ScriptHeuristic<'_> {
+    fn progress(&self) -> Progress {
+        self.progress
+    }
+}
+
+impl HeuristicContext for ScriptHeuristic<'_> {
+    fn supply(&mut self, values: &TiSlice<Col, f64>) -> Result<(), ActionError> {
+        check_solution(values, self.num_cols)?;
+        self.supplied
+            .push(values.iter_enumerated().map(|(col, &v)| (col, v)).collect());
+        Ok(())
+    }
+}
+
 /// The price context of a [`Script`]: columns are checked and numbered by the solve's [`Priced`], and the round is
-/// recorded in [`Record::priced`]. A bound reported in [`PriceMode::Farkas`] is refused with [`ActionError::Refused`].
+/// recorded in [`Record::priced`]. A bound reported and an early stop in [`PriceMode::Farkas`] are refused with
+/// [`ActionError::Refused`].
 #[derive(Debug)]
 pub struct ScriptPrice<'a> {
     progress: Progress,
@@ -574,10 +652,13 @@ impl<'a> ScriptPrice<'a> {
     }
 }
 
-impl PriceContext for ScriptPrice<'_> {
+impl Context for ScriptPrice<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
+
+impl PriceContext for ScriptPrice<'_> {
     fn mode(&self) -> PriceMode {
         self.mode
     }
@@ -595,15 +676,21 @@ impl PriceContext for ScriptPrice<'_> {
         self.round.added = Cols::range(self.start, self.priced.num_cols());
         Ok(col)
     }
-    fn branch_early(&mut self) {
+    fn branch_early(&mut self) -> Result<(), ActionError> {
+        if matches!(self.mode, PriceMode::Farkas) {
+            return Err(ActionError::Refused(
+                "Script: a Farkas round does not end early".to_owned(),
+            ));
+        }
         self.round.early = true;
+        Ok(())
     }
     fn report_bound(&mut self, bound: f64) -> Result<(), ActionError> {
         if matches!(self.mode, PriceMode::Farkas) {
             return Err(ActionError::Refused("Script: a Farkas round takes no bound".to_owned()));
         }
         if !bound.is_finite() {
-            return Err(ActionError::NotFiniteBound { bound });
+            return Err(ActionError::NonFiniteBound { bound });
         }
         self.round.bound = Some(bound);
         Ok(())

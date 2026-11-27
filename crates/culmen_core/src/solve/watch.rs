@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The convenient path: a stop, an observer of progress, solutions and log lines, and the request carrying them.
+//! The convenient path: a stop, an observer of progress, solutions and log lines, and the callback running them.
 
 use core::fmt;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use typed_index_collections::TiSlice;
 
-use super::context::{LogContext, PollContext, ProgressContext, SolutionContext};
-use crate::{Backend, Callback, Col, Events, LogLevel, Progress, Settings, Start};
+use super::context::{Context, LogContext, PollContext, SolutionContext};
+use crate::{Backend, Callback, Col, Event, Events, LogLevel, Progress};
 
 /// A cooperative stop request, polled while a solve runs.
 ///
@@ -121,7 +121,7 @@ pub struct LogLine<'a> {
 /// }
 /// ```
 pub trait Observer: Send {
-    /// Where the solve stands, at most about once per [`Request::progress_interval`].
+    /// Where the solve stands, at most about once per [`Run::progress_interval`](crate::Run::progress_interval).
     fn progress(&mut self, progress: &Progress) {
         let _ = progress;
     }
@@ -149,147 +149,33 @@ impl<O: Observer + ?Sized> Observer for &mut O {
     }
 }
 
-/// One solve's settings, stop, observer and start.
+/// A stop and an observer as a [`Callback`] for every backend: what a [`Run`](crate::Run) runs before its callback.
+///
+/// It polls the stop at every [`Event::Poll`], reports progress from polls and progress events at most once per
+/// interval, reports each incumbent, and joins log chunks into lines, each without its `\n` or `\r\n`, even when the
+/// two halves of a `\r\n` arrive in different chunks. Code that drives a [`Backend`] directly registers it paired
+/// with a callback of its own, `(watch, mine)`, to keep this convenience while reaching every event, and calls
+/// [`Watch::finish`] once the solve returns.
 ///
 /// ```
 /// use core::time::Duration;
 /// use std::sync::atomic::AtomicBool;
-/// use culmen_core::{Request, Settings, relative_gap, threads};
+/// use culmen_core::{Backend, Model, Outcome, Phase, Progress, Settings, StopReason, Var};
+/// use culmen_core::backend::{Hooks, Watch};
+/// use culmen_core::script::{Script, Step};
 ///
-/// let stop = AtomicBool::new(false);
-/// let mut seen = ();
-/// let request = Request::new()
-///     .settings_from(Settings {
-///         relative_gap: Some(relative_gap!(0.01)),
-///         threads: Some(threads!(2)),
-///         ..Settings::new()
-///     })
-///     .time_limit(Duration::from_secs(60))
-///     .stop(&stop)
-///     .observer(&mut seen)
-///     .progress_interval(Duration::from_millis(500));
-/// assert_eq!(request.settings().time_limit, Some(Duration::from_secs(60)));
+/// let mut m = Model::new();
+/// m.add_var(Var::binary());
+/// let mut script = Script::new([Step::Poll(Progress::at(Duration::ZERO, Phase::Mip))], Outcome::Infeasible);
+/// script.load(&m.build()?)?;
+///
+/// let stop = AtomicBool::new(true);
+/// let mut watch = Watch::new(Some(&stop), None, Watch::DEFAULT_PROGRESS_INTERVAL);
+/// let solved = script.solve(&Settings::new(), Hooks::new().register_callback(&mut watch))?;
+/// watch.finish();
+/// assert!(matches!(solved.outcome, Outcome::Stopped { reason: StopReason::Interrupted, .. }));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[must_use]
-pub struct Request<'a> {
-    settings: Settings,
-    stop: Option<&'a dyn Stop>,
-    observer: Option<&'a mut dyn Observer>,
-    progress_interval: Duration,
-    start: Option<Start>,
-}
-
-impl<'a> Request<'a> {
-    /// The pace of progress reports when none is set.
-    pub const DEFAULT_PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
-
-    /// The solver's defaults, no stop, no observer, no start.
-    pub const fn new() -> Self {
-        Self {
-            settings: Settings::new(),
-            stop: None,
-            observer: None,
-            progress_interval: Self::DEFAULT_PROGRESS_INTERVAL,
-            start: None,
-        }
-    }
-
-    /// Replaces every setting, including a time limit set before; the rest of [`Settings`] has no setter of its
-    /// own here.
-    pub fn settings_from(mut self, settings: impl Into<Settings>) -> Self {
-        self.settings = settings.into();
-        self
-    }
-
-    /// The wall-clock time the solve may take.
-    pub const fn time_limit(mut self, limit: Duration) -> Self {
-        self.settings.time_limit = Some(limit);
-        self
-    }
-
-    /// The stop polled while the solve runs.
-    pub fn stop(mut self, stop: &'a impl Stop) -> Self {
-        self.stop = Some(stop);
-        self
-    }
-
-    /// The observer of progress, improving solutions and log lines.
-    pub fn observer(mut self, observer: &'a mut impl Observer) -> Self {
-        self.observer = Some(observer);
-        self
-    }
-
-    /// The least time between two progress reports.
-    pub const fn progress_interval(mut self, interval: Duration) -> Self {
-        self.progress_interval = interval;
-        self
-    }
-
-    /// The start handed to the solver before the solve: a full [`TiVec<Col, f64>`](crate::TiVec) or `Vec<f64>`, or a
-    /// sparse `Vec<(Col, f64)>`, checked by [`Solver::solve`](crate::Solver::solve) against the program.
-    ///
-    /// ```
-    /// use culmen_core::{Col, Request, Start};
-    /// let request = Request::new().start(vec![(Col::new(0), 1.0)]);
-    /// assert_eq!(request.start_solution(), Some(&Start::Sparse(vec![(Col::new(0), 1.0)])));
-    /// ```
-    pub fn start(mut self, start: impl Into<Start>) -> Self {
-        self.start = Some(start.into());
-        self
-    }
-
-    /// The settings the solve runs under.
-    #[must_use]
-    pub const fn settings(&self) -> &Settings {
-        &self.settings
-    }
-
-    /// The start handed to the solver, `None` when there is none.
-    #[must_use]
-    pub const fn start_solution(&self) -> Option<&Start> {
-        self.start.as_ref()
-    }
-
-    /// The request's stop and observer as a callback, its settings and its start.
-    #[must_use]
-    pub fn into_watch(self) -> (Watch<'a>, Settings, Option<Start>) {
-        let watch = Watch {
-            stop: self.stop,
-            observer: self.observer,
-            interval: self.progress_interval,
-            last_progress: None,
-            line: String::new(),
-            line_level: LogLevel::Info,
-            line_elapsed: Duration::ZERO,
-        };
-        (watch, self.settings, self.start)
-    }
-}
-
-impl Default for Request<'_> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl fmt::Debug for Request<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Request")
-            .field("settings", &self.settings)
-            .field("stop", &self.stop.is_some())
-            .field("observer", &self.observer.is_some())
-            .field("progress_interval", &self.progress_interval)
-            .field("start", &self.start)
-            .finish()
-    }
-}
-
-/// A [`Request`]'s stop and observer as a [`Callback`] for every backend.
-///
-/// It polls the stop at every [`Events::POLL`], reports progress from polls and progress events at most once per
-/// interval, reports each incumbent, and joins log chunks into lines, each without its `\n` or `\r\n`, even when the
-/// two halves of a `\r\n` arrive in different chunks. Pair it with a callback of your own,
-/// `(watch, mine)`, to keep this convenience while reaching every event.
 pub struct Watch<'a> {
     stop: Option<&'a dyn Stop>,
     observer: Option<&'a mut dyn Observer>,
@@ -300,7 +186,24 @@ pub struct Watch<'a> {
     line_elapsed: Duration,
 }
 
-impl Watch<'_> {
+impl<'a> Watch<'a> {
+    /// The pace of progress reports when none is set.
+    pub const DEFAULT_PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
+
+    /// Polls `stop`, when given, and reports to `observer`, when given, at most one progress report per `interval`.
+    #[must_use]
+    pub const fn new(stop: Option<&'a dyn Stop>, observer: Option<&'a mut dyn Observer>, interval: Duration) -> Self {
+        Self {
+            stop,
+            observer,
+            interval,
+            last_progress: None,
+            line: String::new(),
+            line_level: LogLevel::Info,
+            line_elapsed: Duration::ZERO,
+        }
+    }
+
     /// Reports the part of a log line still waiting for its line break, if any but carriage returns; a second call
     /// reports nothing.
     pub fn finish(&mut self) {
@@ -360,12 +263,12 @@ impl Watch<'_> {
 impl<B: Backend> Callback<B> for Watch<'_> {
     fn events(&self) -> Events {
         let watched = if self.observer.is_some() {
-            Events::LOG | Events::PROGRESS | Events::POLL | Events::INCUMBENT
+            Event::Log | Event::Progress | Event::Poll | Event::Incumbent
         } else {
             Events::NONE
         };
         if self.stop.is_some() {
-            watched | Events::POLL
+            watched | Event::Poll
         } else {
             watched
         }

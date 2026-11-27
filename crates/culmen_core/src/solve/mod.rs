@@ -5,41 +5,52 @@
 
 mod analysis;
 mod backend;
-pub mod context;
+mod capability;
+mod context;
 mod edit;
 mod events;
+mod hooks;
 mod load;
 mod outcome;
 mod priced;
+mod run;
 mod settings;
 mod start;
 mod watch;
 
 pub use analysis::{
-    Analyses, AnalysesIter, Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit,
-    Line, Misfit, Penalty, Ranged, Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
+    Analysis, AnalysisError, Basis, BasisStatus, Bound, Duals, Iis, InvalidPenalty, Limit, Line, Misfit, Penalty,
+    Ranged, Ranging, Relaxed, Side, Table, Violation, Violations, Weights,
 };
 pub use backend::{Backend, Callback};
-pub use context::{
-    ActionError, AddedRow, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, PriceMode,
-    ProgressContext, SolutionContext, Unsupported,
+pub use capability::{
+    BasisAnalysis, Configurable, DualAnalysis, Heuristics, IisAnalysis, LazyConstraints, Prices, RangingAnalysis,
+    RayAnalysis, RelaxationAnalysis, Starts, UserCuts,
 };
-pub use edit::{Edit, EditError, NewRow};
-pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
+pub use context::{
+    ActionError, AddedRow, Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext,
+    PriceMode, ProgressContext, SolutionContext, Unsupported, check_constraint, check_entries, check_solution,
+};
+pub use edit::{Edit, EditError};
+pub use events::{Event, Events, EventsIter, LogLevel, Phase, Progress};
+pub use hooks::{CutHandler, HeuristicHandler, Hooks, LazyHandler, Pricer, Relay};
 pub use load::LoadError;
 pub use outcome::{Outcome, Solution, Solved, StopReason};
 pub use priced::Priced;
+pub use run::Run;
 pub use settings::Settings;
 pub use start::{SolveError, Start, StartEntries, StartError};
-pub use watch::{Improvement, LogLine, Observer, Request, Stop, StopFn, Watch, stop_fn};
+pub use watch::{Improvement, LogLine, Observer, Stop, StopFn, Watch, stop_fn};
 
 use crate::{ModelClass, ModelClasses, Program, ProgramFeature, ProgramFeatures};
-use analysis::Ending;
+use analysis::Ended;
+use run::HandStart;
 
-/// A program loaded into a backend, solved as often as needed, each solve with its own [`Request`].
+/// A program loaded into a backend, solved as often as needed, each solve configured on its own [`Run`].
 ///
 /// ```
-/// use culmen_core::{Model, Outcome, Request, Script, Solver, Var};
+/// use culmen_core::{Model, Outcome, Solver, Var};
+/// use culmen_core::script::Script;
 ///
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::binary());
@@ -48,7 +59,7 @@ use analysis::Ending;
 ///
 /// // The scripted backend stands in for a solver here; with the `highs` feature of `culmen`, `Highs::new()`.
 /// let mut solver = Solver::new(Script::optimal(1.0, vec![1.0]), program)?;
-/// let solved = solver.solve(Request::new())?;
+/// let solved = solver.solve()?;
 /// let Outcome::Optimal(solution) = solved.outcome else { panic!("expected an optimum") };
 /// assert_eq!(solution.values[x], 1.0);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -58,8 +69,9 @@ pub struct Solver<B> {
     backend: B,
     program: Program,
     /// How the last solve ended; `None` before one, once a later solve reached the backend, until it returns `Ok`, or
-    /// once another later call replaced its result. A request refused before the backend sees it keeps it.
-    ended: Option<Ending>,
+    /// once another later call replaced its result. A solve refused before the backend sees it keeps it. A ray asked
+    /// of the backend keeps the ending but marks the result as no longer held, since the backend may have run again.
+    ended: Option<Ended>,
     /// Whether the backend holds `program`. An edit clears it while the backend changes; it stays clear when that
     /// change and the reload after it both fail, or a panic interrupts them, until the next call that runs the
     /// backend reloads `program`.
@@ -131,7 +143,7 @@ fn lack<B: Backend>(class: ModelClass, features: ProgramFeatures) -> Result<(), 
 impl<E> From<Lack> for LoadError<E> {
     fn from(lack: Lack) -> Self {
         match lack {
-            Lack::Class { class, supported } => Self::Unsupported { class, supported },
+            Lack::Class { class, supported } => Self::UnsupportedClass { class, supported },
             Lack::Feature { feature, supported } => Self::UnsupportedFeature { feature, supported },
         }
     }
@@ -140,7 +152,7 @@ impl<E> From<Lack> for LoadError<E> {
 impl<E> From<Lack> for EditError<E> {
     fn from(lack: Lack) -> Self {
         match lack {
-            Lack::Class { class, supported } => Self::Unsupported { class, supported },
+            Lack::Class { class, supported } => Self::UnsupportedClass { class, supported },
             Lack::Feature { feature, supported } => Self::UnsupportedFeature { feature, supported },
         }
     }
@@ -151,7 +163,7 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Errors
     ///
-    /// [`LoadError::Unsupported`] when [`Backend::CLASSES`] lacks the program's [`class`](Program::class), else
+    /// [`LoadError::UnsupportedClass`] when [`Backend::CLASSES`] lacks the program's [`class`](Program::class), else
     /// [`LoadError::UnsupportedFeature`] when [`Backend::FEATURES`] lacks one of its [`features`](Program::features),
     /// both before the backend sees it; [`LoadError::Backend`] when the backend refuses the program.
     pub fn new(mut backend: B, program: Program) -> Result<Self, LoadError<B::Error>> {
@@ -177,11 +189,6 @@ impl<B: Backend> Solver<B> {
         &self.backend
     }
 
-    /// The backend, to change its own options between solves.
-    pub const fn backend_mut(&mut self) -> &mut B {
-        &mut self.backend
-    }
-
     /// The backend and the program, taken apart. The backend holds the program unless an edit failed and so did the
     /// reload after it, a panic interrupted them, or the last solve priced columns.
     #[must_use]
@@ -189,61 +196,80 @@ impl<B: Backend> Solver<B> {
         (self.backend, self.program)
     }
 
-    /// Solves under the request's settings, from its start, polling its stop and reporting to its observer.
-    ///
-    /// A solve whose callback priced columns ([`Callback::prices`](crate::Callback::prices)) appends them to the
-    /// program, in the order of their ids, however it ends: returning, failing or unwinding from a panic. The backend
-    /// loads the grown program at the next call that runs it, and the analyses find no solve to read until the next
-    /// solve that prices nothing.
+    /// Solves under the backend's defaults, with no stop, observer, callback, start or handler: [`Run::solve`] of
+    /// [`Solver::run`] with nothing set.
     ///
     /// # Errors
     ///
-    /// [`SolveError::Backend`] when the backend refuses the program it reloads after an edit whose reload failed;
-    /// [`SolveError::UnsupportedFeature`] for a start when [`Backend::FEATURES`] lacks
-    /// [`ProgramFeature::StartSolution`], else [`SolveError::Start`] for a start [`Start::check`] refuses, both before
-    /// the backend sees the request; [`SolveError::Backend`] when the backend refuses the start, a setting cannot be
-    /// applied or the solver fails.
-    ///
-    /// # Panics
-    ///
-    /// When the observer panics: the panic continues once the solver has stopped.
-    pub fn solve(&mut self, request: Request<'_>) -> Result<Solved<B::Status>, SolveError<B::Error>> {
-        self.solve_with(request, &mut ())
+    /// As [`Run::solve`].
+    pub fn solve(&mut self) -> Result<Solved<B::Status>, SolveError<B::Error>> {
+        self.run().solve()
     }
 
-    /// Solves as [`Solver::solve`] does, and also runs `callback` with the backend's full context types.
+    /// One solve to configure: its settings, stop, observer, callback, and the start and handlers the backend
+    /// takes, ended by [`Run::solve`].
+    ///
+    /// ```
+    /// use core::time::Duration;
+    /// use culmen_core::{Backend, Callback, Model, Outcome, Phase, Progress, Solver, Var};
+    /// use culmen_core::script::{Script, Step};
+    ///
+    /// /// Counts the polls a solve delivers.
+    /// #[derive(Default)]
+    /// struct Count(usize);
+    ///
+    /// impl<B: Backend> Callback<B> for Count {
+    ///     fn poll(&mut self, _: &mut B::Poll<'_>) {
+    ///         self.0 += 1;
+    ///     }
+    /// }
+    ///
+    /// let mut m = Model::new();
+    /// m.add_var(Var::binary());
+    /// let poll = Step::Poll(Progress::at(Duration::from_secs(1), Phase::Mip));
+    /// let mut solver = Solver::new(Script::new([poll.clone(), poll], Outcome::Infeasible), m.build()?)?;
+    /// let mut count = Count::default();
+    /// solver.run().time_limit(Duration::from_secs(10)).callback(&mut count).solve()?;
+    /// assert_eq!(count.0, 2);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub const fn run(&mut self) -> Run<'_, '_, B> {
+        Run::new(self)
+    }
+
+    /// Syncs the backend, hands it `start` when given, and solves under `settings` with `watch` run before `hooks`.
     ///
     /// # Errors
     ///
-    /// As [`Solver::solve`].
+    /// As [`Run::solve`].
     ///
     /// # Panics
     ///
-    /// When the observer or `callback` panics: the panic continues once the solver has stopped.
-    pub fn solve_with(
+    /// When the observer, the callback or a handler panics: the panic continues once the solver has stopped.
+    fn execute(
         &mut self,
-        request: Request<'_>,
-        callback: &mut impl Callback<B>,
+        settings: &Settings,
+        watch: &mut Watch<'_>,
+        start: Option<&(Start, HandStart<B>)>,
+        hooks: Hooks<'_, B>,
     ) -> Result<Solved<B::Status>, SolveError<B::Error>> {
-        let (watch, settings, start) = request.into_watch();
         self.sync().map_err(SolveError::Backend)?;
-        if let Some(start) = &start {
-            self.hand_start(start)?;
+        if let Some((start, hand)) = start {
+            hand(self, start)?;
         }
         // The backend's result is replaced from here on, so the last solve is read no longer even when the backend
         // fails or a panic unwinds out of it.
         self.ended = None;
-        let mut both = (watch, callback);
         let mut grow = Grow {
             priced: Priced::new(&self.program, B::CLASSES),
             program: &mut self.program,
             synced: &mut self.synced,
         };
-        let solved = self.backend.solve(&settings, &mut both, &mut grow.priced);
-        both.0.finish();
+        let solved = self.backend.solve(settings, hooks.install(watch, &mut grow.priced));
+        watch.finish();
         // The analyses would read the backend's answer for the program before the priced columns.
-        if grow.priced.cols().len() == 0 {
-            self.ended = solved.as_ref().ok().map(|s| Ending::of(&s.outcome));
+        if grow.priced.cols().is_empty() {
+            self.ended = solved.as_ref().ok().map(|s| Ended::of(&s.outcome));
         }
         drop(grow);
         solved.map_err(SolveError::Backend)
@@ -261,19 +287,29 @@ impl<B: Backend> Solver<B> {
         }
         Ok(())
     }
+}
 
-    /// Checks a start against the backend's features and the program, and hands it to the backend.
+impl<B: Configurable> Solver<B> {
+    /// The backend's own options, which every solve applies before its settings.
+    #[must_use]
+    pub fn options(&self) -> &B::Options {
+        self.backend.options()
+    }
+
+    /// The backend's own options, to change between solves. The backend is reachable mutably only through them, so
+    /// the program it holds stays the solver's.
+    pub fn options_mut(&mut self) -> &mut B::Options {
+        self.backend.options_mut()
+    }
+}
+
+impl<B: Starts> Solver<B> {
+    /// Checks a start against the program, and hands it to the backend.
     ///
     /// # Errors
     ///
-    /// As [`Solver::solve`] states for a start.
+    /// As [`Run::solve`] states for a start.
     fn hand_start(&mut self, start: &Start) -> Result<(), SolveError<B::Error>> {
-        if !B::FEATURES.contains(ProgramFeature::StartSolution) {
-            return Err(SolveError::UnsupportedFeature {
-                feature: ProgramFeature::StartSolution,
-                supported: B::FEATURES,
-            });
-        }
         start.check(self.program.num_cols()).map_err(SolveError::Start)?;
         self.ended = None;
         self.backend.set_start(start).map_err(SolveError::Backend)

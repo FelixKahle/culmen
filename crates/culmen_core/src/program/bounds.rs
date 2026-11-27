@@ -272,7 +272,6 @@ impl fmt::Display for Bounds {
 
 /// Why [`Bounds::new`] refused an interval.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum InvalidBounds {
     /// An end is NaN.
     NotANumber,

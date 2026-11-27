@@ -4,9 +4,10 @@
 //! Cutting stock by branch-and-price on SCIP: cut rolls of width 100 into pieces to meet each width's demand with as
 //! few whole rolls as possible, the instance of `column_generation`. The master holds one integer column per cutting
 //! pattern, at first one pattern per width. SCIP solves it by branch and bound and, at every node, hands the node LP's
-//! duals to the callback (whose `prices()` is true), which prices patterns in with a knapsack solved by a second
-//! solver, until no pattern improves the node LP. `column_generation` is the same model priced in an outer loop on
-//! HiGHS and made whole only at the end; here the patterns are priced inside the search, so the search is exact.
+//! duals to the pricer (a `Pricer`, which exists only for a backend that prices), which prices patterns in with a
+//! knapsack solved by a second solver, until no pattern improves the node LP. `column_generation` is the same model
+//! priced in an outer loop on HiGHS and made whole only at the end; here the patterns are priced inside the search, so
+//! the search is exact.
 //!
 //! Pricing on SCIP is column generation at every node, with SCIP's default branching on the master's columns. It is
 //! exact when the pricing is exact and never adds a column the master already holds, as here: the knapsack excludes
@@ -19,7 +20,6 @@
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, PriceMode, ProgramColumn};
 
 /// The width of a roll.
 const ROLL: f64 = 100.0;
@@ -98,9 +98,7 @@ impl Patterns {
             .zip(duals)
             .flat_map(|(choices, &dual)| choices.iter().enumerate().map(move |(k, &z)| (z, k as f64 * dual)));
         self.knapsack.set_col_costs(costs.collect::<Vec<_>>())?;
-        let solved = self
-            .knapsack
-            .solve(Request::new().time_limit(Duration::from_secs(10)))?;
+        let solved = self.knapsack.run().time_limit(Duration::from_secs(10)).solve()?;
         let Outcome::Optimal(best) = solved.outcome else {
             return Err(format!("the knapsack has no optimum: {:?}", solved.outcome).into());
         };
@@ -109,14 +107,7 @@ impl Patterns {
     }
 }
 
-impl<B: Backend> Callback<B> for Patterns {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
-
+impl<B: Prices> Pricer<B> for Patterns {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         self.rounds += 1;
         assert!(self.rounds <= MAX_ROUNDS, "pricing ran {} rounds", self.rounds);
@@ -124,11 +115,10 @@ impl<B: Backend> Callback<B> for Patterns {
         // finds the pattern that repairs an infeasible node LP most.
         let duals: Vec<f64> = self.demand.iter().map(|&row| ctx.duals()[row]).collect();
         let pattern = self.best(&duals).expect("the pricing knapsack solves");
-        let entries = self.demand.iter().zip(&pattern).filter(|&(_, &k)| k > 0);
-        let column = NewCol {
-            column: ProgramColumn::integer(1.0, Bounds::NON_NEGATIVE),
-            entries: entries.map(|(&row, &k)| (row, k as f64)).collect(),
-        };
+        let pieces = self.demand.iter().zip(&pattern).filter(|&(_, &k)| k > 0);
+        let column = NewCol::integer()
+            .cost(1)
+            .entries(pieces.map(|(&row, &k)| (row, k as f64)));
         // The knapsack is exact over the patterns the master lacks, so when its best does not improve, none does.
         if ctx.improves(&column) {
             if self.rounds <= 5 || matches!(ctx.mode(), PriceMode::Farkas) {
@@ -154,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .zip(&only)
         .enumerate()
         .map(|(i, (&(width, demand), &x))| {
-            m.add_named_constraint(format!("demand[{i}]"), ((ROLL / width).floor() * x).geq(demand))
+            m.add_constraint((format!("demand[{i}]"), ((ROLL / width).floor() * x).geq(demand)))
         })
         .collect();
     m.minimize(LinExpr::sum(only.iter().copied()));
@@ -162,15 +152,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Every pattern costs one roll, so the objective is whole: a solution within less than one roll of the bound is
     // optimal, and the absolute gap stops the search there.
-    let request = Request::new()
-        .settings_from(Settings {
+    let mut patterns = Patterns::new(demand.clone())?;
+    let solved = master
+        .run()
+        .settings(Settings {
             absolute_gap: Some(absolute_gap!(0.999)),
             node_limit: Some(10_000),
             ..Settings::new()
         })
-        .time_limit(Duration::from_secs(60));
-    let mut patterns = Patterns::new(demand.clone())?;
-    let solved = master.solve_with(request, &mut patterns)?;
+        .time_limit(Duration::from_secs(60))
+        .pricer(&mut patterns)
+        .solve()?;
 
     let (rolls, bound) = match &solved.outcome {
         Outcome::Optimal(best) => (best, best.objective),
@@ -179,20 +171,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!(
         "{} patterns priced in {} rounds over {} nodes",
-        patterns.priced, patterns.rounds, solved.status.nodes
+        patterns.priced,
+        patterns.rounds,
+        solved.nodes.unwrap_or(0)
     );
     let program = master.program();
     for col in program.cols() {
         let used = rolls.values[col].round();
         if used > 0.0 {
-            let pieces = |row: Row| {
-                program
-                    .row(row)
-                    .entries()
-                    .find(|&(c, _)| c == col)
-                    .map_or(0.0, |(_, a)| a)
-            };
-            let pattern: Vec<f64> = demand.iter().map(|&row| pieces(row)).collect();
+            let pattern: Vec<f64> = demand.iter().map(|&row| program.coefficient(row, col)).collect();
             println!(
                 "  {used} rolls cut into {pattern:?} pieces of widths {:?}",
                 PIECES.map(|(width, _)| width)

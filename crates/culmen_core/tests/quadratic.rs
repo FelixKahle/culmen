@@ -13,10 +13,12 @@ use core::fmt;
 use core::time::Duration;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use culmen_core::backend::Unsupported;
+use culmen_core::script::Script;
 use culmen_core::{
-    Backend, Bounds, Callback, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, ModelClasses, ModelError,
-    ModelVar, Outcome, Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Script, Sense,
-    Settings, Solved, Solver, Term, TiSlice, TiVec, Unsupported, Var,
+    Backend, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, ModelClasses, ModelError, ModelVar, Outcome,
+    Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Sense, Settings, Solved, Solver,
+    Term, TiSlice, TiVec, Var,
 };
 use proptest::prelude::*;
 
@@ -360,12 +362,12 @@ fn test_semidefinite_and_concave_objectives_build() {
 #[test]
 fn test_the_plan_checks_its_quadratic_terms() {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free());
+    let y = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(x, Col::new(5), 1.0)];
     assert_eq!(
         plan.clone().build(),
-        Err(ProgramError::UnknownQuadColumn { col: Col::new(5) })
+        Err(ProgramError::UnknownQuadCol { col: Col::new(5) })
     );
     plan.quadratic = vec![(x, y, f64::INFINITY)];
     assert_eq!(
@@ -415,9 +417,7 @@ fn gram_plan(a: &[Vec<i32>], ridge: f64, sign: f64, sense: Sense) -> ProgramPlan
     let h = |i: usize, j: usize| a.iter().map(|row| f64::from(row[i] * row[j])).sum::<f64>();
     let mut plan = ProgramPlan::new();
     plan.sense = sense;
-    let cols: Vec<Col> = (0..n)
-        .map(|_| plan.col(ProgramColumn::continuous(0.0, Bounds::FREE)))
-        .collect();
+    let cols: Vec<Col> = (0..n).map(|_| plan.col(ProgramColumn::free())).collect();
     for i in 0..n {
         plan.quadratic.push((cols[i], cols[i], sign * (h(i, i) + ridge) / 2.0));
         for j in i + 1..n {
@@ -458,7 +458,11 @@ fn test_the_class_reads_integrality_and_the_objective_degree() {
     for class in ModelClasses::ALL {
         let degree = matches!(class, ModelClass::Qp | ModelClass::Miqp);
         let integer = matches!(class, ModelClass::Milp | ModelClass::Miqp);
-        assert_eq!((class.is_quadratic(), class.is_integer()), (degree, integer), "{class}");
+        assert_eq!(
+            (class.is_quadratic(), class.is_discrete()),
+            (degree, integer),
+            "{class}"
+        );
     }
 }
 
@@ -528,10 +532,6 @@ impl Backend for LinearOnly {
     type Progress<'a> = Unsupported;
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = Unsupported;
-    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: Events = Events::NONE;
@@ -546,16 +546,13 @@ impl Backend for LinearOnly {
         }
     }
 
-    fn solve(
-        &mut self,
-        _: &Settings,
-        _: &mut dyn Callback<Self>,
-        _: &mut culmen_core::Priced,
-    ) -> Result<Solved<()>, NoColumns> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::backend::Hooks<'_, Self>) -> Result<Solved<()>, NoColumns> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),
             elapsed: Duration::ZERO,
+            nodes: None,
+            iterations: None,
         })
     }
 }
@@ -572,7 +569,7 @@ fn test_a_class_outside_the_backend_set_is_refused_before_load() {
     let error = Solver::new(LinearOnly, m.build().unwrap()).unwrap_err();
     assert_eq!(
         error,
-        LoadError::Unsupported {
+        LoadError::UnsupportedClass {
             class: ModelClass::Qp,
             supported: LinearOnly::CLASSES
         }
@@ -593,7 +590,7 @@ fn test_a_class_outside_the_backend_set_is_refused_before_load() {
     // The script replays any class.
     let mut solver = Solver::new(Script::optimal(2.0, vec![1.0, 1.0]), m.build().unwrap()).unwrap();
     assert_eq!(solver.program().class(), ModelClass::Qp);
-    assert!(solver.solve(culmen_core::Request::new()).is_ok());
+    assert!(solver.solve().is_ok());
 }
 
 #[test]
@@ -644,7 +641,7 @@ fn test_a_product_with_a_zero_factor_keeps_a_non_finite_coefficient() {
 fn test_a_square_whose_hessian_value_overflows_is_refused() {
     // The coefficient 1e308 is finite, but the Hessian HiGHS reads holds it twice on the diagonal.
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(x, x, 1e308)];
     assert_eq!(
         plan.clone().build(),

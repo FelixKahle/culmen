@@ -12,17 +12,34 @@
 use core::time::Duration;
 
 use culmen_core::{
-    Bounds, Col, LinExpr, Linear, Model, Outcome, Program, ProgramColumn, ProgramPlan, Request, Sense, Settings,
-    Solution, Solved, Solver, StopReason, Var, bounds, relative_gap, solutions,
+    Bounds, Col, LinExpr, Linear, Model, ModelClass, Outcome, Program, ProgramColumn, ProgramPlan, Sense, Settings,
+    Solution, Solved, Solver, StopReason, Var, bounds, feasibility_tolerance, relative_gap, solutions,
 };
 use culmen_scip::{Emphasis, Scip, ScipOptions, ScipStatus, Status};
+use culmen_testing::instances::{flat_costs, infeasible_by_a_hair};
 
 fn solve(program: Program) -> Solved<ScipStatus> {
-    solve_with(Scip::new(), program, Request::new())
+    solve_with(Scip::new(), program, Settings::new())
 }
 
-fn solve_with(scip: Scip, program: Program, request: Request<'_>) -> Solved<ScipStatus> {
-    Solver::new(scip, program).unwrap().solve(request).unwrap()
+fn solve_with(scip: Scip, program: Program, settings: Settings) -> Solved<ScipStatus> {
+    Solver::new(scip, program)
+        .unwrap()
+        .run()
+        .settings(settings)
+        .solve()
+        .unwrap()
+}
+
+/// Solves from `start` when one is given.
+fn solve_from(scip: Scip, program: Program, settings: Settings, start: Option<Vec<f64>>) -> Solved<ScipStatus> {
+    let mut solver = Solver::new(scip, program).unwrap();
+    let run = solver.run().settings(settings);
+    match start {
+        Some(start) => run.start(start).solve(),
+        None => run.solve(),
+    }
+    .unwrap()
 }
 
 fn optimum(solved: &Solved<ScipStatus>) -> &Solution {
@@ -37,7 +54,7 @@ fn assert_close(got: f64, want: f64) {
 }
 
 #[test]
-fn test_an_lp_maximum_includes_the_offset_and_the_dual_bound_meets_it() {
+fn test_an_lp_maximum_includes_the_offset_and_reports_its_work() {
     // Maximize 3x + 2y + 10 subject to x + y <= 4, x + 3y <= 6, x, y >= 0: x = 4, y = 0, objective 22.
     let mut m = Model::new();
     let x = m.add_var(Var::continuous());
@@ -51,8 +68,10 @@ fn test_an_lp_maximum_includes_the_offset_and_the_dual_bound_meets_it() {
     assert_close(best.values[x], 4.0);
     assert_close(best.values[y], 0.0);
     assert_eq!(solved.status.status, Status::Optimal);
-    assert_close(solved.status.dual_bound.unwrap(), 22.0);
     assert!(solved.status.solutions_found >= 1);
+    // SCIP solves an LP at the root of its tree.
+    assert_eq!(solved.nodes, Some(1));
+    assert!(solved.iterations.is_some());
 }
 
 #[test]
@@ -152,8 +171,8 @@ fn test_a_program_without_columns_and_true_rows_is_optimal_at_its_offset() {
 fn test_a_program_with_only_bounds_takes_the_best_bound_of_each_column() {
     // Minimize x - y over x in [1, 3] and integer y in [-2, 5]: x = 1, y = 5, objective -4.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(1, 3));
-    let y = m.add_var(Var::integer().bounds(-2, 5));
+    let x = m.add_var(Var::continuous().bounds(bounds!(1.0, 3.0)));
+    let y = m.add_var(Var::integer().bounds(bounds!(-2.0, 5.0)));
     m.minimize(x - y);
     let solved = solve(m.build().unwrap());
     let best = optimum(&solved);
@@ -169,10 +188,10 @@ fn test_a_free_row_binds_nothing_and_a_ranged_row_binds_both_sides() {
     let program = |sense| {
         let mut plan = ProgramPlan::new();
         plan.sense = sense;
-        let x = plan.col(ProgramColumn::continuous(2.0, bounds!(0.0, 2.0)));
-        let y = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-        plan.row(Bounds::FREE, [(x, 1.0), (y, -1.0)]);
-        plan.row(bounds!(1.0, 3.0), [(x, 1.0), (y, 1.0)]);
+        let x = plan.col(ProgramColumn::continuous().cost(2.0).bounds(bounds!(0.0, 2.0)));
+        let y = plan.col(ProgramColumn::continuous().cost(1.0));
+        plan.row((Bounds::FREE, [(x, 1.0), (y, -1.0)]));
+        plan.row((bounds!(1.0, 3.0), [(x, 1.0), (y, 1.0)]));
         (plan.build().unwrap(), x, y)
     };
     let (max, x, y) = program(Sense::Maximize);
@@ -193,8 +212,8 @@ fn test_a_free_row_binds_nothing_and_a_ranged_row_binds_both_sides() {
 fn test_a_fixed_column_keeps_its_value() {
     // Maximize x + y with x fixed at 2.5, y integer in [0, 10] and x + y <= 6: y = 3, objective 5.5.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(2.5, 2.5));
-    let y = m.add_var(Var::integer().bounds(0, 10));
+    let x = m.add_var(Var::continuous().bounds(bounds!(2.5, 2.5)));
+    let y = m.add_var(Var::integer().bounds(bounds!(0.0, 10.0)));
     m.add_constraint((x + y).leq(6.0));
     m.maximize(x + y);
     let solved = solve(m.build().unwrap());
@@ -208,7 +227,7 @@ fn test_a_fixed_column_keeps_its_value() {
 fn test_infinite_bounds_leave_a_column_free() {
     // Minimize x over a free x and y >= 0 subject to x + y >= -3 and y <= 1 in a row: x = -4, y = 1, objective -4.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(f64::NEG_INFINITY, f64::INFINITY));
+    let x = m.add_var(Var::continuous().bounds(bounds!(f64::NEG_INFINITY, f64::INFINITY)));
     let y = m.add_var(Var::continuous());
     m.add_constraint((x + y).geq(-3.0));
     m.add_constraint(LinExpr::from(y).leq(1.0));
@@ -223,7 +242,7 @@ fn test_infinite_bounds_leave_a_column_free() {
 #[test]
 fn test_an_integer_column_whose_bounds_hold_no_whole_number_is_infeasible() {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(0.25, 0.75));
+    let x = m.add_var(Var::integer().bounds(bounds!(0.25, 0.75)));
     m.minimize(x);
     let solved = solve(m.build().unwrap());
     assert!(
@@ -260,15 +279,11 @@ fn plain() -> Scip {
     })
 }
 
-/// A request without presolving under `settings`, from `start` when one is given.
-fn plain_request(settings: Settings, start: Option<Vec<f64>>) -> Request<'static> {
-    let request = Request::new().settings_from(Settings {
+/// `settings` with presolving off.
+fn plain_settings(settings: Settings) -> Settings {
+    Settings {
         presolve: Some(false),
         ..settings
-    });
-    match start {
-        Some(start) => request.start(start),
-        None => request,
     }
 }
 
@@ -279,7 +294,7 @@ fn test_a_node_limit_stops_with_the_root_bound_and_without_a_solution() {
         node_limit: Some(1),
         ..Settings::new()
     };
-    let solved = solve_with(plain(), program, plain_request(settings, None));
+    let solved = solve_with(plain(), program, plain_settings(settings));
     assert_eq!(solved.status.status, Status::NodeLimit, "{solved:?}");
     let Outcome::Stopped { reason, best, bound } = solved.outcome else {
         panic!("{solved:?}")
@@ -295,7 +310,7 @@ fn test_a_node_limit_stops_with_the_start_as_its_best_solution() {
         node_limit: Some(1),
         ..Settings::new()
     };
-    let solved = solve_with(plain(), program, plain_request(settings, last_two()));
+    let solved = solve_from(plain(), program, plain_settings(settings), last_two());
     let Outcome::Stopped { reason, best, bound } = solved.outcome else {
         panic!("{solved:?}")
     };
@@ -313,7 +328,7 @@ fn test_a_time_limit_of_zero_stops_with_and_without_a_solution() {
         time_limit: Some(Duration::ZERO),
         ..Settings::new()
     };
-    let without = solve_with(plain(), program.clone(), plain_request(settings.clone(), None));
+    let without = solve_with(plain(), program.clone(), plain_settings(settings.clone()));
     assert_eq!(without.status.status, Status::TimeLimit, "{without:?}");
     assert!(
         matches!(
@@ -326,7 +341,7 @@ fn test_a_time_limit_of_zero_stops_with_and_without_a_solution() {
         ),
         "{without:?}"
     );
-    let with = solve_with(plain(), program, plain_request(settings, last_two()));
+    let with = solve_from(plain(), program, plain_settings(settings), last_two());
     let Outcome::Stopped { reason, best, .. } = with.outcome else {
         panic!("{with:?}")
     };
@@ -348,7 +363,7 @@ fn test_a_solution_limit_ends_with_a_solution() {
         solution_limit: Some(solutions!(1)),
         ..Settings::new()
     };
-    let solved = solve_with(Scip::new(), m.build().unwrap(), Request::new().settings_from(settings));
+    let solved = solve_with(Scip::new(), m.build().unwrap(), settings);
     assert!(
         matches!(
             solved.outcome,
@@ -370,7 +385,7 @@ fn test_a_solution_limit_reached_by_the_start_stops_at_the_start() {
         solution_limit: Some(solutions!(1)),
         ..Settings::new()
     };
-    let solved = solve_with(plain(), program, plain_request(settings, last_two()));
+    let solved = solve_from(plain(), program, plain_settings(settings), last_two());
     assert_eq!(solved.status.status, Status::BestSolutionLimit, "{solved:?}");
     let Outcome::Stopped { reason, best, .. } = solved.outcome else {
         panic!("{solved:?}")
@@ -389,7 +404,7 @@ fn test_a_wide_relative_gap_is_reached_at_the_root() {
         ..Settings::new()
     };
     let start = Some(vec![1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
-    let solved = solve_with(plain(), program, plain_request(settings, start));
+    let solved = solve_from(plain(), program, plain_settings(settings), start);
     assert_eq!(solved.status.status, Status::GapLimit, "{solved:?}");
     let Outcome::GapReached { solution, bound } = solved.outcome else {
         panic!("{solved:?}")
@@ -401,7 +416,12 @@ fn test_a_wide_relative_gap_is_reached_at_the_root() {
 #[test]
 fn test_a_sparse_start_is_taken_and_the_solve_still_proves_the_optimum() {
     let (program, take) = branching();
-    let solved = solve_with(Scip::new(), program, Request::new().start(vec![(take[5], 1.0)]));
+    let solved = Solver::new(Scip::new(), program)
+        .unwrap()
+        .run()
+        .start(vec![(take[5], 1.0)])
+        .solve()
+        .unwrap();
     let best = optimum(&solved);
     assert_close(best.objective, 2.9);
     assert_close(best.values[take[0]] + best.values[take[1]], 2.0);
@@ -415,11 +435,11 @@ fn test_a_second_solve_takes_its_own_settings() {
         node_limit: Some(1),
         ..Settings::new()
     };
-    let first = solver.solve(plain_request(limited, None)).unwrap();
+    let first = solver.run().settings(plain_settings(limited)).solve().unwrap();
     assert_eq!(first.status.status, Status::NodeLimit);
-    let second = solver.solve(plain_request(Settings::new(), None)).unwrap();
+    let second = solver.run().settings(plain_settings(Settings::new())).solve().unwrap();
     assert_close(optimum(&second).objective, 2.9);
-    let third = solver.solve(Request::new()).unwrap();
+    let third = solver.solve().unwrap();
     assert_close(optimum(&third).objective, 2.9);
 }
 
@@ -432,17 +452,14 @@ fn test_a_second_solve_starts_from_the_last_solves_best_solution_until_an_edit()
     let (program, take) = branching();
     let mut solver = Solver::new(plain(), program).unwrap();
     let one_node = || {
-        plain_request(
-            Settings {
-                node_limit: Some(1),
-                ..Settings::new()
-            },
-            None,
-        )
+        plain_settings(Settings {
+            node_limit: Some(1),
+            ..Settings::new()
+        })
     };
-    let first = solver.solve(plain_request(Settings::new(), None)).unwrap();
+    let first = solver.run().settings(plain_settings(Settings::new())).solve().unwrap();
     assert_close(optimum(&first).objective, 2.9);
-    let again = solver.solve(one_node()).unwrap();
+    let again = solver.run().settings(one_node()).solve().unwrap();
     let Outcome::Stopped { reason, best, .. } = again.outcome else {
         panic!("{again:?}")
     };
@@ -452,7 +469,7 @@ fn test_a_second_solve_starts_from_the_last_solves_best_solution_until_an_edit()
     assert_close(best.values[take[0]] + best.values[take[1]], 2.0);
     // The last item is worth 1.0 still less than any other, so the optimum stays; only the instance is new.
     solver.set_col_costs([(take[5], 0.9)]).unwrap();
-    let edited = solver.solve(one_node()).unwrap();
+    let edited = solver.run().settings(one_node()).solve().unwrap();
     assert!(
         matches!(
             edited.outcome,
@@ -470,14 +487,31 @@ fn test_a_second_solve_starts_from_the_last_solves_best_solution_until_an_edit()
 fn test_an_edit_reloads_the_program() {
     // Raising y's upper bound to 5 lets maximize x + y over x + y <= 4 reach 4 instead of 3.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(0, 1));
-    let y = m.add_var(Var::continuous().bounds(0, 2));
+    let x = m.add_var(Var::continuous().bounds(bounds!(0.0, 1.0)));
+    let y = m.add_var(Var::continuous().bounds(bounds!(0.0, 2.0)));
     m.add_constraint((x + y).leq(4.0));
     m.maximize(x + y);
     let mut solver = Solver::new(Scip::new(), m.build().unwrap()).unwrap();
-    assert_close(optimum(&solver.solve(Request::new()).unwrap()).objective, 3.0);
+    assert_close(optimum(&solver.solve().unwrap()).objective, 3.0);
     solver.set_col_bounds([(y, bounds!(0.0, 5.0))]).unwrap();
-    assert_close(optimum(&solver.solve(Request::new()).unwrap()).objective, 4.0);
+    assert_close(optimum(&solver.solve().unwrap()).objective, 4.0);
+}
+
+#[test]
+fn test_a_coefficient_edit_reloads_the_program() {
+    // Maximize x + y over x + y <= 4, x, y in [0, 3]: 4. With the row 2x + y <= 4 instead: 3.5 at (0.5, 3); with y
+    // taken out of the row: 3 + 2 = 5 at (2, 3), x bound by 2x <= 4.
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(3));
+    let y = m.add_var(Var::continuous().upper(3));
+    let cap = m.add_constraint((x + y).leq(4.0));
+    m.maximize(x + y);
+    let mut solver = Solver::new(Scip::new(), m.build().unwrap()).unwrap();
+    assert_close(optimum(&solver.solve().unwrap()).objective, 4.0);
+    solver.set_coefficients([(cap, x, 2.0)]).unwrap();
+    assert_close(optimum(&solver.solve().unwrap()).objective, 3.5);
+    solver.set_coefficients([(cap, y, 0.0)]).unwrap();
+    assert_close(optimum(&solver.solve().unwrap()).objective, 5.0);
 }
 
 #[test]
@@ -486,15 +520,15 @@ fn test_columns_and_rows_may_share_a_name_and_go_without_one() {
     plan.sense = Sense::Maximize;
     let named = |name: &str| ProgramColumn {
         name: Some(name.to_owned()),
-        ..ProgramColumn::integer(1.0, bounds!(0.0, 3.0))
+        ..ProgramColumn::integer().cost(1.0).bounds(bounds!(0.0, 3.0))
     };
     let x = plan.col(named("twin"));
     let y = plan.col(named("twin"));
     let z = plan.col(named(""));
-    let w = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 0.5)));
-    let row = plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0), (z, 1.0)]);
+    let w = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 0.5)));
+    let row = plan.row((bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0), (z, 1.0)]));
     plan.rows[row].name = Some("twin".to_owned());
-    let other = plan.row(bounds!(f64::NEG_INFINITY, 10.0), [(w, 1.0)]);
+    let other = plan.row((bounds!(f64::NEG_INFINITY, 10.0), [(w, 1.0)]));
     plan.rows[other].name = Some("twin".to_owned());
     let solved = solve(plan.build().unwrap());
     assert_close(optimum(&solved).objective, 4.5);
@@ -503,9 +537,7 @@ fn test_columns_and_rows_may_share_a_name_and_go_without_one() {
 #[test]
 fn test_a_moved_backend_solves_on_another_thread() {
     let mut solver = Solver::new(Scip::new(), infeasible(false).build().unwrap()).unwrap();
-    let solved = std::thread::spawn(move || solver.solve(Request::new()).unwrap())
-        .join()
-        .unwrap();
+    let solved = std::thread::spawn(move || solver.solve().unwrap()).join().unwrap();
     assert!(matches!(
         solved.outcome,
         Outcome::Infeasible | Outcome::InfeasibleOrUnbounded
@@ -523,6 +555,80 @@ fn test_threads_a_seed_and_the_console_setting_are_accepted() {
         console: false,
         ..Settings::new()
     };
-    let solved = solve_with(Scip::new(), program, Request::new().settings_from(settings));
+    let solved = solve_with(Scip::new(), program, settings);
     assert_close(optimum(&solved).objective, 2.9);
+}
+
+#[test]
+fn test_the_objective_edits_reach_each_hand_worked_optimum() {
+    // Minimize x + 2y over x + y >= 1, x, y in [0, 4] with x whole: 1 at (1, 0). Maximized: 12 at (4, 4).
+    let mut m = Model::new();
+    let x = m.add_var(Var::integer().upper(4));
+    let y = m.add_var(Var::continuous().upper(4));
+    m.add_constraint((x + y).geq(1));
+    m.minimize(x + 2 * y);
+    let mut solver = Solver::new(Scip::new(), m.build().unwrap()).unwrap();
+    let best = |solver: &mut Solver<Scip>| optimum(&solver.solve().unwrap()).objective;
+    assert!((best(&mut solver) - 1.0).abs() < 1e-9);
+    solver.set_sense(Sense::Maximize).unwrap();
+    assert!((best(&mut solver) - 12.0).abs() < 1e-9);
+    solver.set_offset(-2).unwrap();
+    assert!((best(&mut solver) - 10.0).abs() < 1e-9);
+    // Minimize (x - 2)² + y = x² - 4x + 4 + y: 0 at (2, 0), a MIQP.
+    solver.set_objective(Sense::Minimize, x * x - 4 * x + 4 + y).unwrap();
+    assert!(best(&mut solver).abs() < 1e-6);
+    assert_eq!(solver.program().class(), ModelClass::Miqp);
+}
+
+#[test]
+fn test_the_feasibility_tolerance_admits_a_hair_of_infeasibility() {
+    for integer in [false, true] {
+        let program = infeasible_by_a_hair(integer);
+        let strict = Solver::new(Scip::new(), program.clone()).unwrap().solve().unwrap();
+        assert!(
+            matches!(strict.outcome, Outcome::Infeasible),
+            "integer {integer}: {:?}",
+            strict.outcome
+        );
+        let loose = Settings {
+            feasibility_tolerance: Some(feasibility_tolerance!(1e-4)),
+            ..Settings::new()
+        };
+        let solved = Solver::new(Scip::new(), program.clone())
+            .unwrap()
+            .run()
+            .settings(loose)
+            .solve()
+            .unwrap();
+        let Outcome::Optimal(solution) = &solved.outcome else {
+            panic!("integer {integer}: {:?}", solved.outcome)
+        };
+        let violation = program.max_violation(&solution.values);
+        assert!(violation > 1e-6 && violation <= 1e-4, "integer {integer}: {violation}");
+    }
+}
+
+#[test]
+fn test_the_optimality_tolerance_takes_a_flat_reduced_cost_as_optimal() {
+    let program = flat_costs();
+    let solve = |optimality_tolerance| {
+        let settings = Settings {
+            presolve: Some(false),
+            optimality_tolerance,
+            ..Settings::new()
+        };
+        let solved = Solver::new(Scip::new(), program.clone())
+            .unwrap()
+            .run()
+            .settings(settings)
+            .solve()
+            .unwrap();
+        match solved.outcome {
+            Outcome::Optimal(solution) => solution.objective,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert!((solve(None) - -1e-4).abs() <= 1e-12, "{}", solve(None));
+    let loose = solve(Some(feasibility_tolerance!(1e-3)));
+    assert!(loose.abs() <= 1e-12, "{loose}");
 }

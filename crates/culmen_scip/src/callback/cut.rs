@@ -10,11 +10,19 @@
 //!
 //! SCIP takes a cut as valid: it may cut off every point the cut excludes. That every integer-feasible point of the
 //! program satisfies the cut is the callback's promise, which nothing checks.
+//!
+//! A call of SCIP that fails while the separator hands it the cuts keeps the error, asks SCIP to stop and answers with
+//! what the cuts SCIP took before make of the separation, instead of returning an error code: SCIP leaves its
+//! separation on an error code without applying or clearing the cuts already in its separation store (`SCIP_CALL`
+//! around `SCIPsepaExecLP` in `solve.c:1794` and `solve.c:1895` of SCIP 10.0.2), which a debug SCIP then finds
+//! non-empty as it frees the store (`assert((*sepastore)->ncuts == 0)`, `sepastore.c:125`). The separator does not
+//! run again until SCIP stops, and the solve fails with the error.
 
 use core::ffi::{c_int, c_uint};
 use core::ptr::{self, NonNull};
 
-use culmen_core::{ActionError, AddedRow, Col, Constraint, CutContext, Events, Progress, TiSlice};
+use culmen_core::backend::AddedRow;
+use culmen_core::{ActionError, Col, Constraint, Context, CutContext, Progress, TiSlice};
 use scip_sys::{
     SCIP, SCIP_RESULT, SCIP_RETCODE, SCIP_ROW, SCIP_Result_SCIP_CUTOFF, SCIP_Result_SCIP_DIDNOTFIND,
     SCIP_Result_SCIP_DIDNOTRUN, SCIP_Result_SCIP_SEPARATED, SCIP_Retcode_SCIP_OKAY, SCIP_SEPA, SCIP_VAR,
@@ -22,7 +30,7 @@ use scip_sys::{
     SCIPreleaseRow, SCIPsepaGetData,
 };
 
-use super::{Delivered, Run, Slot, checked, sides, slot};
+use super::{Delivered, Run, Slot, checked, representable, sides, slot};
 use crate::columns::Columns;
 use crate::error::check;
 use crate::{RetCode, ScipError};
@@ -33,16 +41,23 @@ const PRIORITY: c_int = 1_000_000;
 /// A node's LP solution, to be cut off with user cuts: the separator's `SEPAEXECLP`.
 #[derive(Debug)]
 pub struct ScipCut<'a> {
+    scip: *mut SCIP,
+    cols: Columns<'a>,
+    /// The variables of the columns priced so far.
+    priced: &'a [NonNull<SCIP_VAR>],
     progress: Progress,
     relaxation: &'a TiSlice<Col, f64>,
     infinity: f64,
     added: &'a mut Vec<AddedRow>,
 }
 
-impl CutContext for ScipCut<'_> {
+impl Context for ScipCut<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
+
+impl CutContext for ScipCut<'_> {
     fn relaxation(&self) -> &TiSlice<Col, f64> {
         self.relaxation
     }
@@ -51,10 +66,17 @@ impl CutContext for ScipCut<'_> {
     ///
     /// # Errors
     ///
-    /// Besides the core errors, [`ActionError::Refused`] for a number SCIP would read as infinite, or more terms
-    /// than SCIP's `int` counts.
+    /// Besides the core errors, [`ActionError::Refused`] for a number SCIP would read as infinite, more terms than
+    /// SCIP's `int` counts, or columns SCIP has fixed or aggregated that add up to a number SCIP would read as
+    /// infinite, as SCIP stands now: SCIP adds such a column to a row as its share of the row's constant
+    /// (`SCIPvarAddToRow`), and asserts on a debug SCIP that each share and the constant stay below its infinity
+    /// (`var.c:20053`, `lp.c:5868`, `lp.c:5813` of SCIP 10.0.2).
     fn add_cut(&mut self, cut: Constraint) -> Result<(), ActionError> {
         let row = checked(&cut, self.relaxation.len(), self.infinity)?;
+        // SAFETY: the instance is the run's, live while the callback runs, and holds the columns and the priced ones;
+        // `checked` found every column of the row among them.
+        unsafe { representable(self.scip, self.cols, self.priced, &row, self.infinity) }
+            .map_err(ActionError::Refused)?;
         self.added.push(row);
         Ok(())
     }
@@ -126,35 +148,62 @@ unsafe fn row(
     Ok(row)
 }
 
-impl Run<'_> {
-    /// Hands the LP solution to the callback and the cuts it added to SCIP; the separator's result.
-    ///
-    /// # Errors
-    ///
-    /// [`ScipError::Call`] when SCIP refuses a call.
+impl Run<'_, '_> {
+    /// Hands the LP solution to the callback and the cuts it added to SCIP; the separator's result, and the error a
+    /// call of SCIP met, with the result of the cuts SCIP took before it.
     ///
     /// # Safety
     ///
     /// `scip` is the live instance of the run, solving with a node LP, and `sepa` its separator.
-    unsafe fn separate(&self, scip: *mut SCIP, sepa: *mut SCIP_SEPA) -> Result<SCIP_RESULT, ScipError> {
+    unsafe fn separate(&self, scip: *mut SCIP, sepa: *mut SCIP_SEPA) -> (SCIP_RESULT, Result<(), ScipError>) {
+        // SCIP is being stopped: the separator does not run until it does.
+        if self.stopping() {
+            return (SCIP_Result_SCIP_DIDNOTRUN, Ok(()));
+        }
         // SAFETY: the caller vouches for the instance and its stage; null is the current LP solution.
         let relaxation = unsafe { self.values(scip, ptr::null_mut()) };
         let progress = self.progress(scip);
         let mut added = Vec::new();
-        let delivered = self.deliver(scip, |callback| {
-            callback.cut(&mut ScipCut {
+        let priced = self.priced_vars.borrow();
+        let delivered = self.deliver(scip, |hooks| {
+            hooks.cut(&mut ScipCut {
+                scip,
+                cols: self.cols,
+                priced: &priced,
                 progress,
                 relaxation: &relaxation,
                 infinity: self.infinity,
                 added: &mut added,
             });
         });
+        drop(priced);
         if delivered != Delivered::Ran {
-            return Ok(SCIP_Result_SCIP_DIDNOTRUN);
+            return (SCIP_Result_SCIP_DIDNOTRUN, Ok(()));
         }
         let mut result = SCIP_Result_SCIP_DIDNOTFIND;
-        for cut in &added {
-            // SAFETY: as above.
+        // SAFETY: as above.
+        let taken = unsafe { self.take_cuts(scip, sepa, &added, &mut result) };
+        (result, taken)
+    }
+
+    /// Hands `cuts` to SCIP in order, keeping in `result` what the cuts SCIP took so far make of the separation.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP refuses a call; the cuts before it stay with SCIP.
+    ///
+    /// # Safety
+    ///
+    /// As [`Run::separate`].
+    unsafe fn take_cuts(
+        &self,
+        scip: *mut SCIP,
+        sepa: *mut SCIP_SEPA,
+        cuts: &[AddedRow],
+        result: &mut SCIP_RESULT,
+    ) -> Result<(), ScipError> {
+        for cut in cuts {
+            // SAFETY: the caller's contract is `row`'s.
             let row = unsafe { row(scip, sepa, self.cols, &self.priced_vars.borrow(), cut, self.infinity) }?;
             let raw = row.row.as_ptr();
             // SAFETY: the instance is live and solving with a node LP; the row is live. Null is the LP solution.
@@ -163,14 +212,15 @@ impl Run<'_> {
                 // SAFETY: as above; `infeasible` is a local to write to.
                 check("SCIPaddRow", unsafe { SCIPaddRow(scip, raw, 0, &raw mut infeasible) })?;
                 if infeasible != 0 {
-                    return Ok(SCIP_Result_SCIP_CUTOFF);
+                    *result = SCIP_Result_SCIP_CUTOFF;
+                    return Ok(());
                 }
-                result = SCIP_Result_SCIP_SEPARATED;
+                *result = SCIP_Result_SCIP_SEPARATED;
             }
             // SAFETY: as above; the pool takes its own reference to the global row.
             check("SCIPaddPoolCut", unsafe { SCIPaddPoolCut(scip, raw) })?;
         }
-        Ok(result)
+        Ok(())
     }
 }
 
@@ -218,13 +268,15 @@ unsafe extern "C" fn execlp(
         // SAFETY: SCIP calls the separator during the solve the run is installed for.
         .and_then(|slot| unsafe { slot.run() })
         .inspect(|run| run.pass_stop(scip))
-        .filter(|run| run.wanted.contains(Events::CUT));
+        .filter(|run| run.wants_cut);
     let (verdict, code) = match run {
-        // SAFETY: SCIP separates while solving, with the node's LP solved.
-        Some(run) => match unsafe { run.separate(scip, sepa) } {
-            Ok(verdict) => (verdict, SCIP_Retcode_SCIP_OKAY),
-            Err(error) => (SCIP_Result_SCIP_DIDNOTFIND, run.fail(error)),
-        },
+        Some(run) => {
+            // SAFETY: SCIP separates while solving, with the node's LP solved.
+            let (verdict, taken) = unsafe { run.separate(scip, sepa) };
+            // The solve fails with the error once SCIP has stopped; the cuts SCIP took before it are reported as taken.
+            let code = taken.map_or_else(|error| run.stop_with(scip, error), |()| SCIP_Retcode_SCIP_OKAY);
+            (verdict, code)
+        }
         None => (SCIP_Result_SCIP_DIDNOTRUN, SCIP_Retcode_SCIP_OKAY),
     };
     // SAFETY: `result` is SCIP's to write for the call.

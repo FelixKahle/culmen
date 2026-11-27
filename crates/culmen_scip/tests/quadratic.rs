@@ -10,8 +10,8 @@
 )]
 
 use culmen_core::{
-    Col, Integrality, Linear, Model, ModelClass, Outcome, Program, ProgramPlan, Request, Sense, Solution, SolveError,
-    Solver, TiVec, Var,
+    Col, Integrality, Linear, Model, ModelClass, Outcome, Program, ProgramPlan, Sense, Solution, SolveError, Solver,
+    TiVec, Var, bounds,
 };
 use culmen_scip::{Scip, ScipError, ScipOptions, Status};
 use culmen_testing::reference::close;
@@ -21,10 +21,7 @@ use proptest::prelude::*;
 
 /// The optimum SCIP finds, which the test expects to exist: feasible, and valued as the program values its point.
 fn optimum(program: &Program) -> Solution {
-    let solved = Solver::new(Scip::new(), program.clone())
-        .unwrap()
-        .solve(Request::new())
-        .unwrap();
+    let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve().unwrap();
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!("expected an optimum, got {solved:?}")
     };
@@ -77,7 +74,7 @@ fn test_a_constraint_projects_the_centre_onto_its_half_plane() {
 fn test_a_concave_objective_is_maximized_with_its_offset() {
     // Maximize 5 - (x - 3)² - 2y² + y over x in [0, 2], y free: x = 2, y = 1/4, objective 5 - 1 + 1/8.
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(0, 2));
+    let x = m.add_var(Var::continuous().bounds(bounds!(0.0, 2.0)));
     let y = m.add_var(Var::free());
     m.maximize(5.0 - (x - 3) * (x - 3) - 2.0 * y * y + y);
     assert_point(&optimum(&m.build().unwrap()), 4.125, &[2.0, 0.25]);
@@ -98,8 +95,8 @@ fn test_a_cross_term_counts_at_its_written_weight() {
 fn test_a_miqp_rounds_the_centre_to_the_nearest_whole_point() {
     // Minimize (x - 1.4)² + (y - 2.6)² over integers: (1, 3), at 0.16 + 0.16.
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(-10, 10));
-    let y = m.add_var(Var::integer().bounds(-10, 10));
+    let x = m.add_var(Var::integer().bounds(bounds!(-10.0, 10.0)));
+    let y = m.add_var(Var::integer().bounds(bounds!(-10.0, 10.0)));
     m.minimize((x - 1.4) * (x - 1.4) + (y - 2.6) * (y - 2.6));
     let program = m.build().unwrap();
     assert_eq!(program.class(), ModelClass::Miqp);
@@ -112,7 +109,7 @@ fn test_a_miqp_with_a_continuous_column_and_a_row() {
     // c <= 0.75 and its best c = 0.5, objective 10 - 0.25 - 0.25 + 0.5 = 10; n = 3 forces c <= -0.25, objective
     // 10 - 0.25 - 0.0625 - 0.25 = 9.4375.
     let mut m = Model::new();
-    let n = m.add_var(Var::integer().bounds(0, 5));
+    let n = m.add_var(Var::integer().bounds(bounds!(0.0, 5.0)));
     let c = m.add_var(Var::free());
     m.add_constraint((n + c).leq(2.75));
     m.maximize(10.0 - (n - 2.5) * (n - 2.5) - c * c + c);
@@ -126,9 +123,9 @@ fn test_a_miqp_with_a_continuous_column_and_a_row() {
 /// that `c = 0` forces `b = 0`, a clique only better solutions obey.
 fn binary_products_miqp(sense: Sense) -> Program {
     let mut m = Model::new();
-    let a = m.add_var(Var::integer().bounds(-1, 1));
-    let b = m.add_var(Var::integer().bounds(-1, 1));
-    let c = m.add_var(Var::integer().bounds(-1, 0));
+    let a = m.add_var(Var::integer().bounds(bounds!(-1.0, 1.0)));
+    let b = m.add_var(Var::integer().bounds(bounds!(-1.0, 1.0)));
+    let c = m.add_var(Var::integer().bounds(bounds!(-1.0, 0.0)));
     let objective =
         -2.0 * a + 2.0 * b + 2.05 * a * a - 6.0 * a * b + 2.0 * a * c + 9.05 * b * b - 12.0 * b * c + 5.05 * c * c;
     match sense {
@@ -158,7 +155,7 @@ fn test_a_best_solution_scip_finds_infeasible_in_the_original_problem_is_an_erro
     for sense in [Sense::Minimize, Sense::Maximize] {
         let options = ScipOptions::default().param("constraints/nonlinear/reformbinprods", true);
         let mut solver = Solver::new(Scip::with_options(options), binary_products_miqp(sense)).unwrap();
-        let solved = solver.solve(Request::new());
+        let solved = solver.solve();
         assert!(
             matches!(
                 solved,
@@ -175,14 +172,11 @@ fn test_a_best_solution_scip_finds_infeasible_in_the_original_problem_is_an_erro
 #[test]
 fn test_a_qp_with_conflicting_rows_is_infeasible() {
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(0, 5));
+    let x = m.add_var(Var::continuous().bounds(bounds!(0.0, 5.0)));
     m.add_constraint(x.geq(4));
     m.add_constraint(x.leq(3));
     m.minimize(x * x);
-    let solved = Solver::new(Scip::new(), m.build().unwrap())
-        .unwrap()
-        .solve(Request::new())
-        .unwrap();
+    let solved = Solver::new(Scip::new(), m.build().unwrap()).unwrap().solve().unwrap();
     assert!(
         matches!(solved.outcome, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded),
         "{solved:?}"
@@ -247,7 +241,7 @@ proptest! {
         program in small_qp(),
         fractions in prop::collection::vec(prop::collection::vec(0.0..=1.0f64, 4), 8),
     ) {
-        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve(Request::new()).unwrap();
+        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve().unwrap();
         let Outcome::Optimal(best) = solved.outcome else {
             return Err(TestCaseError::fail(format!("{solved:?} on {program:?}")));
         };
@@ -276,7 +270,7 @@ proptest! {
             .filter(|p| program.max_violation(p) == 0.0)
             .map(|p| program.objective_value(&p))
             .reduce(|a, b| if no_worse(sense, a, b, 0.0) { a } else { b });
-        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve(Request::new()).unwrap();
+        let solved = Solver::new(Scip::new(), program.clone()).unwrap().solve().unwrap();
         match (expected, &solved.outcome) {
             (None, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded) => {}
             (Some(want), Outcome::Optimal(best)) => {

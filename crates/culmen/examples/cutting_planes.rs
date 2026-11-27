@@ -7,7 +7,6 @@
 //! `cargo run -p culmen --example cutting_planes`
 
 use culmen::prelude::*;
-use culmen::{Integrality, TiSlice};
 
 /// Each item's name, value and weight.
 const ITEMS: [(&str, f64, f64); 8] = [
@@ -30,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Var::continuous().upper(1.0).name(format!("take[{}]", ITEMS[i].0))
     });
     let weight = LinExpr::sum(ITEMS.iter().zip(&take).map(|(&(_, _, weight), &x)| weight * x));
-    m.add_named_constraint("capacity", weight.leq(CAPACITY));
+    m.add_constraint(("capacity", weight.leq(CAPACITY)));
     m.maximize(LinExpr::sum(
         ITEMS.iter().zip(&take).map(|(&(_, value, _), &x)| value * x),
     ));
@@ -46,10 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(format!("{covers} rounds added more covers than {} items have", ITEMS.len()).into());
         }
         let (relaxed, iterations) = solve(&mut solver)?;
-        println!(
-            "relaxation {:.3} after {iterations} simplex iterations",
-            relaxed.objective
-        );
+        println!("relaxation {:.3} after {iterations} LP iterations", relaxed.objective);
         let Some(cover) = violated_cover(&take, &relaxed.values) else {
             break;
         };
@@ -74,11 +70,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Solves and returns the optimal solution and the simplex iterations the solve took.
+/// Solves and returns the optimal solution and the LP iterations the solve took, zero when the backend counted none.
 fn solve(solver: &mut Solver<Highs>) -> Result<(Solution, u64), Box<dyn std::error::Error>> {
-    let solved = solver.solve(Request::new())?;
+    let solved = solver.solve()?;
     match solved.outcome {
-        Outcome::Optimal(solution) => Ok((solution, solved.status.simplex_iterations)),
+        Outcome::Optimal(solution) => Ok((solution, solved.iterations.unwrap_or(0))),
         other => Err(format!("no optimum: {other:?}").into()),
     }
 }

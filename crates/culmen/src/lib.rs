@@ -5,10 +5,17 @@
 //! solved on a switchable backend, with a live view of the search (best solution, bound, gap, solver log) and a
 //! cooperative stop.
 //!
-//! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as [`Highs`] (and the
-//! whole backend as [`highs`]) with the default `highs` feature, the SCIP backend as `Scip` (and the whole backend as
-//! `scip`) with the `scip` feature, and the modelling macros with the `macros` feature. [`prelude`] holds what a model
-//! and a solve need.
+//! This is the crate to depend on. It re-exports [`culmen_core`] at its root, the HiGHS backend as the module [`highs`]
+//! with the default `highs` feature, the SCIP backend as the module `scip` with the `scip` feature, and the modelling
+//! macros with the `macros` feature. [`prelude`] holds what a model and a solve need, `Highs` and `Scip` among them.
+//!
+//! # Where an item lives
+//!
+//! Each item has one address, chosen by who names it. The root holds what code that models and solves names: the
+//! model and the program, [`Solver`] and [`Run`], settings, outcomes, the callback and handler traits, the context
+//! traits a handler calls, the capability traits a generic bound names ([`LazyConstraints`], [`DualAnalysis`], …),
+//! the analyses' data and the errors. [`script`] holds the scripted backend for tests, and [`backend`] what only code
+//! implementing or driving a backend names. Each solver's own types are in its module, [`highs`] or `scip`.
 //!
 //! # A model, two ways
 //!
@@ -36,7 +43,7 @@
 //! m.minimize(x.iter().map(|(&(p, l), x)| walk[p][l] * x).sum::<LinExpr>());
 //!
 //! let mut solver = Solver::new(Highs::new(), m.build()?)?;
-//! let solved = solver.solve(Request::new())?;
+//! let solved = solver.solve()?;
 //! let Outcome::Optimal(best) = solved.outcome else { panic!("{:?}", solved.outcome) };
 //! assert_eq!(best.objective, 6.0);
 //! # }
@@ -69,12 +76,12 @@
 //! |---|---|
 //! | `variable!(m, x)` | `let x = m.add_var(Var::continuous().name("x"));` |
 //! | `variable!(m, 0 <= y <= 9, Int)` | `let y = m.add_var(Var::integer().lower(0).upper(9).name("y"));` |
-//! | `variable!(m, z == 2.5, Free)` | `let z = m.add_var(Var::free().bounds(2.5, 2.5).name("z"));` |
+//! | `variable!(m, z == 2.5, Free)` | `let z = m.add_var(Var::free().lower(2.5).upper(2.5).name("z"));` |
 //! | `variable!(m, x[i in I, j in J if f(i, j)], Bin)` | `let x = m.add_var_map(keys, \|&(i, j)\| Var::binary().name(format!("x[{i},{j}]")));` with `keys` the filtered product |
 //! | `constraint!(e <= f)` | `Linear::leq(e, f)` (also `geq`, `equals`) |
 //! | `constraint!(lo <= e <= hi)` | `Linear::between(e, lo, hi)` |
 //! | `constraint!(m, e == f)` | `m.add_constraint(Linear::equals(e, f))` |
-//! | `constraint!(m, c, e >= f)` | `let c = m.add_named_constraint("c", Linear::geq(e, f));` |
+//! | `constraint!(m, c, e >= f)` | `let c = m.add_constraint(("c", Linear::geq(e, f)));` |
 //! | `constraint!(m, c[i in I], e <= f)` | `let c = m.add_constraint_map(I, \|&i\| (format!("c[{i}]"), Linear::leq(e, f)));` |
 //! | `objective!(m, Min, e)` | `m.set_objective(Sense::Minimize, e)` |
 //! | `sum!(e for i in I, j in J if g)` | `LinExpr` or, for a quadratic `e`, `QuadExpr`, summed in nested `for` loops |
@@ -118,12 +125,13 @@
 //! let cancel = Arc::new(AtomicBool::new(false)); // set from another thread to stop
 //! let mut print = Print;
 //! let mut solver = Solver::new(Highs::new(), m.build()?)?;
-//! let request = Request::new()
+//! let solved = solver
+//!     .run()
 //!     .time_limit(Duration::from_secs(10))
 //!     .stop(&cancel)
 //!     .observer(&mut print)
-//!     .progress_interval(Duration::from_secs(1));
-//! let solved = solver.solve(request)?;
+//!     .progress_interval(Duration::from_secs(1))
+//!     .solve()?;
 //! assert_eq!(solved.outcome.objective(), Some(7.0));
 //! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -143,14 +151,10 @@
 pub use culmen_core::*;
 #[cfg(feature = "highs")]
 pub use culmen_highs as highs;
-#[cfg(feature = "highs")]
-pub use culmen_highs::Highs;
 #[cfg(feature = "macros")]
 pub use culmen_macros::{constraint, objective, sum, variable};
 #[cfg(feature = "scip")]
 pub use culmen_scip as scip;
-#[cfg(feature = "scip")]
-pub use culmen_scip::Scip;
 
 /// The README and the user guide under `docs/`, compiled as doctests so every snippet in it stays true. A page whose
 /// snippets need a feature is included only with that feature.
@@ -208,7 +212,19 @@ mod docs {
     struct Backends;
 }
 
-/// What a model and a solve need, in one import.
+/// What nearly every program that models and solves names, in one import: `use culmen::prelude::*;`.
+///
+/// The prelude holds the modelling layer ([`Model`], [`Var`], [`LinExpr`], the literal macros, the families), the
+/// program's handles and the plain data a model or a solve passes around ([`Col`], [`Row`], [`Bounds`],
+/// [`Integrality`], [`NewCol`], the [`TiVec`] and [`TiSlice`] a solution's values come in), the solve ([`Solver`],
+/// [`Settings`], [`Outcome`], [`Solved`], [`Start`], the [`Stop`] and the [`Observer`]), and the backends enabled.
+/// Writing a callback or a search handler needs no further import: the prelude holds [`Callback`] and [`Events`], each
+/// handler trait with its capability trait, which a generic handler names in its bound, and every context trait, which
+/// must be in scope for a handler's calls on its context to resolve, with the [`PriceMode`] a pricer reads.
+///
+/// What only some programs name is not in it: the errors beyond [`SolveError`], the analyses and their capability
+/// traits (a `Solver`'s analysis methods resolve without them), the program's own building blocks such as
+/// [`ProgramPlan`], and the modules [`script`] and [`backend`].
 pub mod prelude {
     #[cfg(feature = "highs")]
     pub use culmen_highs::Highs;
@@ -218,15 +234,21 @@ pub mod prelude {
     pub use culmen_scip::Scip;
 
     pub use culmen_core::{
-        Backend, Bounds, Callback, Col, Constraint, ConstraintMap, Events, Improvement, IndexSet, LinExpr, Linear,
-        LogLine, Model, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Request, Row, Sense,
-        Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap, absolute_gap,
-        bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
+        Backend, Bounds, Col, Constraint, ConstraintMap, Improvement, IndexSet, Integrality, LinExpr, Linear, LogLine,
+        Model, NewCol, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Row, Sense, Settings,
+        Solution, SolveError, Solved, Solver, Start, Stop, StopReason, TiSlice, TiVec, Tolerance, Var, VarMap,
+        absolute_gap, bounds, feasibility_tolerance, product, relative_gap, set, solutions, stop_fn, threads, weight,
     };
-    // A generic callback calls its contexts through these traits, and a backend names `Unsupported` for an event it
-    // cannot deliver.
+    // A callback names the events it asks for.
+    pub use culmen_core::{Callback, Event, Events};
+    // A generic callback or handler calls its context through these traits, which must be in scope for the calls to
+    // resolve; a pricer reads the mode of its round.
     pub use culmen_core::{
-        CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext,
-        SolutionContext, Unsupported,
+        Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, PriceMode,
+        ProgressContext, SolutionContext,
+    };
+    // The search capabilities a backend may have, and the handler each one takes.
+    pub use culmen_core::{
+        CutHandler, HeuristicHandler, Heuristics, LazyConstraints, LazyHandler, Pricer, Prices, UserCuts,
     };
 }

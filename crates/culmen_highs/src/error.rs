@@ -11,7 +11,6 @@ use crate::{ModelStatus, OptionValue};
 
 /// Why loading or solving with HiGHS failed.
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum HighsError {
     /// A solve was asked for before a program was loaded.
     NotLoaded,
@@ -33,12 +32,14 @@ pub enum HighsError {
         /// The value refused.
         value: OptionValue,
     },
-    /// An exact integer setting, such as a seed or a thread count, exceeds HiGHS's largest integer, `i32::MAX`.
+    /// An exact integer setting, such as a seed or a thread count, exceeds HiGHS's largest integer.
     OutOfRange {
         /// HiGHS's name of the option.
         name: &'static str,
         /// The value given.
         value: u64,
+        /// The largest value the option takes, HiGHS's largest integer, `i32::MAX`.
+        max: u64,
     },
     /// An option name holds a NUL byte, which HiGHS's C strings cannot carry.
     OptionName {
@@ -89,14 +90,63 @@ pub enum HighsError {
         /// The program's feature HiGHS gets it wrong for.
         feature: ProgramFeature,
     },
+    /// The options set HiGHS's `solve_relaxation`, which solves a MIP's continuous relaxation in place of the MIP, so
+    /// its optimum would be reported as the program's; refused before HiGHS runs. Relaxing is the program's to state:
+    /// [`Solver::set_col_integrality`](culmen_core::Solver::set_col_integrality) makes the columns continuous.
+    Relaxation,
+    /// HiGHS returned a value of one of its enumerations that HiGHS 1.16's headers do not define. The pinned HiGHS
+    /// returns only defined values, so this names a HiGHS other than the one `highs-sys` builds.
+    Unlisted {
+        /// The enumeration the value belongs to.
+        code: HighsCode,
+        /// The value.
+        raw: i32,
+        /// The C function that returned the value, or the callback kind whose record held it.
+        call: &'static str,
+    },
+}
+
+/// An enumeration of HiGHS 1.16 whose values the backend reads, named in [`HighsError::Unlisted`].
+///
+/// ```
+/// use culmen_highs::{HighsCode, HighsError};
+/// let error = HighsError::Unlisted { code: HighsCode::ModelStatus, raw: 42, call: "Highs_getModelStatus" };
+/// assert_eq!(
+///     error.to_string(),
+///     "HiGHS: Highs_getModelStatus gave the model status 42, which HiGHS 1.16 does not define"
+/// );
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HighsCode {
+    /// What a call of the C API returns, `kHighsStatus*` in `highs_c_api.h`: [`CallStatus`](crate::CallStatus).
+    CallStatus,
+    /// `kHighsModelStatus*` in `highs_c_api.h`: [`ModelStatus`](crate::ModelStatus).
+    ModelStatus,
+    /// `kHighsSolutionStatus*` in `highs_c_api.h`: [`SolutionStatus`](crate::SolutionStatus).
+    SolutionStatus,
+    /// `HighsLogType` in `lp_data/HConst.h`: [`HighsLogType`](crate::HighsLogType).
+    LogType,
+    /// `ExternalMipSolutionQueryOrigin` in `lp_data/HighsCallback.h`: [`HighsQueryOrigin`](crate::HighsQueryOrigin).
+    QueryOrigin,
+}
+
+impl fmt::Display for HighsCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::CallStatus => "call status",
+            Self::ModelStatus => "model status",
+            Self::SolutionStatus => "solution status",
+            Self::LogType => "log type",
+            Self::QueryOrigin => "query origin",
+        })
+    }
 }
 
 /// Why the backend does not trust the ending HiGHS's QP solver reported.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum UnsoundQp {
-    /// HiGHS reported an optimum whose relative primal-dual objective error exceeds
-    /// [`Highs::QP_OBJECTIVE_ERROR`](crate::Highs::QP_OBJECTIVE_ERROR); the point need not be feasible.
+    /// HiGHS reported an optimum whose relative primal-dual objective error exceeds the options'
+    /// [`qp_objective_error`](crate::HighsOptions::qp_objective_error); the point need not be feasible.
     ObjectiveError {
         /// HiGHS's relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`.
         error: f64,
@@ -128,8 +178,8 @@ impl fmt::Display for HighsError {
             Self::TooLarge { what, count } => write!(f, "HiGHS: {count} {what} exceed HiGHS's 32-bit indices"),
             Self::Load => write!(f, "HiGHS: the program was refused"),
             Self::Option { name, value } => write!(f, "HiGHS: option `{name}` refused the value {value}"),
-            Self::OutOfRange { name, value } => {
-                write!(f, "HiGHS: option `{name}` takes at most {}, not {value}", i32::MAX)
+            Self::OutOfRange { name, value, max } => {
+                write!(f, "HiGHS: option `{name}` takes at most {max}, not {value}")
             }
             Self::OptionName { name } => write!(f, "HiGHS: option name {name:?} holds a NUL byte"),
             Self::OptionString { name } => write!(f, "HiGHS: the value of option `{name}` holds a NUL byte"),
@@ -146,6 +196,16 @@ impl fmt::Display for HighsError {
             Self::AnalysisFeature { analysis, feature } => {
                 write!(f, "HiGHS: the {analysis} of a program with {feature} is refused")
             }
+            Self::Relaxation => write!(
+                f,
+                "HiGHS: the option `solve_relaxation` would report a MIP's continuous relaxation as its optimum"
+            ),
+            Self::Unlisted { code, raw, call } => {
+                write!(
+                    f,
+                    "HiGHS: {call} gave the {code} {raw}, which HiGHS 1.16 does not define"
+                )
+            }
         }
     }
 }
@@ -159,7 +219,6 @@ impl core::error::Error for HighsError {}
 /// assert_eq!(Dimension::Entries.to_string(), "entries");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Dimension {
     /// The columns.
     Columns,

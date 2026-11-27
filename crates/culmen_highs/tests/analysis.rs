@@ -13,8 +13,7 @@ use std::collections::BTreeMap;
 
 use culmen_core::{
     Analysis, AnalysisError, Basis, BasisStatus, Bound, Bounds, Col, Iis, Line, Linear, Misfit, Model, ModelClass,
-    Outcome, Program, ProgramPlan, Request, Row, Sense, Settings, Side, Solver, Table, TiVec, Var, Violation, Weights,
-    penalty,
+    Outcome, Program, ProgramPlan, Row, Sense, Settings, Side, Solver, Table, TiVec, Var, Violation, Weights, penalty,
 };
 use culmen_highs::{Highs, HighsStatus};
 use culmen_testing::reference::{close, solve};
@@ -35,7 +34,7 @@ fn assert_all_near(got: &[f64], want: &[f64]) {
 /// A solver on `program` after one solve, and that solve's status.
 fn solved(program: &Program) -> (Solver<Highs>, Outcome, HighsStatus) {
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     (solver, solved.outcome, solved.status)
 }
 
@@ -162,13 +161,13 @@ fn test_an_optimal_basis_warm_starts_a_fresh_solver_without_iterations() {
         ..Settings::new()
     };
     let mut cold = Solver::new(Highs::new(), program.clone()).unwrap();
-    let first = cold.solve(Request::new().settings_from(no_presolve.clone())).unwrap();
+    let first = cold.run().settings(no_presolve.clone()).solve().unwrap();
     assert!(first.status.simplex_iterations > 0, "{:?}", first.status);
     let basis = cold.basis().unwrap().unwrap();
 
     let mut warm = Solver::new(Highs::new(), program).unwrap();
     warm.set_basis(&basis).unwrap();
-    let second = warm.solve(Request::new().settings_from(no_presolve)).unwrap();
+    let second = warm.run().settings(no_presolve).solve().unwrap();
     assert_eq!(second.status.simplex_iterations, 0, "{:?}", second.status);
     let objective = |o: &Outcome| o.solution().unwrap().objective;
     assert!(near(objective(&second.outcome), objective(&first.outcome)));
@@ -380,10 +379,40 @@ fn test_a_dual_ray_is_a_farkas_certificate() {
             presolve: Some(presolve),
             ..Settings::new()
         };
-        let solved = solver.solve(Request::new().settings_from(settings)).unwrap();
+        let solved = solver.run().settings(settings).solve().unwrap();
         assert!(matches!(solved.outcome, Outcome::Infeasible), "{solved:?}");
         let ray = solver.dual_ray().unwrap().expect("a certificate");
         assert!(is_farkas(&program, &ray), "{sense:?}, presolve {presolve}: {ray:?}");
+        assert_eq!(solver.primal_ray().unwrap(), None);
+    }
+}
+
+#[test]
+fn test_a_ray_that_may_run_highs_again_leaves_no_basis_of_another_run_to_read() {
+    // With presolve, HiGHS proves `contradictory` infeasible without a simplex run and holds neither a dual ray nor a
+    // basis; finding the ray runs its simplex solver on the program with zero costs, whose basis is not one the solve
+    // ended with. Without presolve the simplex run holds the ray already, but the solver cannot tell the two apart.
+    for presolve in [true, false] {
+        let program = contradictory(Sense::Minimize);
+        let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
+        let settings = Settings {
+            presolve: Some(presolve),
+            ..Settings::new()
+        };
+        let solved = solver.run().settings(settings).solve().unwrap();
+        assert!(matches!(solved.outcome, Outcome::Infeasible), "{solved:?}");
+        let before = solver.basis();
+        let ray = solver.dual_ray().unwrap().expect("a certificate");
+        assert!(is_farkas(&program, &ray), "presolve {presolve}: {ray:?}");
+        assert_eq!(
+            solver.basis(),
+            Err(AnalysisError::NotSolved {
+                analysis: Analysis::Basis
+            }),
+            "presolve {presolve}, the basis before the ray: {before:?}"
+        );
+        // The rays still read the solve's ending.
+        assert!(solver.dual_ray().unwrap().is_some());
         assert_eq!(solver.primal_ray().unwrap(), None);
     }
 }
@@ -532,7 +561,7 @@ fn gap_of_two() -> (Program, [Row; 2]) {
 fn test_a_relaxation_violates_the_cheaper_row_by_the_gap() {
     // The rows are 2 apart; violating r1 by 2 costs 2, violating r2 by 2 costs 6.
     let (program, [r1, r2]) = gap_of_two();
-    let mut weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let mut weights = Weights::soft_rows(&program, penalty!(1.0));
     weights.rows[r2] = Some(penalty!(3.0));
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
@@ -554,7 +583,7 @@ fn test_a_relaxation_of_a_maximized_program_minimizes_the_violation() {
     let r2 = m.add_constraint((x + y).leq(3.0));
     m.maximize(x - y + 7);
     let program = m.build().unwrap();
-    let mut weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let mut weights = Weights::soft_rows(&program, penalty!(1.0));
     weights.rows[r2] = Some(penalty!(3.0));
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
@@ -573,7 +602,7 @@ fn test_a_relaxation_may_move_a_column_past_a_soft_bound() {
     m.add_constraint(x.geq(3.0));
     m.minimize(x);
     let program = m.build().unwrap();
-    let mut weights = Weights::uniform(&program, None, None);
+    let mut weights = Weights::hard(&program);
     weights.upper[x] = Some(penalty!(1.0));
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
@@ -589,11 +618,8 @@ fn test_a_relaxation_with_only_hard_bounds_and_rows_finds_nothing() {
     // that program infeasible; the backend checks the point it returns.
     let (program, _) = gap_of_two();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-    assert_eq!(
-        solver.feasibility_relaxation(&Weights::uniform(&program, None, None)),
-        Ok(None)
-    );
-    let soft_columns = Weights::uniform(&program, Some(penalty!(1.0)), None);
+    assert_eq!(solver.feasibility_relaxation(&Weights::hard(&program)), Ok(None));
+    let soft_columns = Weights::soft_bounds(&program, penalty!(1.0));
     assert_eq!(
         solver.feasibility_relaxation(&soft_columns),
         Ok(None),
@@ -651,7 +677,7 @@ fn test_a_relaxation_of_a_milp_keeps_integrality() {
     m.add_constraint((2.0 * x).equals(3.0));
     m.minimize(x);
     let program = m.build().unwrap();
-    let weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let weights = Weights::soft_rows(&program, penalty!(1.0));
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
     assert!(near(relaxed.values[x], relaxed.values[x].round()), "{relaxed:?}");
@@ -662,7 +688,7 @@ fn test_a_relaxation_of_a_milp_keeps_integrality() {
 fn test_a_solve_after_a_relaxation_solves_the_program_again() {
     let (program, _, _) = production(Sense::Minimize);
     let (mut solver, _, _) = solved(&program);
-    let weights = Weights::uniform(&program, Some(penalty!(1.0)), Some(penalty!(1.0)));
+    let weights = Weights::soft(&program, penalty!(1.0));
     let relaxed = solver.feasibility_relaxation(&weights).unwrap().unwrap();
     assert_eq!(
         relaxed.violations(&program).count(),
@@ -675,7 +701,7 @@ fn test_a_solve_after_a_relaxation_solves_the_program_again() {
             analysis: Analysis::Duals
         })
     ));
-    let again = solver.solve(Request::new()).unwrap();
+    let again = solver.solve().unwrap();
     assert!(near(again.outcome.solution().unwrap().objective, -11.0));
     assert!(near(solver.duals().unwrap().rows[Row::new(0)], -2.0));
 }
@@ -743,7 +769,7 @@ fn test_analyses_are_refused_by_class_and_state() {
     let x = m.add_var(Var::continuous());
     m.minimize(x * x);
     let mut qp = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
-    let weights = Weights::uniform(qp.program(), None, None);
+    let weights = Weights::hard(qp.program());
     assert_eq!(
         qp.feasibility_relaxation(&weights),
         Err(AnalysisError::Class {

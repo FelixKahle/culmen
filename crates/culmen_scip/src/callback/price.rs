@@ -4,11 +4,11 @@
 //! Pricing: a variable pricer with a reduced-cost and a Farkas callback (`PRICERREDCOST`, `PRICERFARKAS`).
 //!
 //! The pricer is included in every instance, delayed, so SCIP prices the variables it holds before it asks the
-//! callback, and inactive. A solve whose callback [`prices`](culmen_core::Callback::prices) activates it and marks
-//! every program row's constraint modifiable, as SCIP requires of a constraint a pricer adds variables to; a solve that
-//! does not deactivates it and leaves every constraint unmodifiable, so SCIP neither calls it nor gives up a reduction
-//! for it. A modifiable linear constraint is never presolved, upgraded or used to tighten bounds, so it stays a linear
-//! constraint whose dual SCIP reports.
+//! [`Pricer`](culmen_core::Pricer), and inactive. A solve with a pricer activates it and marks every program row's
+//! constraint modifiable, as SCIP requires of a constraint a pricer adds variables to; a solve without one deactivates
+//! it and leaves every constraint unmodifiable, so SCIP neither calls it nor gives up a reduction for it. A modifiable
+//! linear constraint is never presolved, upgraded or used to tighten bounds, so it stays a linear constraint whose dual
+//! SCIP reports.
 //!
 //! SCIP minimizes `s·c` for the program's cost `c`, with `s = 1` when the program minimizes and `s = -1` when it
 //! maximizes; SCIP's dual of a row in its transformed problem is therefore `s` times the program's, which the context
@@ -27,21 +27,29 @@
 //! | reduced cost | returned | `SUCCESS`, with the bound it reported as SCIP's lower bound |
 //! | reduced cost | branched early | `SUCCESS` with `stopearly` |
 //! | Farkas | returned | `SUCCESS` |
-//! | Farkas | branched early | `DIDNOTRUN` |
 //! | either | busy with an outer event, or panicked | `DIDNOTRUN` |
+//! | either | met an error, as [`ScipError::BranchEarly`] | `DIDNOTRUN`, SCIP is asked to stop |
 //! | reduced cost, on a node LP that is not optimal | not called | `DIDNOTRUN` |
 //!
 //! SCIP can stop pricing early only where it can branch: at a node without an unfixed integer variable, as in a
-//! program without integer columns, an early stop fails the solve with [`ScipError::BranchEarly`] instead.
+//! program without integer columns, an early stop fails the solve with [`ScipError::BranchEarly`] instead. A Farkas
+//! round does not end early: SCIP holds an infeasible node LP whose pricing was cut short as a state that does not
+//! arise (a debug SCIP asserts so at `solve.c:3436` of SCIP 10.0.2), and a release SCIP falls back on the node's
+//! pseudo solution as if the LP solver had failed, or fails the solve where it cannot branch.
+//!
+//! A pricer callback that meets an error keeps it, asks SCIP to stop and answers `DIDNOTRUN` instead of returning an
+//! error code: SCIP leaves the columns of the round in its pricing store on an error code (`solve.c:2323`), and a
+//! debug SCIP aborts when it frees the store (`pricestore.c:142`).
 
 use core::ffi::{CStr, c_uint};
 use core::ptr::{self, NonNull};
 use std::collections::BTreeMap;
 use std::ffi::CString;
 
+use culmen_core::backend::Priced;
 use culmen_core::{
-    ActionError, Bounds, Col, Integrality, NewCol, PriceContext, PriceMode, Priced, Progress, Row, Sense, TiSlice,
-    TiVec,
+    ActionError, Bounds, Col, Context, Integrality, NewCol, PriceContext, PriceMode, ProgramColumn, Progress, Row,
+    Sense, TiSlice, TiVec,
 };
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_LPSolStat_SCIP_LPSOLSTAT_OPTIMAL, SCIP_PRICER, SCIP_RESULT, SCIP_RETCODE,
@@ -156,10 +164,13 @@ impl ScipPrice<'_> {
     }
 }
 
-impl PriceContext for ScipPrice<'_> {
+impl Context for ScipPrice<'_> {
     fn progress(&self) -> Progress {
         self.progress
     }
+}
+
+impl PriceContext for ScipPrice<'_> {
     fn mode(&self) -> PriceMode {
         self.mode
     }
@@ -184,15 +195,24 @@ impl PriceContext for ScipPrice<'_> {
         self.round.added.push(col);
         Ok(col)
     }
-    /// In [`PriceMode::Farkas`] SCIP takes the round as not run, and the node LP stays infeasible to it. SCIP stops
-    /// pricing early only where it can branch: at a node where no integer variable is unfixed, as in a program
-    /// without integer columns, the solve fails with [`ScipError::BranchEarly`] once the callback returns.
-    fn branch_early(&mut self) {
+    /// SCIP stops pricing early only where it can branch: at a node where no integer variable is unfixed, as in a
+    /// program without integer columns, the solve fails with [`ScipError::BranchEarly`] once the callback returns.
+    ///
+    /// # Errors
+    ///
+    /// [`ActionError::Refused`] in [`PriceMode::Farkas`], where SCIP takes no early stop.
+    fn branch_early(&mut self) -> Result<(), ActionError> {
+        if matches!(self.mode, PriceMode::Farkas) {
+            return Err(ActionError::Refused(
+                "SCIP takes no early stop in a Farkas round".to_owned(),
+            ));
+        }
         self.round.early = true;
+        Ok(())
     }
     /// # Errors
     ///
-    /// [`ActionError::NotFiniteBound`] for a NaN or infinite bound, [`ActionError::Refused`] in
+    /// [`ActionError::NonFiniteBound`] for a NaN or infinite bound, [`ActionError::Refused`] in
     /// [`PriceMode::Farkas`], which takes no bound, or for a bound SCIP reads as infinite.
     fn report_bound(&mut self, bound: f64) -> Result<(), ActionError> {
         if matches!(self.mode, PriceMode::Farkas) {
@@ -201,7 +221,7 @@ impl PriceContext for ScipPrice<'_> {
             ));
         }
         if !bound.is_finite() {
-            return Err(ActionError::NotFiniteBound { bound });
+            return Err(ActionError::NonFiniteBound { bound });
         }
         if bound.abs() >= self.infinity {
             return Err(ActionError::Refused(format!(
@@ -229,9 +249,39 @@ impl Verdict {
         lower: None,
         stop_early: false,
     };
+
+    /// The verdict of a round the pricer ran, whose columns SCIP holds.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::BranchEarly`] for an early stop where SCIP cannot branch.
+    ///
+    /// # Safety
+    ///
+    /// `scip` is a live instance, in a pricer callback of `farkas`'s kind.
+    unsafe fn of(scip: *mut SCIP, farkas: bool, round: &Round) -> Result<Self, ScipError> {
+        // SAFETY: the instance is solving.
+        if round.early && unsafe { SCIPgetNPseudoBranchCands(scip) } == 0 {
+            return Err(ScipError::BranchEarly);
+        }
+        Ok(match (farkas, round.early) {
+            // `branch_early` refuses an early stop in a Farkas round.
+            (true, _) => Self {
+                result: SCIP_Result_SCIP_SUCCESS,
+                lower: None,
+                stop_early: false,
+            },
+            (false, stop_early) => Self {
+                result: SCIP_Result_SCIP_SUCCESS,
+                // SAFETY: the instance is solving; SCIP maps the bound into its transformed space.
+                lower: round.bound.map(|bound| unsafe { SCIPtransformObj(scip, bound) }),
+                stop_early,
+            },
+        })
+    }
 }
 
-impl Run<'_> {
+impl Run<'_, '_> {
     /// The multiplier of every program row in `mode`: the program's dual in reduced-cost mode, SCIP's Farkas
     /// multiplier in Farkas mode.
     ///
@@ -282,6 +332,30 @@ impl Run<'_> {
             return Ok(Verdict::DIDNOTRUN);
         }
         // SAFETY: the caller's contract.
+        let (duals, mode) = unsafe { self.node_lp(scip, farkas) }?;
+        // SAFETY: the caller's contract.
+        let Some(round) = (unsafe { self.round(scip, mode, &duals) }) else {
+            return Ok(Verdict::DIDNOTRUN);
+        };
+        for &col in &round.added {
+            // SAFETY: the caller's contract; `col` is a column the solve's `Priced` handed out in this round.
+            unsafe { self.apply(scip, col, &duals, farkas) }?;
+        }
+        // SAFETY: the caller's contract.
+        unsafe { Verdict::of(scip, farkas, &round) }
+    }
+
+    /// The node LP's multiplier of every program row, and what they mean.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP refuses a call or a row has no transformed constraint.
+    ///
+    /// # Safety
+    ///
+    /// `scip` is the live instance of the run, in a pricer callback of `farkas`'s kind, whose node LP is solved.
+    unsafe fn node_lp(&self, scip: *mut SCIP, farkas: bool) -> Result<(TiVec<Row, f64>, PriceMode), ScipError> {
+        // SAFETY: the caller's contract.
         let duals = unsafe { self.duals(scip, farkas) }?;
         let mode = if farkas {
             PriceMode::Farkas
@@ -290,54 +364,40 @@ impl Run<'_> {
             let objective = unsafe { SCIPretransformObj(scip, SCIPgetLPObjval(scip)) };
             PriceMode::ReducedCost { objective }
         };
+        Ok((duals, mode))
+    }
+
+    /// Hands the node LP to the pricer: the round it priced, `None` when it did not run, being busy with an outer
+    /// event or stopped, or when the run has no sink.
+    ///
+    /// # Safety
+    ///
+    /// `scip` is the live instance of the run, in a pricer callback.
+    unsafe fn round(&self, scip: *mut SCIP, mode: PriceMode, duals: &TiSlice<Row, f64>) -> Option<Round> {
         let progress = self.progress(scip);
         // SAFETY: the instance is solving.
         let tolerance = unsafe { SCIPdualfeastol(scip) };
         let mut round = Round::default();
-        let delivered = {
-            let priced_vars = self.priced_vars.borrow();
-            let mut priced = self.priced.borrow_mut();
-            self.deliver(scip, |callback| {
-                callback.price(&mut ScipPrice {
-                    scip,
-                    progress,
-                    mode,
-                    sense: self.sense,
-                    duals: &duals,
-                    tolerance,
-                    infinity: self.infinity,
-                    priced_vars: &priced_vars,
-                    vars: self.cols.vars,
-                    priced: &mut priced,
-                    round: &mut round,
-                });
-            })
-        };
-        if delivered != Delivered::Ran {
-            return Ok(Verdict::DIDNOTRUN);
-        }
-        for &col in &round.added {
-            // SAFETY: the caller's contract; `col` is a column the solve's `Priced` handed out in this round.
-            unsafe { self.apply(scip, col, &duals, farkas) }?;
-        }
-        // SAFETY: the instance is solving.
-        if round.early && unsafe { SCIPgetNPseudoBranchCands(scip) } == 0 {
-            return Err(ScipError::BranchEarly);
-        }
-        Ok(match (farkas, round.early) {
-            (true, true) => Verdict::DIDNOTRUN,
-            (true, false) => Verdict {
-                result: SCIP_Result_SCIP_SUCCESS,
-                lower: None,
-                stop_early: false,
-            },
-            (false, stop_early) => Verdict {
-                result: SCIP_Result_SCIP_SUCCESS,
-                // SAFETY: the instance is solving; SCIP maps the bound into its transformed space.
-                lower: round.bound.map(|bound| unsafe { SCIPtransformObj(scip, bound) }),
-                stop_early,
-            },
-        })
+        let priced_vars = self.priced_vars.borrow();
+        let mut priced = self.priced.borrow_mut();
+        // A run prices only with the sink its hooks gave.
+        let priced = priced.as_deref_mut()?;
+        let delivered = self.deliver(scip, |hooks| {
+            hooks.price(&mut ScipPrice {
+                scip,
+                progress,
+                mode,
+                sense: self.sense,
+                duals,
+                tolerance,
+                infinity: self.infinity,
+                priced_vars: &priced_vars,
+                vars: self.cols.vars,
+                priced,
+                round: &mut round,
+            });
+        });
+        (delivered == Delivered::Ran).then_some(round)
     }
 
     /// Adds the priced column `col` to SCIP's transformed problem as a variable with its coefficients in the
@@ -349,7 +409,7 @@ impl Run<'_> {
     ///
     /// # Panics
     ///
-    /// When the solve's `Priced` did not hand `col` out.
+    /// When the run has no sink, or the sink did not hand `col` out.
     ///
     /// # Safety
     ///
@@ -362,8 +422,47 @@ impl Run<'_> {
         farkas: bool,
     ) -> Result<(), ScipError> {
         let priced = self.priced.borrow();
-        let column = priced.get(col).expect("a column the solve's `Priced` handed out");
-        let data = &column.column;
+        let column = priced
+            .as_deref()
+            .and_then(|priced| priced.get(col))
+            .expect("a column the solve's `Priced` handed out");
+        let dot: f64 = column.entries.iter().map(|&(row, a)| duals[row] * a).sum();
+        let score = if farkas {
+            dot.abs()
+        } else {
+            (column.column.cost - dot).abs()
+        };
+        // SAFETY: the caller's contract.
+        let var = unsafe { self.create_var(scip, &column.column) }?;
+        // SAFETY: the instance is pricing, the one stage SCIP adds a priced variable in; `var` is its own.
+        check("SCIPaddPricedVar", unsafe {
+            SCIPaddPricedVar(scip, var.as_ptr(), score)
+        })?;
+        // A lazy-constraint handler may add a constraint on the column, so it holds the column both ways, as it holds
+        // every column of the program; SCIP's lock of a handler without constraints never reaches a variable created
+        // while solving, so the lock is applied here, and the handler's unlock undoes it with the problem.
+        if self.wants_lazy {
+            // SAFETY: the instance is solving and `var` a variable of its transformed problem.
+            unsafe { self.slot.lazy_locks.lock(scip, var, 1, 1) }?;
+        }
+        if column.column.integrality == Integrality::Integer {
+            self.integral.set(true);
+        }
+        // SAFETY: the caller's contract; `var` is a variable of the transformed problem.
+        unsafe { self.add_coefficients(scip, var, &column.entries) }
+    }
+
+    /// Creates the variable of a priced column in SCIP's transformed problem, with the column's bounds, cost in SCIP's
+    /// sense, type and name, and keeps the run's reference to it.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP refuses the variable or its name holds a NUL byte.
+    ///
+    /// # Safety
+    ///
+    /// `scip` is the live instance of the run, in a pricer callback.
+    unsafe fn create_var(&self, scip: *mut SCIP, data: &ProgramColumn) -> Result<NonNull<SCIP_VAR>, ScipError> {
         let s = match self.sense {
             Sense::Minimize => 1.0,
             Sense::Maximize => -1.0,
@@ -389,8 +488,6 @@ impl Run<'_> {
             .map(CString::new)
             .transpose()
             .map_err(|_| invalid())?;
-        let dot: f64 = column.entries.iter().map(|&(row, a)| duals[row] * a).sum();
-        let score = if farkas { dot.abs() } else { (data.cost - dot).abs() };
         let mut var: *mut SCIP_VAR = ptr::null_mut();
         // SAFETY: the instance is solving, where a variable of the transformed problem is created; `var` is a local to
         // write to, and the name null, for a name SCIP makes up, or a NUL-terminated string SCIP copies. The
@@ -416,14 +513,26 @@ impl Run<'_> {
         let var = NonNull::new(var).ok_or_else(invalid)?;
         // The run owns the reference from here on, so it is released on every path.
         self.priced_vars.borrow_mut().push(var);
-        // SAFETY: the instance is pricing, the one stage SCIP adds a priced variable in; `var` is its own.
-        check("SCIPaddPricedVar", unsafe {
-            SCIPaddPricedVar(scip, var.as_ptr(), score)
-        })?;
-        if kind == SCIP_Vartype_SCIP_VARTYPE_INTEGER {
-            self.integral.set(true);
-        }
-        for &(row, a) in &column.entries {
+        Ok(var)
+    }
+
+    /// Writes a priced variable's coefficients into the transformed constraints of its rows.
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Call`] when SCIP refuses a call or a row has no transformed constraint.
+    ///
+    /// # Safety
+    ///
+    /// `scip` is the live instance of the run, in a pricer callback, and `var` a variable of its transformed
+    /// problem.
+    unsafe fn add_coefficients(
+        &self,
+        scip: *mut SCIP,
+        var: NonNull<SCIP_VAR>,
+        entries: &[(Row, f64)],
+    ) -> Result<(), ScipError> {
+        for &(row, a) in entries {
             // SAFETY: the instance is solving; the row's constraint is one of its own.
             let cons = unsafe { transformed_cons(scip, self.rows[row].as_ptr()) }?;
             // SAFETY: as above; `cons` is a modifiable linear constraint of the transformed problem.
@@ -505,7 +614,8 @@ unsafe fn exec(scip: *mut SCIP, pricer: *mut SCIP_PRICER, farkas: bool) -> (Verd
         // SAFETY: the caller's contract.
         Some(run) => match unsafe { run.price(scip, farkas) } {
             Ok(verdict) => (verdict, SCIP_Retcode_SCIP_OKAY),
-            Err(error) => (Verdict::DIDNOTRUN, run.fail(error)),
+            // The solve fails with the error once SCIP has stopped.
+            Err(error) => (Verdict::DIDNOTRUN, run.stop_with(scip, error)),
         },
         None => (Verdict::DIDNOTRUN, SCIP_Retcode_SCIP_OKAY),
     }

@@ -12,14 +12,14 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use typed_index_collections::TiVec;
 
-use crate::{Col, ProgramFeature, ProgramFeatures};
+use crate::Col;
 
 /// A starting solution for one solve: a value for every column, or for some.
 ///
 /// The solver may start its search from it: a MIP solver takes a feasible start as its first incumbent and may
 /// complete a partial or infeasible one, an LP solver may start from it. A start need not be feasible, but every value
 /// must be finite and name a column of the program; [`Start::check`] states it, and
-/// [`Solver::solve`](crate::Solver::solve) checks it before the backend sees the start.
+/// [`Run::solve`](crate::Run::solve) checks it before the backend sees the start.
 ///
 /// ```
 /// use culmen_core::{Col, Start, StartError, TiVec};
@@ -31,7 +31,7 @@ use crate::{Col, ProgramFeature, ProgramFeatures};
 ///
 /// let sparse = Start::from(vec![(Col::new(2), 2.5), (Col::new(0), 1.0)]);
 /// assert_eq!(sparse.entries().collect::<Vec<_>>(), [(Col::new(2), 2.5), (Col::new(0), 1.0)]);
-/// assert_eq!(sparse.check(2), Err(StartError::UnknownColumn { col: Col::new(2) }));
+/// assert_eq!(sparse.check(2), Err(StartError::UnknownCol { col: Col::new(2) }));
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -48,8 +48,8 @@ impl Start {
     ///
     /// # Errors
     ///
-    /// [`StartError::Length`] for a full start of another length, else [`StartError::UnknownColumn`],
-    /// [`StartError::RepeatedColumn`] or [`StartError::NotFinite`] for the first entry at fault.
+    /// [`StartError::Length`] for a full start of another length, else [`StartError::UnknownCol`],
+    /// [`StartError::RepeatedCol`] or [`StartError::NonFinite`] for the first entry at fault.
     pub fn check(&self, num_cols: usize) -> Result<(), StartError> {
         if let Self::Full(values) = self
             && values.len() != num_cols
@@ -62,11 +62,11 @@ impl Start {
         let mut seen = HashSet::new();
         self.entries().try_for_each(|(col, value)| {
             if col.index() >= num_cols {
-                Err(StartError::UnknownColumn { col })
+                Err(StartError::UnknownCol { col })
             } else if !seen.insert(col) {
-                Err(StartError::RepeatedColumn { col })
+                Err(StartError::RepeatedCol { col })
             } else if !value.is_finite() {
-                Err(StartError::NotFinite { col, value })
+                Err(StartError::NonFinite { col, value })
             } else {
                 Ok(())
             }
@@ -144,7 +144,6 @@ impl FusedIterator for StartEntries<'_> {}
 
 /// Why [`Start::check`] refused a start.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum StartError {
     /// A full start holds another number of values than the program has columns.
     Length {
@@ -154,17 +153,17 @@ pub enum StartError {
         found: usize,
     },
     /// A sparse start names a column the program does not have.
-    UnknownColumn {
+    UnknownCol {
         /// The column named.
         col: Col,
     },
     /// A sparse start names a column twice.
-    RepeatedColumn {
+    RepeatedCol {
         /// The column named again.
         col: Col,
     },
     /// A value is NaN or infinite.
-    NotFinite {
+    NonFinite {
         /// The column of the value.
         col: Col,
         /// The value given.
@@ -178,40 +177,29 @@ impl fmt::Display for StartError {
             Self::Length { expected, found } => {
                 write!(f, "Start: {found} values given for {expected} columns")
             }
-            Self::UnknownColumn { col } => write!(f, "Start: {col:?} is not a column of the program"),
-            Self::RepeatedColumn { col } => write!(f, "Start: {col:?} is given twice"),
-            Self::NotFinite { col, value } => write!(f, "Start: the value {value} of {col:?} is not finite"),
+            Self::UnknownCol { col } => write!(f, "Start: {col:?} is not a column of the program"),
+            Self::RepeatedCol { col } => write!(f, "Start: {col:?} is given twice"),
+            Self::NonFinite { col, value } => write!(f, "Start: the value {value} of {col:?} is not finite"),
         }
     }
 }
 
 impl core::error::Error for StartError {}
 
-/// Why [`Solver::solve`](crate::Solver::solve) failed: the request uses a feature the backend lacks, its start does
-/// not fit the program, or the backend failed with its own error `E`.
+/// Why [`Solver::solve`](crate::Solver::solve) failed: the start does not fit the program, or the backend failed
+/// with its own error `E`.
 ///
-/// The first two are the same for every backend: they are decided before the backend sees the request.
+/// The first is the same for every backend: it is decided before the backend sees the start.
 ///
 /// ```
-/// use culmen_core::{ProgramFeature, ProgramFeatures, SolveError};
+/// use culmen_core::{Col, SolveError, StartError};
 ///
-/// let error = SolveError::<std::io::Error>::UnsupportedFeature {
-///     feature: ProgramFeature::StartSolution,
-///     supported: ProgramFeatures::NONE,
-/// };
-/// assert_eq!(error.to_string(), "Solver: the backend takes {}, not a start solution");
+/// let error = SolveError::<std::io::Error>::Start(StartError::RepeatedCol { col: Col::new(1) });
+/// assert_eq!(error.to_string(), "Solver: the start is refused: Start: Col(1) is given twice");
 /// ```
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum SolveError<E> {
-    /// The request uses a feature not in [`Backend::FEATURES`](crate::Backend::FEATURES).
-    UnsupportedFeature {
-        /// The feature the request uses.
-        feature: ProgramFeature,
-        /// The features the backend takes.
-        supported: ProgramFeatures,
-    },
-    /// The request's start does not fit the program.
+    /// The start does not fit the program.
     Start(StartError),
     /// The backend failed.
     Backend(E),
@@ -220,10 +208,7 @@ pub enum SolveError<E> {
 impl<E: fmt::Display> fmt::Display for SolveError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedFeature { feature, supported } => {
-                write!(f, "Solver: the backend takes {supported}, not {feature}")
-            }
-            Self::Start(error) => write!(f, "Solver: the request's start is refused: {error}"),
+            Self::Start(error) => write!(f, "Solver: the start is refused: {error}"),
             Self::Backend(error) => write!(f, "Solver: the backend failed: {error}"),
         }
     }
@@ -232,7 +217,6 @@ impl<E: fmt::Display> fmt::Display for SolveError<E> {
 impl<E: core::error::Error + 'static> core::error::Error for SolveError<E> {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::UnsupportedFeature { .. } => None,
             Self::Start(error) => Some(error),
             Self::Backend(error) => Some(error),
         }

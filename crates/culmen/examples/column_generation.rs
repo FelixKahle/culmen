@@ -9,7 +9,6 @@
 //! `cargo run -p culmen --example column_generation`
 
 use culmen::prelude::*;
-use culmen::{Integrality, NewCol, ProgramColumn};
 
 /// The width of a roll.
 const ROLL: f64 = 100.0;
@@ -26,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .zip(&only)
         .enumerate()
         .map(|(i, (&(width, demand), &x))| {
-            m.add_named_constraint(format!("demand[{i}]"), ((ROLL / width).floor() * x).geq(demand))
+            m.add_constraint((format!("demand[{i}]"), ((ROLL / width).floor() * x).geq(demand)))
         })
         .collect();
     m.minimize(LinExpr::sum(only.iter().copied()));
@@ -53,10 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(format!("{patterns} rounds priced more patterns than one roll has").into());
         }
         let (relaxed, iterations) = solve(&mut master)?;
-        println!(
-            "master {:.3} rolls after {iterations} simplex iterations",
-            relaxed.objective
-        );
+        println!("master {:.3} rolls after {iterations} LP iterations", relaxed.objective);
         let duals = master.duals()?;
         pricing.set_col_costs(yields.iter().zip(&demand).map(|(&a, &row)| (a, duals.rows[row])))?;
         let (pattern, _) = solve(&mut pricing)?;
@@ -71,10 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .filter(|&(_, pieces)| pieces > 0.0)
             .collect();
         println!("  new pattern: {entries:?}");
-        master.add_col(NewCol {
-            column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE),
-            entries,
-        })?;
+        master.add_col(NewCol::continuous().cost(1).entries(entries))?;
     }
 
     let patterns: Vec<Col> = master.program().cols().collect();
@@ -84,11 +77,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Solves and returns the optimal solution and the simplex iterations the solve took.
+/// Solves and returns the optimal solution and the LP iterations the solve took, zero when the backend counted none.
 fn solve(solver: &mut Solver<Highs>) -> Result<(Solution, u64), Box<dyn std::error::Error>> {
-    let solved = solver.solve(Request::new())?;
+    let solved = solver.solve()?;
     match solved.outcome {
-        Outcome::Optimal(solution) => Ok((solution, solved.status.simplex_iterations)),
+        Outcome::Optimal(solution) => Ok((solution, solved.iterations.unwrap_or(0))),
         other => Err(format!("no optimum: {other:?}").into()),
     }
 }

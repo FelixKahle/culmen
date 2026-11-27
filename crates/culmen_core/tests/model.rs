@@ -10,8 +10,8 @@
 
 use culmen_core::{
     Bounds, Col, Constraint, ExprPlace, Integrality, InvalidBounds, LinExpr, Linear, Model, ModelConstraint,
-    ModelError, ModelVar, ProgramColumn, ProgramError, ProgramPlan, Row, Sense, Term, TiSlice, TiVec, Var, VarMap,
-    bounds, product, set,
+    ModelError, ModelVar, NewCol, ProgramColumn, ProgramError, ProgramPlan, ProgramRow, Row, Sense, Term, TiSlice,
+    TiVec, Var, VarMap, bounds, product, set,
 };
 use proptest::prelude::*;
 
@@ -42,22 +42,119 @@ fn test_bounds_refuse_every_empty_or_undefined_interval() {
 #[test]
 fn test_plan_merges_repeated_terms_and_drops_zeros() {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-    let y = plan.col(ProgramColumn::binary(2.0));
-    let r = plan.row(bounds!(0.0, 4.0), [(y, 1.0), (x, 2.0), (x, -2.0), (y, 0.5)]);
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
+    let y = plan.col(ProgramColumn::binary().cost(2.0));
+    let r = plan.row((bounds!(0.0, 4.0), [(y, 1.0), (x, 2.0), (x, -2.0), (y, 0.5)]));
     let program = plan.build().unwrap();
     assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(y, 1.5)]);
     assert_eq!(program.num_entries(), 1);
-    assert!(program.is_mip());
+    assert!(program.class().is_discrete());
+}
+
+#[test]
+fn test_columns_are_built_by_chaining_with_the_defaults_their_integrality_names() {
+    let column = |cost: f64, bounds, integrality| ProgramColumn {
+        cost,
+        bounds,
+        integrality,
+        name: None,
+    };
+    let cases = [
+        (
+            ProgramColumn::continuous(),
+            column(0.0, Bounds::NON_NEGATIVE, Integrality::Continuous),
+        ),
+        (
+            ProgramColumn::free(),
+            column(0.0, Bounds::FREE, Integrality::Continuous),
+        ),
+        (
+            ProgramColumn::integer(),
+            column(0.0, Bounds::NON_NEGATIVE, Integrality::Integer),
+        ),
+        (
+            ProgramColumn::binary(),
+            column(0.0, Bounds::BINARY, Integrality::Integer),
+        ),
+        (
+            ProgramColumn::semi_continuous(),
+            column(0.0, Bounds::NON_NEGATIVE, Integrality::SemiContinuous),
+        ),
+        (
+            ProgramColumn::semi_integer(),
+            column(0.0, Bounds::NON_NEGATIVE, Integrality::SemiInteger),
+        ),
+    ];
+    for (built, expected) in cases {
+        assert_eq!(built.clone(), expected);
+        assert_eq!(
+            NewCol::from(built),
+            NewCol {
+                column: expected,
+                entries: Vec::new()
+            }
+        );
+    }
+    let named = ProgramColumn::integer().cost(3u8).bounds(bounds!(1.0, 4.0)).name("n");
+    assert_eq!(
+        named,
+        ProgramColumn {
+            cost: 3.0,
+            bounds: bounds!(1.0, 4.0),
+            integrality: Integrality::Integer,
+            name: Some("n".to_owned()),
+        }
+    );
+    let (a, b) = (Row::new(0), Row::new(2));
+    let new = NewCol::integer()
+        .cost(3u8)
+        .bounds(bounds!(1.0, 4.0))
+        .name("n")
+        .entry(a, 2)
+        .entries([(b, 0.5), (a, 1.0)]);
+    assert_eq!(
+        new,
+        NewCol {
+            column: named,
+            entries: vec![(a, 2.0), (b, 0.5), (a, 1.0)],
+        }
+    );
+    assert_eq!(NewCol::free(), NewCol::from(ProgramColumn::free()));
+    assert_eq!(NewCol::binary().column, ProgramColumn::binary());
+    assert_eq!(NewCol::continuous().column, ProgramColumn::continuous());
+    assert_eq!(NewCol::semi_continuous().column, ProgramColumn::semi_continuous());
+    assert_eq!(NewCol::semi_integer().column, ProgramColumn::semi_integer());
+}
+
+#[test]
+fn test_a_plan_row_is_given_as_the_record_or_its_parts_named_or_not() {
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous());
+    let parts = plan.row((bounds!(0.0, 1.0), vec![(x, 2.0)]));
+    let named = plan.row(("cap", .., [(x, 1.0)]));
+    let record = plan.row(ProgramRow {
+        bounds: Bounds::FREE,
+        terms: vec![(x, 1.0)],
+        name: Some("cap".to_owned()),
+    });
+    assert_eq!(
+        plan.rows[parts],
+        ProgramRow {
+            bounds: bounds!(0.0, 1.0),
+            terms: vec![(x, 2.0)],
+            name: None
+        }
+    );
+    assert_eq!(plan.rows[named], plan.rows[record]);
 }
 
 #[test]
 fn test_plan_names_the_first_defect() {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(f64::NAN, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free().cost(f64::NAN));
     assert!(matches!(plan.clone().build(), Err(ProgramError::NonFiniteCost { col, .. }) if col == x));
     plan.columns[x].cost = 1.0;
-    let r = plan.row(Bounds::FREE, [(x, f64::INFINITY)]);
+    let r = plan.row((Bounds::FREE, [(x, f64::INFINITY)]));
     assert_eq!(
         plan.clone().build(),
         Err(ProgramError::NonFiniteCoefficient {
@@ -69,7 +166,7 @@ fn test_plan_names_the_first_defect() {
     plan.rows[r].terms = vec![(Col::new(7), 1.0)];
     assert_eq!(
         plan.clone().build(),
-        Err(ProgramError::UnknownColumn {
+        Err(ProgramError::UnknownCol {
             row: r,
             col: Col::new(7)
         })
@@ -92,7 +189,7 @@ fn test_plan_names_the_first_defect() {
 #[test]
 fn test_model_errors_name_the_variable_or_constraint() {
     let mut m = Model::new();
-    let x = m.add_var(Var::continuous().bounds(3.0, 1.0).name("stock"));
+    let x = m.add_var(Var::continuous().lower(3.0).upper(1.0).name("stock"));
     assert_eq!(
         m.build().unwrap_err(),
         ModelError::VarBounds {
@@ -106,7 +203,7 @@ fn test_model_errors_name_the_variable_or_constraint() {
 
     let mut m = Model::new();
     let x2 = m.add_var(Var::continuous().name("flow"));
-    m.add_named_constraint("cap", (f64::NAN * x2).leq(1.0));
+    m.add_constraint(("cap", (f64::NAN * x2).leq(1.0)));
     let error = m.build().unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -128,7 +225,7 @@ fn test_model_errors_name_the_variable_or_constraint() {
     m.minimize(x + 1.0);
     assert!(matches!(m.build(), Err(ModelError::UnknownVar { place: ExprPlace::Objective, col }) if col == x));
     let mut m = Model::new();
-    let row = m.add_named_constraint("cap", (2.0 * x).leq(1.0));
+    let row = m.add_constraint(("cap", (2.0 * x).leq(1.0)));
     let error = m.build().unwrap_err();
     assert_eq!(
         error,
@@ -150,7 +247,7 @@ fn test_model_errors_name_the_variable_or_constraint() {
 fn test_model_names_a_constraint_whose_repeated_terms_sum_past_finite() {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().name("flow"));
-    let row = m.add_named_constraint("cap", (1e308 * x + 1e308 * x).leq(1.0));
+    let row = m.add_constraint(("cap", (1e308 * x + 1e308 * x).leq(1.0)));
     assert_eq!(
         m.build().unwrap_err(),
         ModelError::Coefficient {
@@ -264,6 +361,32 @@ fn test_operators_build_the_expected_terms() {
 }
 
 #[test]
+fn test_every_number_that_converts_into_f64_without_loss_scales_and_compares() {
+    let (x, y) = (Col::new(0), Col::new(1));
+    let (a, b, c, d, e, f) = (2u8, 2u16, 2u32, 2i8, 2i16, 2.0f32);
+    let doubled = 2.0 * x;
+    for scaled in [x * a, x * b, x * c, x * d, x * e, x * f, Term::from(x) * a] {
+        assert_eq!(scaled, doubled);
+    }
+    assert_eq!(x / c, x * 0.5);
+    let limit: u32 = 7;
+    assert_eq!(x.leq(limit), x.leq(7.0));
+    assert_eq!(x.geq(a), x.geq(2.0));
+    assert_eq!(x + c - d, x + 0.0);
+    assert_eq!((x + y) * e, 2.0 * x + 2.0 * y);
+    assert_eq!(LinExpr::from(f), LinExpr::from(2.0));
+    let mut sum = x + 1;
+    sum *= a;
+    sum /= b;
+    assert_eq!(sum, x + 1);
+    assert_eq!((x * y) * c, 2.0 * x * y);
+    assert_eq!((x * x + x) * f, 2.0 * (x * x) + 2.0 * x);
+    // An unsuffixed literal still infers through a method call on the product.
+    assert_eq!((2 * x).leq(4), (x * 2.0).leq(4.0));
+    assert_eq!((x + 2 * y).geq(1), (x + 2.0 * y).geq(1.0));
+}
+
+#[test]
 fn test_keyed_families_over_filtered_products() {
     let mut m = Model::new();
     let fits = |p: usize, l: char| !(p == 1 && l == 'b');
@@ -294,6 +417,54 @@ fn test_keyed_families_are_read_by_a_borrowed_key() {
 }
 
 #[test]
+fn test_a_model_takes_a_constraint_named_or_not_or_a_program_row_as_a_solver_does() {
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous());
+    let y = m.add_var(Var::continuous());
+    let unnamed = m.add_constraint((x + y).leq(4));
+    let named = m.add_constraint(("cap", (x + 1).leq(3)));
+    let data = m.add_constraint(ProgramRow {
+        bounds: bounds!(1.0, 2.0),
+        terms: vec![(y, 1.0), (x, 2.0), (y, 1.0)],
+        name: Some("data".to_owned()),
+    });
+    let family = m.add_constraint_map(0..2, |&i| x.geq(f64::from(i as u8)));
+    assert_eq!(m.constraint_name(family[&1]), None);
+    let program = m.build().unwrap();
+    assert_eq!(program.row(unnamed).name(), None);
+    assert_eq!(
+        (program.row(named).name(), program.row(named).bounds()),
+        (Some("cap"), bounds!(f64::NEG_INFINITY, 2.0))
+    );
+    assert_eq!(program.row(data).entries().collect::<Vec<_>>(), [(x, 2.0), (y, 2.0)]);
+    assert_eq!(program.row(data).name(), Some("data"));
+
+    // A program row is checked in the model's terms.
+    m.add_constraint(ProgramRow {
+        bounds: Bounds::FREE,
+        terms: vec![(Col::new(9), 1.0)],
+        name: Some("stray".to_owned()),
+    });
+    assert!(matches!(
+        m.build(),
+        Err(ModelError::UnknownVar { place: ExprPlace::Constraint(ModelConstraint { name: Some(n), .. }), col })
+            if n == "stray" && col == Col::new(9)
+    ));
+}
+
+#[test]
+fn test_a_family_of_variables_is_made_from_bounds() {
+    let mut m = Model::new();
+    let flow = m.add_var_map(
+        ['a', 'b'],
+        |&k| if k == 'a' { bounds!(0.0, 1.0) } else { bounds!(0.0, 2.0) },
+    );
+    let program = m.build().unwrap();
+    assert_eq!(program.columns()[flow['b']].bounds, bounds!(0.0, 2.0));
+    assert_eq!(program.columns()[flow['a']].integrality, Integrality::Continuous);
+}
+
+#[test]
 #[should_panic(expected = "a key is inserted twice")]
 fn test_keyed_family_refuses_repeated_keys() {
     let mut m = Model::new();
@@ -303,10 +474,10 @@ fn test_keyed_family_refuses_repeated_keys() {
 #[test]
 fn test_lp_file_writes_every_section() {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(-2.0, 5.0).name("x[1]"));
+    let x = m.add_var(Var::integer().bounds(bounds!(-2.0, 5.0)).name("x[1]"));
     let y = m.add_var(Var::free().name("1y"));
-    m.add_named_constraint("range", (x + y).between(-1.0, 4.0));
-    m.add_named_constraint("fix", (x - y).equals(0.0));
+    m.add_constraint(("range", (x + y).between(-1.0, 4.0)));
+    m.add_constraint(("fix", (x - y).equals(0.0)));
     m.minimize(x - 2.0 * y + 3.0);
     let text = m.build().unwrap().to_lp_string().unwrap();
     let expected = "Minimize\n obj: 1 x_1_ - 2 _1y + 3\nSubject To\n range_lo: 1 x_1_ + 1 _1y >= -1\n \
@@ -323,7 +494,7 @@ fn test_lp_file_escapes_names_the_format_reserves() {
     let x = m.add_var(Var::integer().upper(3).name("max"));
     let y = m.add_var(Var::continuous().upper(3).name("SOS"));
     let z = m.add_var(Var::continuous().upper(3).name("Minimize"));
-    m.add_named_constraint("min", (x + y + z).geq(1));
+    m.add_constraint(("min", (x + y + z).geq(1)));
     m.minimize(2.0 * x + y + z);
     let text = m.build().unwrap().to_lp_string().unwrap();
     let expected = "Minimize\n obj: 2 _max + 1 _SOS + 1 _Minimize\nSubject To\n _min: 1 _max + 1 _SOS + 1 _Minimize >= 1\n\
@@ -339,11 +510,11 @@ fn test_lp_file_labels_every_column_and_row_apart() {
     let y = m.add_var(Var::continuous());
     let a = m.add_var(Var::continuous().name("a"));
     let b = m.add_var(Var::continuous().name("a"));
-    m.add_named_constraint("r1", (x - y).geq(1));
+    m.add_constraint(("r1", (x - y).geq(1)));
     m.add_constraint((a - b).geq(1));
-    m.add_named_constraint("band", (x + a).between(1, 3));
-    m.add_named_constraint("band_lo", (y + b).leq(5));
-    m.add_named_constraint("obj", (x + b).leq(7));
+    m.add_constraint(("band", (x + a).between(1, 3)));
+    m.add_constraint(("band_lo", (y + b).leq(5)));
+    m.add_constraint(("obj", (x + b).leq(7)));
     m.minimize(x + 2 * y + a + b);
     let text = m.build().unwrap().to_lp_string().unwrap();
     let expected = "Minimize\n obj: 1 x1 + 2 x1~1 + 1 a + 1 a~1\nSubject To\n r1: 1 x1 - 1 x1~1 >= 1\n \
@@ -422,7 +593,7 @@ proptest! {
 fn test_row_views_read_bounds_name_and_entries_both_ways() {
     let mut m = Model::new();
     let x = m.add_vars(3, |_| Var::continuous());
-    let r = m.add_named_constraint("mix", (2 * x[2] + x[0] - x[1]).leq(4.0));
+    let r = m.add_constraint(("mix", (2 * x[2] + x[0] - x[1]).leq(4.0)));
     let program = m.build().unwrap();
     let row = program.row(r);
     assert_eq!(row.bounds(), bounds!(f64::NEG_INFINITY, 4.0));
@@ -575,6 +746,33 @@ proptest! {
         prop_assert_eq!(program.row(row).len(), forwards.len());
         prop_assert!(forwards.windows(2).all(|w| w[0].0 < w[1].0));
     }
+
+    /// A column's entries, read from either end, and every coefficient are the plan's terms of that column added up
+    /// per row in a map, the zero sums left out.
+    #[test]
+    fn test_column_entries_and_coefficients_are_the_terms_summed_per_row(
+        rows in prop::collection::vec(prop::collection::vec((0usize..4, -2i32..=2), 0..5), 0..5),
+    ) {
+        let mut plan = ProgramPlan::new();
+        let cols: Vec<Col> = (0..4).map(|_| plan.col(ProgramColumn::free())).collect();
+        for terms in &rows {
+            plan.row((.., terms.iter().map(|&(c, a)| (cols[c], f64::from(a)))));
+        }
+        let program = plan.build().unwrap();
+        for (c, &col) in cols.iter().enumerate() {
+            let mut expected = Vec::new();
+            for (r, terms) in rows.iter().enumerate() {
+                let sum: i32 = terms.iter().filter(|&&(t, _)| t == c).map(|&(_, a)| a).sum();
+                prop_assert_eq!(program.coefficient(Row::new(r), col), f64::from(sum));
+                if sum != 0 {
+                    expected.push((Row::new(r), f64::from(sum)));
+                }
+            }
+            prop_assert_eq!(program.col_entries(col).collect::<Vec<_>>(), expected.clone());
+            expected.reverse();
+            prop_assert_eq!(program.col_entries(col).rev().collect::<Vec<_>>(), expected);
+        }
+    }
 }
 
 #[test]
@@ -591,9 +789,9 @@ fn test_a_point_with_a_nan_is_infinitely_far_from_feasible() {
         f64::INFINITY
     );
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1.0)));
-    let y = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1.0)));
-    plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0)]);
+    let x = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0)));
+    let y = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0)));
+    plan.row((bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0)]));
     let program = plan.build().unwrap();
     assert_eq!(
         program.max_violation(TiSlice::from_ref(&[0.5, f64::NAN])),

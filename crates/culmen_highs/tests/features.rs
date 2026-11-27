@@ -10,9 +10,9 @@
 )]
 
 use culmen_core::{
-    Analysis, AnalysisError, Col, Combination, Improvement, LinExpr, Linear, LoadError, Misfit, Model, ModelClass,
-    Objective, ObjectiveId, Observer, Outcome, Program, ProgramFeature, Request, Solution, SolveError, Solver, Start,
-    StartError, TiSlice, TiVec, Tolerance, Var, Weights, absolute_gap, penalty, relative_gap, weight,
+    Analysis, AnalysisError, Col, Improvement, LinExpr, Linear, LoadError, Misfit, Model, ModelClass, Objective,
+    ObjectiveId, Observer, Outcome, Program, ProgramFeature, Solution, SolveError, Solver, Start, StartError, TiSlice,
+    TiVec, Tolerance, Var, Weights, absolute_gap, bounds, penalty, relative_gap, weight,
 };
 use culmen_highs::{Highs, HighsError};
 use culmen_testing::reference::{self, close};
@@ -22,10 +22,7 @@ use proptest::prelude::*;
 
 /// The optimal solution of a program HiGHS solves.
 fn optimum(program: &Program) -> Solution {
-    let solved = Solver::new(Highs::new(), program.clone())
-        .unwrap()
-        .solve(Request::new())
-        .unwrap();
+    let solved = Solver::new(Highs::new(), program.clone()).unwrap().solve().unwrap();
     match solved.outcome {
         Outcome::Optimal(solution) => solution,
         other => panic!("expected an optimum, got {other:?}"),
@@ -36,7 +33,7 @@ fn optimum(program: &Program) -> Solution {
 fn test_a_semi_continuous_column_is_zero_or_in_its_bounds() {
     // x is zero or in [2, 10]. Below 1.5 the most it can be is zero, where a continuous x would reach 1.5.
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     m.add_constraint(x.leq(1.5));
     m.maximize(x);
     let best = optimum(&m.build().unwrap());
@@ -44,7 +41,7 @@ fn test_a_semi_continuous_column_is_zero_or_in_its_bounds() {
 
     // Above 0.5 the least it can be is its lower bound 2, where a continuous x would stay at 0.5.
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     m.add_constraint(x.geq(0.5));
     m.minimize(x);
     let best = optimum(&m.build().unwrap());
@@ -58,14 +55,14 @@ fn test_a_semi_continuous_column_is_zero_or_in_its_bounds() {
 fn test_a_semi_integer_column_is_zero_or_whole_in_its_bounds() {
     // y is zero or a whole number in [2.5, 10]: above 0.5 the least is 3; below 2.9 the most is zero.
     let mut m = Model::new();
-    let y = m.add_var(Var::semi_integer().bounds(2.5, 10));
+    let y = m.add_var(Var::semi_integer().bounds(bounds!(2.5, 10.0)));
     m.add_constraint(y.geq(0.5));
     m.minimize(y);
     let best = optimum(&m.build().unwrap());
     assert_eq!((best.objective, best.values[y]), (3.0, 3.0));
 
     let mut m = Model::new();
-    let y = m.add_var(Var::semi_integer().bounds(2.5, 10));
+    let y = m.add_var(Var::semi_integer().bounds(bounds!(2.5, 10.0)));
     m.add_constraint(y.leq(2.9));
     m.maximize(y);
     assert_eq!(optimum(&m.build().unwrap()).values[y], 0.0);
@@ -76,12 +73,12 @@ fn test_a_semi_upper_bound_above_highs_limit_is_refused() {
     // HiGHS 1.16 lowers a semi column's upper bound above 1e5 to 1e5 (HighsLpUtils.cpp, assessSemiVariables), so
     // the optimum x = 2e5 of this program would be out of its reach.
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(1, 2e5));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 2e5)));
     m.maximize(x);
     let error = Solver::new(Highs::new(), m.build().unwrap()).unwrap_err();
     assert_eq!(error, LoadError::Backend(HighsError::SemiUpper { col: x, upper: 2e5 }));
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(1, Highs::SEMI_UPPER_LIMIT));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, Highs::SEMI_UPPER_LIMIT)));
     m.maximize(x);
     assert_eq!(optimum(&m.build().unwrap()).objective, Highs::SEMI_UPPER_LIMIT);
 }
@@ -96,7 +93,7 @@ fn two_stage() -> (Model, Col, Col, ObjectiveId) {
     let y = m.add_var(Var::continuous().upper(10));
     m.add_constraint((x + y).leq(10));
     m.maximize(x + y);
-    let second = m.add_objective(Objective::minimize(y));
+    let second = m.add_stage(Objective::minimize(y), Tolerance::EXACT);
     (m, x, y, second)
 }
 
@@ -126,7 +123,7 @@ fn test_lexicographic_objectives_keep_each_optimum_within_its_tolerance() {
         let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
         // A second solve gives the same: HiGHS's own costs, which its lexicographic solve overwrites, are not used.
         for _ in 0..2 {
-            let best = solver.solve(Request::new()).unwrap().outcome.into_solution().unwrap();
+            let best = solver.solve().unwrap().outcome.into_solution().unwrap();
             assert!(close(best.values[x], 6.0, 1e-9), "{tolerance:?}: {best:?}");
             assert!(close(best.values[y], expected_y, 1e-9), "{tolerance:?}: {best:?}");
             // The solution reports the program's own objective, not HiGHS's objective value, which a lexicographic
@@ -146,7 +143,7 @@ fn test_lexicographic_objectives_of_a_mip() {
     let y = m.add_var(Var::integer().upper(5));
     m.add_constraint((x + y).leq(7));
     m.maximize(x + y);
-    m.add_objective(Objective::maximize(x - y));
+    m.add_stage(Objective::maximize(x - y), Tolerance::EXACT);
     let best = optimum(&m.build().unwrap());
     assert_eq!(
         (best.values[x].round(), best.values[y].round(), best.objective),
@@ -159,7 +156,7 @@ fn test_lexicographic_objectives_of_a_mip() {
     let y = m2.add_var(Var::integer().upper(5));
     m2.add_constraint((x + y).leq(7));
     m2.maximize(x + y);
-    m2.add_objective(Objective::minimize(x - y));
+    m2.add_stage(Objective::minimize(x - y), Tolerance::EXACT);
     let best = optimum(&m2.build().unwrap());
     assert_eq!((best.values[x].round(), best.values[y].round()), (2.0, 5.0));
 }
@@ -179,9 +176,8 @@ fn test_blended_objectives_minimize_their_signed_weighted_sum() {
         let y = m.add_var(Var::continuous().upper(10));
         m.add_constraint((x + y).leq(10));
         m.maximize(x + y);
-        m.add_objective(Objective::minimize(y).weight(second));
+        m.add_weighted(Objective::minimize(y), second);
         m.set_objective_weight(first);
-        m.set_combination(Combination::Blended);
         let best = optimum(&m.build().unwrap());
         assert!(
             close(best.values[x], 6.0, 1e-9) && close(best.values[y], expected_y, 1e-9),
@@ -220,7 +216,10 @@ fn test_a_full_start_is_the_first_incumbent() {
     let mut fresh = Solver::new(Highs::new(), program).unwrap();
     let mut seen = Improvements::default();
     let solved = fresh
-        .solve(Request::new().observer(&mut seen).start(best.values.clone()))
+        .run()
+        .observer(&mut seen)
+        .start(best.values.clone())
+        .solve()
         .unwrap();
     assert_eq!(seen.0.first(), Some(&best.objective), "{:?}", seen.0);
     assert_eq!(solved.outcome.solution().map(|s| s.objective), Some(best.objective));
@@ -238,7 +237,7 @@ fn test_a_sparse_start_is_completed_by_highs() {
         .collect();
     let mut fresh = Solver::new(Highs::new(), program).unwrap();
     let mut seen = Improvements::default();
-    fresh.solve(Request::new().observer(&mut seen).start(chosen)).unwrap();
+    fresh.run().observer(&mut seen).start(chosen).solve().unwrap();
     assert_eq!(seen.0.first(), Some(&best.objective), "{:?}", seen.0);
 }
 
@@ -267,7 +266,10 @@ fn test_a_sparse_starts_unset_columns_are_completed_by_highs() {
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
     let mut seen = ImprovedValues::default();
     let best = solver
-        .solve(Request::new().observer(&mut seen).start(vec![(x, 3.0)]))
+        .run()
+        .observer(&mut seen)
+        .start(vec![(x, 3.0)])
+        .solve()
         .unwrap()
         .outcome
         .into_solution()
@@ -287,7 +289,9 @@ fn test_a_start_of_an_lp_leaves_its_optimum() {
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
     for start in [Start::Full(vec![1.0, 1.0].into()), Start::Sparse(vec![(y, 3.0)])] {
         let best = solver
-            .solve(Request::new().start(start))
+            .run()
+            .start(start)
+            .solve()
             .unwrap()
             .outcome
             .into_solution()
@@ -302,13 +306,15 @@ fn test_a_sparse_start_may_hold_a_semi_columns_zero() {
     // Zero lies outside a semi column's bounds; HiGHS 1.16's sparse start refuses no value for its bounds, so the zero
     // is taken.
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     let y = m.add_var(Var::integer().upper(3));
     m.add_constraint((x + y).geq(1));
     m.minimize(x + 2 * y);
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
     let best = solver
-        .solve(Request::new().start(vec![(x, 0.0), (y, 1.0)]))
+        .run()
+        .start(vec![(x, 0.0), (y, 1.0)])
+        .solve()
         .unwrap()
         .outcome
         .into_solution()
@@ -320,7 +326,7 @@ fn test_a_sparse_start_may_hold_a_semi_columns_zero() {
 fn test_a_start_that_does_not_fit_is_refused_typed() {
     let program = knapsack();
     let mut solver = Solver::new(Highs::new(), program).unwrap();
-    let refused = |solver: &mut Solver<Highs>, start: Start| match solver.solve(Request::new().start(start)) {
+    let refused = |solver: &mut Solver<Highs>, start: Start| match solver.run().start(start).solve() {
         Err(SolveError::Start(error)) => error,
         other => panic!("{other:?}"),
     };
@@ -333,11 +339,11 @@ fn test_a_start_that_does_not_fit_is_refused_typed() {
     );
     assert_eq!(
         refused(&mut solver, Start::Sparse(vec![(Col::new(40), 1.0)])),
-        StartError::UnknownColumn { col: Col::new(40) }
+        StartError::UnknownCol { col: Col::new(40) }
     );
     assert_eq!(
         refused(&mut solver, Start::Sparse(vec![(Col::new(1), f64::INFINITY)])),
-        StartError::NotFinite {
+        StartError::NonFinite {
             col: Col::new(1),
             value: f64::INFINITY
         }
@@ -351,7 +357,7 @@ proptest! {
     /// semi column of its solution is zero or in its bounds to them.
     #[test]
     fn test_semi_programs_match_the_reference(program in small_semi()) {
-        let solved = Solver::new(Highs::new(), program.clone()).unwrap().solve(Request::new()).unwrap();
+        let solved = Solver::new(Highs::new(), program.clone()).unwrap().solve().unwrap();
         let expected = reference::solve(&program);
         // HiGHS meets rows, bounds and a semi column's zero only to its absolute MIP feasibility tolerance, 1e-6: the
         // saved seed ends with a semi-integer column at 1.25e-7 standing for zero. Its optimum lies in the window
@@ -384,7 +390,7 @@ fn test_objective_values_follow_the_program() {
 /// zero, which violates none of its bounds.
 fn semi_relaxation() -> (Program, Col, Col) {
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     let y = m.add_var(Var::continuous().upper(1));
     m.add_constraint((x + y).geq(1.8));
     m.add_constraint(x.leq(0.5));
@@ -397,7 +403,7 @@ fn test_highs_relaxation_of_a_semi_program_is_refused() {
     // HiGHS 1.16's feasibility relaxation keeps x within [2, 10]: it returns x = 2, a penalty of 15, however high the
     // second row's price, where x = 0 costs 0.8 (a raw fixture below). The backend refuses it.
     let (program, ..) = semi_relaxation();
-    let weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let weights = Weights::soft_rows(&program, penalty!(1.0));
     let mut solver = Solver::new(Highs::new(), program).unwrap();
     assert_eq!(
         solver.feasibility_relaxation(&weights).unwrap_err(),
@@ -474,7 +480,7 @@ fn test_highs_relaxation_keeps_a_semi_column_on() {
 #[test]
 fn test_a_soft_bound_of_a_semi_column_is_refused() {
     let (program, x, _) = semi_relaxation();
-    let mut weights = Weights::uniform(&program, None, Some(penalty!(1.0)));
+    let mut weights = Weights::soft_rows(&program, penalty!(1.0));
     weights.lower[x] = Some(penalty!(1.0));
     let mut solver = Solver::new(Highs::new(), program).unwrap();
     assert_eq!(
@@ -487,7 +493,7 @@ fn test_a_soft_bound_of_a_semi_column_is_refused() {
 fn test_analyses_of_one_objective_are_refused_for_several() {
     let (m, ..) = two_stage();
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
-    solver.solve(Request::new()).unwrap();
+    solver.solve().unwrap();
     let refused = AnalysisError::Feature {
         analysis: Analysis::Duals,
         feature: ProgramFeature::MultipleObjectives,
@@ -524,7 +530,7 @@ fn test_analyses_of_one_objective_are_refused_for_several() {
     // A semi program is a MILP, which has no duals.
     let (program, ..) = semi_relaxation();
     let mut solver = Solver::new(Highs::new(), program).unwrap();
-    solver.solve(Request::new()).unwrap();
+    solver.solve().unwrap();
     assert!(matches!(
         solver.duals(),
         Err(AnalysisError::Class {

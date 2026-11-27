@@ -9,12 +9,16 @@ use crate::{ActionError, Col, Cols, ModelClass, ModelClasses, NewCol, Program};
 /// The columns one solve prices in, numbered after the program's columns: what a backend's price context hands every
 /// added column to, so that the [`Solver`](crate::Solver) can append them to its program.
 ///
-/// The [`Solver`](crate::Solver) makes one for each solve and hands it to [`Backend::solve`](crate::Backend::solve);
-/// code that drives a backend directly makes its own and owns the columns it holds afterwards
-/// ([`Priced::into_cols`]).
+/// The [`Solver`](crate::Solver) makes one for each solve and hands it to [`Backend::solve`](crate::Backend::solve) in
+/// the [`Hooks`](crate::backend::Hooks), where a backend that prices takes it
+/// ([`Hooks::take_priced`](crate::backend::Hooks::take_priced)); code that drives a backend directly makes its own,
+/// registers it with the pricer in [`Hooks::register_pricer`](crate::backend::Hooks::register_pricer), and owns the
+/// columns it holds afterwards ([`Priced::into_cols`]).
 ///
 /// ```
-/// use culmen_core::{Backend, Bounds, Col, Linear, Model, NewCol, Priced, ProgramColumn, Script, Var};
+/// use culmen_core::{Backend, Col, Linear, Model, NewCol, Var};
+/// use culmen_core::backend::Priced;
+/// use culmen_core::script::Script;
 ///
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::continuous());
@@ -22,7 +26,7 @@ use crate::{ActionError, Col, Cols, ModelClass, ModelClasses, NewCol, Program};
 /// let program = m.build()?;
 ///
 /// let mut priced = Priced::new(&program, Script::CLASSES);
-/// let new = NewCol { column: ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE), entries: vec![(row, 1.0)] };
+/// let new = NewCol::continuous().cost(1).entry(row, 1);
 /// assert_eq!(priced.push(new), Ok(Col::new(1)));
 /// assert_eq!(priced.num_cols(), 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -77,7 +81,7 @@ impl Priced {
     fn check(&self, col: Col, column: &NewCol) -> Result<ModelClass, ActionError> {
         let NewCol { column: data, entries } = column;
         if !data.cost.is_finite() {
-            return Err(ActionError::NotFinite { col });
+            return Err(ActionError::NonFinite { col });
         }
         let class = if data.integrality.is_discrete() {
             self.class.with_integer()
@@ -98,7 +102,7 @@ impl Priced {
         }
         match bad_term(entries, self.num_rows) {
             Some(BadTerm::Unknown(row)) => Err(ActionError::UnknownRow { row }),
-            Some(BadTerm::NonFinite(row, _)) => Err(ActionError::NotFiniteEntry { row, col }),
+            Some(BadTerm::NonFinite(row, _)) => Err(ActionError::NonFiniteEntry { row, col }),
             None => Ok(class),
         }
     }

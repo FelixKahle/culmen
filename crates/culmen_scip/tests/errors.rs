@@ -11,9 +11,10 @@
 
 use core::num::NonZeroU64;
 
+use culmen_core::backend::Hooks;
 use culmen_core::{
-    Backend, Bounds, Col, Linear, LoadError, Model, Priced, Program, ProgramColumn, ProgramFeature, ProgramPlan,
-    Request, Row, Settings, SolveError, Solver, Start, Var, bounds,
+    Backend, Col, Linear, LoadError, Model, Program, ProgramColumn, ProgramFeature, ProgramPlan, Row, Settings,
+    SolveError, Solver, Start, Starts, Var, bounds,
 };
 use culmen_scip::{Number, ParamValue, RetCode, Scip, ScipError, ScipOptions};
 
@@ -27,10 +28,7 @@ fn knapsack() -> Program {
 }
 
 fn refusal(scip: Scip, settings: Settings) -> ScipError {
-    match Solver::new(scip, knapsack())
-        .unwrap()
-        .solve(Request::new().settings_from(settings))
-    {
+    match Solver::new(scip, knapsack()).unwrap().run().settings(settings).solve() {
         Err(SolveError::Backend(error)) => error,
         other => panic!("expected a refusal, got {other:?}"),
     }
@@ -100,7 +98,9 @@ fn test_the_largest_values_scips_parameters_take_are_accepted() {
     };
     let solved = Solver::new(Scip::new(), knapsack())
         .unwrap()
-        .solve(Request::new().settings_from(settings))
+        .run()
+        .settings(settings)
+        .solve()
         .unwrap();
     assert_eq!(solved.outcome.objective(), Some(2.0));
 }
@@ -155,11 +155,11 @@ fn test_parameters_of_every_type_are_set() {
         .param("limits/maxsol", 50)
         .param("limits/totalnodes", 1_000_000_i64)
         .param("limits/memory", 4096.0)
-        .param("nodeselection/childsel", 'h')
+        .param("nodeselection/childsel", ParamValue::Char('h'))
         .param("visual/vbcfilename", "-");
     let solved = Solver::new(Scip::with_options(options), knapsack())
         .unwrap()
-        .solve(Request::new())
+        .solve()
         .unwrap();
     assert_eq!(solved.outcome.objective(), Some(2.0));
 }
@@ -179,7 +179,7 @@ fn test_names_and_values_c_cannot_carry_are_refused_before_scip_sees_them() {
             name: "visual/vbcfilename".to_owned()
         }
     );
-    let char = with(ScipOptions::default().param("nodeselection/childsel", 'é'));
+    let char = with(ScipOptions::default().param("nodeselection/childsel", ParamValue::Char('é')));
     assert_eq!(
         char,
         ScipError::ParamChar {
@@ -190,6 +190,17 @@ fn test_names_and_values_c_cannot_carry_are_refused_before_scip_sees_them() {
     assert_eq!(
         char.to_string(),
         "SCIP: the value 'é' of parameter `nodeselection/childsel` is not an ASCII character"
+    );
+}
+
+#[test]
+fn test_a_char_that_is_not_ascii_is_refused_where_the_value_is_made() {
+    assert_eq!(ParamValue::try_from('h'), Ok(ParamValue::Char('h')));
+    let refused = ParamValue::try_from('é');
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(
+        refused.unwrap_err().to_string(),
+        "SCIP: the character 'é' is not ASCII, as a char parameter needs"
     );
 }
 
@@ -209,21 +220,21 @@ fn test_numbers_scip_would_read_as_infinite_are_refused_where_they_stand() {
         })
     };
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, bounds!(0.0, 1e20)));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1e20)));
     assert_eq!(load(plan), refused(Number::ColBound(x), 1e20));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(-1e25, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(-1e25));
     assert_eq!(load(plan), refused(Number::Cost(x), -1e25));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::FREE));
-    let row = plan.row(bounds!(-1e21, 0.0), [(x, 1.0)]);
+    let x = plan.col(ProgramColumn::free().cost(1.0));
+    let row = plan.row((bounds!(-1e21, 0.0), [(x, 1.0)]));
     assert_eq!(load(plan), refused(Number::RowBound(row), -1e21));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-    let row = plan.row(bounds!(0.0, 1.0), [(x, 3e20)]);
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
+    let row = plan.row((bounds!(0.0, 1.0), [(x, 3e20)]));
     assert_eq!(load(plan), refused(Number::Coefficient { row, col: x }, 3e20));
 
     let mut plan = ProgramPlan::new();
@@ -231,8 +242,8 @@ fn test_numbers_scip_would_read_as_infinite_are_refused_where_they_stand() {
     assert_eq!(load(plan), refused(Number::Offset, 1e20));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free());
+    let y = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(x, x, 1e21), (y, y, 1e21)];
     assert_eq!(
         load(plan),
@@ -254,7 +265,7 @@ fn test_numbers_scip_would_read_as_infinite_are_refused_where_they_stand() {
 
     // Just below SCIP's infinity, a number is finite to SCIP and loads.
     let mut plan = ProgramPlan::new();
-    plan.col(ProgramColumn::continuous(1.0, bounds!(-9.9e19, 9.9e19)));
+    plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(-9.9e19, 9.9e19)));
     assert_eq!(load(plan), Ok(()));
 }
 
@@ -263,13 +274,13 @@ fn test_a_name_holding_a_nul_byte_is_refused_for_its_column_or_row() {
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn {
         name: Some("x\0".to_owned()),
-        ..ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE)
+        ..ProgramColumn::continuous().cost(1.0)
     });
     assert_eq!(load(plan), Err(ScipError::ColName { col: x }));
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-    let row = plan.row(bounds!(0.0, 1.0), [(x, 1.0)]);
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
+    let row = plan.row((bounds!(0.0, 1.0), [(x, 1.0)]));
     plan.rows[row].name = Some("r\0w".to_owned());
     let program = plan.build().unwrap();
     assert_eq!(
@@ -283,28 +294,29 @@ fn test_a_failed_load_leaves_no_program_and_a_later_load_works() {
     let mut scip = Scip::new();
     scip.load(&knapsack()).unwrap();
     let mut plan = ProgramPlan::new();
-    plan.col(ProgramColumn::continuous(1e30, Bounds::NON_NEGATIVE));
+    plan.col(ProgramColumn::continuous().cost(1e30));
     assert!(scip.load(&plan.build().unwrap()).is_err());
-    let mut priced = Priced::new(&knapsack(), Scip::CLASSES);
     assert_eq!(
-        scip.solve(&Settings::new(), &mut (), &mut priced).unwrap_err(),
+        scip.solve(&Settings::new(), Hooks::new()).unwrap_err(),
         ScipError::NotLoaded
     );
     scip.load(&knapsack()).unwrap();
-    let solved = scip.solve(&Settings::new(), &mut (), &mut priced).unwrap();
+    let solved = scip.solve(&Settings::new(), Hooks::new()).unwrap();
     assert_eq!(solved.outcome.objective(), Some(2.0));
 }
 
 #[test]
 fn test_programs_with_features_it_does_not_declare_are_refused() {
     let mut m = Model::new();
-    m.add_var(Var::semi_continuous().bounds(1, 2));
+    m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 2.0)));
     let semi = m.build().unwrap();
+    // Loaded directly, against the `Backend` contract, the program is refused by a panic before SCIP sees it.
+    let mut scip = Scip::new();
+    let direct = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scip.load(&semi)));
+    assert!(direct.is_err());
     assert_eq!(
-        Scip::new().load(&semi),
-        Err(ScipError::UnsupportedFeature {
-            feature: ProgramFeature::SemiContinuous
-        })
+        scip.solve(&Settings::new(), Hooks::new()).unwrap_err(),
+        ScipError::NotLoaded
     );
     assert!(matches!(
         Solver::new(Scip::new(), semi),
@@ -318,9 +330,8 @@ fn test_programs_with_features_it_does_not_declare_are_refused() {
 #[test]
 fn test_solving_or_starting_before_loading_is_refused() {
     let mut scip = Scip::new();
-    let mut priced = Priced::new(&knapsack(), Scip::CLASSES);
     assert_eq!(
-        scip.solve(&Settings::new(), &mut (), &mut priced).unwrap_err(),
+        scip.solve(&Settings::new(), Hooks::new()).unwrap_err(),
         ScipError::NotLoaded
     );
     assert_eq!(scip.set_start(&Start::from(vec![1.0])), Err(ScipError::NotLoaded));

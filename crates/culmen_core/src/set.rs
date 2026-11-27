@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The one implementation of a set of the variants of a fieldless enum, for `ModelClasses`, `ProgramFeatures` and
-//! `Analyses`: every such set has the same methods, operators, iterator, conversions and formatting.
+//! `Events`: every such set has the same methods, operators, iterator, conversions and formatting.
 
 /// Implements a set over a fieldless element enum for a `Copy` newtype `$set` over the bits `$bits`, and its iterator
 /// `$iter`, a newtype over `$set`.
@@ -87,6 +87,34 @@ macro_rules! element_set {
         impl From<$element> for $set {
             fn from(element: $element) -> Self {
                 Self(element.bit())
+            }
+        }
+
+        /// The set of both elements, so a set is written `a | b` as its elements are named.
+        impl core::ops::BitOr for $element {
+            type Output = $set;
+            fn bitor(self, other: Self) -> $set {
+                $set::from(self).union(other.into())
+            }
+        }
+
+        impl core::ops::BitOr<$element> for $set {
+            type Output = Self;
+            fn bitor(self, element: $element) -> Self {
+                self.union(element.into())
+            }
+        }
+
+        impl core::ops::BitOrAssign<$element> for $set {
+            fn bitor_assign(&mut self, element: $element) {
+                *self = self.union(element.into());
+            }
+        }
+
+        impl core::ops::Sub<$element> for $set {
+            type Output = Self;
+            fn sub(self, element: $element) -> Self {
+                self.difference(element.into())
             }
         }
 

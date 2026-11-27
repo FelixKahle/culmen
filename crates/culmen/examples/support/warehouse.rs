@@ -128,11 +128,12 @@ pub(crate) fn solve(
     );
     let mut solver = Solver::new(Highs::new(), program)?;
     let mut live = Live { show_log };
-    let request = Request::new()
+    let solved = solver
+        .run()
         .time_limit(Duration::from_secs(seconds))
         .stop(&stop)
-        .observer(&mut live);
-    let solved = solver.solve(request)?;
+        .observer(&mut live)
+        .solve()?;
 
     let (best, ending) = match &solved.outcome {
         Outcome::Optimal(best) => (best, "optimal".to_owned()),

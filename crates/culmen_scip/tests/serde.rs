@@ -11,7 +11,7 @@
 
 use core::fmt::Debug;
 
-use culmen_core::{Linear, Model, Request, Solver, Var};
+use culmen_core::{Linear, Model, Solver, Var};
 use culmen_scip::{Emphasis, ParamValue, RetCode, Scip, ScipOptions, ScipStatus, Status, Version};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -33,7 +33,7 @@ fn test_options_and_parameters_round_trip() {
     .param("limits/maxsol", 50)
     .param("limits/totalnodes", 7_i64)
     .param("limits/memory", 0.5)
-    .param("nodeselection/childsel", 'h')
+    .param("nodeselection/childsel", ParamValue::Char('h'))
     .param("visual/vbcfilename", "tree.vbc");
     round_trip(&options);
     round_trip(&ScipOptions::default());
@@ -49,17 +49,14 @@ fn test_options_and_parameters_round_trip() {
 
 #[test]
 fn test_statuses_codes_and_versions_round_trip() {
-    for status in [Status::Optimal, Status::GapLimit, Status::Other(99)] {
+    for status in [Status::Optimal, Status::GapLimit, Status::RestartLimit] {
         round_trip(&status);
     }
-    for code in [RetCode::LpError, RetCode::Other(-42)] {
+    for code in [RetCode::LpError, RetCode::NotImplemented] {
         round_trip(&code);
     }
     round_trip(&ScipStatus {
         status: Status::NodeLimit,
-        dual_bound: None,
-        nodes: 3,
-        lp_iterations: 17,
         solutions_found: 1,
     });
     round_trip(&culmen_scip::version());
@@ -77,10 +74,7 @@ fn test_a_solved_knapsack_round_trips() {
     let y = m.add_var(Var::binary());
     m.add_constraint((2.0 * x + 3.0 * y).leq(4.0));
     m.maximize(x + 2.0 * y);
-    let solved = Solver::new(Scip::new(), m.build().unwrap())
-        .unwrap()
-        .solve(Request::new())
-        .unwrap();
+    let solved = Solver::new(Scip::new(), m.build().unwrap()).unwrap().solve().unwrap();
     round_trip(&solved.status);
     round_trip(&solved);
 }

@@ -9,13 +9,14 @@
 )]
 
 use culmen_core::{
-    Backend, LinExpr, Linear, Model, Outcome, Request, Settings, SolveError, Solver, StopReason, Var, solutions,
-    threads,
+    Backend, Integrality, LinExpr, Linear, Model, Outcome, Settings, SolveError, Solver, StopReason, Var,
+    feasibility_tolerance, solutions, threads,
 };
 use culmen_highs::{
-    CallStatus, Dimension, Highs, HighsError, HighsOptions, ModelStatus, OptionValue, RawOption, SimplexStrategy,
+    CallStatus, Dimension, Highs, HighsError, HighsOption, HighsOptions, ModelStatus, OptionValue, SimplexStrategy,
     SolutionStatus, Version,
 };
+use culmen_testing::instances::{flat_costs, infeasible_by_a_hair};
 
 fn infeasible(integer: bool) -> Model {
     let mut m = Model::new();
@@ -32,7 +33,7 @@ fn infeasible(integer: bool) -> Model {
 fn test_infeasible_lp_and_mip() {
     for integer in [false, true] {
         let mut solver = Solver::new(Highs::new(), infeasible(integer).build().unwrap()).unwrap();
-        let solved = solver.solve(Request::new()).unwrap();
+        let solved = solver.solve().unwrap();
         assert!(
             matches!(solved.outcome, Outcome::Infeasible | Outcome::InfeasibleOrUnbounded),
             "integer {integer}: {solved:?}"
@@ -53,7 +54,7 @@ fn test_unbounded_lp_and_mip() {
         m.add_constraint((x - y).geq(0.0));
         m.maximize(x + y);
         let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
-        let solved = solver.solve(Request::new()).unwrap();
+        let solved = solver.solve().unwrap();
         assert!(
             matches!(solved.outcome, Outcome::Unbounded | Outcome::InfeasibleOrUnbounded),
             "integer {integer}: {solved:?}"
@@ -70,7 +71,7 @@ fn test_lp_optimum_and_status_with_offset() {
     m.add_constraint((x + 3.0 * y).leq(6.0));
     m.maximize(3.0 * x + 2.0 * y + 10);
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     let Outcome::Optimal(solution) = &solved.outcome else {
         panic!("{solved:?}")
     };
@@ -84,6 +85,9 @@ fn test_lp_optimum_and_status_with_offset() {
     );
     assert_eq!(solved.status.mip_gap, None);
     assert!(solved.status.simplex_iterations > 0);
+    // An LP runs no branch and bound, and its iterations are the simplex's.
+    assert_eq!(solved.nodes, None);
+    assert_eq!(solved.iterations, Some(solved.status.simplex_iterations));
 }
 
 #[test]
@@ -91,7 +95,7 @@ fn test_empty_model_is_optimal_at_its_offset() {
     let mut m = Model::new();
     m.minimize(culmen_core::LinExpr::from(3.5));
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     assert_eq!(solved.status.model, ModelStatus::ModelEmpty);
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!()
@@ -106,7 +110,7 @@ fn test_empty_model_with_a_false_row_is_infeasible() {
         let mut m = Model::new();
         m.add_constraint(culmen_core::LinExpr::from(0.0).between(lower, upper));
         let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
-        let solved = solver.solve(Request::new()).unwrap();
+        let solved = solver.solve().unwrap();
         assert_eq!(solved.outcome, Outcome::Infeasible, "{lower} ..= {upper}");
     }
 }
@@ -118,7 +122,7 @@ fn test_empty_model_with_true_rows_is_optimal_at_its_offset() {
     m.add_constraint(culmen_core::LinExpr::from(2.0).between(-1.0, 3.0));
     m.minimize(culmen_core::LinExpr::from(-1.5));
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
-    let Outcome::Optimal(solution) = solver.solve(Request::new()).unwrap().outcome else {
+    let Outcome::Optimal(solution) = solver.solve().unwrap().outcome else {
         panic!()
     };
     assert_eq!((solution.objective, solution.values.len()), (-1.5, 0));
@@ -135,16 +139,13 @@ fn test_options_are_applied_and_refused_by_name() {
         ..HighsOptions::default()
     };
     let mut solver = Solver::new(Highs::with_options(options), program.clone()).unwrap();
-    assert!(matches!(
-        solver.solve(Request::new()).unwrap().outcome,
-        Outcome::Optimal(_)
-    ));
+    assert!(matches!(solver.solve().unwrap().outcome, Outcome::Optimal(_)));
 
-    solver.backend_mut().options_mut().raw.push(RawOption {
+    solver.options_mut().options.push(HighsOption {
         name: "no_such_option".to_owned(),
         value: OptionValue::Int(1),
     });
-    let error = solver.solve(Request::new()).unwrap_err();
+    let error = solver.solve().unwrap_err();
     assert_eq!(
         error,
         SolveError::Backend(HighsError::Option {
@@ -156,7 +157,7 @@ fn test_options_are_applied_and_refused_by_name() {
     let wrong_kind = HighsOptions::default().option("mip_rel_gap", "large");
     let mut solver = Solver::new(Highs::with_options(wrong_kind), program).unwrap();
     assert!(matches!(
-        solver.solve(Request::new()),
+        solver.solve(),
         Err(SolveError::Backend(HighsError::Option { .. }))
     ));
 }
@@ -166,7 +167,7 @@ fn test_a_nul_byte_is_blamed_on_the_name_or_the_value_that_holds_it() {
     let program = infeasible(false).build().unwrap();
     let solve = |options: HighsOptions| match Solver::new(Highs::with_options(options), program.clone())
         .unwrap()
-        .solve(Request::new())
+        .solve()
     {
         Err(SolveError::Backend(error)) => error,
         other => panic!("{other:?}"),
@@ -218,9 +219,10 @@ fn test_errors_name_the_dimension_and_the_model_status() {
 #[test]
 fn test_solving_before_loading_is_refused() {
     let mut highs = Highs::new();
-    let mut priced = culmen_core::Priced::new(&Model::new().build().unwrap(), Highs::CLASSES);
     assert_eq!(
-        highs.solve(&Settings::new(), &mut (), &mut priced).unwrap_err(),
+        highs
+            .solve(&Settings::new(), culmen_core::backend::Hooks::new())
+            .unwrap_err(),
         HighsError::NotLoaded
     );
 }
@@ -229,14 +231,12 @@ fn test_solving_before_loading_is_refused() {
 fn test_a_thread_count_conflict_on_one_thread_is_an_error() {
     // HiGHS's scheduler belongs to the thread; this test's thread starts it at two threads, then asks for three.
     let mut solver = Solver::new(Highs::new(), infeasible(true).build().unwrap()).unwrap();
-    let on = |threads| {
-        Request::new().settings_from(Settings {
-            threads: Some(threads),
-            ..Settings::new()
-        })
+    let on = |threads| Settings {
+        threads: Some(threads),
+        ..Settings::new()
     };
-    solver.solve(on(threads!(2))).unwrap();
-    let error = solver.solve(on(threads!(3))).unwrap_err();
+    solver.run().settings(on(threads!(2))).solve().unwrap();
+    let error = solver.run().settings(on(threads!(3))).solve().unwrap_err();
     let SolveError::Backend(HighsError::Run { message, .. }) = error else {
         panic!("{error:?}")
     };
@@ -247,18 +247,16 @@ fn test_a_thread_count_conflict_on_one_thread_is_an_error() {
 fn test_dropping_the_backend_frees_the_threads_scheduler_for_another_count() {
     // A thread of its own, so no other test's scheduler is in play: once the solver that started the scheduler at two
     // threads is dropped, a new one on the same thread may ask for three.
-    let on = |threads| {
-        Request::new().settings_from(Settings {
-            threads: Some(threads),
-            ..Settings::new()
-        })
+    let on = |threads| Settings {
+        threads: Some(threads),
+        ..Settings::new()
     };
     std::thread::spawn(move || {
         let mut first = Solver::new(Highs::new(), infeasible(true).build().unwrap()).unwrap();
-        first.solve(on(threads!(2))).unwrap();
+        first.run().settings(on(threads!(2))).solve().unwrap();
         drop(first);
         let mut second = Solver::new(Highs::new(), infeasible(true).build().unwrap()).unwrap();
-        second.solve(on(threads!(3))).unwrap();
+        second.run().settings(on(threads!(3))).solve().unwrap();
     })
     .join()
     .unwrap();
@@ -267,9 +265,7 @@ fn test_dropping_the_backend_frees_the_threads_scheduler_for_another_count() {
 #[test]
 fn test_a_moved_backend_solves_on_another_thread() {
     let mut solver = Solver::new(Highs::new(), infeasible(false).build().unwrap()).unwrap();
-    let solved = std::thread::spawn(move || solver.solve(Request::new()).unwrap())
-        .join()
-        .unwrap();
+    let solved = std::thread::spawn(move || solver.solve().unwrap()).join().unwrap();
     assert!(matches!(
         solved.outcome,
         Outcome::Infeasible | Outcome::InfeasibleOrUnbounded
@@ -286,22 +282,30 @@ fn test_a_seed_beyond_highs_integers_is_refused() {
     let refused = HighsError::OutOfRange {
         name: "random_seed",
         value: 4_294_967_295,
+        max: 2_147_483_647,
     };
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-    let solved = solver.solve(Request::new().settings_from(settings));
+    let solved = solver.run().settings(settings).solve();
     assert_eq!(solved.unwrap_err(), SolveError::Backend(refused.clone()));
 
-    let options = HighsOptions {
-        random_seed: Some(u32::MAX),
-        ..HighsOptions::default()
-    };
-    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
-    let solved = solver.solve(Request::new());
-    assert_eq!(solved.unwrap_err(), SolveError::Backend(refused.clone()));
     assert_eq!(
         refused.to_string(),
         "HiGHS: option `random_seed` takes at most 2147483647, not 4294967295"
     );
+
+    // An exact integer field of the options is refused alike.
+    let options = HighsOptions {
+        simplex_max_concurrency: Some(u32::MAX),
+        ..HighsOptions::default()
+    };
+    let mut solver = Solver::new(Highs::with_options(options), program).unwrap();
+    let solved = solver.solve();
+    let refused = HighsError::OutOfRange {
+        name: "simplex_max_concurrency",
+        value: 4_294_967_295,
+        max: 2_147_483_647,
+    };
+    assert_eq!(solved.unwrap_err(), SolveError::Backend(refused));
 }
 
 #[cfg(feature = "serde")]
@@ -312,21 +316,20 @@ fn test_options_and_statuses_round_trip() {
         assert_eq!(&serde_json::from_str::<T>(&json).unwrap(), value, "{json}");
     }
     let options = HighsOptions {
-        presolve: Some(culmen_highs::Switch::Off),
+        parallel: Some(culmen_highs::Switch::Off),
         presolve_mode: Some(culmen_highs::PresolveMode::Light),
-        time_limit: Some(core::time::Duration::from_secs(3)),
-        mip_rel_gap: Some(0.01),
+        mip_heuristic_effort: Some(0.2),
         ..HighsOptions::default()
     }
     .option("mip_pool_soft_limit", 100)
     .option("log_file", "highs.log");
     round_trip(&options);
-    round_trip(&options.raw[1]);
+    round_trip(&options.options[1]);
     let mut solver = Solver::new(Highs::new(), infeasible(true).build().unwrap()).unwrap();
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     round_trip(&solved.status);
     round_trip(&solved);
-    round_trip(&ModelStatus::Other(42));
+    round_trip(&ModelStatus::HighsInterrupt);
     round_trip(&culmen_highs::version());
     // HiGHS's own default objective bound is +inf, and its infinite bound a double option set by name.
     let infinite = HighsOptions {
@@ -337,11 +340,10 @@ fn test_options_and_statuses_round_trip() {
     .option("infinite_bound", f64::INFINITY);
     round_trip(&infinite);
     round_trip(&culmen_highs::OptionValue::Double(f64::NEG_INFINITY));
-    use culmen_highs::{EdgeWeight, LpSolver, MipIpmSolver, MipLpSolver, OnOff, ScaleStrategy, files::ModelFormat};
+    use culmen_highs::{EdgeWeight, LpSolver, MipIpmSolver, MipLpSolver, ModelFormat, ScaleStrategy};
     for format in [ModelFormat::Mps, ModelFormat::Lp] {
         round_trip(&format);
     }
-    round_trip(&OnOff::On);
     round_trip(&LpSolver::QpAsm);
     round_trip(&MipLpSolver::Hipo);
     round_trip(&MipIpmSolver::Ipx);
@@ -376,15 +378,14 @@ fn test_a_solution_limit_ends_a_mip_with_a_solution() {
     };
     let in_settings = Solver::new(Highs::new(), program.clone())
         .unwrap()
-        .solve(Request::new().settings_from(limit))
+        .run()
+        .settings(limit)
+        .solve()
         .unwrap();
-    let options = HighsOptions {
-        mip_max_improving_sols: Some(solutions!(1)),
-        ..HighsOptions::default()
-    };
+    let options = HighsOptions::default().option("mip_max_improving_sols", 1);
     let in_options = Solver::new(Highs::with_options(options), program)
         .unwrap()
-        .solve(Request::new())
+        .solve()
         .unwrap();
     for solved in [in_settings, in_options] {
         assert!(
@@ -417,27 +418,27 @@ fn stop_reason(solved: &culmen_core::Solved<culmen_highs::HighsStatus>) -> StopR
 
 #[test]
 fn test_a_node_limit_stops_a_mip_at_the_node_limit_however_it_is_set() {
-    let limited = Request::new().settings_from(Settings {
+    let limited = Settings {
         node_limit: Some(1),
         time_limit: Some(core::time::Duration::from_secs(60)),
         ..Settings::new()
-    });
-    let in_settings = Solver::new(Highs::new(), hard_mip()).unwrap().solve(limited).unwrap();
-    assert_eq!(stop_reason(&in_settings), StopReason::NodeLimit, "{in_settings:?}");
-    let timed = || Request::new().time_limit(core::time::Duration::from_secs(60));
-    let typed = HighsOptions {
-        mip_max_nodes: Some(1),
-        ..HighsOptions::default()
     };
-    let solved = Solver::new(Highs::with_options(typed), hard_mip())
+    let in_settings = Solver::new(Highs::new(), hard_mip())
         .unwrap()
-        .solve(timed())
+        .run()
+        .settings(limited)
+        .solve()
         .unwrap();
-    assert_eq!(stop_reason(&solved), StopReason::NodeLimit, "{solved:?}");
+    assert_eq!(stop_reason(&in_settings), StopReason::NodeLimit, "{in_settings:?}");
+    // A MIP's work is its nodes, at least the one the limit allows, and its LP iterations.
+    assert!(in_settings.nodes.is_some_and(|n| n >= 1), "{in_settings:?}");
+    assert!(in_settings.iterations.is_some_and(|n| n > 0), "{in_settings:?}");
     let by_name = HighsOptions::default().option("mip_max_nodes", 1);
     let solved = Solver::new(Highs::with_options(by_name), hard_mip())
         .unwrap()
-        .solve(timed())
+        .run()
+        .time_limit(core::time::Duration::from_secs(60))
+        .solve()
         .unwrap();
     assert_eq!(stop_reason(&solved), StopReason::NodeLimit, "{solved:?}");
 }
@@ -451,7 +452,9 @@ fn test_an_objective_target_stops_a_mip_at_its_first_good_enough_solution() {
     };
     let solved = Solver::new(Highs::with_options(target), hard_mip())
         .unwrap()
-        .solve(Request::new().time_limit(core::time::Duration::from_secs(60)))
+        .run()
+        .time_limit(core::time::Duration::from_secs(60))
+        .solve()
         .unwrap();
     assert_eq!(stop_reason(&solved), StopReason::ObjectiveLimit, "{solved:?}");
     assert!(solved.outcome.objective().is_some_and(|objective| objective <= 1e9));
@@ -466,14 +469,18 @@ fn test_an_objective_bound_stops_the_dual_simplex_once_the_lp_cannot_beat_it() {
     }
     let bounded = HighsOptions {
         objective_bound: Some(1.0),
-        presolve: Some(culmen_highs::Switch::Off),
         solver: Some(culmen_highs::LpSolver::Simplex),
         simplex_strategy: Some(SimplexStrategy::Dual),
         ..HighsOptions::default()
     };
     let solved = Solver::new(Highs::with_options(bounded), plan.build().unwrap())
         .unwrap()
-        .solve(Request::new())
+        .run()
+        .settings(Settings {
+            presolve: Some(false),
+            ..Settings::new()
+        })
+        .solve()
         .unwrap();
     assert_eq!(stop_reason(&solved), StopReason::ObjectiveLimit, "{solved:?}");
 }
@@ -503,5 +510,81 @@ fn test_a_coefficient_highs_finds_excessive_is_refused_at_load_and_at_an_edit() 
         "HiGHS: Highs_addRows refused the edit"
     );
     // The solver holds the program before the edit again.
-    assert_eq!(solver.solve(Request::new()).unwrap().outcome.objective(), Some(1.0));
+    assert_eq!(solver.solve().unwrap().outcome.objective(), Some(1.0));
+}
+
+#[test]
+fn test_a_mip_never_reports_its_relaxations_optimum_as_its_own() {
+    // The relaxation's optimum is x = y = 3/4, worth 3/2; the MIP's takes one of the two, worth 1.
+    let mut m = Model::new();
+    let x = m.add_var(Var::binary());
+    let y = m.add_var(Var::binary());
+    m.add_constraint((2.0 * x + 2.0 * y).leq(3.0));
+    m.maximize(x + y);
+    let relaxing = HighsOptions::default().option("solve_relaxation", true);
+    let mut solver = Solver::new(Highs::with_options(relaxing), m.build().unwrap()).unwrap();
+    assert_eq!(solver.solve(), Err(SolveError::Backend(HighsError::Relaxation)));
+    assert_eq!(
+        HighsError::Relaxation.to_string(),
+        "HiGHS: the option `solve_relaxation` would report a MIP's continuous relaxation as its optimum"
+    );
+
+    // Relaxing the program itself solves the relaxation, reported as the optimum of the program it is.
+    solver
+        .set_col_integrality([(x, Integrality::Continuous), (y, Integrality::Continuous)])
+        .unwrap();
+    assert_eq!(solver.solve().unwrap().outcome.objective(), Some(1.5));
+}
+
+#[test]
+fn test_the_feasibility_tolerance_admits_a_hair_of_infeasibility() {
+    for integer in [false, true] {
+        let program = infeasible_by_a_hair(integer);
+        let strict = Solver::new(Highs::new(), program.clone()).unwrap().solve().unwrap();
+        assert!(
+            matches!(strict.outcome, Outcome::Infeasible),
+            "integer {integer}: {:?}",
+            strict.outcome
+        );
+        let loose = Settings {
+            feasibility_tolerance: Some(feasibility_tolerance!(1e-4)),
+            ..Settings::new()
+        };
+        let solved = Solver::new(Highs::new(), program.clone())
+            .unwrap()
+            .run()
+            .settings(loose)
+            .solve()
+            .unwrap();
+        let Outcome::Optimal(solution) = &solved.outcome else {
+            panic!("integer {integer}: {:?}", solved.outcome)
+        };
+        let violation = program.max_violation(&solution.values);
+        assert!(violation > 1e-6 && violation <= 1e-4, "integer {integer}: {violation}");
+    }
+}
+
+#[test]
+fn test_the_optimality_tolerance_takes_a_flat_reduced_cost_as_optimal() {
+    let program = flat_costs();
+    let solve = |optimality_tolerance| {
+        let settings = Settings {
+            presolve: Some(false),
+            optimality_tolerance,
+            ..Settings::new()
+        };
+        let solved = Solver::new(Highs::new(), program.clone())
+            .unwrap()
+            .run()
+            .settings(settings)
+            .solve()
+            .unwrap();
+        match solved.outcome {
+            Outcome::Optimal(solution) => solution.objective,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert!((solve(None) - -1e-4).abs() <= 1e-12, "{}", solve(None));
+    let loose = solve(Some(feasibility_tolerance!(1e-3)));
+    assert!(loose.abs() <= 1e-12, "{loose}");
 }

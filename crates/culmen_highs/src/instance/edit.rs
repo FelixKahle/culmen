@@ -6,11 +6,12 @@
 
 use culmen_core::{Bounds, Col, Cols, Integrality, Program, Row, Rows};
 use highs_sys::{
-    Highs_addCols, Highs_addRows, Highs_changeColsBoundsBySet, Highs_changeColsCostBySet,
-    Highs_changeColsIntegralityByRange, Highs_changeColsIntegralityBySet, Highs_changeRowsBoundsBySet, HighsInt,
+    Highs_addCols, Highs_addRows, Highs_changeCoeff, Highs_changeColsBoundsBySet, Highs_changeColsCostBySet,
+    Highs_changeColsIntegralityByRange, Highs_changeColsIntegralityBySet, Highs_changeObjectiveOffset,
+    Highs_changeObjectiveSense, Highs_changeRowsBoundsBySet, HighsInt,
 };
 
-use super::{Instance, index, var_type};
+use super::{Instance, index, objective_sense, var_type};
 use crate::{CallStatus, Dimension, HighsError};
 
 impl Instance {
@@ -123,6 +124,61 @@ impl Instance {
             )
         };
         edited(status, "Highs_changeRowsBoundsBySet")
+    }
+
+    /// Sets the coefficients of `entries` of the model HiGHS holds to theirs in `program`, one `Highs_changeCoeff`
+    /// each; HiGHS takes an entry set to zero out of its matrix.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::TooLarge`] for an index beyond HiGHS's 32-bit indices, [`HighsError::Edit`] when HiGHS refuses
+    /// a change, such as a value of at least its `large_matrix_value`; the entries before it are changed then.
+    ///
+    /// # Panics
+    ///
+    /// When `entries` names a row or column `program` lacks.
+    pub(crate) fn change_coefficients(&mut self, program: &Program, entries: &[(Row, Col)]) -> Result<(), HighsError> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        for &(row, col) in entries {
+            let value = program.coefficient(row, col);
+            let (r, c) = (
+                index(row.index(), Dimension::Rows)?,
+                index(col.index(), Dimension::Columns)?,
+            );
+            debug_assert!(
+                row.index() < self.num_row() && self.holds(&[col]),
+                "Instance: an entry HiGHS's model lacks"
+            );
+            // SAFETY: the instance is live and borrowed exclusively; the call takes plain numbers, and HiGHS checks
+            // both indices against its model before it uses them, refusing the call otherwise.
+            let status = unsafe { Highs_changeCoeff(self.raw(), r, c, value) };
+            edited(status, "Highs_changeCoeff")?;
+        }
+        Ok(())
+    }
+
+    /// Sets the objective sense of the model HiGHS holds to `program`'s.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Edit`] when HiGHS refuses the change.
+    pub(crate) fn change_sense(&mut self, program: &Program) -> Result<(), HighsError> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live and borrowed exclusively; the sense is one of HiGHS's two constants.
+        let status = unsafe { Highs_changeObjectiveSense(self.raw(), objective_sense(program.sense())) };
+        edited(status, "Highs_changeObjectiveSense")
+    }
+
+    /// Sets the objective offset of the model HiGHS holds to `program`'s.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Edit`] when HiGHS refuses the change.
+    pub(crate) fn change_offset(&mut self, program: &Program) -> Result<(), HighsError> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live and borrowed exclusively.
+        let status = unsafe { Highs_changeObjectiveOffset(self.raw(), program.offset()) };
+        edited(status, "Highs_changeObjectiveOffset")
     }
 
     /// Appends `rows`, the last rows of `program`, to the model HiGHS holds, which holds `program`'s rows before
@@ -267,11 +323,11 @@ fn ends(bounds: impl Iterator<Item = Bounds>) -> (Vec<f64>, Vec<f64>) {
 /// # Errors
 ///
 /// [`HighsError::Edit`] naming `call` when HiGHS reports an error; the C API returns no message with it.
+/// [`HighsError::Unlisted`] when `status` is no `kHighsStatus*` value.
 fn edited(status: HighsInt, call: &'static str) -> Result<(), HighsError> {
-    match CallStatus::from_raw(status) {
-        CallStatus::Error => Err(HighsError::Edit { call }),
-        CallStatus::Ok | CallStatus::Warning => Ok(()),
-    }
+    CallStatus::succeeded(status, call)?
+        .then_some(())
+        .ok_or(HighsError::Edit { call })
 }
 
 /// A program's last rows in the layout `Highs_addRows` reads: row-wise, starts relative to the first new row.
@@ -462,7 +518,7 @@ mod tests {
         let mut m = Model::new();
         let x = m.add_var(Var::continuous().upper(4).name("x"));
         let y = m.add_var(Var::continuous().upper(4));
-        let cap = m.add_named_constraint("cap", (x + y).leq(5));
+        let cap = m.add_constraint(("cap", (x + y).leq(5)));
         let floor = m.add_constraint((x - y).geq(-1));
         m.maximize(x + 2.0 * y);
         let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
@@ -491,12 +547,10 @@ mod tests {
             .unwrap();
         assert_eq!(held(&solver), unnamed(&solver), "the new rows' bounds");
         let both = NewCol {
-            column: ProgramColumn::integer(1.0, bounds!(0.0, 5.0)),
+            column: ProgramColumn::integer().cost(1.0).bounds(bounds!(0.0, 5.0)),
             entries: vec![(cap, 1.0), (floor, -2.0)],
         };
-        let cols = solver
-            .add_cols([both, NewCol::from(ProgramColumn::continuous(0.0, Bounds::FREE))])
-            .unwrap();
+        let cols = solver.add_cols([both, NewCol::from(ProgramColumn::free())]).unwrap();
         assert_eq!(held(&solver), unnamed(&solver), "columns");
         solver.set_col_costs(cols.map(|col| (col, 3.0))).unwrap();
         assert_eq!(held(&solver), unnamed(&solver), "the new columns' costs");
@@ -509,7 +563,7 @@ mod tests {
         m.minimize(x * x - 2.0 * x);
         let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
         let y = solver
-            .add_col(ProgramColumn::continuous(1.0, bounds!(0.0, 2.0)))
+            .add_col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 2.0)))
             .unwrap();
         assert_eq!(held(&solver), unnamed(&solver), "a column beside the free row");
         solver.add_row((x + y).geq(1)).unwrap();

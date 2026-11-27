@@ -379,13 +379,21 @@ pub struct Refused {
 /// - A new column is appended after every column, and each entry `(row, a)` adds the term `(column, a)` to `row`.
 /// - Every column's cost is finite, and a semi column's bounds are `lower ..= upper` with `0 < lower` and `upper`
 ///   finite. In every row, the coefficients of each column, added up in the order given, are finite.
+/// - The sense of the program's own objective may change only while it has no quadratic part, since the quadratic
+///   part a program holds is convex for its sense and a non-zero one is then not concave for the other. An offset is
+///   finite.
+/// - A replaced objective names only the program's columns; each column's cost is its coefficients added up in the
+///   order given, zero without one, and finite after every term; its constant is finite. Its squares' coefficients are
+///   finite, and so is each column's sum of them and twice that sum, its Hessian value; a sum is at least zero to
+///   minimize and at most zero to maximize, the convexity of a quadratic part of squares; and a non-zero sum is
+///   refused beside further objectives.
 /// - The backend solves the edited program's class (`classes`): an LP, or a MILP once a column is integer or semi,
 ///   a QP or MIQP alike with a quadratic objective. It takes its features (`features`): a semi-continuous or
 ///   semi-integer column, and the program's further objectives.
 ///
 /// The rules are judged here, without the checks of `culmen_core` that the code under test calls; the edited plan is
-/// then built into the program returned, and an edit changes nothing else a program is checked for (its offset, its
-/// quadratic part, its further objectives), so a plan these rules accept builds.
+/// then built into the program returned, and an edit changes nothing else a program is checked for, so a plan these
+/// rules accept builds.
 ///
 /// # Errors
 ///
@@ -406,6 +414,8 @@ pub fn edit_plan(
         EditOp::ColBounds(given) => given
             .iter()
             .try_for_each(|&(c, b)| column(&mut plan, c).map(|c| c.bounds = b))?,
+        EditOp::ColLower(given) => col_ends(&mut plan, given, true)?,
+        EditOp::ColUpper(given) => col_ends(&mut plan, given, false)?,
         EditOp::ColCosts(given) => given
             .iter()
             .try_for_each(|&(c, v)| column(&mut plan, c).map(|c| c.cost = v))?,
@@ -417,6 +427,9 @@ pub fn edit_plan(
         EditOp::RowBounds(given) => given
             .iter()
             .try_for_each(|&(r, b)| row(&mut plan, r).map(|r| r.bounds = b))?,
+        EditOp::Coefficients(given) => set_coefficients(&mut plan, given)?,
+        EditOp::RowLower(given) => row_ends(&mut plan, given, true)?,
+        EditOp::RowUpper(given) => row_ends(&mut plan, given, false)?,
         EditOp::AddRows(new) => {
             for new in new {
                 let row = plan_row(new, num_cols)?;
@@ -424,6 +437,15 @@ pub fn edit_plan(
             }
         }
         EditOp::AddCols(new) => new.iter().try_for_each(|new| append_column(&mut plan, new, num_rows))?,
+        EditOp::Sense(sense) => set_sense(&mut plan, *sense)?,
+        EditOp::Offset(offset) => plan.offset = finite_offset(*offset)?,
+        EditOp::Objective {
+            sense,
+            terms,
+            constant,
+            squares,
+            cross,
+        } => replace_objective(&mut plan, *sense, terms, *constant, squares, cross)?,
     }
     check_columns_and_rows(&plan)?;
     let (class, used) = class_and_features(&plan);
@@ -435,6 +457,242 @@ pub fn edit_plan(
     }
     let built = plan.build();
     Ok(built.unwrap_or_else(|e| panic!("the edit rules accept a plan Program::from_plan refuses: {e}")))
+}
+
+/// Sets the lower end, or the upper when not `lower`, of the bounds of each column `given` names to the last end
+/// given for it, keeping the other end.
+///
+/// # Errors
+///
+/// [`Refused`] for a column the plan lacks, or as [`one_end`].
+fn col_ends(plan: &mut ProgramPlan, given: &[(Col, f64)], lower: bool) -> Result<(), Refused> {
+    if let Some((c, _)) = given.iter().find(|(c, _)| c.index() >= plan.columns.len()) {
+        return Err(refused(format!("the program has no {c:?}")));
+    }
+    let last: BTreeMap<Col, f64> = given.iter().copied().collect();
+    for (c, end) in last {
+        let bounds = &mut plan.columns[c].bounds;
+        *bounds = one_end(*bounds, end, lower)?;
+    }
+    Ok(())
+}
+
+/// [`col_ends`] for rows.
+///
+/// # Errors
+///
+/// [`Refused`] for a row the plan lacks, or as [`one_end`].
+fn row_ends(plan: &mut ProgramPlan, given: &[(Row, f64)], lower: bool) -> Result<(), Refused> {
+    if let Some((r, _)) = given.iter().find(|(r, _)| r.index() >= plan.rows.len()) {
+        return Err(refused(format!("the program has no {r:?}")));
+    }
+    let last: BTreeMap<Row, f64> = given.iter().copied().collect();
+    for (r, end) in last {
+        let bounds = &mut plan.rows[r].bounds;
+        *bounds = one_end(*bounds, end, lower)?;
+    }
+    Ok(())
+}
+
+/// Sets each entry `given` names to the last value given for it: its row then holds the column once with that
+/// value, or not at all for zero.
+///
+/// # Errors
+///
+/// [`Refused`] for an entry naming a row or column the plan lacks, or a value that is not finite.
+fn set_coefficients(plan: &mut ProgramPlan, given: &[(Row, Col, f64)]) -> Result<(), Refused> {
+    for &(r, c, value) in given {
+        if r.index() >= plan.rows.len() || c.index() >= plan.columns.len() {
+            return Err(refused(format!("the program has no entry ({r:?}, {c:?})")));
+        }
+        if !value.is_finite() {
+            return Err(refused(format!("the coefficient {value} of {c:?} in {r:?}")));
+        }
+    }
+    let last: BTreeMap<(Row, Col), f64> = given.iter().map(|&(r, c, value)| ((r, c), value)).collect();
+    for ((r, c), value) in last {
+        let terms = &mut plan.rows[r].terms;
+        terms.retain(|&(col, _)| col != c);
+        if value != 0.0 {
+            terms.push((c, value));
+        }
+    }
+    Ok(())
+}
+
+/// `bounds` with its lower end, or its upper when not `lower`, set to `end`.
+///
+/// # Errors
+///
+/// [`Refused`] when an end is NaN, the lower end is `+∞` or the upper `-∞`, or the lower end exceeds the upper.
+///
+/// # Panics
+///
+/// When `Bounds::new` refuses ends these rules accept.
+fn one_end(bounds: Bounds, end: f64, lower: bool) -> Result<Bounds, Refused> {
+    let (l, u) = if lower {
+        (end, bounds.upper())
+    } else {
+        (bounds.lower(), end)
+    };
+    if l.is_nan() || u.is_nan() || l == f64::INFINITY || u == f64::NEG_INFINITY || l > u {
+        return Err(refused(format!("one end set gives the bounds {l} ..= {u}")));
+    }
+    Ok(Bounds::new(l, u).unwrap_or_else(|e| panic!("the edit rules accept bounds Bounds::new refuses: {e}")))
+}
+
+/// Sets the plan's sense.
+///
+/// # Errors
+///
+/// [`Refused`] when the sense changes beside a quadratic part.
+fn set_sense(plan: &mut ProgramPlan, sense: Sense) -> Result<(), Refused> {
+    if sense != plan.sense && !plan.quadratic.is_empty() {
+        return Err(refused(format!(
+            "a quadratic part kept while the sense becomes {sense:?}"
+        )));
+    }
+    plan.sense = sense;
+    Ok(())
+}
+
+/// The offset given.
+///
+/// # Errors
+///
+/// [`Refused`] when it is not finite.
+fn finite_offset(offset: f64) -> Result<f64, Refused> {
+    if offset.is_finite() {
+        Ok(offset)
+    } else {
+        Err(refused(format!("the offset {offset} is not finite")))
+    }
+}
+
+/// Replaces the plan's own objective with `Σ terms + constant + Σ q · col² + Σ q · first · second` in `sense`.
+///
+/// # Errors
+///
+/// [`Refused`] for the first rule the objective breaks.
+fn replace_objective(
+    plan: &mut ProgramPlan,
+    sense: Sense,
+    terms: &[(Col, f64)],
+    constant: f64,
+    squares: &[(Col, f64)],
+    cross: &[(Col, Col, f64)],
+) -> Result<(), Refused> {
+    let num_cols = plan.columns.len();
+    let named = terms.iter().chain(squares).map(|&(col, _)| col);
+    let named = named.chain(cross.iter().flat_map(|&(first, second, _)| [first, second]));
+    if let Some(col) = named.into_iter().find(|col| col.index() >= num_cols) {
+        return Err(refused(format!("the objective names {col:?}, which the program lacks")));
+    }
+    let mut costs = vec![0.0; num_cols];
+    for &(col, a) in terms {
+        costs[col.index()] += a;
+        if !costs[col.index()].is_finite() {
+            return Err(refused(format!(
+                "{col:?} costs {} in the objective",
+                costs[col.index()]
+            )));
+        }
+    }
+    let offset = finite_offset(constant)?;
+    let quadratic = quadratic_part(squares, cross, sense)?;
+    if !quadratic.is_empty() && plan.objectives.are_several() {
+        return Err(refused("a quadratic part beside further objectives"));
+    }
+    plan.sense = sense;
+    plan.offset = offset;
+    plan.columns
+        .iter_mut()
+        .zip(costs)
+        .for_each(|(column, cost)| column.cost = cost);
+    plan.quadratic = quadratic;
+    Ok(())
+}
+
+/// The quadratic part of squares and cross terms on at most one pair of columns, as `(first, second, q)` with every
+/// `q` not zero.
+///
+/// The Hessian splits into the pair's block and a block per other column. A column's block alone is convex to
+/// minimize when its squares sum to at least zero, and concave to maximize when they sum to at most zero. The pair's
+/// block `[[2a, c], [c, 2b]]`, with `a` and `b` its columns' square sums and `c` its cross terms' sum, is convex when
+/// `a` and `b` are at least zero and its determinant `4ab - c²` is too, and concave when `a` and `b` are at most zero
+/// and the determinant at least zero; with whole numbers this is exact.
+///
+/// # Errors
+///
+/// [`Refused`] for a coefficient or a sum that is not finite, or a block that is not convex for `sense`.
+///
+/// # Panics
+///
+/// When the cross terms name more than one pair, or a column paired with itself.
+fn quadratic_part(
+    squares: &[(Col, f64)],
+    cross: &[(Col, Col, f64)],
+    sense: Sense,
+) -> Result<Vec<(Col, Col, f64)>, Refused> {
+    let pair = cross.first().map(|&(i, j, _)| (i.min(j), i.max(j)));
+    assert!(
+        cross
+            .iter()
+            .all(|&(i, j, _)| Some((i.min(j), i.max(j))) == pair && i != j),
+        "the reference judges cross terms on one pair of different columns"
+    );
+    if let Some((i, j, q)) = cross.iter().find(|(.., q)| !q.is_finite()) {
+        return Err(refused(format!("the term {i:?} · {j:?} has the coefficient {q}")));
+    }
+    let c: f64 = cross.iter().map(|&(.., q)| q).sum();
+    if !c.is_finite() {
+        return Err(refused(format!("the cross terms sum to {c}")));
+    }
+    let sums = square_sums(squares)?;
+    let sum = |col: Col| sums.get(&col).copied().unwrap_or(0.0);
+    let signed = |q: f64| match sense {
+        Sense::Minimize => q >= 0.0,
+        Sense::Maximize => q <= 0.0,
+    };
+    let in_pair = |col: Col| pair.is_some_and(|(i, j)| c != 0.0 && (col == i || col == j));
+    if let Some((&col, &q)) = sums.iter().find(|&(&col, &q)| !in_pair(col) && !signed(q)) {
+        return Err(refused(format!(
+            "the squares of {col:?} sum to {q}, which {sense:?} refuses"
+        )));
+    }
+    if let Some((i, j)) = pair.filter(|_| c != 0.0) {
+        let (a, b) = (sum(i), sum(j));
+        if !(signed(a) && signed(b) && 4.0 * a * b - c * c >= 0.0) {
+            return Err(refused(format!(
+                "the block of {i:?} and {j:?}, squares {a} and {b}, cross {c}, which {sense:?} refuses"
+            )));
+        }
+    }
+    let squares = sums
+        .into_iter()
+        .filter(|&(_, q)| q != 0.0)
+        .map(|(col, q)| (col, col, q));
+    let pair = pair.filter(|_| c != 0.0).map(|(i, j)| (i, j, c));
+    Ok(squares.chain(pair).collect())
+}
+
+/// Each column's squares' coefficients added up.
+///
+/// # Errors
+///
+/// [`Refused`] for a coefficient, a sum or twice a sum that is not finite.
+fn square_sums(squares: &[(Col, f64)]) -> Result<BTreeMap<Col, f64>, Refused> {
+    if let Some((col, q)) = squares.iter().find(|(_, q)| !q.is_finite()) {
+        return Err(refused(format!("the square of {col:?} has the coefficient {q}")));
+    }
+    let mut sums: BTreeMap<Col, f64> = BTreeMap::new();
+    for &(col, q) in squares {
+        *sums.entry(col).or_insert(0.0) += q;
+    }
+    if let Some((col, sum)) = sums.iter().find(|&(_, &sum)| !(2.0 * sum).is_finite()) {
+        return Err(refused(format!("the squares of {col:?} sum to {sum}")));
+    }
+    Ok(sums)
 }
 
 /// Checks every cost, every semi column's bounds, and every row's coefficients added up per column.
@@ -632,19 +890,19 @@ mod tests {
     fn test_reference_solves_hand_worked_semi_problems() {
         // x is zero or in [2, 10]: maximizing it below 1.5 leaves it at zero; minimizing it above 0.5 lifts it to 2.
         let mut m = Model::new();
-        let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+        let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
         m.add_constraint(x.leq(1.5));
         m.maximize(x);
         assert_eq!(solve(&m.build().unwrap()).objective(), Some(0.0));
         let mut m = Model::new();
-        let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+        let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
         m.add_constraint(x.geq(0.5));
         m.minimize(x);
         assert_eq!(solve(&m.build().unwrap()).objective(), Some(2.0));
 
         // y is zero or a whole number in [2.5, 10]: at least 0.5 makes it 3; between 0.5 and 2.9 nothing fits.
         let mut m = Model::new();
-        let y = m.add_var(Var::semi_integer().bounds(2.5, 10));
+        let y = m.add_var(Var::semi_integer().bounds(bounds!(2.5, 10.0)));
         m.add_constraint(y.geq(0.5));
         m.minimize(y);
         assert_eq!(solve(&m.build().unwrap()).objective(), Some(3.0));
@@ -666,8 +924,8 @@ mod tests {
     fn test_the_reference_refuses_an_integer_box_beyond_i64() {
         // Each column has 8e18 + 1 whole values, which i64 counts; the box has their square, which it does not.
         let mut m = Model::new();
-        let x = m.add_var(Var::integer().bounds(-4e18, 4e18));
-        let y = m.add_var(Var::integer().bounds(-4e18, 4e18));
+        let x = m.add_var(Var::integer().bounds(bounds!(-4e18, 4e18)));
+        let y = m.add_var(Var::integer().bounds(bounds!(-4e18, 4e18)));
         m.minimize(x + y);
         let _ = solve(&m.build().unwrap());
     }
@@ -704,7 +962,7 @@ mod tests {
     #[test]
     fn test_edit_plan_appends_a_column_with_its_entries_added_up() {
         let (program, x, y, row) = small();
-        let column = ProgramColumn::continuous(-1.0, bounds!(0.0, 1.0));
+        let column = ProgramColumn::continuous().cost(-1.0).bounds(bounds!(0.0, 1.0));
         let new = NewCol {
             column: column.clone(),
             entries: vec![(row, 1.0), (row, 2.0)],
@@ -738,7 +996,7 @@ mod tests {
             (1e308 * x + 1e308 * x).leq(1)
         )])));
         let unknown_row = NewCol {
-            column: ProgramColumn::binary(0.0),
+            column: ProgramColumn::binary(),
             entries: vec![(Row::new(1), 1.0)],
         };
         assert!(refused(EditOp::AddCols(vec![unknown_row])));
@@ -748,10 +1006,9 @@ mod tests {
         let linear = ModelClasses::of(&[ModelClass::Lp]);
         let integer = EditOp::ColIntegrality(vec![(x, Integrality::Integer)]);
         assert!(edit_plan(&program, &integer, linear, ProgramFeatures::ALL).is_err());
-        let semi = EditOp::AddCols(vec![NewCol::from(ProgramColumn::semi_continuous(
-            1.0,
-            bounds!(1.0, 2.0),
-        ))]);
+        let semi = EditOp::AddCols(vec![NewCol::from(
+            ProgramColumn::semi_continuous().cost(1.0).bounds(bounds!(1.0, 2.0)),
+        )]);
         assert!(edit_plan(&program, &semi, ModelClasses::ALL, ProgramFeature::SemiInteger.into()).is_err());
         assert!(
             edit_plan(

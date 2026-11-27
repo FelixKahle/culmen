@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The kinds of analysis a solve can be followed by, and the set of them a backend provides.
+//! The kinds of analysis a solve can be followed by.
 
 use core::fmt;
 
@@ -12,9 +12,9 @@ use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 
 /// What a [`Solver`](crate::Solver) can report beyond a solve's [`Outcome`](crate::Outcome).
 ///
-/// A backend declares the analyses it provides in [`Backend::ANALYSES`](crate::Backend::ANALYSES); each is defined
-/// only for the [`classes`](Analysis::classes) of program where its mathematics holds. The enum is non-exhaustive: a
-/// new analysis is a new variant, and a backend that does not declare it refuses it.
+/// A backend provides an analysis by implementing its trait, such as [`DualAnalysis`](crate::DualAnalysis); each
+/// analysis is defined only for the [`classes`](Analysis::classes) of program where its mathematics holds. It names the
+/// analysis in an [`AnalysisError`](crate::AnalysisError).
 ///
 /// ```
 /// use culmen_core::{Analysis, ModelClass};
@@ -24,7 +24,6 @@ use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum Analysis {
     /// Row duals and reduced costs of an optimal continuous program: [`Solver::duals`](crate::Solver::duals).
     Duals,
@@ -44,16 +43,6 @@ pub enum Analysis {
 }
 
 impl Analysis {
-    /// Every analysis, in the order of their bits in [`Analyses`].
-    const ALL: [Self; 6] = [
-        Self::Duals,
-        Self::Basis,
-        Self::Ranging,
-        Self::Rays,
-        Self::Iis,
-        Self::FeasibilityRelaxation,
-    ];
-
     /// The classes of program the analysis is defined for.
     ///
     /// Duals exist for continuous programs; a basis, ranging and rays are simplex notions of a linear program; an
@@ -83,11 +72,6 @@ impl Analysis {
         }
     }
 
-    /// The analysis's bit in an [`Analyses`].
-    const fn bit(self) -> u8 {
-        1 << self as u8
-    }
-
     /// `singular` or `plural`, whichever agrees with the analysis's name as a subject.
     pub(super) const fn agree(self, singular: &'static str, plural: &'static str) -> &'static str {
         match self {
@@ -115,37 +99,3 @@ impl fmt::Display for Analysis {
         f.write_str(self.name())
     }
 }
-
-/// A set of [`Analysis`] kinds: what a [`Backend`](crate::Backend) provides ([`Backend::ANALYSES`]).
-///
-/// A [`Solver`](crate::Solver) asks its backend only for an analysis in the set, and refuses any other with
-/// [`AnalysisError::Unsupported`](crate::AnalysisError::Unsupported).
-///
-/// [`Backend::ANALYSES`]: crate::Backend::ANALYSES
-///
-/// ```
-/// use culmen_core::{Analyses, Analysis};
-///
-/// const LP: Analyses = Analyses::of(&[Analysis::Duals, Analysis::Basis]);
-/// let analyses = LP | Analysis::Iis.into();
-/// assert!(analyses.contains(Analysis::Iis));
-/// assert!(!analyses.contains(Analysis::Rays));
-/// assert_eq!(analyses & LP, LP);
-/// assert_eq!(analyses.iter().collect::<Analyses>(), analyses);
-/// assert_eq!(format!("{analyses:?}"), "Analyses(duals | basis | IIS)");
-/// assert_eq!(analyses.to_string(), "{duals, basis, IIS}");
-/// ```
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(
-    feature = "serde",
-    derive(Serialize, Deserialize),
-    serde(from = "Vec<Analysis>", into = "Vec<Analysis>")
-)]
-pub struct Analyses(u8);
-
-/// The analyses of an [`Analyses`] set, in the order of [`Analysis`]'s variants; made by [`Analyses::iter`].
-#[derive(Clone, Debug)]
-#[must_use = "iterators are lazy and do nothing unless consumed"]
-pub struct AnalysesIter(Analyses);
-
-crate::set::element_set!(Analyses, AnalysesIter, Analysis, u8, "analyses", "{}");

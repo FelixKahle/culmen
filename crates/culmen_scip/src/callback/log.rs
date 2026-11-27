@@ -6,20 +6,20 @@
 //! The handler buffers SCIP's output up to each line break, so an info message or a warning arrives as a whole line
 //! with its `\n`; SCIP cuts a line longer than its buffer, about a thousand bytes, into pieces. Each line reaches
 //! standard output (an info message) or standard error (a warning) when [`Settings::console`] asks for it, and the
-//! callback as a [`ScipLog`] when it asks for [`Events::LOG`]. Output SCIP writes to a file of its own, as when it
+//! callback as a [`ScipLog`] when it asks for [`Event::Log`]. Output SCIP writes to a file of its own, as when it
 //! writes a problem, goes to that file unchanged. Sub-SCIPs that SCIP's heuristics copy share the handler, so their
 //! messages, which they keep to warnings, arrive too. SCIP's error messages go through its process-wide error printer
 //! instead, which the backend leaves alone.
 //!
 //! [`Settings::console`]: culmen_core::Settings::console
-//! [`Events::LOG`]: culmen_core::Events::LOG
+//! [`Event::Log`]: culmen_core::Event::Log
 
 use core::ffi::{CStr, c_char};
 use core::ptr::{self, NonNull};
 use core::time::Duration;
 use std::io::Write as _;
 
-use culmen_core::{Events, LogContext, LogLevel, Phase, Progress};
+use culmen_core::{Context, Event, LogContext, LogLevel, Phase, Progress};
 use scip_sys::{
     FILE, SCIP, SCIP_MESSAGEHDLR, SCIPmessagehdlrCreate, SCIPmessagehdlrGetData, SCIPmessagehdlrRelease,
     SCIPsetMessagehdlr, fflush, fputs,
@@ -43,6 +43,12 @@ impl<'a> ScipLog<'a> {
     }
 }
 
+impl Context for ScipLog<'_> {
+    fn progress(&self) -> Progress {
+        Progress::at(self.elapsed, Phase::Other)
+    }
+}
+
 impl LogContext for ScipLog<'_> {
     fn text(&self) -> &str {
         self.text
@@ -50,9 +56,6 @@ impl LogContext for ScipLog<'_> {
     /// [`LogLevel::Info`] for an info message, [`LogLevel::Warning`] for a warning.
     fn level(&self) -> LogLevel {
         self.level
-    }
-    fn progress(&self) -> Progress {
-        Progress::at(self.elapsed, Phase::Other)
     }
 }
 
@@ -140,7 +143,7 @@ unsafe fn line(handler: *mut SCIP_MESSAGEHDLR, msg: *const c_char, level: LogLev
     }
     // SAFETY: SCIP writes messages during the solve the run is installed for, or with none installed.
     if let Some(run) = unsafe { slot.run() }
-        && run.wanted.contains(Events::LOG)
+        && run.wanted.contains(Event::Log)
     {
         run.log(slot.scip, &text, level);
     }

@@ -2,11 +2,12 @@
 
 `culmen_scip` is the SCIP backend: SCIP 10 with SoPlex as its LP solver, built from source through the `scip-sys`
 crate, with every SCIP status, SCIP's emphasis settings and parameters as typed options, and every generic callback
-event delivered through SCIP plugins: lazy constraints, user cuts, heuristic solutions and pricing included. With the
-`scip` feature it is `culmen::scip`, and its backend type is also `culmen::Scip` and in the prelude.
+event and every search handler delivered through SCIP plugins: lazy constraints, user cuts, heuristic solutions and
+pricing included. With the `scip` feature it is `culmen::scip`, and its backend type `culmen::scip::Scip` is also in
+the prelude.
 
 SCIP is the backend for what HiGHS cannot do: a convex quadratic objective over integer columns (MIQP), constraints
-known only to a callback, cuts of your own, and column generation at every node of the search (branch-and-price).
+known only to a handler, cuts of your own, and column generation at every node of the search (branch-and-price).
 
 ## The backend
 
@@ -16,12 +17,13 @@ known only to a callback, cuts of your own, and column generation at every node 
 |---|---|
 | `Scip::new()` | A backend with SCIP's default parameters. |
 | `Scip::with_options(options)` | A backend with the given `ScipOptions`. |
-| `scip.options()`, `scip.options_mut()` | The options, to read or to change between solves. |
-| `Scip::EVENTS` | Every event but `NATIVE`: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `LAZY`, `CUT` and `HEURISTIC`. |
-| `Scip::PRICES` | `true`: SCIP prices for a callback whose `prices()` is true ([Pricing](#pricing)). |
+| `options()`, `options_mut()` (`Configurable`, `Options = ScipOptions`) | The options, to read or to change between solves; `solver.options_mut()` reaches them through a `Solver`. |
+| `Scip::EVENTS` | Every observational event but `Native`: `Log`, `Progress`, `Poll`, `Feasible` and `Incumbent`. |
+| Search capabilities | All four: `LazyConstraints`, `UserCuts`, `Heuristics` and `Prices` ([Callback events](#callback-events)). |
 | `Scip::CLASSES` | `Lp`, `Milp`, `Qp` and `Miqp`; see [Quadratic programs](#quadratic-programs). |
-| `Scip::FEATURES` | `StartSolution` only; see [Starts](#starts). |
-| `Scip::ANALYSES` | None; see [Limitations](#limitations). |
+| `Scip::FEATURES` | None: no semi columns and no several objectives; see [Limitations](#limitations). |
+| `Starts` | Implemented; see [Starts](#starts). |
+| Analysis traits | None implemented; see [Limitations](#limitations). |
 | `culmen_scip::version()` | The version of the linked SCIP; it displays as `10.0.x`. |
 
 ```rust
@@ -38,11 +40,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let options = ScipOptions { heuristics: Some(Emphasis::Fast), ..ScipOptions::default() };
     let mut solver = Solver::new(Scip::with_options(options), m.build()?)?;
-    let first = solver.solve(Request::new())?;
+    let first = solver.solve()?;
 
     // The options belong to the backend; change them between solves.
-    solver.backend_mut().options_mut().separating = Some(Emphasis::Off);
-    let second = solver.solve(Request::new())?;
+    solver.options_mut().separating = Some(Emphasis::Off);
+    let second = solver.solve()?;
     assert_eq!(first.outcome.objective(), Some(21.0));
     assert_eq!(second.outcome.objective(), Some(21.0));
     assert_eq!(culmen::scip::version().major, 10);
@@ -78,7 +80,7 @@ default feature of `culmen`: most models are served by HiGHS, whose build is sho
 
 ```toml
 [dependencies]
-culmen = { version = "0.4", features = ["scip"] }
+culmen = { version = "0.5", features = ["scip"] }
 ```
 
 ## Options
@@ -95,15 +97,17 @@ culmen = { version = "0.4", features = ["scip"] }
 `Emphasis` is SCIP's `SCIP_PARAMSETTING`: `Default`, `Aggressive`, `Fast` or `Off`. **Parameters by name** are added
 with `ScipOptions::param(name, value)`, which appends a `ScipParam { name, value }`. The value is a `ParamValue`, one of
 SCIP's six types (`Bool`, `Int`, `Longint`, `Real`, `Char`, `String`), converted from a `bool`, `i32`, `i64`, `f64`,
-`char`, `&str` or `String`. SCIP checks the name and the value when the solve sets them; an unknown name or a value of
+`&str` or `String`; a `char` converts with `ParamValue::try_from`, which refuses one that is not ASCII with
+`NotAscii`, or is written as `ParamValue::Char(c)`. A whole-number literal is an `i32`, so a `SCIP_Longint` parameter
+such as `limits/nodes` takes `100_i64`. SCIP checks the name and the value when the solve sets them; an unknown name or a value of
 the wrong type or range is a [`ScipError::Param`](#errors) naming the parameter and SCIP's return code.
 
 ```rust
-use culmen::scip::{Emphasis, ScipOptions};
+use culmen::scip::{Emphasis, ParamValue, ScipOptions};
 
 let options = ScipOptions { presolving: Some(Emphasis::Aggressive), ..ScipOptions::default() }
     .param("limits/maxorigsol", 5)
-    .param("lp/initalgorithm", 'd')
+    .param("lp/initalgorithm", ParamValue::Char('d'))
     .param("display/verblevel", 5);
 assert_eq!(options.params.len(), 3);
 ```
@@ -125,9 +129,10 @@ Every solve sets SCIP up from its defaults, in this order:
 3. The backend's `ScipOptions` apply: the three emphases, then the parameters by name in the order added.
 4. The solve's [`Settings`](solving.md#settings) apply. `presolve: Some(true)` acts in step 3 instead, by skipping an
    `Off` presolving emphasis of the options, so it never resets a presolving parameter the options set by name.
-5. What the events the callback asks for need is set last ([Callback events](#callback-events)): for `LAZY`, symmetry
-   handling and dual reductions off (`misc/usesymmetry`, `misc/allowstrongdualreds`, `misc/allowweakdualreds`); for
-   `CUT` and `HEURISTIC`, culmen's separator or heuristic called at every node; for a callback that prices, the pricer
+5. What the registered handlers need is set last ([Callback events](#callback-events)), whatever events the callback
+   asks for: for a lazy-constraint handler, symmetry handling and dual reductions off (`misc/usesymmetry`,
+   `misc/allowstrongdualreds`, `misc/allowweakdualreds`); for a cut or a heuristic handler, culmen's separator or
+   heuristic called at every node; for a pricer, the pricer
    active, every row modifiable, `lp/presolving` off, `separating/aggregation/freq` at `-1` and `lp/disablecutoff` at
    `1`.
 
@@ -141,6 +146,8 @@ asks for it.
 | `time_limit` | `limits/time`, in seconds; SCIP's clock restarts with each solve while `misc/resetstat` keeps its default |
 | `relative_gap` | `limits/gap` |
 | `absolute_gap` | `limits/absgap` |
+| `feasibility_tolerance` | `numerics/feastol`, relative to the larger of the values compared when that exceeds one; it also bounds how far an integer column may lie from a whole number |
+| `optimality_tolerance` | `numerics/dualfeastol`, which SCIP also hands its LP solver |
 | `threads` | nothing; see [Threads](#threads) |
 | `seed` | `randomization/randomseedshift`; a seed above `i32::MAX` is refused |
 | `presolve` | `false`: `SCIPsetPresolving` to `Off`, after the options' parameters, so it wins over them; `true`: the options' `presolving` emphasis is skipped when it is `Off`, and a presolving parameter set by name stays as set |
@@ -180,7 +187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
 
     let settings = Settings { threads: Some(threads!(4)), ..Settings::new() };
-    let worker = std::thread::spawn(move || solver.solve(Request::new().settings_from(settings)));
+    let worker = std::thread::spawn(move || solver.run().settings(settings).solve());
     let solved = worker.join().map_err(|_| "the solve thread panicked")??;
     assert_eq!(solved.outcome.objective(), Some(2.0));
     Ok(())
@@ -193,11 +200,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Field | Holds |
 |---|---|
-| `status` | SCIP's `Status`: every value of `SCIP_STATUS` in SCIP 10, and `Other(u32)` for a value SCIP 10 does not define. |
-| `dual_bound` | The best bound SCIP proved, offset included, in the program's sense; `None` when it proved none. |
-| `nodes` | The branch-and-bound nodes, across restarts. |
-| `lp_iterations` | The LP iterations. |
+| `status` | SCIP's `Status`: every value of `SCIP_STATUS` in SCIP 10. |
 | `solutions_found` | The feasible solutions SCIP found, its heuristics', the starts and the carried solutions included. |
+
+The work every backend reports is in `Solved` itself: `nodes`, SCIP's branch-and-bound nodes across restarts (`1` for
+an LP, which SCIP solves at the root of its tree), and `iterations`, its LP iterations. The best bound is in the
+`Outcome`, for a reached gap and a stop.
 
 `Status` displays in SCIP's own wording (`SCIPstatusName`): `"optimal solution found"`, `"gap limit reached"`.
 
@@ -213,7 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `SolutionLimit`, `BestSolutionLimit` | `Stopped { SolutionLimit }` |
 | `PrimalLimit`, `DualLimit` | `Stopped { ObjectiveLimit }` |
 | `Terminate`, `RestartLimit` | `Stopped { Other }` |
-| `Unknown`, `Other(_)`, or `Optimal` / `GapLimit` without a solution or bound | `Err(ScipError::Failed)` |
+| `Unknown`, or `Optimal` / `GapLimit` without a solution or bound | `Err(ScipError::Failed)` |
 
 A `Stopped` outcome carries SCIP's best solution when it holds one, and its dual bound. A solve reports a best
 solution, an optimum or a reached gap only after SCIP's own check (`SCIPcheckSolOrig`) finds that solution feasible in
@@ -233,11 +241,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.add_constraint((x + 3.0 * y).leq(6.0));
     m.maximize(3.0 * x + 2.0 * y + 10);
 
-    let solved = Solver::new(Scip::new(), m.build()?)?.solve(Request::new())?;
+    let solved = Solver::new(Scip::new(), m.build()?)?.solve()?;
     let status = &solved.status;
     assert_eq!(status.status, Status::Optimal);
     assert_eq!(status.status.to_string(), "optimal solution found");
-    assert!((status.dual_bound.ok_or("no bound")? - 22.0).abs() < 1e-9);
+    assert_eq!(solved.nodes, Some(1));
     assert!((solved.outcome.objective().ok_or("no solution")? - 22.0).abs() < 1e-9);
     Ok(())
 }
@@ -267,14 +275,14 @@ use culmen::ModelClass;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The point of x + y <= 1 nearest (1, 2) with x whole: (0, 1), at squared distance 2.
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(-5, 5));
+    let x = m.add_var(Var::integer().bounds(bounds!(-5.0, 5.0)));
     let y = m.add_var(Var::free());
     m.add_constraint((x + y).leq(1));
     m.minimize((x - 1) * (x - 1) + (y - 2) * (y - 2));
     let program = m.build()?;
     assert_eq!(program.class(), ModelClass::Miqp);
 
-    let solved = Solver::new(Scip::new(), program)?.solve(Request::new())?;
+    let solved = Solver::new(Scip::new(), program)?.solve()?;
     let Outcome::Optimal(best) = solved.outcome else { return Err("no optimum".into()) };
     assert!((best.objective - 2.0).abs() < 1e-6);
     assert!(best.values[x].abs() < 1e-3 && (best.values[y] - 1.0).abs() < 1e-3);
@@ -284,15 +292,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Starts
 
-`Scip::FEATURES` is `StartSolution` alone. A [start](solving.md#starts) reaches SCIP before the solve: a full start as
-a SCIP solution (`SCIPcreateSol`, `SCIPaddSolFree`), a sparse one as a partial solution (`SCIPcreatePartialSol`) that
-SCIP completes when the solve begins. SCIP checks a start as it begins; an infeasible start, or a sparse one it cannot
+`Scip` implements `Starts`, so `Run::start` takes a start. A [start](solving.md#starts) reaches SCIP before the
+solve: a full start as a SCIP solution (`SCIPcreateSol`, `SCIPaddSolFree`), a sparse one as a partial solution
+(`SCIPcreatePartialSol`) that SCIP completes when the solve begins. SCIP checks a start as it begins; an infeasible start, or a sparse one it cannot
 complete, is dropped then, without an error, as SCIP drops any. A feasible start is the solve's first incumbent. SCIP
 completes a sparse start with its `completesol` heuristic, a sub-SCIP over the columns left open, so a `heuristics`
 emphasis of `Off` keeps a sparse start from being completed, and it is dropped.
 
 Semi columns and several objectives are refused by [`Solver::new`](solving.md#model-classes-and-refusal) with
-`LoadError::UnsupportedFeature` before SCIP sees the program.
+`LoadError::UnsupportedFeature` before SCIP sees the program. `Backend::load` called directly with such a program,
+against the [`Backend` contract](backends.md#the-seam), panics before SCIP sees it: neither backend
+has an error variant for what the contract rules out.
 
 ```rust
 use culmen::prelude::*;
@@ -312,13 +322,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // A start taking the last two items, worth 2.1, is the best one node holds.
     let last_two = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0];
-    let started = solver.solve(Request::new().settings_from(one_node.clone()).start(last_two))?;
+    let started = solver.run().settings(one_node.clone()).start(last_two).solve()?;
     let Outcome::Stopped { best: Some(best), .. } = started.outcome else { return Err("no start".into()) };
     assert!((best.objective - 2.1).abs() < 1e-9);
 
     // A solve to the optimum, 2.9, and then one node again: it ends with the optimum the last solve left.
-    assert!((solver.solve(Request::new())?.outcome.objective().ok_or("no optimum")? - 2.9).abs() < 1e-9);
-    let again = solver.solve(Request::new().settings_from(one_node))?;
+    assert!((solver.solve()?.outcome.objective().ok_or("no optimum")? - 2.9).abs() < 1e-9);
+    let again = solver.run().settings(one_node).solve()?;
     assert!((again.outcome.objective().ok_or("no solution")? - 2.9).abs() < 1e-9);
     Ok(())
 }
@@ -326,80 +336,92 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Callback events
 
-A `Callback<Scip>` receives SCIP's own context types. Each implements the neutral [context trait](callbacks.md#contexts)
-of its event; each event comes from a SCIP plugin that culmen includes in every instance:
+A `Callback<Scip>` and the search handlers for `Scip` receive SCIP's own context types. Each implements the neutral
+[context trait](callbacks.md#contexts) of its event; each event comes from a SCIP plugin that culmen includes in every
+instance:
 
-| Event | SCIP plugin | Context | Beyond the trait |
+| Event or handler | SCIP plugin | Context | Beyond the trait |
 |---|---|---|---|
-| `LOG` | the instance's message handler: each info message and warning, a whole line | `ScipLog` | |
-| `POLL` | an event handler on each presolve round, focused node, solved node LP and solved node (`PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED`); `interrupt` calls `SCIPinterruptSolve` | `ScipPoll` | `event()`: a `ScipEvent` |
-| `PROGRESS` | the same event handler, at each poll | `ScipProgress` | `event()` |
-| `FEASIBLE`, `INCUMBENT` | the event handler on each solution SCIP stores (`POORSOLFOUND`, `BESTSOLFOUND`), a new best one as the incumbent too; the starts and carried solutions SCIP stored before it, as it catches its events | `ScipSolution` | |
-| `LAZY` | a constraint handler without constraints, checked and enforced after every other (`CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`) | `ScipLazy` | `source()`: a `LazySource`, `Check`, `Lp`, `Pseudo` or `Relaxation` |
-| `CUT` | a separator on each node's LP solution (`SEPAEXECLP`) | `ScipCut` | |
-| `HEURISTIC` | a primal heuristic before and after each node (`HEUREXEC`) | `ScipHeuristic` | |
-| pricing (`prices()`) | a variable pricer, delayed, on each optimal or infeasible node LP (`PRICERREDCOST`, `PRICERFARKAS`) | `ScipPrice` | `local_bounds(col)`: the node's bounds of a column |
-| `NATIVE` | none | `Unsupported` | never delivered |
+| `Log` | the instance's message handler: each info message and warning, a whole line | `ScipLog` | |
+| `Poll` | an event handler on each presolve round, focused node, solved node LP and solved node (`PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED`); `interrupt` calls `SCIPinterruptSolve` | `ScipPoll` | `event()`: a `ScipEvent` |
+| `Progress` | the same event handler, at each poll | `ScipProgress` | `event()` |
+| `Feasible`, `Incumbent` | the event handler on each solution SCIP stores (`POORSOLFOUND`, `BESTSOLFOUND`), a new best one as the incumbent too; the starts and carried solutions SCIP stored before it, as it catches its events | `ScipSolution` | |
+| `LazyHandler` | a constraint handler without constraints, checked and enforced after every other (`CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`) | `ScipLazy` | `source()`: a `ScipLazySource`, `Check`, `Lp`, `Pseudo` or `Relaxation` |
+| `CutHandler` | a separator on each node's LP solution (`SEPAEXECLP`) | `ScipCut` | |
+| `HeuristicHandler` | a primal heuristic before and after each node (`HEUREXEC`) | `ScipHeuristic` | |
+| `Pricer` | a variable pricer, delayed, on each optimal or infeasible node LP (`PRICERREDCOST`, `PRICERFARKAS`) | `ScipPrice` | `local_bounds(col)`: the node's bounds of a column |
+| `Native` | none | `Unsupported` | never delivered |
 
 Every value a context reports is the program's: a candidate, a relaxation and a solution hold one value per column,
 read through SCIP's original variables whatever presolve did to them, and every objective value and bound is in the
 program's sense with its offset and quadratic part. Progress carries the wall-clock time since the solve began, the
 primal and dual bound, the nodes and the LP iterations, each in the stages SCIP reports it.
 
-A plugin acts only for the events a solve's callback asks for, so a solve that asks for nothing runs SCIP as it would
-without culmen: asking for `LAZY` or pricing changes how SCIP solves (see each section below), asking for `CUT` or
-`HEURISTIC` calls culmen's separator or heuristic at every node, and the other events cost a call per event. SCIP calls
-every plugin on the thread running the solve, one call at a time; a plugin called while the callback is busy with an
+A handler's plugin acts only for a solve whose `Run` registered a handler of its kind, and the observational plugins
+only for the events the callback asks for, so a solve with neither runs SCIP as it would without culmen. What SCIP gives
+up is decided by the handlers registered, never by the events asked for: a lazy-constraint handler or a pricer changes
+how SCIP solves (see each section below), a cut or a heuristic handler calls culmen's separator or heuristic at every
+node, and a callback, even one asking for `Events::ALL`, costs a call per event and nothing else. SCIP calls every
+plugin on the thread running the solve, one call at a time; a plugin called while a callback or handler is busy with an
 outer event (a solution supplied from `heuristic` is checked and stored at once, which calls the constraint handler and
-the event handler) finds it busy: a log line or a solution is then delivered as soon as the outer call returns, and a
-poll or a progress report is dropped. Everything a context changes in SCIP (a lazy constraint, a cut, a priced column)
-is handed to SCIP once the callback returns.
+the event handler) finds the hooks busy: a log line or a solution is then delivered as soon as the outer call returns,
+and a poll or a progress report is dropped. Everything a context changes in SCIP (a lazy constraint, a cut, a priced
+column) is handed to SCIP once the handler returns.
 
-A panic in a callback never unwinds into SCIP: the plugin catches it and asks SCIP to stop (`SCIPinterruptSolve`),
+A panic in a callback or handler never unwinds into SCIP: the plugin catches it and asks SCIP to stop (`SCIPinterruptSolve`),
 every later delivery is skipped, and the panic resumes once SCIP has returned. The backend stays usable.
+
+An error a plugin meets while handing SCIP what a handler gave (SCIP refusing a lazy constraint, a pricer stopping
+early where SCIP cannot branch) fails the solve with that error. The lazy-constraint handler's enforcement and the
+pricer never return it to SCIP as an error code, which would leave SCIP's state behind for the next solve of the
+instance (a delayed constraint update, priced columns in SCIP's pricing store) and abort a debug build of SCIP: they
+keep the error, ask SCIP to stop and close the node (the pricer answers its round as not run), and the solve fails with
+the error once SCIP has returned.
 
 ## Lazy constraints
 
-At `LAZY`, the callback sees every candidate SCIP would accept: each solution SCIP checks before storing it, from a
-heuristic, a start, a sub-SCIP or a supplied solution (`LazySource::Check`), and each node's LP solution (`Lp`), pseudo
+A `LazyHandler<Scip>` sees every candidate SCIP would accept: each solution SCIP checks before storing it, from a
+heuristic, a start, a sub-SCIP or a supplied solution (`ScipLazySource::Check`), and each node's LP solution (`Lp`), pseudo
 solution (`Pseudo`) or relaxation (`Relaxation`) that every other constraint handler found feasible, so an integer
 one. `add_lazy` adds a constraint the candidate may violate:
 
 - A constraint holds for the rest of the solve. Every later candidate satisfies every lazy constraint added before, to
-  SCIP's feasibility tolerance; one that violates a constraint kept before is rejected without asking the callback.
+  SCIP's feasibility tolerance; one that violates a constraint kept before is rejected without asking the handler.
 - At an enforcement, SCIP's problem takes the constraint as a global linear constraint (`SCIPaddCons`), which SCIP then
   enforces, separates and checks with everything else, and SCIP solves the node again. SCIP allows no constraint to be
   added while it checks a solution, so a constraint added at `Check` waits in the handler, which rejects every later
   candidate violating it, until the next enforcement adds it.
 - A constraint added again, the same terms and bounds as one kept, is not added twice.
+- SCIP holds a constraint over the variables it keeps: it replaces a column presolve fixed or aggregated by its value
+  or representation, and refuses a constraint whose columns then add up to a number at least its infinity (`1e20`).
+  `add_lazy` refuses such a constraint with `ActionError::Refused`, as SCIP stands when it is called. A constraint
+  added at `Check` before presolve fixed its columns, as for a start, may meet SCIP's refusal only at the enforcement
+  that adds it; the solve then stops and fails with `ScipError::Call` naming `SCIPcreateConsBasicLinear`.
 
-A solve asking for `LAZY` gives up what reasons only about the constraints SCIP holds: every variable is locked against
+A solve with a lazy-constraint handler gives up what reasons only about the constraints SCIP holds: every variable is locked against
 dual reductions, symmetry handling is off (`misc/usesymmetry = 0`) and so are SCIP's strong and weak dual reductions
 (`misc/allowstrongdualreds`, `misc/allowweakdualreds`). Without that, presolve could fix a column by an argument a
-constraint added later refutes. SCIP's sub-SCIPs, which copy the problem without the callback, still run; their
-solutions are checked by the main SCIP and so meet the callback.
+constraint added later refutes. SCIP's sub-SCIPs, which copy the problem without the handler, still run; their
+solutions are checked by the main SCIP and so meet the handler.
 
 ```rust
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::scip::{LazySource, ScipLazy};
+use culmen::scip::{ScipLazySource, ScipLazy};
 
-/// Forbids taking both items, a conflict only the callback knows.
+/// Forbids taking both items, a conflict only the handler knows.
 struct NotBoth {
     pair: (Col, Col),
     calls: usize,
     checked: usize,
 }
 
-impl Callback<Scip> for NotBoth {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
+impl LazyHandler<Scip> for NotBoth {
     fn lazy(&mut self, ctx: &mut ScipLazy<'_>) {
         self.calls += 1;
-        assert!(self.calls < 1000, "a lazy callback that never settles");
-        if ctx.source() == LazySource::Check {
+        assert!(self.calls < 1000, "a lazy-constraint handler that never settles");
+        if ctx.source() == ScipLazySource::Check {
             self.checked += 1;
         }
         let (x, y) = self.pair;
@@ -419,11 +441,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(3.0 * x + 2.0 * y + z);
 
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
-    let request = Request::new()
-        .settings_from(Settings { node_limit: Some(1000), ..Settings::new() })
-        .time_limit(Duration::from_secs(10));
     let mut not_both = NotBoth { pair: (x, y), calls: 0, checked: 0 };
-    let solved = solver.solve_with(request, &mut not_both)?;
+    let solved = solver
+        .run()
+        .settings(Settings { node_limit: Some(1000), ..Settings::new() })
+        .time_limit(Duration::from_secs(10))
+        .lazy(&mut not_both)
+        .solve()?;
     let best = solved.outcome.solution().ok_or("no solution")?;
     assert_eq!(best.objective, 4.0); // x and z
     assert!(best.values[x] + best.values[y] <= 1.0 + 1e-9);
@@ -436,12 +460,15 @@ subtours.
 
 ## Cuts
 
-At `CUT`, the callback sees each node's LP solution, `relaxation()`, before SCIP's own separators. `add_cut` adds a
+A `CutHandler<Scip>` sees each node's LP solution, `relaxation()`, before SCIP's own separators. `add_cut` adds a
 constraint that every integer-feasible point of the program satisfies: each becomes a global row over the columns'
 variables; a cut that cuts the LP solution off by SCIP's efficacy goes into the LP at once (`SCIPaddRow`), and every cut
 goes into SCIP's global cut pool (`SCIPaddPoolCut`), which SCIP separates again at later nodes. SCIP takes a cut as
-valid and may cut off every point it excludes; that the cut is valid is the callback's promise, which nothing checks.
-A solve asking for `CUT` calls the separator at every node, also when the `separating` emphasis turned SCIP's own off.
+valid and may cut off every point it excludes; that the cut is valid is the handler's promise, which nothing checks.
+A solve with a cut handler calls the separator at every node, also when the `separating` emphasis turned SCIP's own off.
+SCIP adds a column presolve fixed or aggregated to a row by its value or representation, the value's share going into
+the row's constant, so `add_cut` refuses a cut whose columns then add up to a number at least SCIP's infinity (`1e20`)
+with `ActionError::Refused`, as it refuses such a lazy constraint.
 
 ```rust
 use std::time::Duration;
@@ -456,10 +483,7 @@ struct Cover {
     added: usize,
 }
 
-impl<B: Backend> Callback<B> for Cover {
-    fn events(&self) -> Events {
-        Events::CUT
-    }
+impl<B: UserCuts> CutHandler<B> for Cover {
     fn cut(&mut self, ctx: &mut B::Cut<'_>) {
         self.calls += 1;
         assert!(self.calls < 1000, "a separator that never settles");
@@ -477,14 +501,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.add_constraint(LinExpr::sum(take.iter().map(|&x| 4.0 * x)).leq(11.0));
     m.maximize(LinExpr::sum(take.iter().zip([5.0, 4.0, 3.0, 2.0]).map(|(&x, v)| v * x)));
 
-    // SCIP's own cuts and presolve off, so the root LP takes 2.75 items and the callback's cut is the one that helps.
+    // SCIP's own cuts and presolve off, so the root LP takes 2.75 items and the handler's cut is the one that helps.
     let options = ScipOptions { separating: Some(Emphasis::Off), ..ScipOptions::default() };
     let mut solver = Solver::new(Scip::with_options(options), m.build()?)?;
-    let request = Request::new()
-        .settings_from(Settings { presolve: Some(false), node_limit: Some(1000), ..Settings::new() })
-        .time_limit(Duration::from_secs(10));
     let mut cover = Cover { items: take.clone(), calls: 0, added: 0 };
-    let solved = solver.solve_with(request, &mut cover)?;
+    let solved = solver
+        .run()
+        .settings(Settings { presolve: Some(false), node_limit: Some(1000), ..Settings::new() })
+        .time_limit(Duration::from_secs(10))
+        .cut(&mut cover)
+        .solve()?;
     assert_eq!(solved.outcome.objective(), Some(9.0));
     assert!(cover.added >= 1);
     Ok(())
@@ -493,36 +519,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Heuristic solutions
 
-At `HEURISTIC`, SCIP asks for a solution of the callback's own, before and after each node, ahead of SCIP's own
-heuristics. A solve asking for it calls the heuristic at every node, also when the `heuristics` emphasis turned SCIP's
+A `HeuristicHandler<Scip>` is asked for a solution of its own, before and after each node, ahead of SCIP's own
+heuristics. A solve with a heuristic handler calls the heuristic at every node, also when the `heuristics` emphasis turned SCIP's
 own off.
 
 - `ctx.supply(&values)` offers a value for every column. The values are checked first: one finite value per column,
-  or `ActionError::Length` or `ActionError::NotFinite`. The solution becomes an original solution of SCIP's
+  or `ActionError::Length` or `ActionError::NonFinite`. The solution becomes an original solution of SCIP's
   (`SCIPcreateOrigSol`), the epigraph's variable set to the quadratic part's value, and SCIP tries it at once
   (`SCIPtrySolFree`): it checks it against the program, bounds and integrality included, and stores it if it is
   feasible and among the solutions it keeps (`limits/maxsol`). A solution SCIP does not store is
-  `ActionError::Refused`. In a solve that also asks for `LAZY`, the solution is tried once the heuristic callback
-  returns, after the lazy-constraint callback judged it, and `supply` returns `Ok` when it took it to try.
-- `ctx.supply_partial(&entries)` is refused with `ActionError::Refused` once the entries pass the core checks: SCIP
-  completes a partial solution only as a start, before a solve begins. Hand a partial solution over as a sparse
-  [start](#starts) instead.
+  `ActionError::Refused`. In a solve with a lazy-constraint handler too, the solution is tried once the heuristic
+  handler returns, after the lazy-constraint handler judged it, and `supply` returns `Ok` when it took it to try.
+- `ScipHeuristic` has no `supply_partial`: SCIP completes a partial solution only as a start, before a solve begins.
+  Hand a partial solution over as a sparse [start](#starts) instead.
 
 ```rust
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{ActionError, TiVec};
+use culmen::ActionError;
 
 struct Offer {
     values: Option<TiVec<Col, f64>>,
     supplied: Vec<Result<(), ActionError>>,
 }
 
-impl<B: Backend> Callback<B> for Offer {
-    fn events(&self) -> Events {
-        Events::HEURISTIC
-    }
+impl<B: Heuristics> HeuristicHandler<B> for Offer {
     fn heuristic(&mut self, ctx: &mut B::Heuristic<'_>) {
         if let Some(values) = self.values.take() {
             self.supplied.push(ctx.supply(&values));
@@ -545,10 +567,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Without presolve, which would solve so small a program before the first node, so no heuristic would run.
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
     let mut offer = Offer { values: Some(known), supplied: Vec::new() };
-    let request = Request::new()
-        .settings_from(Settings { presolve: Some(false), ..Settings::new() })
-        .time_limit(Duration::from_secs(10));
-    let solved = solver.solve_with(request, &mut offer)?;
+    let solved = solver
+        .run()
+        .settings(Settings { presolve: Some(false), ..Settings::new() })
+        .time_limit(Duration::from_secs(10))
+        .heuristic(&mut offer)
+        .solve()?;
     assert_eq!(offer.supplied, [Ok(())]);
     assert_eq!(solved.outcome.objective(), Some(25.0));
     Ok(())
@@ -557,15 +581,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Pricing
 
-[Pricing](callbacks.md#pricing), for a callback whose `prices()` is true, runs at every node: SCIP solves each node LP
-over the columns it holds, prices those itself, and then hands the callback the node LP's duals, optimal
+[Pricing](callbacks.md#pricing), for a solve with a `Pricer<Scip>`, runs at every node: SCIP solves each node LP
+over the columns it holds, prices those itself, and then hands the pricer the node LP's duals, optimal
 (`PriceMode::ReducedCost`) or infeasible (`PriceMode::Farkas`), until a round adds no column. Branching on the master's
 integer columns, as SCIP chooses, makes it branch-and-price.
 
 How SCIP does it:
 
 - **The pricer.** Every instance includes a variable pricer, delayed (SCIP prices the variables it holds before it asks
-  the callback) and inactive. A solve whose callback prices activates it (`SCIPactivatePricer`) and marks every
+  the pricer) and inactive. A solve with a pricer activates it (`SCIPactivatePricer`) and marks every
   program row's constraint modifiable (`SCIPsetConsModifiable`), as SCIP requires of a row a pricer adds variables to;
   any other solve deactivates it and leaves every row unmodifiable, so it costs a solve without pricing nothing.
 - **The duals.** SCIP minimizes `s·c` for the program's cost `c`, with `s = 1` when the program minimizes and `s = -1`
@@ -573,15 +597,17 @@ How SCIP does it:
   in the sign convention of [`Duals`](analysis.md). A Farkas multiplier (`SCIPgetDualfarkasLinear`) does not depend on
   the sense and is handed out as SCIP reports it. `tolerance()` is SCIP's dual feasibility tolerance
   (`numerics/dualfeastol`).
-- **The columns.** Each column the callback adds is checked against what SCIP can hold (a number SCIP reads as
+- **The columns.** Each column the pricer adds is checked against what SCIP can hold (a number SCIP reads as
   infinite, a name with a NUL byte, as `ActionError::Refused`) and by the solve's `Priced`, which numbers it. Once the
-  callback returns it becomes a variable of SCIP's transformed problem (`SCIPcreateVar` with objective `s·c`,
+  pricer returns it becomes a variable of SCIP's transformed problem (`SCIPcreateVar` with objective `s·c`,
   `SCIPaddPricedVar`) with its coefficients in the transformed rows (`SCIPaddCoefLinear`). SCIP never deletes it.
 - **Ending a round.** A round that returns is SCIP's `SUCCESS`, with the bound `report_bound` gave, if any, as the
   node's lower bound. `branch_early()` in a reduced-cost round stops pricing at the node (`stopearly`), and SCIP
-  branches; in a Farkas round SCIP takes the round as not run. SCIP can branch only on an unfixed integer column: an
+  branches; in a Farkas round it is refused (`ActionError::Refused`), since SCIP holds an infeasible node LP whose
+  pricing was cut short as a state that does not arise: a debug SCIP asserts, and a release SCIP falls back on the
+  node's pseudo solution as if the LP solver had failed. SCIP can branch only on an unfixed integer column: an
   early stop where there is none, as in a program without integer columns, fails the solve with
-  `ScipError::BranchEarly`. A round SCIP calls while the callback is busy with an outer event, or after it panicked,
+  `ScipError::BranchEarly`. A round SCIP calls while a callback or handler is busy with an outer event, or after one panicked,
   is not run. A stop during pricing ends the node's pricing loop, and the node LP then counts as no bound.
 - **What a pricing solve gives up.** SCIP itself turns off what needs every column known: restarts, presolve and bound
   tightening on the modifiable rows, the presolvers and propagators that need complete columns, the objective's
@@ -589,14 +615,14 @@ How SCIP does it:
   simplifier can return duals of a degenerate node LP that do not price a column at its bound out, which would end
   pricing with a wrong optimum; SCIP's aggregation separator (`separating/aggregation/freq = -1`), which cuts with
   the objective cutoff over the columns held as if no other column could enter; and the LP solver's objective limit
-  (`lp/disablecutoff = 1`), which would stop a node LP at the cutoff and hand its non-optimal duals to the callback.
-- **Other events beside it.** A priced column has entries only in program rows, so it enters every lazy constraint
-  and cut with coefficient zero: those must hold for every column the callback may price. A heuristic solution of a
+  (`lp/disablecutoff = 1`), which would stop a node LP at the cutoff and hand its non-optimal duals to the pricer.
+- **Other handlers beside it.** A priced column has entries only in program rows, so it enters every lazy constraint
+  and cut with coefficient zero: those must hold for every column the pricer may price. A heuristic solution of a
   pricing solve is a transformed solution (`SCIPcreateSol`) holding the priced columns, refused when presolve fixed or
   aggregated a program column so that it cannot hold the values given. A lazy constraint may name a priced column.
-- **No quadratic objective.** A callback that prices is refused on a program with a quadratic objective with
-  `ScipError::PricingQuadratic` before SCIP runs. A callback whose `prices()` is false solves a quadratic program
-  whatever events it asks for, `Events::ALL` included.
+- **No quadratic objective.** A solve with a pricer is refused on a program with a quadratic objective with
+  `ScipError::PricingQuadratic` before SCIP runs. A solve without one solves a quadratic program whatever events its
+  callback asks for, `Events::ALL` included.
 
 **What branch-and-price is here.** It is column generation at every node with **SCIP's default branching on the
 master's integer columns**. Each node LP is the full master LP under the bounds branching set on some held columns,
@@ -615,7 +641,6 @@ then optimal.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, ProgramColumn};
 
 /// Adds every pattern of the pool, not added yet, that improves the node LP. The pool holds every pattern the
 /// master lacks, so the pricing is exact and never adds a held column.
@@ -625,13 +650,7 @@ struct Pool {
     rounds: usize,
 }
 
-impl<B: Backend> Callback<B> for Pool {
-    fn events(&self) -> Events {
-        Events::NONE
-    }
-    fn prices(&self) -> bool {
-        true
-    }
+impl<B: Prices> Pricer<B> for Pool {
     fn price(&mut self, ctx: &mut B::Price<'_>) {
         self.rounds += 1;
         assert!(self.rounds < 10_000, "a pricer that never settles");
@@ -653,9 +672,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.minimize(a + d + f);
 
     // The other patterns of three, four and five pieces a roll of 10 holds.
-    let pattern = |pieces: [f64; 3]| NewCol {
-        column: ProgramColumn::integer(1.0, Bounds::NON_NEGATIVE),
-        entries: [threes, fours, fives].into_iter().zip(pieces).filter(|&(_, k)| k > 0.0).collect(),
+    let pattern = |pieces: [f64; 3]| {
+        let entries = [threes, fours, fives].into_iter().zip(pieces).filter(|&(_, k)| k > 0.0);
+        NewCol::integer().cost(1).entries(entries)
     };
     let others = [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0], [2.0, 1.0, 0.0],
         [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [0.0, 1.0, 1.0]];
@@ -663,10 +682,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Every pattern costs one roll, so less than one roll from the bound is optimal.
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
-    let request = Request::new()
-        .settings_from(Settings { absolute_gap: Some(absolute_gap!(0.999)), node_limit: Some(1000), ..Settings::new() })
-        .time_limit(Duration::from_secs(10));
-    let solved = solver.solve_with(request, &mut pool)?;
+    let solved = solver
+        .run()
+        .settings(Settings { absolute_gap: Some(absolute_gap!(0.999)), node_limit: Some(1000), ..Settings::new() })
+        .time_limit(Duration::from_secs(10))
+        .pricer(&mut pool)
+        .solve()?;
 
     // Five rolls: the LP bound is 4.5, and three threes, two threes and a four, a three and a five, and two fives
     // cover the demand.
@@ -696,15 +717,14 @@ a second `Scip`, which excludes every pattern the master holds.
 | `ColName { col }`, `RowName { row }` | A column's or row's name holds a NUL byte. |
 | `BeyondInfinity { number, value, infinity }` | A finite number of the program is at least SCIP's infinity (`1e20`) in magnitude; `number` says where it stands. |
 | `RowTooLong { row, len }`, `QuadraticTooLong { len }` | A row or the quadratic part has more entries than SCIP's `int` counts. |
-| `Unsupported { class }`, `UnsupportedFeature { feature }` | A program the backend does not take, which a `Solver` never hands it. |
 | `Start` | A start that does not fit the program, which a `Solver` never hands over. |
 | `Failed { status }` | SCIP ended with a status that proves nothing, or claimed an optimum or a gap without a solution or a bound. |
-| `PricingQuadratic` | A callback that prices was given a program with a quadratic objective. |
-| `BranchEarly` | A pricing callback ended pricing early where SCIP has no integer column left to branch on. |
+| `PricingQuadratic` | A solve with a pricer was given a program with a quadratic objective. |
+| `BranchEarly` | A pricer ended pricing early where SCIP has no integer column left to branch on. |
 | `InfeasibleBest { status, objective }` | SCIP's own check finds its best solution infeasible in the original problem; the solution is not reported. |
+| `Unlisted { code, raw, call }` | SCIP's function `call` returned a return code or status (`code`, a `ScipCode`) that SCIP 10 does not define, which the pinned SCIP never does ([Design](design.md#public-types-are-exhaustive)). |
 
-`RetCode` is every error value of `SCIP_RETCODE` (`NoMemory`, `LpError`, `InvalidCall`, `ParameterUnknown`, …) and
-`Other(i32)` for one SCIP 10 does not define.
+`RetCode` is every error value of `SCIP_RETCODE` (`NoMemory`, `LpError`, `InvalidCall`, `ParameterUnknown`, …).
 
 ```rust
 use culmen::prelude::*;
@@ -717,13 +737,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
 
     let settings = Settings { seed: Some(u32::MAX), ..Settings::new() };
-    let Err(SolveError::Backend(error)) = solver.solve(Request::new().settings_from(settings)) else {
+    let Err(SolveError::Backend(error)) = solver.run().settings(settings).solve() else {
         panic!("the seed is refused")
     };
     let max = i32::MAX.unsigned_abs().into();
     let value = u32::MAX.into();
     assert_eq!(error, ScipError::OutOfRange { name: "randomization/randomseedshift", value, max });
-    assert_eq!(solver.solve(Request::new())?.outcome.objective(), Some(1.0));
+    assert_eq!(solver.solve()?.outcome.objective(), Some(1.0));
     Ok(())
 }
 ```
@@ -734,13 +754,13 @@ the call or parameter and SCIP's return code, and the message is on standard err
 
 ## Limitations
 
-- **No semi columns and no several objectives.** `Scip::FEATURES` is `StartSolution` alone, so `Solver::new` refuses a
-  program with a semi-continuous or semi-integer column or with further objectives ([Starts](#starts)).
-- **No analyses.** `Scip::ANALYSES` is empty: duals, basis, ranging, rays, IIS and feasibility relaxation are
-  `AnalysisError::Unsupported` ([Analysis](analysis.md)).
-- **No partial heuristic solutions.** `supply_partial` is always refused; a partial solution is a sparse start
+- **No semi columns and no several objectives.** `Scip::FEATURES` is empty, so `Solver::new` refuses a program with a
+  semi-continuous or semi-integer column or with further objectives ([Features](backends.md#features)).
+- **No analyses.** `Scip` implements none of the analysis traits, so `Solver<Scip>` has no `duals`, `basis`,
+  `ranging`, rays, `iis` or `feasibility_relaxation` method ([Analysis](analysis.md)).
+- **No partial heuristic solutions.** `ScipHeuristic` has no `supply_partial`; a partial solution is a sparse start
   ([Heuristic solutions](#heuristic-solutions)).
-- **No native events and no branching event.** `NATIVE` is `Unsupported`, and there is no event to branch on the
+- **No native events and no branching event.** `Native` is `Unsupported`, and there is no event to branch on the
   pricing problem, so branch-and-price branches on master columns only ([Pricing](#pricing)).
 - **No pricing on a quadratic objective.** `ScipError::PricingQuadratic` ([Pricing](#pricing)).
 - **An interrupt acts after the current LP.** SCIP's LP solver runs without events, so a stop asked for during one LP
@@ -759,8 +779,8 @@ the call or parameter and SCIP's return code, and the message is on standard err
 
 ## See also
 
-- [Callbacks](callbacks.md): the neutral events and contexts, and pricing.
-- [Solving](solving.md): requests, settings, starts and outcomes.
+- [Callbacks](callbacks.md): the neutral events and contexts, the search handlers, and pricing.
+- [Solving](solving.md): the run of a solve, settings, starts and outcomes.
 - [HiGHS](highs.md): the default backend.
 - [Backends](backends.md): how SCIP's plugins, parameters and statuses map onto culmen's seam, beside HiGHS and Gurobi.
 - [Documentation index](README.md).

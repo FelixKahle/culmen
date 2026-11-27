@@ -5,7 +5,7 @@ first model written two ways, and how to read its solution.
 
 ## Requirements
 
-- Rust 1.99 or later, edition 2024.
+- Rust 1.100 or later, edition 2024.
 - For the default `highs` feature: **cmake** and **libclang**. The HiGHS backend builds HiGHS 1.16 from the
   sources bundled with the `highs-sys` crate, so no system HiGHS is needed, but its C++ build needs both tools.
   The first build takes a minute or two; later builds reuse it.
@@ -22,7 +22,7 @@ culmen is on crates.io:
 
 ```toml
 [dependencies]
-culmen = { version = "0.4", features = ["macros"] }
+culmen = { version = "0.5", features = ["macros"] }
 # the main branch instead: culmen = { git = "https://github.com/FelixKahle/culmen", features = ["macros"] }
 ```
 
@@ -32,34 +32,39 @@ Depend on `culmen` only. It re-exports everything a model and a solve need; the 
 
 | Feature | Default | What it adds |
 |---|---|---|
-| `highs` | on | The HiGHS backend: `culmen::Highs`, and the whole backend crate as `culmen::highs`. |
-| `scip` | off | The SCIP backend: `culmen::Scip`, and the whole backend crate as `culmen::scip` (see [SCIP](scip.md)). |
+| `highs` | on | The HiGHS backend: the whole backend crate as `culmen::highs`, and `Highs` in the prelude. |
+| `scip` | off | The SCIP backend: the whole backend crate as `culmen::scip`, and `Scip` in the prelude (see [SCIP](scip.md)). |
 | `macros` | off | `variable!`, `constraint!`, `objective!` and `sum!` (see [Macros](macros.md)). |
 | `serde` | off | `Serialize` and `Deserialize` for the plain data, and for the options and statuses of each backend enabled (see [Serialization](testing.md#serialization)). |
 
 With `default-features = false` you get the modelling layer, the program and the solve API without a solver: enough to
 build and inspect models, write LP files, or drive a backend of your own.
 
-`culmen::prelude` holds what a model and a solve need: `Model`, `Var`, `LinExpr`, `QuadExpr`, `Linear`, `Quadratic`,
-`Constraint`, `Objective`, `Tolerance`, `Bounds`, `Col`, `Row`, `Program`, `Sense`, `Solver`, `Request`, `Settings`,
-`Start`, `Outcome`, `Solution`, `Solved`, `SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`,
-`LogLine`, `Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the functions `product`,
-`set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`, `absolute_gap!`, `weight!`, `threads!` and
-`solutions!`, the [context traits](callbacks.md#contexts) a callback calls (`LogContext`, `PollContext`, `LazyContext`
-and the rest) with `Unsupported`, and, with their features, `Highs`, `Scip` and the modelling macros. Everything else
-is at the crate root, `culmen::…`.
+`culmen::prelude` holds what nearly every program that models and solves names: `Model`, `Var`, `LinExpr`,
+`QuadExpr`, `Linear`, `Quadratic`, `Constraint`, `Objective`, `Tolerance`, `Bounds`, `Col`, `Row`, `Integrality`,
+`NewCol`, `TiVec`, `TiSlice`, `Program`, `Sense`, `Solver`, `Settings`, `Start`, `Outcome`, `Solution`, `Solved`,
+`SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`, `LogLine`, `Stop`, `Backend`, `IndexSet`, `VarMap`,
+`ConstraintMap`, the functions `product`, `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`,
+`absolute_gap!`, `feasibility_tolerance!`, `weight!`, `threads!` and `solutions!`, `Callback` with `Event` and `Events`, the
+[context traits](callbacks.md#contexts) a callback or handler calls (`Context`, `LogContext`, `PollContext`,
+`LazyContext` and the rest) with the `PriceMode` a pricer reads, the [search capabilities and their
+handlers](callbacks.md#search-handlers) (`LazyConstraints` and `LazyHandler`, `UserCuts` and `CutHandler`,
+`Heuristics` and `HeuristicHandler`, `Prices` and `Pricer`), and, with their features, `Highs`, `Scip` and the
+modelling macros. Everything else a consumer names is at the crate root, `culmen::…`; the scripted test backend is in
+`culmen::script`, what only a backend author names in `culmen::backend`, and each solver's own types in
+`culmen::highs` and `culmen::scip`.
 
 ## Choosing a backend
 
 The backend is a type: `Solver::new(Highs::new(), program)` or `Solver::new(Scip::new(), program)`. The model, the
-request and the outcome are the same for both, so switching is one word.
+solve and the outcome are the same for both, so switching is one word.
 
 | Need | HiGHS (`highs`, default) | SCIP (`scip`) |
 |---|---|---|
 | LPs, MILPs, convex QPs | yes | yes; a quadratic objective through an epigraph, exact to SCIP's tolerance |
 | A convex quadratic objective over integer columns (MIQP) | no | yes |
-| Lazy constraints, user cuts | no | yes |
-| Pricing at every node (branch-and-price) | no; price in an outer loop with [edits](solving.md#editing-a-loaded-program) | yes |
+| Lazy constraints, user cuts | no: a handler for either does not compile | yes |
+| Pricing at every node (branch-and-price) | no, a pricer does not compile; price in an outer loop with [edits](solving.md#editing-a-loaded-program) | yes |
 | Duals, basis, ranging, rays, IIS, feasibility relaxation | yes | no |
 | Semi-continuous and semi-integer columns, several objectives | yes | no |
 | Reading and writing MPS and LP files with the solver's own readers | yes | no; culmen writes [LP files](program.md#lp-files) itself |
@@ -86,12 +91,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Σ weight · take <= 10, and maximize Σ value · take.
     let weight = LinExpr::sum(items.iter().map(|&(name, _, weight)| weight * take[name]));
-    m.add_named_constraint("capacity", weight.leq(10.0));
+    m.add_constraint(("capacity", weight.leq(10.0)));
     m.maximize(LinExpr::sum(items.iter().map(|&(name, value, _)| value * take[name])));
 
     // Build the checked program, load it into HiGHS, and solve with HiGHS's defaults.
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    let solved = solver.solve(Request::new())?;
+    let solved = solver.solve()?;
 
     let Outcome::Optimal(best) = solved.outcome else {
         return Err(format!("no optimum: {:?}", solved.outcome).into());
@@ -115,8 +120,9 @@ What happened, step by step:
    `.leq(10.0)` turns it into a [`Constraint`](modelling.md#comparisons).
 3. `m.build()` checked every number and produced a [`Program`](program.md#program). A defect there is a
    [`ModelError`](modelling.md#building-and-modelerror) naming the variable or constraint at fault.
-4. `Solver::new` loaded the program into the backend; `solve` ran it under a [`Request`](solving.md#request) and
-   returned [`Solved`](solving.md#solved-and-outcome): the generic `Outcome`, HiGHS's own status, and the time.
+4. `Solver::new` loaded the program into the backend; `solve` ran it under the backend's defaults (a
+   [`Run`](solving.md#run) sets limits, a stop and an observer) and returned
+   [`Solved`](solving.md#solved-and-outcome): the generic `Outcome`, HiGHS's own status, and the time.
 5. The solution is read with the handles the model returned: `best.values[take["tent"]]`, or the whole family at
    once with `take.values(&best.values)`.
 
@@ -140,7 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(m.var_name(take[0]), Some("take[0]"));
     assert_eq!(m.constraint_name(capacity), Some("capacity"));
 
-    let solved = Solver::new(Highs::new(), m.build()?)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), m.build()?)?.solve()?;
     assert_eq!(solved.outcome.objective(), Some(15.0));
     Ok(())
 }

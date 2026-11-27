@@ -60,9 +60,9 @@ fn semi_column() -> impl Strategy<Value = ProgramColumn> {
     (any::<bool>(), 1i32..=2, 0i32..=2, -5i32..=5).prop_map(|(integer, lower, width, cost)| {
         let bounds = Bounds::new(f64::from(lower), f64::from(lower + width)).expect("lower <= upper");
         if integer {
-            ProgramColumn::semi_integer(f64::from(cost), bounds)
+            ProgramColumn::semi_integer().cost(f64::from(cost)).bounds(bounds)
         } else {
-            ProgramColumn::semi_continuous(f64::from(cost), bounds)
+            ProgramColumn::semi_continuous().cost(f64::from(cost)).bounds(bounds)
         }
     })
 }
@@ -150,7 +150,7 @@ pub fn small_qp() -> impl Strategy<Value = Program> {
                 .zip(&costs)
                 .map(|(&(lower, width), &cost)| {
                     let bounds = Bounds::new(f64::from(lower), f64::from(lower + width)).expect("lower <= upper");
-                    ProgramColumn::continuous(sign * f64::from(cost), bounds)
+                    ProgramColumn::continuous().cost(sign * f64::from(cost)).bounds(bounds)
                 })
                 .collect();
             let mid: Vec<f64> = boxes.iter().map(|&(l, w)| f64::from(l) + f64::from(w) / 2.0).collect();
@@ -238,9 +238,9 @@ pub fn priced_split() -> impl Strategy<Value = PricedSplit> {
                 .map(|(cost, lower, upper, integer)| {
                     let bounds = Bounds::new(f64::from(lower), f64::from(upper)).expect("lower <= 0 <= upper");
                     if integer {
-                        ProgramColumn::integer(f64::from(cost), bounds)
+                        ProgramColumn::integer().cost(f64::from(cost)).bounds(bounds)
                     } else {
-                        ProgramColumn::continuous(f64::from(cost), bounds)
+                        ProgramColumn::continuous().cost(f64::from(cost)).bounds(bounds)
                     }
                 })
                 .collect();
@@ -437,6 +437,57 @@ fn new_col(rows: usize) -> impl Strategy<Value = NewCol> {
     )
 }
 
+/// An offset: a small integer, one time in five NaN or an infinity.
+fn edit_offset() -> impl Strategy<Value = f64> {
+    prop_oneof![
+        4 => (-3i32..=3).prop_map(f64::from),
+        1 => prop_oneof![Just(f64::NAN), Just(f64::INFINITY), Just(f64::NEG_INFINITY)],
+    ]
+}
+
+/// Either sense.
+fn edit_sense() -> impl Strategy<Value = Sense> {
+    prop_oneof![Just(Sense::Minimize), Just(Sense::Maximize)]
+}
+
+/// A replaced objective whose terms name columns below `cols`: its sense, linear terms, constant, mostly no squares,
+/// and sometimes a block on one pair of different columns: a square on each, signed for the sense, and one or two
+/// cross terms between them, written in either order, the pair mostly among the program's `held` columns. The
+/// quadratic part's blocks are then a pair at most.
+fn edit_objective(cols: usize, held: usize) -> impl Strategy<Value = EditOp> {
+    let col = move || (0..cols).prop_map(Col::new);
+    let squares = prop_oneof![
+        2 => Just(Vec::new()),
+        1 => prop::collection::vec((col(), edit_number()), 1..=2),
+    ];
+    let n = held.max(2);
+    let pair = (0..n, 1..n).prop_map(move |(first, step)| (Col::new(first), Col::new((first + step) % n)));
+    let cross = prop::collection::vec((any::<bool>(), edit_number()), 1..=2);
+    let block = prop_oneof![1 => Just(None), 1 => (pair, 0i32..=3, 0i32..=3, cross).prop_map(Some)];
+    let terms = prop::collection::vec((col(), edit_number()), 0..=3);
+    (edit_sense(), terms, edit_offset(), squares, block).prop_map(|(sense, terms, constant, mut squares, block)| {
+        let mut cross = Vec::new();
+        if let Some(((i, j), a, b, terms)) = block {
+            let s = match sense {
+                Sense::Minimize => 1.0,
+                Sense::Maximize => -1.0,
+            };
+            squares.extend([(i, s * f64::from(a)), (j, s * f64::from(b))]);
+            cross = terms
+                .into_iter()
+                .map(|(swap, q)| if swap { (j, i, q) } else { (i, j, q) })
+                .collect();
+        }
+        EditOp::Objective {
+            sense,
+            terms,
+            constant,
+            squares,
+            cross,
+        }
+    })
+}
+
 /// One edit whose ids lie below `cols + 2` columns and `rows + 2` rows, so some name nothing.
 fn edit_op(cols: usize, rows: usize) -> impl Strategy<Value = EditOp> {
     let (cols, rows) = (cols + 2, rows + 2);
@@ -444,11 +495,19 @@ fn edit_op(cols: usize, rows: usize) -> impl Strategy<Value = EditOp> {
     let row = move || (0..rows).prop_map(Row::new);
     prop_oneof![
         prop::collection::vec((col(), edit_bounds()), 0..=3).prop_map(EditOp::ColBounds),
+        prop::collection::vec((col(), edit_number()), 0..=3).prop_map(EditOp::ColLower),
+        prop::collection::vec((col(), edit_number()), 0..=3).prop_map(EditOp::ColUpper),
         prop::collection::vec((col(), edit_number()), 0..=3).prop_map(EditOp::ColCosts),
         prop::collection::vec((col(), edit_integrality()), 0..=3).prop_map(EditOp::ColIntegrality),
         prop::collection::vec((row(), edit_bounds()), 0..=3).prop_map(EditOp::RowBounds),
+        prop::collection::vec((row(), edit_number()), 0..=3).prop_map(EditOp::RowLower),
+        prop::collection::vec((row(), edit_number()), 0..=3).prop_map(EditOp::RowUpper),
+        prop::collection::vec((row(), col(), edit_number()), 0..=3).prop_map(EditOp::Coefficients),
         prop::collection::vec(new_row(cols), 0..=2).prop_map(EditOp::AddRows),
         prop::collection::vec(new_col(rows), 0..=2).prop_map(EditOp::AddCols),
+        edit_sense().prop_map(EditOp::Sense),
+        edit_offset().prop_map(EditOp::Offset),
+        edit_objective(cols, cols - 2),
     ]
 }
 
@@ -477,11 +536,12 @@ mod tests {
     use crate::reference::edit_plan;
 
     #[test]
+    /// Every kind of edit, an objective with cross terms counted apart, is accepted and refused often.
     fn test_edits_of_every_kind_are_both_accepted_and_refused() {
         let mut runner = TestRunner::deterministic();
         let strategy = with_edits(prop_oneof![small_lp(), small_semi(), small_qp()]);
-        let (mut accepted, mut refused) = ([0usize; 6], [0usize; 6]);
-        for _ in 0..2000 {
+        let (mut accepted, mut refused) = ([0usize; 15], [0usize; 15]);
+        for _ in 0..4000 {
             let (program, ops) = strategy.new_tree(&mut runner).unwrap().current();
             for op in &ops {
                 let kind = match op {
@@ -491,6 +551,15 @@ mod tests {
                     EditOp::RowBounds(_) => 3,
                     EditOp::AddRows(_) => 4,
                     EditOp::AddCols(_) => 5,
+                    EditOp::Sense(_) => 6,
+                    EditOp::Offset(_) => 7,
+                    EditOp::Objective { cross, .. } if cross.is_empty() => 8,
+                    EditOp::ColLower(_) => 9,
+                    EditOp::ColUpper(_) => 10,
+                    EditOp::RowLower(_) => 11,
+                    EditOp::RowUpper(_) => 12,
+                    EditOp::Coefficients(_) => 13,
+                    EditOp::Objective { .. } => 14,
                 };
                 match edit_plan(&program, op, ModelClasses::ALL, ProgramFeatures::ALL) {
                     Ok(_) => accepted[kind] += 1,
@@ -498,7 +567,12 @@ mod tests {
                 }
             }
         }
-        assert!(accepted.iter().all(|&n| n >= 100), "accepted {accepted:?}");
+        // An objective with cross terms needs two columns, which many small programs lack, so fewer are accepted.
+        let (cross, others) = accepted.split_last().unwrap();
+        assert!(
+            others.iter().all(|&n| n >= 100) && *cross >= 40,
+            "accepted {accepted:?}, refused {refused:?}"
+        );
         assert!(refused.iter().all(|&n| n >= 50), "refused {refused:?}");
     }
 }

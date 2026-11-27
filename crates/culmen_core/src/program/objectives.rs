@@ -17,7 +17,8 @@ use crate::{AbsoluteGap, RelativeGap};
 /// An objective of a [`Program`](super::Program): [`ObjectiveId::FIRST`] is the program's own, and the further
 /// objectives of its [`Objectives`] follow in order from `ObjectiveId::new(1)`.
 ///
-/// A plain `Copy` index like [`Col`]; [`Model::add_objective`](crate::Model::add_objective) hands it out.
+/// A plain `Copy` index like [`Col`]; [`Model::add_stage`](crate::Model::add_stage) and
+/// [`Model::add_weighted`](crate::Model::add_weighted) hand it out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(transparent))]
 pub struct ObjectiveId(usize);
@@ -87,7 +88,7 @@ impl Weight {
     /// [`InvalidWeight`] when `value` is not finite or not above zero.
     pub const fn new(value: f64) -> Result<Self, InvalidWeight> {
         if !value.is_finite() {
-            Err(InvalidWeight::NotFinite)
+            Err(InvalidWeight::NonFinite)
         } else if value <= 0.0 {
             Err(InvalidWeight::NotPositive)
         } else {
@@ -112,7 +113,7 @@ impl Weight {
     pub const fn literal(value: f64) -> Self {
         match Self::new(value) {
             Ok(weight) => weight,
-            Err(InvalidWeight::NotFinite) => panic!("Weight: not a finite number"),
+            Err(InvalidWeight::NonFinite) => panic!("Weight: not a finite number"),
             Err(InvalidWeight::NotPositive) => panic!("Weight: not above zero"),
         }
     }
@@ -147,10 +148,9 @@ impl fmt::Display for Weight {
 
 /// Why [`Weight::new`] refused a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum InvalidWeight {
     /// The number is NaN or infinite.
-    NotFinite,
+    NonFinite,
     /// The number is zero or below.
     NotPositive,
 }
@@ -158,7 +158,7 @@ pub enum InvalidWeight {
 impl fmt::Display for InvalidWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotFinite => write!(f, "Weight: not a finite number"),
+            Self::NonFinite => write!(f, "Weight: not a finite number"),
             Self::NotPositive => write!(f, "Weight: not above zero"),
         }
     }

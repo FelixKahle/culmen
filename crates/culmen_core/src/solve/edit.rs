@@ -8,105 +8,65 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use super::{Backend, Solver, lack};
-use crate::program::{BadColumn, BadTerm, bad_column, bad_term, merge_terms};
+use typed_index_collections::TiVec;
+
+use crate::program::{
+    BadColumn, BadTerm, OwnObjective, bad_column, bad_term, check_convex, hessian_value, merge_pairs, merge_terms,
+};
 use crate::{
-    Bounds, Col, Cols, Constraint, Integrality, InvalidBounds, ModelClass, ModelClasses, NewCol, Program,
-    ProgramColumn, ProgramFeature, ProgramFeatures, ProgramRow, Row, Rows,
+    Bounds, Col, Cols, Integrality, InvalidBounds, ModelClass, ModelClasses, NewCol, NewRow, Program, ProgramColumn,
+    ProgramFeature, ProgramFeatures, ProgramRow, QuadExpr, QuadObjective, Quadratic, Row, Rows, Sense,
 };
 
 /// What one edit changed in a [`Solver`]'s program; the new values are read from the program.
 ///
-/// Only a [`Solver`] makes one, so its ids are the edited program's, sorted ascending, each once, and new rows and
-/// columns follow every one before them. [`Backend::edit`] receives it beside the edited program and matches it as
-/// `Edit::ColBounds { cols, .. }`; every variant is non-exhaustive, so a later version may add to it.
+/// The edit a [`Solver`] hands to [`Backend::edit`] names ids of the edited program, sorted ascending, each once, and
+/// new rows and columns that follow every one before them. A backend receives it beside the edited program and
+/// matches every variant, so a variant a later version adds is a compile error in the backend, not a silent reload.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Edit {
     /// The bounds of these columns changed.
-    #[non_exhaustive]
     ColBounds {
         /// The columns, ascending, each once.
         cols: Vec<Col>,
     },
     /// The costs of these columns in the program's own objective changed.
-    #[non_exhaustive]
     ColCosts {
         /// The columns, ascending, each once.
         cols: Vec<Col>,
     },
     /// The integrality of these columns changed.
-    #[non_exhaustive]
     ColIntegrality {
         /// The columns, ascending, each once.
         cols: Vec<Col>,
     },
     /// The bounds of these rows changed.
-    #[non_exhaustive]
     RowBounds {
         /// The rows, ascending, each once.
         rows: Vec<Row>,
     },
     /// These rows were appended.
-    #[non_exhaustive]
     NewRows {
         /// The rows, the program's last.
         rows: Rows,
     },
     /// These columns were appended, with their entries in the rows before them.
-    #[non_exhaustive]
     NewCols {
         /// The columns, the program's last.
         cols: Cols,
     },
-}
-
-/// A row to append to a [`Solver`]'s program: a model constraint, named or not, or a program row.
-///
-/// ```
-/// use culmen_core::{Linear, Model, NewRow, Var};
-///
-/// let mut m = Model::new();
-/// let x = m.add_var(Var::continuous());
-/// let unnamed = NewRow::from(x.leq(4));
-/// let named = NewRow::from(("cut", x.geq(1)));
-/// assert!(matches!(unnamed, NewRow::Constraint { name: None, .. }));
-/// assert!(matches!(named, NewRow::Constraint { name: Some(ref n), .. } if n == "cut"));
-/// ```
-#[derive(Clone, Debug, PartialEq)]
-pub enum NewRow {
-    /// A constraint as a model writes it; its constant moves into its bounds as
-    /// [`Model::build`](crate::Model::build) moves it.
-    Constraint {
-        /// The constraint.
-        constraint: Constraint,
-        /// The row's name in diagnostics and LP files; `None` names it by its index.
-        name: Option<String>,
+    /// The coefficients of these entries of the constraint matrix changed, an entry set to zero taken out.
+    Coefficients {
+        /// The entries as `(row, col)`, ascending by row and then by column, each once.
+        entries: Vec<(Row, Col)>,
     },
-    /// A row as program data; its terms may repeat a column and add up, and terms that cancel to zero are dropped.
-    Row(ProgramRow),
-}
-
-/// An unnamed row.
-impl From<Constraint> for NewRow {
-    fn from(constraint: Constraint) -> Self {
-        Self::Constraint { constraint, name: None }
-    }
-}
-
-/// A named row, given as the closures of [`Model::add_constraint_map`](crate::Model::add_constraint_map) give it.
-impl<N: Into<String>> From<(N, Constraint)> for NewRow {
-    fn from((name, constraint): (N, Constraint)) -> Self {
-        Self::Constraint {
-            constraint,
-            name: Some(name.into()),
-        }
-    }
-}
-
-impl From<ProgramRow> for NewRow {
-    fn from(row: ProgramRow) -> Self {
-        Self::Row(row)
-    }
+    /// The sense of the program's own objective was set.
+    Sense,
+    /// The offset of the program's own objective was set.
+    Offset,
+    /// The program's own objective was replaced: its sense, every column's cost, its offset and its quadratic part,
+    /// which may be the one it had.
+    Objective,
 }
 
 /// Why a [`Solver`] refused an edit.
@@ -122,7 +82,6 @@ impl From<ProgramRow> for NewRow {
 /// assert_eq!(error.to_string(), "Solver: the program has no Col(7)");
 /// ```
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum EditError<E> {
     /// A column the program does not have: an edit's target or a new row's term.
     UnknownCol {
@@ -157,6 +116,22 @@ pub enum EditError<E> {
         /// What is wrong with its bounds.
         source: InvalidBounds,
     },
+    /// A column's bounds with one end set and the other kept, by [`Solver::set_col_lower`] or
+    /// [`Solver::set_col_upper`], would be invalid.
+    ColEnd {
+        /// The column.
+        col: Col,
+        /// What is wrong with the bounds it would have.
+        source: InvalidBounds,
+    },
+    /// A row's bounds with one end set and the other kept, by [`Solver::set_row_lower`] or
+    /// [`Solver::set_row_upper`], would be invalid.
+    RowEnd {
+        /// The row.
+        row: Row,
+        /// What is wrong with the bounds it would have.
+        source: InvalidBounds,
+    },
     /// A semi-continuous or semi-integer column would have bounds that are not `lower ..= upper` with `0 < lower` and
     /// `upper` finite.
     SemiBounds {
@@ -165,8 +140,33 @@ pub enum EditError<E> {
         /// The bounds it would have.
         bounds: Bounds,
     },
+    /// An objective's offset is NaN or infinite.
+    NonFiniteOffset {
+        /// The offset given.
+        value: f64,
+    },
+    /// A quadratic coefficient of a new objective is NaN or infinite, as given or after the terms of its pair were
+    /// added up, or a square's coefficient is so large that its Hessian value, twice it, is infinite.
+    NonFiniteQuadCoefficient {
+        /// The first column of the pair.
+        first: Col,
+        /// The second column of the pair.
+        second: Col,
+        /// The coefficient, or a square's infinite Hessian value when the coefficient itself is finite.
+        value: f64,
+    },
+    /// The objective's quadratic part would not be convex for minimizing, or not concave for maximizing, within
+    /// [`Program::CONVEXITY_TOLERANCE`].
+    NonConvexObjective {
+        /// The sense the objective would have.
+        sense: Sense,
+        /// The smallest column of the first block of the Hessian that fails the check.
+        col: Col,
+    },
+    /// The objective would have a quadratic part beside further objectives, which are linear and need it linear too.
+    QuadraticWithObjectives,
     /// The backend does not solve the class the edited program would have.
-    Unsupported {
+    UnsupportedClass {
         /// The class the edited program would have.
         class: ModelClass,
         /// The classes the backend solves.
@@ -198,11 +198,46 @@ impl<E: fmt::Display> fmt::Display for EditError<E> {
                 f,
                 "Solver: the bounds of the new {row:?}, its constant moved into them, are invalid: {source}"
             ),
+            Self::ColEnd { col, source } => {
+                write!(
+                    f,
+                    "Solver: {col:?} with one end set would have invalid bounds: {source}"
+                )
+            }
+            Self::RowEnd { row, source } => {
+                write!(
+                    f,
+                    "Solver: {row:?} with one end set would have invalid bounds: {source}"
+                )
+            }
             Self::SemiBounds { col, bounds } => write!(
                 f,
                 "Solver: the semi column {col:?} would have the bounds {bounds}, not 0 < lower <= upper < +inf"
             ),
-            Self::Unsupported { class, supported } => {
+            Self::NonFiniteOffset { value } => write!(f, "Solver: the objective offset {value} is not finite"),
+            Self::NonFiniteQuadCoefficient { first, second, value } => write!(
+                f,
+                "Solver: the quadratic coefficient {value} of {first:?} · {second:?} is not finite"
+            ),
+            Self::NonConvexObjective {
+                sense: Sense::Minimize,
+                col,
+            } => write!(
+                f,
+                "Solver: the quadratic objective would not be convex in the block of {col:?}"
+            ),
+            Self::NonConvexObjective {
+                sense: Sense::Maximize,
+                col,
+            } => write!(
+                f,
+                "Solver: the quadratic objective would not be concave in the block of {col:?}"
+            ),
+            Self::QuadraticWithObjectives => write!(
+                f,
+                "Solver: the objective would have a quadratic part beside further objectives"
+            ),
+            Self::UnsupportedClass { class, supported } => {
                 write!(f, "Solver: the backend solves {supported}, not a {class}")
             }
             Self::UnsupportedFeature { feature, supported } => {
@@ -216,14 +251,18 @@ impl<E: fmt::Display> fmt::Display for EditError<E> {
 impl<E: core::error::Error + 'static> core::error::Error for EditError<E> {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::RowBounds { source, .. } => Some(source),
+            Self::RowBounds { source, .. } | Self::ColEnd { source, .. } | Self::RowEnd { source, .. } => Some(source),
             Self::Backend(error) => Some(error),
             Self::UnknownCol { .. }
             | Self::UnknownRow { .. }
             | Self::NonFiniteCost { .. }
             | Self::NonFiniteCoefficient { .. }
             | Self::SemiBounds { .. }
-            | Self::Unsupported { .. }
+            | Self::NonFiniteOffset { .. }
+            | Self::NonFiniteQuadCoefficient { .. }
+            | Self::NonConvexObjective { .. }
+            | Self::QuadraticWithObjectives
+            | Self::UnsupportedClass { .. }
             | Self::UnsupportedFeature { .. } => None,
         }
     }
@@ -248,6 +287,51 @@ impl<B: Backend> Solver<B> {
         self.apply_col_bounds(latest(bounds.into_iter().map(|(col, bounds)| (col, bounds.into()))))
     }
 
+    /// Sets the lower bounds of columns, all or none, keeping their upper bounds, the last bound given for a column
+    /// holding: gurobipy's `x.LB = 1` is `solver.set_col_lower([(x, 1)])`.
+    ///
+    /// ```
+    /// use culmen_core::{Model, Solver, Var};
+    /// use culmen_core::script::Script;
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous().upper(4));
+    /// let mut solver = Solver::new(Script::optimal(0.0, vec![0.0]), m.build()?)?;
+    /// solver.set_col_lower([(x, 1)])?;
+    /// assert_eq!(solver.program().columns()[x].bounds.lower(), 1.0);
+    /// assert_eq!(solver.program().columns()[x].bounds.upper(), 4.0);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::UnknownCol`] for a column the program does not have, [`EditError::ColEnd`] for a column whose
+    /// bounds would be invalid, [`EditError::SemiBounds`] for a semi column given bounds it may not have, all before
+    /// the backend sees the edit; [`EditError::Backend`] when the backend refuses it, or refuses the program the
+    /// solver loads first after an earlier failed edit.
+    pub fn set_col_lower<T: Into<f64>>(
+        &mut self,
+        lower: impl IntoIterator<Item = (Col, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        let lower = latest(lower.into_iter().map(|(col, lower)| (col, lower.into())));
+        let bounds = col_ends(&self.program, lower, |lower, bounds| Bounds::new(lower, bounds.upper()))?;
+        self.apply_col_bounds(bounds)
+    }
+
+    /// Sets the upper bounds of columns, all or none, keeping their lower bounds, the last bound given for a column
+    /// holding.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::set_col_lower`].
+    pub fn set_col_upper<T: Into<f64>>(
+        &mut self,
+        upper: impl IntoIterator<Item = (Col, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        let upper = latest(upper.into_iter().map(|(col, upper)| (col, upper.into())));
+        let bounds = col_ends(&self.program, upper, |upper, bounds| Bounds::new(bounds.lower(), upper))?;
+        self.apply_col_bounds(bounds)
+    }
+
     /// Sets the costs of columns in the program's own objective, all or none, the last cost given for a column
     /// holding.
     ///
@@ -268,10 +352,10 @@ impl<B: Backend> Solver<B> {
     /// # Errors
     ///
     /// [`EditError::UnknownCol`] for a column the program does not have, [`EditError::SemiBounds`] for a column made
-    /// semi whose bounds a semi column may not have, [`EditError::Unsupported`] or [`EditError::UnsupportedFeature`]
-    /// when the backend does not solve the class or take a feature the edited program would have, all before the
-    /// backend sees the edit; [`EditError::Backend`] when the backend refuses it, or refuses the program the solver
-    /// loads first after an earlier failed edit.
+    /// semi whose bounds a semi column may not have, [`EditError::UnsupportedClass`] or
+    /// [`EditError::UnsupportedFeature`] when the backend does not solve the class or take a feature the edited program
+    /// would have, all before the backend sees the edit; [`EditError::Backend`] when the backend refuses it, or refuses
+    /// the program the solver loads first after an earlier failed edit.
     pub fn set_col_integrality(
         &mut self,
         integrality: impl IntoIterator<Item = (Col, Integrality)>,
@@ -294,7 +378,73 @@ impl<B: Backend> Solver<B> {
         self.apply_row_bounds(latest(bounds.into_iter().map(|(row, bounds)| (row, bounds.into()))))
     }
 
-    /// Appends a row and returns it.
+    /// Sets the lower bounds of rows, all or none, keeping their upper bounds, the last bound given for a row holding.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::UnknownRow`] for a row the program does not have, [`EditError::RowEnd`] for a row whose bounds
+    /// would be invalid, both before the backend sees the edit; [`EditError::Backend`] when the backend refuses it,
+    /// or refuses the program the solver loads first after an earlier failed edit.
+    pub fn set_row_lower<T: Into<f64>>(
+        &mut self,
+        lower: impl IntoIterator<Item = (Row, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        let lower = latest(lower.into_iter().map(|(row, lower)| (row, lower.into())));
+        let bounds = row_ends(&self.program, lower, |lower, bounds| Bounds::new(lower, bounds.upper()))?;
+        self.apply_row_bounds(bounds)
+    }
+
+    /// Sets the upper bounds of rows, all or none, keeping their lower bounds, the last bound given for a row
+    /// holding: gurobipy's `c.RHS = 4` on a `≤` row is `solver.set_row_upper([(c, 4)])`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::set_row_lower`].
+    pub fn set_row_upper<T: Into<f64>>(
+        &mut self,
+        upper: impl IntoIterator<Item = (Row, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        let upper = latest(upper.into_iter().map(|(row, upper)| (row, upper.into())));
+        let bounds = row_ends(&self.program, upper, |upper, bounds| Bounds::new(bounds.lower(), upper))?;
+        self.apply_row_bounds(bounds)
+    }
+
+    /// Sets coefficients of the constraint matrix as `(row, col, value)`, all or none, the last value given for an
+    /// entry holding; zero takes an entry out: gurobipy's `m.chgCoeff(c, x, 2)` is
+    /// `solver.set_coefficients([(c, x, 2)])`.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Solver, Var};
+    /// use culmen_core::script::Script;
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous());
+    /// let y = m.add_var(Var::continuous());
+    /// let cap = m.add_constraint((x + y).leq(4));
+    /// let mut solver = Solver::new(Script::optimal(0.0, vec![0.0, 0.0]), m.build()?)?;
+    /// solver.set_coefficients([(cap, x, 2.0), (cap, y, 0.0)])?;
+    /// assert_eq!(solver.program().row(cap).entries().collect::<Vec<_>>(), [(x, 2.0)]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::UnknownRow`] or [`EditError::UnknownCol`] for an entry naming a row or column the program does
+    /// not have, [`EditError::NonFiniteCoefficient`] for a value that is NaN or infinite, all before the backend sees
+    /// the edit; [`EditError::Backend`] when the backend refuses it, or refuses the program the solver loads first
+    /// after an earlier failed edit.
+    pub fn set_coefficients<T: Into<f64>>(
+        &mut self,
+        coefficients: impl IntoIterator<Item = (Row, Col, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        self.apply_coefficients(latest(
+            coefficients
+                .into_iter()
+                .map(|(row, col, value)| ((row, col), value.into())),
+        ))
+    }
+
+    /// Appends a row and returns it: a [`Constraint`](crate::Constraint), a named one as `(name, constraint)`, or a
+    /// [`ProgramRow`], as [`NewRow`] lists and [`Model::add_constraint`](crate::Model::add_constraint) takes them.
     ///
     /// # Errors
     ///
@@ -337,7 +487,7 @@ impl<B: Backend> Solver<B> {
     /// [`EditError::UnknownRow`] for an entry naming a row the program does not have, [`EditError::NonFiniteCost`]
     /// for a cost that is NaN or infinite, [`EditError::NonFiniteCoefficient`] for a coefficient that is NaN or
     /// infinite as given or added up, [`EditError::SemiBounds`] for a semi column whose bounds a semi column may not
-    /// have, [`EditError::Unsupported`] or [`EditError::UnsupportedFeature`] when the backend does not solve the
+    /// have, [`EditError::UnsupportedClass`] or [`EditError::UnsupportedFeature`] when the backend does not solve the
     /// class or take a feature the edited program would have, all before the backend sees the edit;
     /// [`EditError::Backend`] when the backend refuses it, or refuses the program the solver loads first after an
     /// earlier failed edit.
@@ -346,6 +496,83 @@ impl<B: Backend> Solver<B> {
         columns: impl IntoIterator<Item = C>,
     ) -> Result<Cols, EditError<B::Error>> {
         self.append_cols(columns.into_iter().map(Into::into).collect())
+    }
+
+    /// Sets the sense of the program's own objective, so the next solve minimizes or maximizes it.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Sense, Solver, Var};
+    /// use culmen_core::script::Script;
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous().upper(4));
+    /// m.minimize(x);
+    /// let mut solver = Solver::new(Script::optimal(0.0, vec![0.0]), m.build()?)?;
+    /// solver.set_sense(Sense::Maximize)?;
+    /// assert_eq!(solver.program().sense(), Sense::Maximize);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NonConvexObjective`] for a program with a quadratic part whose sense changes, since a quadratic
+    /// part convex for one sense is not concave for the other (replace the whole objective with
+    /// [`Solver::set_objective`] instead), before the backend sees the edit; [`EditError::Backend`] when the backend
+    /// refuses it, or refuses the program the solver loads first after an earlier failed edit.
+    pub fn set_sense(&mut self, sense: Sense) -> Result<(), EditError<B::Error>> {
+        self.sync().map_err(EditError::Backend)?;
+        check_convex(sense, self.program.quadratic(), self.program.num_cols())
+            .map_err(|col| EditError::NonConvexObjective { sense, col })?;
+        self.commit(Edit::Sense, |program| Undo::Sense(program.replace_sense(sense)))
+    }
+
+    /// Sets the constant added to the program's own objective.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NonFiniteOffset`] for an offset that is NaN or infinite, before the backend sees the edit;
+    /// [`EditError::Backend`] when the backend refuses it, or refuses the program the solver loads first after an
+    /// earlier failed edit.
+    pub fn set_offset(&mut self, offset: impl Into<f64>) -> Result<(), EditError<B::Error>> {
+        let offset = offset.into();
+        self.sync().map_err(EditError::Backend)?;
+        if !offset.is_finite() {
+            return Err(EditError::NonFiniteOffset { value: offset });
+        }
+        self.commit(Edit::Offset, |program| Undo::Offset(program.replace_offset(offset)))
+    }
+
+    /// Replaces the program's own objective, linear or quadratic, as
+    /// [`Model::set_objective`](crate::Model::set_objective) sets a model's: every column's cost becomes its
+    /// coefficient in `objective`, zero when it has none, the constant becomes the offset, and the quadratic part
+    /// becomes `objective`'s. Further objectives stay as they are.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Sense, Solver, Var};
+    /// use culmen_core::script::Script;
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous().upper(4));
+    /// let y = m.add_var(Var::continuous().upper(4));
+    /// m.minimize(x + y);
+    /// let mut solver = Solver::new(Script::optimal(0.0, vec![0.0, 0.0]), m.build()?)?;
+    /// solver.set_objective(Sense::Maximize, 2 * y - x * x + 1)?;
+    /// let program = solver.program();
+    /// assert_eq!((program.columns()[x].cost, program.columns()[y].cost, program.offset()), (0.0, 2.0, 1.0));
+    /// assert_eq!(program.quadratic().entries().collect::<Vec<_>>(), [(x, x, -1.0)]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Before the backend sees the edit: [`EditError::UnknownCol`] for a term naming a column the program does not
+    /// have, [`EditError::NonFiniteCost`] for a column whose coefficients, added up in the order given, are NaN or
+    /// infinite, [`EditError::NonFiniteOffset`] for a constant that is, [`EditError::NonFiniteQuadCoefficient`] for a
+    /// quadratic coefficient that is as given or added up per pair, [`EditError::NonConvexObjective`] for a quadratic
+    /// part that is not convex to minimize or concave to maximize, [`EditError::QuadraticWithObjectives`] for one
+    /// beside further objectives, and [`EditError::UnsupportedClass`] when the backend does not solve the class the
+    /// program would have. [`EditError::Backend`] when the backend refuses it, or refuses the program the solver
+    /// loads first after an earlier failed edit.
+    pub fn set_objective(&mut self, sense: Sense, objective: impl Quadratic) -> Result<(), EditError<B::Error>> {
+        self.replace_objective(sense, objective.into_quad_expr())
     }
 }
 
@@ -421,6 +648,29 @@ impl<B: Backend> Solver<B> {
         self.set(bounds, Program::replace_row_bounds, edit, Undo::RowBounds)
     }
 
+    /// [`Solver::set_coefficients`] with each entry once.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::set_coefficients`].
+    fn apply_coefficients(&mut self, coefficients: BTreeMap<(Row, Col), f64>) -> Result<(), EditError<B::Error>> {
+        self.sync().map_err(EditError::Backend)?;
+        let (num_rows, num_cols) = (self.program.num_rows(), self.program.num_cols());
+        for (&(row, col), &value) in &coefficients {
+            if row.index() >= num_rows {
+                return Err(EditError::UnknownRow { row });
+            }
+            if col.index() >= num_cols {
+                return Err(EditError::UnknownCol { col });
+            }
+            if !value.is_finite() {
+                return Err(EditError::NonFiniteCoefficient { row, col, value });
+            }
+        }
+        let edit = |entries| Edit::Coefficients { entries };
+        self.set(coefficients, Program::replace_coefficient, edit, Undo::Coefficients)
+    }
+
     /// [`Solver::add_rows`] of rows as given.
     ///
     /// # Errors
@@ -471,6 +721,41 @@ impl<B: Backend> Solver<B> {
             undo
         })?;
         Ok(added)
+    }
+
+    /// [`Solver::set_objective`] of an expression.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::set_objective`].
+    fn replace_objective(&mut self, sense: Sense, objective: QuadExpr) -> Result<(), EditError<B::Error>> {
+        self.sync().map_err(EditError::Backend)?;
+        let num_cols = self.program.num_cols();
+        let linear = &objective.linear;
+        let named = linear.terms.iter().map(|t| t.col);
+        let quad = objective.terms.iter().flat_map(|t| [t.first, t.second]);
+        if let Some(col) = named.chain(quad).find(|col| col.index() >= num_cols) {
+            return Err(EditError::UnknownCol { col });
+        }
+        let costs = own_costs(linear.terms.iter().map(|t| (t.col, t.coefficient)), num_cols)?;
+        if !linear.constant.is_finite() {
+            return Err(EditError::NonFiniteOffset { value: linear.constant });
+        }
+        let quadratic = own_quadratic(sense, &objective, num_cols)?;
+        if !quadratic.is_empty() && self.program.objectives().are_several() {
+            return Err(EditError::QuadraticWithObjectives);
+        }
+        let class = Program::class_of(self.program.integralities(), !quadratic.is_empty());
+        lack::<B>(class, self.program.features())?;
+        let own = OwnObjective {
+            sense,
+            costs,
+            offset: linear.constant,
+            quadratic,
+        };
+        self.commit(Edit::Objective, |program| {
+            Undo::Objective(Box::new(program.replace_objective(own)))
+        })
     }
 
     /// Writes each value of `given` with `replace` as one edit, which `edit` names by the ids written, through
@@ -541,7 +826,7 @@ impl<B: Backend> Solver<B> {
     ///
     /// # Errors
     ///
-    /// [`EditError::Unsupported`] or [`EditError::UnsupportedFeature`].
+    /// [`EditError::UnsupportedClass`] or [`EditError::UnsupportedFeature`].
     fn supports(&self, integralities: impl Iterator<Item = Integrality> + Clone) -> Result<(), EditError<B::Error>> {
         let class = self.program.class_with(integralities.clone());
         Ok(lack::<B>(class, self.program.features_with(integralities))?)
@@ -554,8 +839,10 @@ impl Edit {
         match self {
             Self::ColBounds { cols } | Self::ColCosts { cols } | Self::ColIntegrality { cols } => cols.is_empty(),
             Self::RowBounds { rows } => rows.is_empty(),
-            Self::NewRows { rows } => rows.len() == 0,
-            Self::NewCols { cols } => cols.len() == 0,
+            Self::NewRows { rows } => rows.is_empty(),
+            Self::NewCols { cols } => cols.is_empty(),
+            Self::Coefficients { entries } => entries.is_empty(),
+            Self::Sense | Self::Offset | Self::Objective => false,
         }
     }
 }
@@ -571,6 +858,14 @@ enum Undo {
     ColIntegrality(Vec<(Col, Integrality)>),
     /// These rows' bounds before.
     RowBounds(Vec<(Row, Bounds)>),
+    /// These entries' coefficients before, zero for none.
+    Coefficients(Vec<((Row, Col), f64)>),
+    /// The sense before.
+    Sense(Sense),
+    /// The offset before.
+    Offset(f64),
+    /// The program's own objective before.
+    Objective(Box<OwnObjective>),
     /// The counts before rows or columns were appended.
     Appended {
         /// The number of columns before.
@@ -603,9 +898,70 @@ impl Undo {
             Self::ColCosts(old) => restore(program, old, Program::replace_col_cost),
             Self::ColIntegrality(old) => restore(program, old, Program::replace_col_integrality),
             Self::RowBounds(old) => restore(program, old, Program::replace_row_bounds),
+            Self::Coefficients(old) => restore(program, old, Program::replace_coefficient),
+            Self::Sense(sense) => {
+                program.replace_sense(sense);
+            }
+            Self::Offset(offset) => {
+                program.replace_offset(offset);
+            }
+            Self::Objective(own) => {
+                program.replace_objective(*own);
+            }
             Self::Appended { cols, rows } => program.truncate(cols, rows),
         }
     }
+}
+
+/// Each of `num_cols` columns' cost in an objective of these terms: its coefficients added up in the order given,
+/// zero for a column without one.
+///
+/// # Errors
+///
+/// [`EditError::NonFiniteCost`] for the first term after which its column's sum is NaN or infinite.
+///
+/// # Panics
+///
+/// When a term names a column beyond `num_cols`.
+fn own_costs<E>(terms: impl Iterator<Item = (Col, f64)>, num_cols: usize) -> Result<TiVec<Col, f64>, EditError<E>> {
+    let mut costs: TiVec<Col, f64> = core::iter::repeat_n(0.0, num_cols).collect();
+    for (col, coefficient) in terms {
+        costs[col] += coefficient;
+        if !costs[col].is_finite() {
+            return Err(EditError::NonFiniteCost { col, value: costs[col] });
+        }
+    }
+    Ok(costs)
+}
+
+/// The quadratic part of `objective` in `sense` over `num_cols` columns, canonical and checked as a program checks
+/// its own.
+///
+/// # Errors
+///
+/// [`EditError::NonFiniteQuadCoefficient`] for the first coefficient that is not finite as given or added up per
+/// pair, a square's Hessian value included, else [`EditError::NonConvexObjective`].
+fn own_quadratic<E>(sense: Sense, objective: &QuadExpr, num_cols: usize) -> Result<QuadObjective, EditError<E>> {
+    let terms: Vec<(Col, Col, f64)> = objective
+        .terms
+        .iter()
+        .map(|t| (t.first, t.second, t.coefficient))
+        .collect();
+    let finite = |(first, second, value): (Col, Col, f64)| {
+        if value.is_finite() {
+            Ok(())
+        } else {
+            Err(EditError::NonFiniteQuadCoefficient { first, second, value })
+        }
+    };
+    terms.iter().copied().try_for_each(finite)?;
+    // A square's Hessian value is twice its coefficient, so a finite sum may still overflow it.
+    merge_pairs(terms.iter().copied())
+        .into_iter()
+        .try_for_each(|entry| finite((entry.0, entry.1, hessian_value(entry))))?;
+    let quadratic = QuadObjective::from_terms(terms);
+    check_convex(sense, &quadratic, num_cols).map_err(|col| EditError::NonConvexObjective { sense, col })?;
+    Ok(quadratic)
 }
 
 /// The values given, each id once with the last value given for it, in the order of the ids.
@@ -614,6 +970,52 @@ fn latest<I: Ord, V>(given: impl IntoIterator<Item = (I, V)>) -> BTreeMap<I, V> 
         latest.insert(id, value);
         latest
     })
+}
+
+/// Each column's bounds with the end given set by `set` and the other kept.
+///
+/// # Errors
+///
+/// [`EditError::UnknownCol`] for the first column the program lacks, else [`EditError::ColEnd`] for the first whose
+/// bounds `set` refuses.
+fn col_ends<E>(
+    program: &Program,
+    ends: BTreeMap<Col, f64>,
+    set: fn(f64, Bounds) -> Result<Bounds, InvalidBounds>,
+) -> Result<BTreeMap<Col, Bounds>, EditError<E>> {
+    known_cols(&ends, program.num_cols())?;
+    ends.into_iter()
+        .map(|(col, end)| {
+            let bounds = set(end, program.columns()[col].bounds);
+            bounds
+                .map(|bounds| (col, bounds))
+                .map_err(|source| EditError::ColEnd { col, source })
+        })
+        .collect()
+}
+
+/// Each row's bounds with the end given set by `set` and the other kept.
+///
+/// # Errors
+///
+/// [`EditError::UnknownRow`] for the first row the program lacks, else [`EditError::RowEnd`] for the first whose
+/// bounds `set` refuses.
+fn row_ends<E>(
+    program: &Program,
+    ends: BTreeMap<Row, f64>,
+    set: fn(f64, Bounds) -> Result<Bounds, InvalidBounds>,
+) -> Result<BTreeMap<Row, Bounds>, EditError<E>> {
+    if let Some((&row, _)) = ends.range(Row::new(program.num_rows())..).next() {
+        return Err(EditError::UnknownRow { row });
+    }
+    ends.into_iter()
+        .map(|(row, end)| {
+            let bounds = set(end, program.row(row).bounds());
+            bounds
+                .map(|bounds| (row, bounds))
+                .map_err(|source| EditError::RowEnd { row, source })
+        })
+        .collect()
 }
 
 /// Checks that every column `given` names is one of the program's `num_cols`.

@@ -9,12 +9,12 @@
 //!
 //! ```
 //! use culmen_core::{Linear, Model, Var};
-//! use culmen_highs::files::{self, ModelFormat};
+//! use culmen_highs::{ModelFormat, files};
 //!
 //! let mut m = Model::new();
 //! let x = m.add_var(Var::integer().upper(4).name("x"));
 //! let y = m.add_var(Var::continuous().upper(3).name("y"));
-//! m.add_named_constraint("cap", (x + 2 * y).leq(6));
+//! m.add_constraint(("cap", (x + 2 * y).leq(6)));
 //! m.maximize(3 * x + 2 * y);
 //! let program = m.build()?;
 //!
@@ -27,70 +27,18 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use core::fmt;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::ffi::CString;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use culmen_core::{
-    Bounds, Col, Integrality, InvalidBounds, Program, ProgramColumn, ProgramError, ProgramFeature, ProgramPlan,
-    ProgramRow, Row, Sense, TiVec,
+    Bounds, Col, Integrality, Program, ProgramColumn, ProgramFeature, ProgramPlan, ProgramRow, Row, Sense, TiVec,
 };
 use highs_sys::{HighsInt, kHighsMaximumStringLength, kHighsObjSenseMaximize};
 
 use crate::instance::{Instance, Line, Padding, RawModel, var_type};
-use crate::{CallStatus, HighsError};
-
-/// A model file format HiGHS reads and writes.
-///
-/// ```
-/// use culmen_highs::files::ModelFormat;
-/// assert_eq!(ModelFormat::of_path("plant.MPS".as_ref()), Some(ModelFormat::Mps));
-/// assert_eq!(ModelFormat::of_path("plant.lp".as_ref()), Some(ModelFormat::Lp));
-/// assert_eq!(ModelFormat::of_path("plant.mps.gz".as_ref()), None);
-/// assert_eq!(ModelFormat::Lp.to_string(), "LP");
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
-pub enum ModelFormat {
-    /// The MPS format, fixed or free, with HiGHS's `QUADOBJ` section for a quadratic objective.
-    Mps,
-    /// The CPLEX LP format.
-    Lp,
-}
-
-impl ModelFormat {
-    /// The format a path's extension names, `.mps` or `.lp` in any case; `None` for any other.
-    #[must_use]
-    pub fn of_path(path: &Path) -> Option<Self> {
-        let extension = path.extension()?.to_str()?;
-        [Self::Mps, Self::Lp]
-            .into_iter()
-            .find(|format| extension.eq_ignore_ascii_case(format.extension()))
-    }
-
-    /// The extension HiGHS reads the format by, without its dot.
-    #[must_use]
-    pub const fn extension(self) -> &'static str {
-        match self {
-            Self::Mps => "mps",
-            Self::Lp => "lp",
-        }
-    }
-}
-
-/// `MPS` or `LP`.
-impl fmt::Display for ModelFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Mps => "MPS",
-            Self::Lp => "LP",
-        })
-    }
-}
+use crate::{FileError, ModelFormat};
 
 /// Reads the model file at `path` in the format its extension names.
 ///
@@ -111,15 +59,16 @@ pub fn read(path: impl AsRef<Path>) -> Result<Program, FileError> {
 /// # Errors
 ///
 /// [`FileError::Path`] for a path HiGHS cannot take, [`FileError::Io`] when the file cannot be read,
-/// [`FileError::Read`] when HiGHS cannot parse it; [`FileError::ColumnBounds`], [`FileError::RowBounds`],
+/// [`FileError::Read`] when HiGHS cannot parse it; [`FileError::ColBounds`], [`FileError::RowBounds`],
 /// [`FileError::VarType`] or [`FileError::Program`] when its content is no valid program, such as a non-convex
-/// quadratic objective.
+/// quadratic objective; [`FileError::Highs`] holding [`HighsError::Unlisted`](crate::HighsError::Unlisted) when
+/// HiGHS returns a status it does not define.
 pub fn read_as(path: impl AsRef<Path>, format: ModelFormat) -> Result<Program, FileError> {
     let path = path.as_ref();
     let staged = Staged::to_read(path, format)?;
     let length = fs::metadata(staged.path()).map_err(|e| FileError::io(path, &e))?.len();
     let mut instance = Instance::new();
-    if instance.read_model(&c_path(staged.path())?) == CallStatus::Error {
+    if !instance.read_model(&c_path(staged.path())?).map_err(FileError::Highs)? {
         return Err(FileError::Read {
             path: path.to_owned(),
             format,
@@ -139,8 +88,8 @@ pub fn read_as(path: impl AsRef<Path>, format: ModelFormat) -> Result<Program, F
     // holds.
     let (col_names, row_names) = unsafe {
         (
-            names(&instance, Line::Col, model.costs.len(), &mut buffer),
-            names(&instance, Line::Row, model.row_lower.len(), &mut buffer),
+            names(&instance, Line::Col, model.costs.len(), &mut buffer).map_err(FileError::Highs)?,
+            names(&instance, Line::Row, model.row_lower.len(), &mut buffer).map_err(FileError::Highs)?,
         )
     };
     program_of(&model, col_names, row_names)
@@ -168,9 +117,10 @@ pub fn write(program: &Program, path: impl AsRef<Path>) -> Result<(), FileError>
 ///
 /// # Errors
 ///
-/// [`FileError::Unsupported`] for a program with further objectives, which neither format, as HiGHS writes it,
+/// [`FileError::UnsupportedFeature`] for a program with further objectives, which neither format, as HiGHS writes it,
 /// keeps; [`FileError::Name`] for a name holding a NUL byte;
-/// [`FileError::Highs`] when HiGHS refuses the program, [`FileError::Path`] for a path HiGHS cannot take,
+/// [`FileError::Highs`] when HiGHS refuses the program or returns a status it does not define,
+/// [`FileError::Path`] for a path HiGHS cannot take,
 /// [`FileError::Write`] when HiGHS cannot write the file and [`FileError::Io`] when the file cannot be moved into
 /// place.
 pub fn write_as(program: &Program, path: impl AsRef<Path>, format: ModelFormat) -> Result<(), FileError> {
@@ -180,7 +130,10 @@ pub fn write_as(program: &Program, path: impl AsRef<Path>, format: ModelFormat) 
     instance.pass(program, Padding::Exact).map_err(FileError::Highs)?;
     pass_names(&mut instance, program)?;
     let staged = Staged::to_write(path, format);
-    if instance.write_model(&c_path(staged.path())?) == CallStatus::Error {
+    if !instance
+        .write_model(&c_path(staged.path())?)
+        .map_err(FileError::Highs)?
+    {
         return Err(FileError::Write {
             path: path.to_owned(),
             format,
@@ -193,10 +146,10 @@ pub fn write_as(program: &Program, path: impl AsRef<Path>, format: ModelFormat) 
 ///
 /// # Errors
 ///
-/// [`FileError::Unsupported`] as [`write_as`] states.
+/// [`FileError::UnsupportedFeature`] as [`write_as`] states.
 fn writable(program: &Program, format: ModelFormat) -> Result<(), FileError> {
     if program.objectives().are_several() {
-        return Err(FileError::Unsupported {
+        return Err(FileError::UnsupportedFeature {
             format,
             feature: ProgramFeature::MultipleObjectives,
         });
@@ -231,7 +184,16 @@ fn pass_names(instance: &mut Instance, program: &Program) -> Result<(), FileErro
 /// # Safety
 ///
 /// Every name of the model `instance` holds is shorter than `buffer`.
-unsafe fn names(instance: &Instance, line: Line, count: usize, buffer: &mut [u8]) -> Vec<Option<String>> {
+///
+/// # Errors
+///
+/// [`HighsError::Unlisted`](crate::HighsError::Unlisted) when HiGHS returns no `kHighsStatus*` value.
+unsafe fn names(
+    instance: &Instance,
+    line: Line,
+    count: usize,
+    buffer: &mut [u8],
+) -> Result<Vec<Option<String>>, crate::HighsError> {
     (0..count)
         .map(|i| {
             // A count of the model HiGHS holds fits its index type.
@@ -246,7 +208,7 @@ unsafe fn names(instance: &Instance, line: Line, count: usize, buffer: &mut [u8]
 ///
 /// # Errors
 ///
-/// [`FileError::ColumnBounds`], [`FileError::RowBounds`], [`FileError::VarType`] or [`FileError::Program`].
+/// [`FileError::ColBounds`], [`FileError::RowBounds`], [`FileError::VarType`] or [`FileError::Program`].
 pub(crate) fn program_of(
     model: &RawModel,
     col_names: Vec<Option<String>>,
@@ -272,7 +234,7 @@ pub(crate) fn program_of(
 ///
 /// # Errors
 ///
-/// [`FileError::ColumnBounds`] or [`FileError::VarType`] for the first column at fault.
+/// [`FileError::ColBounds`] or [`FileError::VarType`] for the first column at fault.
 fn columns_of(model: &RawModel, names: Vec<Option<String>>) -> Result<TiVec<Col, ProgramColumn>, FileError> {
     let parts = model
         .costs
@@ -285,7 +247,7 @@ fn columns_of(model: &RawModel, names: Vec<Option<String>>) -> Result<TiVec<Col,
         .enumerate()
         .map(|(i, ((((&cost, &lower), &upper), &raw), name))| {
             let col = Col::new(i);
-            let bounds = Bounds::new(lower, upper).map_err(|source| FileError::ColumnBounds { col, source })?;
+            let bounds = Bounds::new(lower, upper).map_err(|source| FileError::ColBounds { col, source })?;
             let integrality = integrality_of(raw).ok_or(FileError::VarType { col, raw })?;
             Ok(ProgramColumn {
                 cost,
@@ -442,124 +404,6 @@ impl Drop for Staged {
         if self.temporary {
             // A temporary file that cannot be removed is left behind; the read or write it served is unaffected.
             let _ = fs::remove_file(&self.path);
-        }
-    }
-}
-
-/// Why a model file could not be read or written.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum FileError {
-    /// The path's extension names no format: neither `.mps` nor `.lp`.
-    Extension {
-        /// The path.
-        path: PathBuf,
-    },
-    /// The path is not UTF-8 or holds a NUL byte, so HiGHS cannot take it.
-    Path {
-        /// The path.
-        path: PathBuf,
-    },
-    /// The file system failed on the path.
-    Io {
-        /// The path.
-        path: PathBuf,
-        /// What failed.
-        kind: io::ErrorKind,
-    },
-    /// HiGHS could not read the file in the format: it is missing, unreadable or does not parse.
-    Read {
-        /// The path.
-        path: PathBuf,
-        /// The format it was read in.
-        format: ModelFormat,
-    },
-    /// HiGHS could not write the file.
-    Write {
-        /// The path.
-        path: PathBuf,
-        /// The format it was written in.
-        format: ModelFormat,
-    },
-    /// A column's bounds in the file are no interval.
-    ColumnBounds {
-        /// The column, in the order HiGHS read them.
-        col: Col,
-        /// What is wrong with its bounds.
-        source: InvalidBounds,
-    },
-    /// A row's bounds in the file are no interval.
-    RowBounds {
-        /// The row, in the order HiGHS read them.
-        row: Row,
-        /// What is wrong with its bounds.
-        source: InvalidBounds,
-    },
-    /// A column has a HiGHS variable type culmen has no [`Integrality`] for.
-    VarType {
-        /// The column, in the order HiGHS read them.
-        col: Col,
-        /// HiGHS's variable type.
-        raw: HighsInt,
-    },
-    /// The file's content fails a program's checks.
-    Program(ProgramError),
-    /// The format, as HiGHS writes it, loses a feature the program uses.
-    Unsupported {
-        /// The format.
-        format: ModelFormat,
-        /// The feature it loses.
-        feature: ProgramFeature,
-    },
-    /// A name holds a NUL byte, which HiGHS's C strings cannot carry.
-    Name {
-        /// The name.
-        name: String,
-    },
-    /// HiGHS refused the program.
-    Highs(HighsError),
-}
-
-impl FileError {
-    /// The error of an I/O failure on `path`.
-    fn io(path: &Path, error: &io::Error) -> Self {
-        Self::Io {
-            path: path.to_owned(),
-            kind: error.kind(),
-        }
-    }
-}
-
-impl fmt::Display for FileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Extension { path } => write!(f, "model file: {} names no format", path.display()),
-            Self::Path { path } => write!(f, "model file: HiGHS cannot take the path {}", path.display()),
-            Self::Io { path, kind } => write!(f, "model file: {} failed: {kind}", path.display()),
-            Self::Read { path, format } => write!(f, "model file: HiGHS could not read {} as {format}", path.display()),
-            Self::Write { path, format } => {
-                write!(f, "model file: HiGHS could not write {} as {format}", path.display())
-            }
-            Self::ColumnBounds { col, source } => write!(f, "model file: {col:?} has invalid bounds: {source}"),
-            Self::RowBounds { row, source } => write!(f, "model file: {row:?} has invalid bounds: {source}"),
-            Self::VarType { col, raw } => write!(f, "model file: {col:?} has the unknown variable type {raw}"),
-            Self::Program(error) => write!(f, "model file: the content is no valid program: {error}"),
-            Self::Unsupported { format, feature } => {
-                write!(f, "model file: HiGHS's {format} writer loses {feature}")
-            }
-            Self::Name { name } => write!(f, "model file: the name {name:?} holds a NUL byte"),
-            Self::Highs(error) => write!(f, "model file: {error}"),
-        }
-    }
-}
-
-impl core::error::Error for FileError {
-    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-        match self {
-            Self::ColumnBounds { source, .. } | Self::RowBounds { source, .. } => Some(source),
-            Self::Program(error) => Some(error),
-            Self::Highs(error) => Some(error),
-            _ => None,
         }
     }
 }

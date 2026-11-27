@@ -12,18 +12,16 @@ use serde::{Deserialize, Serialize};
 /// a quadratic part. Its constraints are linear in every class.
 ///
 /// [`Program::class`](super::Program::class) computes it, and a backend declares the classes it solves in
-/// [`Backend::CLASSES`](crate::Backend::CLASSES). The enum is non-exhaustive: a class of quadratic constraints
-/// would be a new variant, and a backend that does not declare it refuses it.
+/// [`Backend::CLASSES`](crate::Backend::CLASSES).
 ///
 /// ```
 /// use culmen_core::ModelClass;
 /// assert_eq!(ModelClass::Miqp.to_string(), "MIQP");
-/// assert!(ModelClass::Miqp.is_integer() && ModelClass::Miqp.is_quadratic());
-/// assert!(!ModelClass::Lp.is_integer() && !ModelClass::Lp.is_quadratic());
+/// assert!(ModelClass::Miqp.is_discrete() && ModelClass::Miqp.is_quadratic());
+/// assert!(!ModelClass::Lp.is_discrete() && !ModelClass::Lp.is_quadratic());
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum ModelClass {
     /// A linear program: continuous columns, a linear objective.
     Lp,
@@ -39,9 +37,10 @@ impl ModelClass {
     /// Every class, in the order of their bits in [`ModelClasses`].
     const ALL: [Self; 4] = [Self::Lp, Self::Milp, Self::Qp, Self::Miqp];
 
-    /// Whether the class has integer columns.
+    /// Whether the class has discrete columns: integer, semi-continuous or semi-integer ones, whose values are not
+    /// one interval.
     #[must_use]
-    pub const fn is_integer(self) -> bool {
+    pub const fn is_discrete(self) -> bool {
         matches!(self, Self::Milp | Self::Miqp)
     }
 
@@ -85,7 +84,7 @@ impl fmt::Display for ModelClass {
 /// A set of [`ModelClass`]es: what a [`Backend`](crate::Backend) solves ([`Backend::CLASSES`]).
 ///
 /// [`Solver::new`](crate::Solver::new) loads a [`Program`](super::Program) only into a backend whose set contains its
-/// class, and refuses any other with [`LoadError::Unsupported`](crate::LoadError::Unsupported).
+/// class, and refuses any other with [`LoadError::UnsupportedClass`](crate::LoadError::UnsupportedClass).
 ///
 /// [`Backend::CLASSES`]: crate::Backend::CLASSES
 ///
@@ -93,7 +92,7 @@ impl fmt::Display for ModelClass {
 /// use culmen_core::{ModelClass, ModelClasses};
 ///
 /// const LINEAR: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]);
-/// let classes = LINEAR | ModelClass::Qp.into();
+/// let classes = LINEAR | ModelClass::Qp;
 /// assert!(classes.contains(ModelClass::Qp));
 /// assert!(!classes.contains(ModelClass::Miqp));
 /// assert_eq!(classes & LINEAR, LINEAR);

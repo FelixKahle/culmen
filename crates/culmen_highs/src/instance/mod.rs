@@ -21,15 +21,16 @@ use culmen_core::{
     Weight,
 };
 use highs_sys::{
-    Highs_clearLinearObjectives, Highs_getColName, Highs_getDoubleInfoValue, Highs_getHessianNumNz,
-    Highs_getInt64InfoValue, Highs_getIntInfoValue, Highs_getIntOptionValue, Highs_getModel, Highs_getModelStatus,
-    Highs_getNumCol, Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName, Highs_getSolution, Highs_passColName,
-    Highs_passLinearObjectives, Highs_passModel, Highs_passRowName, Highs_readModel, Highs_resetOptions, Highs_run,
-    Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue, Highs_setIntOptionValue,
-    Highs_setSparseSolution, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_writeModel,
-    Highs_zeroAllClocks, HighsCCallbackType, HighsInt, kHighsHessianFormatTriangular, kHighsMatrixFormatRowwise,
-    kHighsObjSenseMaximize, kHighsObjSenseMinimize, kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger,
-    kHighsVarTypeSemiContinuous, kHighsVarTypeSemiInteger,
+    Highs_clearLinearObjectives, Highs_getBoolOptionValue, Highs_getColName, Highs_getDoubleInfoValue,
+    Highs_getHessianNumNz, Highs_getInt64InfoValue, Highs_getIntInfoValue, Highs_getIntOptionValue, Highs_getModel,
+    Highs_getModelStatus, Highs_getNumCol, Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName,
+    Highs_getSolution, Highs_passColName, Highs_passLinearObjectives, Highs_passModel, Highs_passRowName,
+    Highs_readModel, Highs_resetOptions, Highs_run, Highs_setBoolOptionValue, Highs_setCallback,
+    Highs_setDoubleOptionValue, Highs_setIntOptionValue, Highs_setSparseSolution, Highs_setStringOptionValue,
+    Highs_startCallback, Highs_stopCallback, Highs_writeModel, Highs_zeroAllClocks, HighsCCallbackType, HighsInt,
+    kHighsHessianFormatTriangular, kHighsMatrixFormatRowwise, kHighsObjSenseMaximize, kHighsObjSenseMinimize,
+    kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger, kHighsVarTypeSemiContinuous,
+    kHighsVarTypeSemiInteger,
 };
 
 pub(crate) use analysis::{Penalties, RangingRecord, RawIis};
@@ -78,6 +79,7 @@ impl Instance {
     ///
     /// [`HighsError::TooLarge`] when a count exceeds HiGHS's 32-bit indices, [`HighsError::Load`] when HiGHS
     /// refuses the program.
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
     pub(crate) fn pass(&mut self, program: &Program, padding: Padding) -> Result<(), HighsError> {
         let arrays = Arrays::of(program, padding);
         let counts = Counts::of(program, &arrays)?;
@@ -90,16 +92,16 @@ impl Instance {
             hessian.agrees_with(program) && hessian.values.len() == program.quadratic().len(),
             "Instance: the Hessian passed to HiGHS does not match the program's quadratic part"
         );
-        match CallStatus::from_raw(self.pass_model(program, &arrays, &hessian, &counts)) {
-            CallStatus::Error => Err(HighsError::Load),
-            CallStatus::Ok | CallStatus::Warning => Ok(()),
-        }
+        let status = self.pass_model(program, &arrays, &hessian, &counts);
+        CallStatus::succeeded(status, "Highs_passModel")?
+            .then_some(())
+            .ok_or(HighsError::Load)
     }
 
     /// Hands HiGHS the model the arrays describe and returns `Highs_passModel`'s status; `arrays`, `hessian` and
     /// `counts` are those of `program`.
     fn pass_model(&mut self, program: &Program, a: &Arrays, q: &Hessian, counts: &Counts) -> HighsInt {
-        let integrality = if program.is_mip() {
+        let integrality = if program.class().is_discrete() {
             a.integrality.as_ptr()
         } else {
             ptr::null()
@@ -151,21 +153,31 @@ impl Instance {
     /// # Errors
     ///
     /// [`HighsError::OptionName`] when the name holds a NUL byte, [`HighsError::OptionString`] when a string value
-    /// does, [`HighsError::Option`] when HiGHS refuses the option: an unknown name, a value of the wrong kind or out
+    /// does, [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value, [`HighsError::Option`] when HiGHS
+    /// refuses the option: an unknown name, a value of the wrong kind or out
     /// of range.
     pub(crate) fn set_option(&mut self, name: &str, value: &OptionValue) -> Result<(), HighsError> {
         let c_name = CString::new(name).map_err(|_| HighsError::OptionName { name: name.to_owned() })?;
         let raw = self.raw();
         let name_ptr = c_name.as_ptr();
         debug_assert!(!raw.is_null(), "Instance: the HiGHS instance is null");
-        let status = match value {
+        let (status, call) = match value {
             // SAFETY: the instance is live and borrowed exclusively, the name a NUL-terminated string HiGHS reads
             // during the call.
-            OptionValue::Bool(v) => unsafe { Highs_setBoolOptionValue(raw, name_ptr, HighsInt::from(*v)) },
+            OptionValue::Bool(v) => (
+                unsafe { Highs_setBoolOptionValue(raw, name_ptr, HighsInt::from(*v)) },
+                "Highs_setBoolOptionValue",
+            ),
             // SAFETY: as above.
-            OptionValue::Int(v) => unsafe { Highs_setIntOptionValue(raw, name_ptr, *v) },
+            OptionValue::Int(v) => (
+                unsafe { Highs_setIntOptionValue(raw, name_ptr, *v) },
+                "Highs_setIntOptionValue",
+            ),
             // SAFETY: as above.
-            OptionValue::Double(v) => unsafe { Highs_setDoubleOptionValue(raw, name_ptr, *v) },
+            OptionValue::Double(v) => (
+                unsafe { Highs_setDoubleOptionValue(raw, name_ptr, *v) },
+                "Highs_setDoubleOptionValue",
+            ),
             OptionValue::String(v) => {
                 let c_value =
                     CString::new(v.as_str()).map_err(|_| HighsError::OptionString { name: name.to_owned() })?;
@@ -174,10 +186,11 @@ impl Instance {
                     "Instance: the option value holds a NUL byte"
                 );
                 // SAFETY: as above, and the value is a NUL-terminated string HiGHS copies during the call.
-                unsafe { Highs_setStringOptionValue(raw, name_ptr, c_value.as_ptr()) }
+                let status = unsafe { Highs_setStringOptionValue(raw, name_ptr, c_value.as_ptr()) };
+                (status, "Highs_setStringOptionValue")
             }
         };
-        if status == kHighsStatusError {
+        if !CallStatus::succeeded(status, call)? {
             return Err(HighsError::Option {
                 name: name.to_owned(),
                 value: value.clone(),
@@ -229,19 +242,27 @@ impl Instance {
     }
 
     /// Runs HiGHS on the loaded model.
-    pub(crate) fn run(&mut self) -> CallStatus {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when `Highs_run` returns no `kHighsStatus*` value.
+    pub(crate) fn run(&mut self) -> Result<CallStatus, HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         let _run = RunGuard::enter();
         // SAFETY: the instance is live and borrowed exclusively. Any callback it calls was installed by `hook`,
         // whose caller keeps the callback's data alive for the run.
-        CallStatus::from_raw(unsafe { Highs_run(self.raw()) })
+        CallStatus::from_raw(unsafe { Highs_run(self.raw()) }, "Highs_run")
     }
 
     /// The model status of the last run.
-    pub(crate) fn model_status(&self) -> ModelStatus {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS reports no `kHighsModelStatus*` value.
+    pub(crate) fn model_status(&self) -> Result<ModelStatus, HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live.
-        ModelStatus::from_raw(unsafe { Highs_getModelStatus(self.raw()) })
+        ModelStatus::from_raw(unsafe { Highs_getModelStatus(self.raw()) }, "Highs_getModelStatus")
     }
 
     /// The objective value of the last run's solution, offset included.
@@ -252,45 +273,79 @@ impl Instance {
     }
 
     /// An integer info value, `None` when HiGHS does not know the name or has no valid info.
-    pub(crate) fn info_int(&self, name: &CStr) -> Option<i32> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn info_int(&self, name: &CStr) -> Result<Option<i32>, HighsError> {
         let mut value: HighsInt = 0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
         let status = unsafe { Highs_getIntInfoValue(self.raw(), name.as_ptr(), &raw mut value) };
-        (status != kHighsStatusError).then_some(value)
+        Ok(CallStatus::succeeded(status, "Highs_getIntInfoValue")?.then_some(value))
     }
 
     /// The value of an integer option as HiGHS holds it, `None` when HiGHS does not know the name or it is not an
     /// integer option.
-    pub(crate) fn option_int(&self, name: &CStr) -> Option<i32> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn option_int(&self, name: &CStr) -> Result<Option<i32>, HighsError> {
         let mut value: HighsInt = 0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
         let status = unsafe { Highs_getIntOptionValue(self.raw(), name.as_ptr(), &raw mut value) };
-        (status != kHighsStatusError).then_some(value)
+        Ok(CallStatus::succeeded(status, "Highs_getIntOptionValue")?.then_some(value))
+    }
+
+    /// The value of a `bool` option as HiGHS holds it, `None` when HiGHS does not know the name or it is not a `bool`
+    /// option.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn option_bool(&self, name: &CStr) -> Result<Option<bool>, HighsError> {
+        let mut value: HighsInt = 0;
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
+        let status = unsafe { Highs_getBoolOptionValue(self.raw(), name.as_ptr(), &raw mut value) };
+        Ok(CallStatus::succeeded(status, "Highs_getBoolOptionValue")?.then_some(value != 0))
     }
 
     /// A 64-bit integer info value, `None` when HiGHS does not know the name or has no valid info.
-    pub(crate) fn info_i64(&self, name: &CStr) -> Option<i64> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn info_i64(&self, name: &CStr) -> Result<Option<i64>, HighsError> {
         let mut value: i64 = 0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one 64-bit integer to write.
         let status = unsafe { Highs_getInt64InfoValue(self.raw(), name.as_ptr(), &raw mut value) };
-        (status != kHighsStatusError).then_some(value)
+        Ok(CallStatus::succeeded(status, "Highs_getInt64InfoValue")?.then_some(value))
     }
 
     /// A floating-point info value, `None` when HiGHS does not know the name or has no valid info.
-    pub(crate) fn info_double(&self, name: &CStr) -> Option<f64> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn info_double(&self, name: &CStr) -> Result<Option<f64>, HighsError> {
         let mut value = 0.0;
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one double to write.
         let status = unsafe { Highs_getDoubleInfoValue(self.raw(), name.as_ptr(), &raw mut value) };
-        (status != kHighsStatusError).then_some(value)
+        Ok(CallStatus::succeeded(status, "Highs_getDoubleInfoValue")?.then_some(value))
     }
 
     /// The column values of the last run's primal solution, one per column of the loaded model with `num_cols`
     /// columns; `None` when HiGHS holds no primal solution.
-    pub(crate) fn primal_values(&self, num_cols: usize) -> Option<Vec<f64>> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) fn primal_values(&self, num_cols: usize) -> Result<Option<Vec<f64>>, HighsError> {
         let mut values = vec![0.0; num_cols];
         debug_assert_eq!(
             self.num_col(),
@@ -310,7 +365,7 @@ impl Instance {
             )
         };
         // HiGHS refuses the call, and leaves `values` unwritten, when its primal solution status is none.
-        (status != kHighsStatusError).then_some(values)
+        Ok(CallStatus::succeeded(status, "Highs_getSolution")?.then_some(values))
     }
 }
 
@@ -325,6 +380,7 @@ impl Instance {
     ///
     /// [`HighsError::TooLarge`] when the objectives' coefficients exceed HiGHS's 32-bit indices,
     /// [`HighsError::Load`] when HiGHS refuses them.
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
     pub(crate) fn pass_objectives(&mut self, program: &Program) -> Result<(), HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively.
@@ -354,10 +410,9 @@ impl Instance {
                 o.priorities.as_ptr(),
             )
         };
-        match CallStatus::from_raw(status) {
-            CallStatus::Error => Err(HighsError::Load),
-            CallStatus::Ok | CallStatus::Warning => Ok(()),
-        }
+        CallStatus::succeeded(status, "Highs_passLinearObjectives")?
+            .then_some(())
+            .ok_or(HighsError::Load)
     }
 
     /// Hands HiGHS `entries`, each a column of its model at most once, as the solution the next run starts from;
@@ -367,6 +422,7 @@ impl Instance {
     ///
     /// [`HighsError::TooLarge`] when a column or the number of entries exceeds HiGHS's 32-bit indices,
     /// [`HighsError::Start`] when HiGHS refuses the solution.
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
     pub(crate) fn set_solution(&mut self, entries: StartEntries<'_>) -> Result<(), HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         let mut indices = Vec::with_capacity(entries.size_hint().0);
@@ -390,10 +446,9 @@ impl Instance {
         // SAFETY: the instance is live and borrowed exclusively. `indices` and `values` hold `count` entries each,
         // which is what HiGHS reads; it copies them and checks each index against its model.
         let status = unsafe { Highs_setSparseSolution(self.raw(), count, indices.as_ptr(), values.as_ptr()) };
-        match CallStatus::from_raw(status) {
-            CallStatus::Error => Err(HighsError::Start),
-            CallStatus::Ok | CallStatus::Warning => Ok(()),
-        }
+        CallStatus::succeeded(status, "Highs_setSparseSolution")?
+            .then_some(())
+            .ok_or(HighsError::Start)
     }
 }
 
@@ -503,20 +558,32 @@ fn dense(objective: &LinearObjective, num_cols: usize) -> Vec<f64> {
 /// Model files: HiGHS's readers and writers, and the model and names HiGHS holds.
 impl Instance {
     /// Reads the model file at `path` into HiGHS, replacing any model before; HiGHS picks the reader by the
-    /// extension, `.mps` or `.lp`.
-    pub(crate) fn read_model(&mut self, path: &CStr) -> CallStatus {
+    /// extension, `.mps` or `.lp`; whether HiGHS read it.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when `Highs_readModel` returns no `kHighsStatus*` value.
+    pub(crate) fn read_model(&mut self, path: &CStr) -> Result<bool, HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads
         // during the call.
-        CallStatus::from_raw(unsafe { Highs_readModel(self.raw(), path.as_ptr()) })
+        CallStatus::succeeded(unsafe { Highs_readModel(self.raw(), path.as_ptr()) }, "Highs_readModel")
     }
 
     /// Writes the model HiGHS holds to the file at `path`; HiGHS picks the writer by the extension, `.mps` or `.lp`.
-    pub(crate) fn write_model(&mut self, path: &CStr) -> CallStatus {
+    /// Whether HiGHS wrote it.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when `Highs_writeModel` returns no `kHighsStatus*` value.
+    pub(crate) fn write_model(&mut self, path: &CStr) -> Result<bool, HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         // SAFETY: the instance is live and borrowed exclusively, and the path a NUL-terminated string HiGHS reads
         // during the call.
-        CallStatus::from_raw(unsafe { Highs_writeModel(self.raw(), path.as_ptr()) })
+        CallStatus::succeeded(
+            unsafe { Highs_writeModel(self.raw(), path.as_ptr()) },
+            "Highs_writeModel",
+        )
     }
 
     /// Names a column or a row of the model HiGHS holds.
@@ -524,6 +591,7 @@ impl Instance {
     /// # Errors
     ///
     /// [`HighsError::Load`] when HiGHS refuses the name.
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
     pub(crate) fn pass_name(&mut self, line: Line, index: HighsInt, name: &CStr) -> Result<(), HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
@@ -532,16 +600,15 @@ impl Instance {
         );
         // SAFETY: the instance is live and borrowed exclusively, `index` a line of its model, and the name a
         // NUL-terminated string HiGHS copies during the call.
-        let status = unsafe {
+        let (status, call) = unsafe {
             match line {
-                Line::Col => Highs_passColName(self.raw(), index, name.as_ptr()),
-                Line::Row => Highs_passRowName(self.raw(), index, name.as_ptr()),
+                Line::Col => (Highs_passColName(self.raw(), index, name.as_ptr()), "Highs_passColName"),
+                Line::Row => (Highs_passRowName(self.raw(), index, name.as_ptr()), "Highs_passRowName"),
             }
         };
-        match CallStatus::from_raw(status) {
-            CallStatus::Error => Err(HighsError::Load),
-            CallStatus::Ok | CallStatus::Warning => Ok(()),
-        }
+        CallStatus::succeeded(status, call)?
+            .then_some(())
+            .ok_or(HighsError::Load)
     }
 
     /// The name of a column or a row of the model HiGHS holds, read through `buffer`; `None` when HiGHS has none.
@@ -550,7 +617,16 @@ impl Instance {
     ///
     /// Every name of the model HiGHS holds is shorter than `buffer`: HiGHS copies the name with its terminating NUL
     /// into the buffer without a bound.
-    pub(crate) unsafe fn name(&self, line: Line, index: HighsInt, buffer: &mut [u8]) -> Option<String> {
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Unlisted`] when HiGHS returns no `kHighsStatus*` value.
+    pub(crate) unsafe fn name(
+        &self,
+        line: Line,
+        index: HighsInt,
+        buffer: &mut [u8],
+    ) -> Result<Option<String>, HighsError> {
         debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
         debug_assert!(
             usize::try_from(index).is_ok_and(|i| i < self.count(line)),
@@ -560,17 +636,17 @@ impl Instance {
         let out: *mut c_char = buffer.as_mut_ptr().cast();
         // SAFETY: the instance is live, `index` a line of its model, and the caller vouches that the name and its NUL
         // fit `buffer`, which HiGHS writes during the call.
-        let status = unsafe {
+        let (status, call) = unsafe {
             match line {
-                Line::Col => Highs_getColName(self.raw(), index, out),
-                Line::Row => Highs_getRowName(self.raw(), index, out),
+                Line::Col => (Highs_getColName(self.raw(), index, out), "Highs_getColName"),
+                Line::Row => (Highs_getRowName(self.raw(), index, out), "Highs_getRowName"),
             }
         };
-        if status == kHighsStatusError {
-            return None;
+        if !CallStatus::succeeded(status, call)? {
+            return Ok(None);
         }
-        let name = CStr::from_bytes_until_nul(buffer).ok()?.to_string_lossy().into_owned();
-        (!name.is_empty()).then_some(name)
+        let name = CStr::from_bytes_until_nul(buffer).map(|name| name.to_string_lossy().into_owned());
+        Ok(name.ok().filter(|name| !name.is_empty()))
     }
 
     /// The number of columns or rows of the model HiGHS holds.
@@ -911,7 +987,7 @@ impl Counts {
 }
 
 /// HiGHS's number for an objective sense.
-const fn objective_sense(sense: Sense) -> HighsInt {
+pub(crate) const fn objective_sense(sense: Sense) -> HighsInt {
     match sense {
         Sense::Minimize => kHighsObjSenseMinimize,
         Sense::Maximize => kHighsObjSenseMaximize,

@@ -2,7 +2,7 @@
 
 `culmen_highs` is the HiGHS backend: HiGHS 1.16 through the `highs-sys` crate, with every HiGHS callback as a typed,
 safe context, HiGHS's commonly used options as typed fields, and every HiGHS status. With the default `highs` feature
-it is `culmen::highs`, and its backend type is also `culmen::Highs` and in the prelude.
+it is `culmen::highs`, and its backend type `culmen::highs::Highs` is also in the prelude.
 
 ## The backend
 
@@ -12,8 +12,9 @@ it is `culmen::highs`, and its backend type is also `culmen::Highs` and in the p
 |---|---|
 | `Highs::new()` | A backend with HiGHS's default options. |
 | `Highs::with_options(options)` | A backend with the given `HighsOptions`. |
-| `highs.options()`, `highs.options_mut()` | The options, to read or to change between solves. |
-| `Highs::EVENTS` | `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`, `HEURISTIC` and `NATIVE`. |
+| `options()`, `options_mut()` (`Configurable`, `Options = HighsOptions`) | The options, to read or to change between solves; `solver.options_mut()` reaches them through a `Solver`. |
+| `Highs::EVENTS` | Every observational event: `Log`, `Progress`, `Poll`, `Feasible`, `Incumbent` and `Native`. |
+| Search capabilities | `Heuristics` alone ([Heuristic solutions](#heuristic-solutions)); no `LazyConstraints`, `UserCuts` or `Prices` ([Limitations](#limitations)). |
 | `Highs::CLASSES` | `Lp`, `Milp` and `Qp`; see [Quadratic programs](#quadratic-programs). |
 | `culmen_highs::version()` | The version of the linked HiGHS; it displays as `1.16.x`. |
 
@@ -22,16 +23,13 @@ crate and needs no system install. The `Highs` backend is `Send` and can be move
 there ([Threads](#threads)).
 
 ```rust
-use std::time::Duration;
-
 use culmen::prelude::*;
 use culmen::highs::{HighsOptions, LpSolver, Switch};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = HighsOptions {
-        presolve: Some(Switch::Off),
+        parallel: Some(Switch::Off),
         mip_heuristic_effort: Some(0.2),
-        time_limit: Some(Duration::from_secs(10)),
         ..HighsOptions::default()
     };
 
@@ -42,11 +40,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(3.0 * x + 2.0 * y);
 
     let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
-    let first = solver.solve(Request::new())?;
+    let first = solver.solve()?;
 
     // The options belong to the backend; change them between solves.
-    solver.backend_mut().options_mut().solver = Some(LpSolver::Simplex);
-    let second = solver.solve(Request::new())?;
+    solver.options_mut().solver = Some(LpSolver::Simplex);
+    let second = solver.solve()?;
     assert_eq!(first.outcome.objective().map(f64::round), Some(13.0));
     assert_eq!(second.outcome.objective().map(f64::round), Some(13.0));
     Ok(())
@@ -56,25 +54,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Options
 
 `HighsOptions` is plain data. Each documented HiGHS option is a field named as HiGHS names it, `None` for HiGHS's
-default: `presolve`, `presolve_mode`, `solver`, `parallel`, `run_crossover`, `time_limit`, `ranging`, the tolerances
-(`primal_feasibility_tolerance`, `dual_feasibility_tolerance`, `optimality_tolerance`, `kkt_tolerance`, …),
-`objective_bound` and `objective_target`, `random_seed`, `threads`, the simplex options (`simplex_strategy`,
-`simplex_scale_strategy`, the edge weights, the iteration and update limits), the logging options (`output_flag`,
-`log_to_console`, `log_file`), the MIP options (`mip_rel_gap`, `mip_abs_gap`, the node, leaf, stall and solution
-limits, the cut-pool limits, `mip_heuristic_effort` and each heuristic's switch, `mip_feasibility_tolerance`,
-`mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and tolerances, the active-set QP solver's
-`qp_iteration_limit` and `qp_nullspace_limit`, `solve_relaxation`, `allow_unbounded_or_infeasible` and
-`presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field. A `u64` field is a limit, and one beyond
-HiGHS's integers is HiGHS's largest integer, its "no limit"; a `u32` field is an exact integer, such as `random_seed`
-or `threads`, and one beyond HiGHS's integers is refused.
+default: `presolve_mode`, `solver`, `parallel`, `run_crossover`, `ranging`, the tolerances
+(`optimality_tolerance`, `kkt_tolerance`, the residual tolerances, …),
+`objective_bound` and `objective_target`, the simplex options (`simplex_strategy`, `simplex_scale_strategy`, the edge
+weights, the iteration and update limits, `simplex_max_concurrency`), the logging options (`output_flag`, `log_file`),
+the MIP options (the leaf and stall limits, the cut-pool limits, `mip_heuristic_effort` and each heuristic's switch,
+`mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and
+tolerances, the active-set QP solver's `qp_iteration_limit` and `qp_nullspace_limit`, `allow_unbounded_or_infeasible`
+and `presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field. A `u64` field is a limit, and one
+beyond HiGHS's integers is HiGHS's largest integer, its "no limit"; a `u32` field is an exact integer, such as
+`simplex_max_concurrency`, and one beyond HiGHS's integers is refused.
 
-A field whose HiGHS option takes one of a few values is an enum:
+What [`Settings`](solving.md#settings) types has no field: the time limit, the gaps, the feasibility and optimality
+tolerances (`primal_feasibility_tolerance`, `mip_feasibility_tolerance`, `dual_feasibility_tolerance`), the thread
+count, the seed, presolve, the node and solution limits and the console are set per solve, with the invariants their types hold. A
+standing value across solves is an option by name, such as `.option("presolve", "off")` or
+`.option("time_limit", 30.0)`, which holds for every solve whose settings leave it unset.
+
+A switch HiGHS takes as `"on"` or `"off"`, as `ranging`, is a `bool`. A field whose HiGHS option takes one of a
+few values is an enum:
 
 | Type | Variants | Options |
 |---|---|---|
-| `Switch` | `Off`, `Choose`, `On` | `presolve`, `parallel`, `run_crossover` |
+| `Switch` | `Off`, `Choose`, `On` | `parallel`, `run_crossover` |
 | `PresolveMode` | `Choose`, `InitialSweep`, `Light`, `Full` | `presolve_mode` |
-| `OnOff` | `Off`, `On` | `ranging` |
 | `LpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo`, `Pdlp`, `Hipdlp`, `QpAsm` | `solver` |
 | `MipLpSolver` | `Choose`, `Simplex`, `Ipm`, `Ipx`, `Hipo` | `mip_lp_solver` |
 | `MipIpmSolver` | `Choose`, `Ipm`, `Ipx`, `Hipo` | `mip_ipm_solver` |
@@ -83,10 +86,13 @@ A field whose HiGHS option takes one of a few values is an enum:
 | `EdgeWeight` | `Choose`, `Dantzig`, `Devex`, `SteepestEdge` | `simplex_dual_edge_weight_strategy`, `simplex_primal_edge_weight_strategy` |
 
 **Options by name.** Any other HiGHS option is set by its name with `HighsOptions::option(name, value)`, which
-appends a `RawOption { name, value }` to the `raw` field. The value is an `OptionValue`, one of HiGHS's four kinds
+appends a `HighsOption { name, value }` to the `options` field. The value is an `OptionValue`, one of HiGHS's four kinds
 (`Bool`, `Int`, `Double`, `String`), converted from a `bool`, `i32`, `f64`, `&str` or `String`. HiGHS checks the
 name and the value when the solve applies them; an unknown name or a value of the wrong kind or range is a
-[`HighsError::Option`](#errors).
+[`HighsError::Option`](#errors). One option is refused for a MIP however it is set: `solve_relaxation`, which has
+HiGHS solve the MIP's continuous relaxation and would report that optimum as the program's, fails the solve with
+[`HighsError::Relaxation`](#errors) before HiGHS runs. Relax the program instead, with
+[`Solver::set_col_integrality`](solving.md#editing-a-loaded-program).
 
 ```rust
 use culmen::highs::HighsOptions;
@@ -94,7 +100,7 @@ use culmen::highs::HighsOptions;
 let options = HighsOptions::default()
     .option("mip_pool_soft_limit", 5000)
     .option("log_file", "highs.log");
-assert_eq!(options.raw.len(), 2);
+assert_eq!(options.options.len(), 2);
 ```
 
 ## How options and settings layer
@@ -108,7 +114,7 @@ Every solve sets HiGHS up from scratch, in this order:
 4. The solve's [`Settings`](solving.md#settings) apply.
 
 So a per-solve setting always wins over the backend's options, and an option set by name wins over a typed field
-for the same option. Nothing set on HiGHS carries over from one solve to the next except through `HighsOptions`.
+for the same option or over the default a setting left unset. Nothing set on HiGHS carries over from one solve to the next except through `HighsOptions`.
 The [Backends](backends.md#settings) page lists the HiGHS option each `Settings` field sets.
 
 HiGHS measures `time_limit` on a clock the backend restarts before every run, so each solve gets the full limit. A
@@ -138,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
 
     let two = Settings { threads: Some(threads!(2)), ..Settings::new() };
-    let worker = std::thread::spawn(move || solver.solve(Request::new().settings_from(two)));
+    let worker = std::thread::spawn(move || solver.run().settings(two).solve());
     let solved = worker.join().map_err(|_| "the solve thread panicked")??;
     assert_eq!(solved.outcome.objective(), Some(2.0));
     Ok(())
@@ -152,10 +158,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | Field | Holds |
 |---|---|
 | `run` | What `Highs_run` returned: a `CallStatus`, `Ok`, `Warning` or `Error`. |
-| `model` | The `ModelStatus`: every value of HiGHS's `HighsModelStatus`, and `Other(i32)` for a value HiGHS 1.16 does not define. |
+| `model` | The `ModelStatus`: every `kHighsModelStatus*` value of HiGHS 1.16. |
 | `primal`, `dual` | Whether a primal or dual solution exists: a `SolutionStatus`, `None`, `Infeasible` or `Feasible`. |
 | `mip_gap` | HiGHS's relative MIP gap; `None` for an LP or when HiGHS reports none. |
-| `mip_nodes`, `simplex_iterations`, `ipm_iterations`, `qp_iterations` | The work done. |
+| `simplex_iterations`, `ipm_iterations`, `qp_iterations` | The iterations of each solver, a MIP's simplex iterations over all its nodes. `Solved::iterations` sums every solver's, crossover and PDLP included, and `Solved::nodes` counts a MIP's nodes (`None` for a program without integer columns). |
 | `primal_dual_objective_error` | HiGHS's relative primal-dual objective error, `\|P - D\| / (1 + \|P\| + \|D\|)`; `None` when it computed none, as for a MIP. |
 | `last_error` | The last error line of HiGHS's log, if it wrote one. |
 
@@ -174,7 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.add_constraint((x + 3.0 * y).leq(6.0));
     m.maximize(3.0 * x + 2.0 * y + 10);
 
-    let solved = Solver::new(Highs::new(), m.build()?)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), m.build()?)?.solve()?;
     let status = &solved.status;
     assert_eq!((status.run, status.model), (CallStatus::Ok, ModelStatus::Optimal));
     assert_eq!(status.primal, SolutionStatus::Feasible);
@@ -194,7 +200,7 @@ more than the status:
   `1e-4` and an absolute gap of `1e-6`), and `Optimal` otherwise.
 - **`NodeLimit` or `SolutionLimit`.** HiGHS reports one status for its node, leaf and improving-solution limits. The
   backend reports `StopReason::NodeLimit` when the node limit HiGHS held for the run (`mip_max_nodes`, set in
-  `Settings`, a typed `HighsOptions` field or by name) was reached, and `StopReason::SolutionLimit` otherwise.
+  `Settings` or by name) was reached, and `StopReason::SolutionLimit` otherwise.
 
 An empty model, one without columns, is `Optimal` at its offset when every row admits an activity of zero, and
 `Infeasible` when a row such as `0 = 1` does not.
@@ -203,7 +209,7 @@ An empty model, one without columns, is `Optimal` at its offset when every row a
 
 HiGHS 1.16 solves LPs, MILPs and convex QPs, so `Highs::CLASSES` is `{LP, MILP, QP}`. It refuses a QP with integer
 columns when it runs ("Cannot solve MIQP problems with HiGHS"), so a MIQP is refused by
-[`Solver::new`](solving.md#model-classes-and-refusal) with `LoadError::Unsupported` before HiGHS sees it; SCIP
+[`Solver::new`](solving.md#model-classes-and-refusal) with `LoadError::UnsupportedClass` before HiGHS sees it; SCIP
 [solves it](scip.md#quadratic-programs).
 
 The backend passes the quadratic part as HiGHS reads it, the lower triangle of the Hessian `H` of `½ xᵀHx` column by
@@ -225,7 +231,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let program = m.build()?;
     assert_eq!(program.class(), ModelClass::Qp);
 
-    let solved = Solver::new(Highs::new(), program)?.solve(Request::new())?;
+    let solved = Solver::new(Highs::new(), program)?.solve()?;
     let Outcome::Optimal(best) = solved.outcome else { return Err("no optimum".into()) };
     assert!((best.objective - 2.0).abs() < 1e-6);
     assert!((best.values[x] - 0.0).abs() < 1e-6 && (best.values[y] - 1.0).abs() < 1e-6);
@@ -239,9 +245,9 @@ trusted:
 
 - **A poll, a first feasible point and the log.** HiGHS 1.16's active-set QP solver polls for an interrupt once its
   starting point is found and then at every iteration, and reports that starting point once. A QP solve therefore
-  delivers `POLL`, with `PollSource::Qp { iterations }`, so a [`Stop`](callbacks.md#stop) ends it as
-  `Stopped { reason: Interrupted, .. }`; it delivers `FEASIBLE` once, for the starting point, valued by the backend
-  since HiGHS reports no objective with it; and `LOG`. It delivers no `PROGRESS` and no `INCUMBENT`, so an observer
+  delivers `Poll`, with `HighsPollSource::Qp { iterations }`, so a [`Stop`](callbacks.md#stop) ends it as
+  `Stopped { reason: Interrupted, .. }`; it delivers `Feasible` once, for the starting point, valued by the backend
+  since HiGHS reports no objective with it; and `Log`. It delivers no `Progress` and no `Incumbent`, so an observer
   sees no progress and no improvement. The time limit of the [`Settings`](solving.md#settings) applies as before.
 - **A row is always passed.** On a QP without rows HiGHS 1.16 starts from the unconstrained minimizer clamped into
   the bounds, and 1.15 reported that point optimal after no iteration when it was not. The backend passes such a QP
@@ -252,15 +258,15 @@ trusted:
   every column is bounded: 1.15 did all three after its iterates turned NaN, and 1.16 still reports the second for some
   edited QPs, though it solves every one of 5000 random QPs of the tests. The backend fails such a solve with
   [`HighsError::UnsoundQp`](#errors): an optimum at a point holding NaN, an optimum whose relative primal-dual objective
-  error exceeds `Highs::QP_OBJECTIVE_ERROR`, `1e-5` (correct optima stay below `1e-6`), or unboundedness with every
-  column bounded. An `Optimal` outcome of a QP is therefore one HiGHS's own measures support.
+  error exceeds `HighsOptions::qp_objective_error`, `relative_gap!(1e-5)` unless set otherwise (correct optima stay
+  below `1e-6`; a badly scaled QP may need a looser threshold), or unboundedness with every column bounded. An `Optimal` outcome of a QP is therefore one HiGHS's own measures support.
 - **It may not terminate.** On a rare QP HiGHS 1.15's QP solver iterated without end, its memory growing; no test
   has seen 1.16 do so. A [time limit](solving.md#settings) ends such a solve as `Stopped { reason: TimeLimit, .. }`,
   and a `Stop` as `Stopped { reason: Interrupted, .. }`; set one for any QP whose solve must end.
 
 ## Semi columns, several objectives and starts
 
-`Highs::FEATURES` is every [feature](program.md#features):
+`Highs::FEATURES` is every [feature](program.md#features), and `Highs` implements `Starts`:
 
 - **Semi columns** reach HiGHS as `kHighsVarTypeSemiContinuous` and `kHighsVarTypeSemiInteger`. HiGHS 1.16 lowers a
   semi column's upper bound above `1e5` to `1e5`, or refuses the model when its lower bound is above a tenth of that,
@@ -278,33 +284,34 @@ trusted:
   A multi-objective solve leaves HiGHS's own objective value at zero after a lexicographic solve and at the blend's
   otherwise (`returnFromLexicographicOptimization` in `HighsInterface.cpp`), and its MIP bound is that of the last
   stage or the blend: the backend reports the program's own objective, computed from the solution, and no bound, so a
-  MIP's outcome is `Optimal` or `Stopped`. Objective values HiGHS reports to callbacks during such a solve are those
-  of the stage it is solving or of the blend.
-- **A start** reaches HiGHS through `Highs_setSparseSolution` before the run, a full one with every column. HiGHS
-  refuses no value for lying outside its column's bounds (`Highs::setSolution` in `Highs.cpp`), so a semi column's
-  zero is kept, and leaves the other columns of a sparse start open; for a MIP it completes them by a sub-MIP over
-  the columns left open. A feasible start of a MIP is the first incumbent HiGHS reports. HiGHS also starts from the
-  last solve's solution when a request gives none, or a sparse start without entries.
+  MIP's outcome is `Optimal` or `Stopped`. The callbacks' solutions are valued the same way, with the program's own
+  objective, and the generic `Progress` of such a solve carries no objective and no bound; HiGHS's own figures, those
+  of the stage it is solving or of the blend, stay in `HighsMipData`.
+- **A start**, given to `Run::start`, reaches HiGHS through `Highs_setSparseSolution` before the run, a full one with
+  every column. HiGHS refuses no value for lying outside its column's bounds (`Highs::setSolution` in `Highs.cpp`), so
+  a semi column's zero is kept, and leaves the other columns of a sparse start open; for a MIP it completes them by a
+  sub-MIP over the columns left open. A feasible start of a MIP is the first incumbent HiGHS reports. HiGHS also starts from the
+  last solve's solution when a solve gives none, or a sparse start without entries.
 
 ## Model files
 
-`culmen_highs::files` reads and writes MPS and LP files with HiGHS's own readers and writers. `files::read(path)` and
-`files::write(&program, path)` pick the `ModelFormat`, `Mps` or `Lp`, by the extension, `.mps` or `.lp` in any case;
-`files::read_as` and `files::write_as` take it explicitly, through a temporary file of the right extension when the
-path has another. Reading gives a checked `Program`, every column and row named as in the file and in the file's
+`culmen_highs::files` reads and writes MPS and LP files with HiGHS's own readers and writers; its types,
+`ModelFormat` and `FileError`, are at the crate root. `files::read(path)` and `files::write(&program, path)` pick the
+`ModelFormat`, `Mps` or `Lp`, by the extension, `.mps` or `.lp` in any case; `files::read_as` and `files::write_as`
+take it explicitly, through a temporary file of the right extension when the path has another. Reading gives a checked `Program`, every column and row named as in the file and in the file's
 order; writing then reading gives the same program up to names and that order, and the same optimum. The one
 exception is a ranged row in an LP file, which HiGHS writes, and so reads back, as two rows named with `lo` and `up`
 appended.
 
 ```rust
 use culmen::prelude::*;
-use culmen::highs::files::{self, FileError, ModelFormat};
+use culmen::highs::{FileError, ModelFormat, files};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
     let x = m.add_var(Var::integer().upper(4).name("x"));
-    let y = m.add_var(Var::semi_continuous().bounds(1, 3).name("y"));
-    m.add_named_constraint("cap", (x + 2 * y).leq(6));
+    let y = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 3.0)).name("y"));
+    m.add_constraint(("cap", (x + 2 * y).leq(6)));
     m.maximize(3 * x + 2 * y);
     let program = m.build()?;
 
@@ -315,7 +322,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(read.columns()[x].name.as_deref(), Some("x"));
 
     let best = |p: Program| -> Result<Outcome, Box<dyn std::error::Error>> {
-        Ok(Solver::new(Highs::new(), p)?.solve(Request::new())?.outcome)
+        Ok(Solver::new(Highs::new(), p)?.solve()?.outcome)
     };
     assert_eq!(best(read)?, best(program)?);
 
@@ -334,10 +341,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `Io { path, kind }` | The file system failed, as for a missing file. |
 | `Read { path, format }` | HiGHS could not parse the file in the format. |
 | `Write { path, format }` | HiGHS could not write the file. |
-| `ColumnBounds { col, source }`, `RowBounds { row, source }` | Bounds in the file are no interval. |
+| `ColBounds { col, source }`, `RowBounds { row, source }` | Bounds in the file are no interval. |
 | `VarType { col, raw }` | A column has a HiGHS variable type with no `Integrality`. |
 | `Program(ProgramError)` | The content fails a program's checks, such as a non-convex objective. |
-| `Unsupported { format, feature }` | The format, as HiGHS writes it, loses a feature: further objectives, in either format, since neither reader takes them. |
+| `UnsupportedFeature { format, feature }` | The format, as HiGHS writes it, loses a feature: further objectives, in either format, since neither reader takes them. |
 | `Name { name }` | A name holds a NUL byte. |
 | `Highs(HighsError)` | HiGHS refused the program. |
 
@@ -352,16 +359,20 @@ keeps the basis of its last solve:
 | Costs | `Highs_changeColsCostBySet`; with several objectives, `Highs_passLinearObjectives` again, since HiGHS does not read the costs into them |
 | Integrality | `Highs_changeColsIntegralityBySet` |
 | Row bounds | `Highs_changeRowsBoundsBySet` |
+| Coefficients | `Highs_changeCoeff`, one call per entry; HiGHS takes an entry set to zero out |
 | New rows | `Highs_addRows` |
 | New columns | `Highs_addCols`, then `Highs_changeColsIntegralityByRange` for any that is not continuous; with several objectives, `Highs_passLinearObjectives` again, since HiGHS does not extend them |
+| Sense, offset | `Highs_changeObjectiveSense`, `Highs_changeObjectiveOffset`; with several objectives, `Highs_passLinearObjectives` again |
+| A replaced objective (`set_objective`) whose quadratic part stays as it was | The sense, the offset and every cost as above |
 
-Two edits load the program whole instead: rows added to a QP without rows, which HiGHS holds with a free row
-([Quadratic programs](#quadratic-programs)), and any kind of edit a later culmen adds before this backend knows it. A
+Two edits load the program whole instead: a replaced objective whose quadratic part changed, and rows added to a QP
+without rows, which HiGHS holds with a free row ([Quadratic programs](#quadratic-programs)). A new Hessian could be passed in place, but a QP without rows needs
+the free row added or dropped with it, so the load keeps that one rule in one place. A
 semi column whose upper bound would exceed `Highs::SEMI_UPPER_LIMIT` is refused with `HighsError::SemiUpper` before
 HiGHS sees the edit, but the refusal comes from the backend: the `Solver` then loads the program before the edit
 again, which costs a full load, and the last solve's result is no longer read. A call HiGHS refuses is
-`HighsError::Edit { call }`, naming it; HiGHS 1.15 could fail halfway through adding columns, after it extended
-some of its arrays, so the `Solver` then loads the program before the edit again too.
+`HighsError::Edit { call }`, naming it. No test has shown HiGHS 1.16 failing halfway through an edit, but the backend
+does not rely on that: the `Solver` then loads the program before the edit again too.
 
 Appending columns costs time in the size of the whole matrix on both sides: the program inserts each new column's
 entries at the ends of their rows, and the backend gathers the new columns' entries from every row. So append the
@@ -390,11 +401,13 @@ from.
 | `Edit { call }` | HiGHS refused an edit of its model; `call` names the C function ([Editing a loaded program](#editing-a-loaded-program)). |
 | `OptionName { name }` | An option name holds a NUL byte, which HiGHS's C strings cannot carry. |
 | `OptionString { name }` | A string option's value holds a NUL byte. |
-| `OutOfRange { name, value }` | An exact integer setting or option (a seed, a thread count, a `u32` field of `HighsOptions`) is above `i32::MAX`, beyond HiGHS's integers. |
+| `OutOfRange { name, value, max }` | An exact integer setting or option (a seed, a thread count, a `u32` field of `HighsOptions`) is above `max`, `i32::MAX`, beyond HiGHS's integers. |
 | `Run { status, message }` | The run failed, as a thread-count conflict makes it; `message` is HiGHS's last error line. |
 | `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `NotANumber`, `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
 | `Analysis(Analysis)` | HiGHS refused or failed an analysis, as a basis it finds singular ([Analysis](analysis.md#highs)). |
 | `AnalysisFeature { analysis, feature }` | HiGHS 1.16 gets the analysis wrong for a program with the feature, as a feasibility relaxation with semi columns ([Analysis](analysis.md#highs)). |
+| `Relaxation` | The options set `solve_relaxation` for a MIP, which would report the relaxation's optimum as the program's ([Options](#options)). |
+| `Unlisted { code, raw, call }` | HiGHS's function `call` returned, or the callback kind `call` passed, a value of one of its enumerations (`code`, a `HighsCode`) that HiGHS 1.16 does not define, which the pinned HiGHS never does ([Design](design.md#public-types-are-exhaustive)). |
 
 ```rust
 use culmen::prelude::*;
@@ -407,7 +420,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = HighsOptions { log_file: Some("a\0b".to_owned()), ..HighsOptions::default() };
     let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
 
-    let Err(SolveError::Backend(error)) = solver.solve(Request::new()) else { panic!("the option is refused") };
+    let Err(SolveError::Backend(error)) = solver.solve() else { panic!("the option is refused") };
     assert_eq!(error, HighsError::OptionString { name: "log_file".to_owned() });
     assert_eq!(error.to_string(), "HiGHS: the value of option `log_file` holds a NUL byte");
     Ok(())
@@ -419,21 +432,21 @@ A run that ends without a solution is not an error but an outcome; a model statu
 
 ## Callback contexts
 
-A `Callback<Highs>` receives HiGHS's own context types. Each implements the neutral [context
-trait](callbacks.md#contexts) of its event and offers what HiGHS reports beyond it:
+A `Callback<Highs>` and a `HeuristicHandler<Highs>` receive HiGHS's own context types. Each implements the neutral
+[context trait](callbacks.md#contexts) of its event and offers what HiGHS reports beyond it:
 
-| Event | Context | HiGHS callback | Beyond the trait |
+| Event or handler | Context | HiGHS callback | Beyond the trait |
 |---|---|---|---|
-| `LOG` | `HighsLog` | `kHighsCallbackLogging` | `log_type()`: a `HighsLogType`, `Info`, `Detailed`, `Verbose`, `Warning` or `Error` |
-| `PROGRESS` | `HighsMipProgress` | `kHighsCallbackMipLogging`, when HiGHS writes a MIP log line | `mip()`: the `MipData` |
-| `POLL` | `HighsPoll` | the simplex, interior-point, MIP and QP interrupt callbacks | `source()`: a `PollSource`, `Simplex { iterations }`, `Ipm { iterations }`, `Mip(MipData)` or `Qp { iterations }` |
-| `FEASIBLE` | `HighsSolution` | `kHighsCallbackMipSolution`, and `kHighsCallbackQpFirstFeasiblePoint` once per QP solve | `mip()`: the `MipData`, `None` for the QP's point |
-| `INCUMBENT` | `HighsSolution` | `kHighsCallbackMipImprovingSolution` | `mip()` |
-| `HEURISTIC` | `HighsHeuristic` | `kHighsCallbackMipUserSolution` | `origin()`, a `QueryOrigin`; `mip()` |
-| `NATIVE` | `HighsNative` | `kHighsCallbackMipGetCutPool` | the [cut pool](#the-cut-pool) |
-| `LAZY`, `CUT`, pricing | `Unsupported` | none | never delivered; `Highs::PRICES` is false ([Limitations](#limitations)) |
+| `Log` | `HighsLog` | `kHighsCallbackLogging` | `log_type()`: a `HighsLogType`, `Info`, `Detailed`, `Verbose`, `Warning` or `Error` |
+| `Progress` | `HighsProgress` | `kHighsCallbackMipLogging`, when HiGHS writes a MIP log line | `mip()`: the `HighsMipData` |
+| `Poll` | `HighsPoll` | the simplex, interior-point, MIP and QP interrupt callbacks | `source()`: a `HighsPollSource`, `Simplex { iterations }`, `Ipm { iterations }`, `Mip(HighsMipData)` or `Qp { iterations }` |
+| `Feasible` | `HighsSolution` | `kHighsCallbackMipSolution`, and `kHighsCallbackQpFirstFeasiblePoint` once per QP solve | `mip()`: the `HighsMipData`, `None` for the QP's point |
+| `Incumbent` | `HighsSolution` | `kHighsCallbackMipImprovingSolution` | `mip()` |
+| `HeuristicHandler` | `HighsHeuristic` | `kHighsCallbackMipUserSolution`, started only for a solve with a heuristic handler | `origin()`, a `HighsQueryOrigin`; `mip()`; `supply_partial(&entries)` |
+| `Native` | `HighsNative` | `kHighsCallbackMipGetCutPool` | the [cut pool](#the-cut-pool) |
+| lazy constraints, cuts, pricing | none | none | `Highs` implements none of their capabilities, so their handlers do not compile ([Limitations](#limitations)) |
 
-`MipData` is what every MIP callback reports, in the model's objective space, offset included:
+`HighsMipData` is what every MIP callback reports, in the model's objective space, offset included:
 
 | Field | Holds |
 |---|---|
@@ -450,11 +463,11 @@ program has columns is not delivered.
 The interrupt and logging callbacks are always installed, whatever the callback asks for: the polls so that a panic
 can stop the run, the log so that a failed run can name HiGHS's last error line. Calls are serialised behind one
 lock; a log line HiGHS writes while `supply_partial` repairs a solution re-enters the same run and is not delivered,
-since the callback is busy. A solve of another `Highs` started from inside a callback gets its own callbacks.
+since the heuristic handler is busy. A solve of another `Highs` started from inside a callback gets its own callbacks.
 
 ```rust
 use culmen::prelude::*;
-use culmen::highs::{HighsLog, HighsLogType, HighsPoll, PollSource};
+use culmen::highs::{HighsLog, HighsLogType, HighsPoll, HighsPollSource};
 
 #[derive(Default)]
 struct Inspect {
@@ -465,7 +478,7 @@ struct Inspect {
 
 impl Callback<Highs> for Inspect {
     fn events(&self) -> Events {
-        Events::LOG | Events::POLL
+        Event::Log | Event::Poll
     }
     fn log(&mut self, ctx: &mut HighsLog<'_>) {
         if ctx.log_type() == HighsLogType::Warning {
@@ -473,7 +486,7 @@ impl Callback<Highs> for Inspect {
         }
     }
     fn poll(&mut self, ctx: &mut HighsPoll<'_>) {
-        if let PollSource::Mip(mip) = ctx.source() {
+        if let HighsPollSource::Mip(mip) = ctx.source() {
             self.mip_polls += 1;
             self.best_bound = mip.dual_bound.or(self.best_bound);
         }
@@ -488,7 +501,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(LinExpr::sum((0..6).map(|i| value[i] * take[i])));
 
     let mut inspect = Inspect::default();
-    let solved = Solver::new(Highs::new(), m.build()?)?.solve_with(Request::new(), &mut inspect)?;
+    let mut solver = Solver::new(Highs::new(), m.build()?)?;
+    let solved = solver.run().callback(&mut inspect).solve()?;
     assert_eq!(solved.outcome.objective(), Some(25.0));
     assert!(inspect.warnings.is_empty());
     Ok(())
@@ -500,39 +514,38 @@ Backend>::Poll<'_>`; they are the same type.
 
 ## Heuristic solutions
 
-At `HEURISTIC`, HiGHS asks for a solution of the callback's own. `HighsHeuristic::origin()` says where in the
-search it asks: `QueryOrigin::AfterSetup`, once the MIP solver is set up; `BeforeDive`; `EvaluateRootNode(point)`,
-during root-node evaluation, `point` a `RootNodePoint` naming HiGHS's numbered point; or `Other(i32)` for a value
-HiGHS 1.16 does not define.
+HiGHS implements `Heuristics`: at its user-solution callback it asks a registered `HeuristicHandler<Highs>` for a
+solution of its own. `HighsHeuristic::origin()` says where in the
+search it asks: `HighsQueryOrigin::AfterSetup`, once the MIP solver is set up; `BeforeDive`; `EvaluateRootNode(point)`,
+during root-node evaluation, `point` a `HighsRootNodePoint` naming HiGHS's numbered point.
 
 - `ctx.supply(&values)` offers a value for every column. The values are checked first: one finite value per column,
-  or `ActionError::Length` or `ActionError::NotFinite`. HiGHS then checks the solution against the model and keeps
+  or `ActionError::Length` or `ActionError::NonFinite`. HiGHS then checks the solution against the model and keeps
   it as its incumbent if it is feasible and better.
-- `ctx.supply_partial(&entries)` offers values for some columns, and HiGHS completes them into a feasible solution
-  if it can. It returns `ActionError::Refused` for no entries, for a column named twice, for a value outside its
+- `ctx.supply_partial(&entries)`, an inherent method of `HighsHeuristic` since not every solver completes a partial
+  solution, offers values for some columns, and HiGHS completes them into a feasible solution if it can. It returns `ActionError::Refused` for no entries, for a column named twice, for a value outside its
   column's bounds or integrality, and when HiGHS finds no feasible completion. A refused call leaves what an earlier
   call at the same query supplied.
 
-HiGHS calls neither solution callback for a solution it takes this way, so the backend reports it itself: once a
-MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as `INCUMBENT`, and so reaches the
-[observer](callbacks.md#observer) too.
+HiGHS calls neither solution callback for a solution it takes this way, so the backend reports it itself: HiGHS
+checks the solution as soon as the query returns, so when the next MIP poll shows HiGHS's best objective moved with no
+solution of HiGHS's own reported between, the supplied solution was taken, and it arrives as `Incumbent`, valued with
+the program's own objective, and so reaches the [observer](callbacks.md#observer) too. This holds with several
+objectives as well, where HiGHS's best objective is a stage's or the blend's.
 
 ```rust
 use culmen::prelude::*;
-use culmen::highs::{HighsHeuristic, HighsOptions, QueryOrigin, Switch};
-use culmen::{ActionError, TiVec};
+use culmen::highs::{HighsHeuristic, HighsQueryOrigin};
+use culmen::ActionError;
 
 struct Start {
     values: Option<TiVec<Col, f64>>,
     supplied: Vec<Result<(), ActionError>>,
 }
 
-impl Callback<Highs> for Start {
-    fn events(&self) -> Events {
-        Events::HEURISTIC
-    }
+impl HeuristicHandler<Highs> for Start {
     fn heuristic(&mut self, ctx: &mut HighsHeuristic<'_>) {
-        if ctx.origin() == QueryOrigin::AfterSetup
+        if ctx.origin() == HighsQueryOrigin::AfterSetup
             && let Some(values) = self.values.take()
         {
             self.supplied.push(ctx.supply(&values));
@@ -552,11 +565,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     start[take[1]] = 1.0;
     start[take[3]] = 1.0;
 
-    let options = HighsOptions { presolve: Some(Switch::Off), ..HighsOptions::default() };
-    let mut solver = Solver::new(Highs::with_options(options), m.build()?)?;
-    let mut callback = Start { values: Some(start), supplied: Vec::new() };
-    let solved = solver.solve_with(Request::new(), &mut callback)?;
-    assert_eq!(callback.supplied, [Ok(())]);
+    let mut solver = Solver::new(Highs::new(), m.build()?)?;
+    let mut handler = Start { values: Some(start), supplied: Vec::new() };
+    let no_presolve = Settings { presolve: Some(false), ..Settings::new() };
+    let solved = solver.run().settings(no_presolve).heuristic(&mut handler).solve()?;
+    assert_eq!(handler.supplied, [Ok(())]);
     assert_eq!(solved.outcome.objective(), Some(25.0));
     Ok(())
 }
@@ -564,28 +577,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## The cut pool
 
-At `NATIVE`, HiGHS reports its cut pool after the root node, and again after each restart, as
+At `Native`, HiGHS reports its cut pool after the root node, and again after each restart, as
 `HighsNative::CutPool(pool)`. The pool is copied out of HiGHS, so it may be kept:
 
 | Field | Holds |
 |---|---|
 | `num_cols` | The number of columns of the presolved problem the cuts range over. |
-| `cuts` | Each `Cut { lower, upper, entries }`: `lower <= Σ value · column <= upper`, an open end infinite. |
-| `mip` | The `MipData` at the time. |
+| `cuts` | Each `HighsCut { lower, upper, entries }`: `lower <= Σ value · column <= upper`, an open end infinite. |
+| `mip` | The `HighsMipData` at the time. |
 
 The cuts range over the presolved problem HiGHS's MIP solver works on, not over the program you loaded, so their columns
-are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your program by mistake. `HighsNative` is
-`#[non_exhaustive]`, so a `match` on it needs a `_` arm.
+are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your program by mistake.
 
 ## Limitations
 
 - **No lazy constraints.** HiGHS 1.16 declares `kHighsCallbackMipDefineLazyConstraints` and never calls it, so
-  `Events::LAZY` is not in `Highs::EVENTS` and its context is `Unsupported`. [SCIP](scip.md#lazy-constraints) takes
-  them.
-- **No user cuts.** HiGHS has no callback for them; `Events::CUT` is `Unsupported` too. [SCIP](scip.md#cuts) takes
-  them.
-- **No pricing.** HiGHS has no pricing callback, so `Highs::PRICES` is false and `price` is never called: price in an
-  outer loop by [editing](#editing-a-loaded-program) the program, as the `column_generation` example does, or at every
+  `Highs` does not implement `LazyConstraints`, and registering a `LazyHandler` for it does not compile.
+  [SCIP](scip.md#lazy-constraints) takes them.
+- **No user cuts.** HiGHS has no callback for them, so `Highs` does not implement `UserCuts`. [SCIP](scip.md#cuts)
+  takes them.
+- **No pricing.** HiGHS has no pricing callback, so `Highs` does not implement `Prices` and a `Pricer` for it does not
+  compile: price in an outer loop by [editing](#editing-a-loaded-program) the program, as the `column_generation` example does, or at every
   node on [SCIP](scip.md#pricing).
 - **An interrupt is honoured only at a poll.** Only `HighsPoll` has `interrupt`, and only `HighsHeuristic` accepts
   a solution.
@@ -602,7 +614,7 @@ are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your 
 
 - [Callbacks](callbacks.md): the neutral events and contexts.
 - [Analysis](analysis.md#highs): duals, basis, ranging, rays, IIS and feasibility relaxation on HiGHS.
-- [Solving](solving.md): requests, settings and outcomes.
+- [Solving](solving.md): the run of a solve, settings and outcomes.
 - [SCIP](scip.md): the second backend, for MIQPs, lazy constraints, cuts and pricing.
 - [Backends](backends.md): how HiGHS's callbacks, options and statuses map onto culmen's seam, beside Gurobi and SCIP.
 - [Design](design.md#where-unsafe-lives): why the trampoline is sound.

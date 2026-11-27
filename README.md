@@ -7,7 +7,7 @@ build it into a checked program, and solve it on a switchable backend. You can w
 cooperatively at any moment.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
-[![Rust 1.99+](https://img.shields.io/badge/rust-1.99%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust 1.100+](https://img.shields.io/badge/rust-1.100%2B-orange.svg)](https://www.rust-lang.org)
 [![Edition 2024](https://img.shields.io/badge/edition-2024-orange.svg)](https://doc.rust-lang.org/edition-guide/)
 [![Backend: HiGHS 1.16](https://img.shields.io/badge/backend-HiGHS%201.16-green.svg)](https://highs.dev)
 [![Backend: SCIP 10](https://img.shields.io/badge/backend-SCIP%2010-green.svg)](https://scipopt.org)
@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(LinExpr::sum((0..4).map(|i| value[i] * take[i])));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    let Outcome::Optimal(best) = solver.solve(Request::new())?.outcome else {
+    let Outcome::Optimal(best) = solver.solve()?.outcome else {
         return Err("no optimum".into());
     };
     assert_eq!(best.objective, 21.0);
@@ -52,12 +52,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   classes it solves, and `Solver::new` refuses any other with a typed error naming both, before the solver sees it.
 - **More than a solution.** After a solve, `Solver` reports duals and reduced costs, the simplex basis (and takes
   one as a warm start), cost and bound ranging, primal and dual rays, an irreducible infeasible subsystem and a
-  weighted feasibility relaxation, all read with the model's own handles. Each backend declares which it provides,
-  and a request it cannot answer is a typed error naming why.
+  weighted feasibility relaxation, all read with the model's own handles. Each analysis is a trait a backend
+  implements, so asking a backend for one it lacks does not compile, and a request the program or the last solve
+  cannot answer is a typed error naming why.
 - **Any solver behind one seam.** `Backend` is an open trait with typed, solver-neutral callback events: log,
-  progress, interrupt poll, feasible and improving solutions, lazy constraints, user cuts, heuristic solutions,
-  pricing, and native events for what only one solver offers. HiGHS is the default backend, with every HiGHS
-  callback mapped; SCIP, behind the `scip` feature, adds MIQPs, lazy constraints, user cuts and branch-and-price.
+  progress, interrupt poll, feasible and improving solutions, and native events for what only one solver offers.
+  What changes the search (lazy constraints, user cuts, heuristic solutions, pricing) is a capability a backend
+  implements, with a handler you register only where the backend has it, so a lazy constraint a solver would ignore
+  does not compile. HiGHS is the default backend, with every HiGHS callback mapped; SCIP, behind the `scip` feature,
+  adds MIQPs, lazy constraints, user cuts and branch-and-price.
 - **A solve you can watch and stop.** A `Stop` can be an `AtomicBool`, a closure or a cancellation token. An
   `Observer` receives throttled progress, every new incumbent and each complete log line, while the solver's own
   console output stays quiet. A panic in an observer or callback stops the solve and unwinds out of `solve`; it
@@ -90,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.minimize(LinExpr::sum(x.iter().map(|(&(p, l), x)| walk[p][l] * x)));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
-    if let Some(best) = solver.solve(Request::new())?.outcome.solution() {
+    if let Some(best) = solver.solve()?.outcome.solution() {
         for (&(p, l), value) in x.values(&best.values) {
             if value > 0.5 {
                 println!("product {p} -> location {l}");
@@ -144,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(program.class(), ModelClass::Qp);
 
     let mut solver = Solver::new(Highs::new(), program)?;
-    let Outcome::Optimal(best) = solver.solve(Request::new())?.outcome else {
+    let Outcome::Optimal(best) = solver.solve()?.outcome else {
         return Err("no optimum".into());
     };
     assert!((best.objective - 2.0).abs() < 1e-6);
@@ -154,26 +157,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 HiGHS 1.16 solves LPs, MILPs and convex QPs, not QPs with integer columns: `Solver::new` refuses a MIQP on HiGHS
-with `LoadError::Unsupported`. SCIP, with the `scip` feature, solves all four classes.
+with `LoadError::UnsupportedClass`. SCIP, with the `scip` feature, solves all four classes.
 
 ## SCIP: lazy constraints and pricing
 
-The same models solve on SCIP by naming another backend. A callback can then add constraints only it knows, as each
-candidate arrives, or price columns into every node of the search:
+The same models solve on SCIP by naming another backend. A handler can then add constraints only it knows, as each
+candidate arrives, or price columns into every node of the search. Each handler is registered on the solve's `Run`,
+and only for a backend with its capability: the same `.lazy(..)` for `Highs` does not compile.
 
 ```rust
 use std::time::Duration;
 
 use culmen::prelude::*;
 
-/// Forbids taking both items, a conflict only the callback knows.
+/// Forbids taking both items, a conflict only the handler knows.
 struct NotBoth(Col, Col);
 
-impl Callback<Scip> for NotBoth {
-    fn events(&self) -> Events {
-        Events::LAZY
-    }
-    fn lazy(&mut self, ctx: &mut <Scip as Backend>::Lazy<'_>) {
+impl<B: LazyConstraints> LazyHandler<B> for NotBoth {
+    fn lazy(&mut self, ctx: &mut B::Lazy<'_>) {
         let candidate = ctx.candidate();
         if candidate[self.0] + candidate[self.1] > 1.5 {
             ctx.add_lazy((self.0 + self.1).leq(1)).expect("a valid constraint");
@@ -188,8 +189,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(3.0 * x + 2.0 * y);
 
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
-    let request = Request::new().time_limit(Duration::from_secs(10));
-    let solved = solver.solve_with(request, &mut NotBoth(x, y))?;
+    let mut not_both = NotBoth(x, y);
+    let solved = solver
+        .run()
+        .time_limit(Duration::from_secs(10))
+        .lazy(&mut not_both)
+        .solve()?;
     assert_eq!(solved.outcome.objective(), Some(3.0));
     Ok(())
 }
@@ -228,14 +233,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setting the flag from any thread stops the solve at the solver's next poll.
     let cancel = AtomicBool::new(false);
     let mut feed = Feed;
-    let request = Request::new()
-        .settings_from(Settings { relative_gap: Some(relative_gap!(0.01)), ..Settings::new() })
+    let solved = solver
+        .run()
+        .settings(Settings { relative_gap: Some(relative_gap!(0.01)), ..Settings::new() })
         .time_limit(Duration::from_secs(60))
         .stop(&cancel)
         .observer(&mut feed)
-        .progress_interval(Duration::from_secs(1));
+        .progress_interval(Duration::from_secs(1))
+        .solve()?;
 
-    match solver.solve(request)?.outcome {
+    match solved.outcome {
         Outcome::Optimal(best) => println!("optimal {}", best.objective),
         Outcome::GapReached { solution, bound } => println!("{} within the gap of {bound}", solution.objective),
         Outcome::Stopped { reason, best, .. } => println!("stopped ({reason:?}), best {:?}", best.map(|b| b.objective)),
@@ -246,8 +253,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 A tokio `CancellationToken` adapts in one line: `stop_fn(move || token.is_cancelled())`. To reach everything a
-solver reports, such as heuristic solutions or the cut pool, implement `Callback<Highs>`, or `Callback<B>` for any
-backend, and pass it with `solver.solve_with(request, &mut callback)`.
+solver reports, such as the cut pool, implement `Callback<Highs>`, or `Callback<B>` for any backend, and pass it with
+`solver.run().callback(&mut callback).solve()`.
 
 ## Installation
 
@@ -255,7 +262,7 @@ culmen is on crates.io:
 
 ```toml
 [dependencies]
-culmen = { version = "0.4", features = ["macros"] }
+culmen = { version = "0.5", features = ["macros"] }
 ```
 
 To follow the main branch instead, depend on it from git:
@@ -268,8 +275,8 @@ access**; its first build takes a few minutes more and about 500 MB of disk.
 
 | Feature | Default | What it adds |
 |---|---|---|
-| `highs` | yes | The HiGHS backend, as `culmen::Highs` and the module `culmen::highs`. |
-| `scip` | no | The SCIP backend, as `culmen::Scip` and the module `culmen::scip`: MIQPs, lazy constraints, user cuts and branch-and-price. |
+| `highs` | yes | The HiGHS backend, the module `culmen::highs`; `Highs` is in the prelude. |
+| `scip` | no | The SCIP backend, the module `culmen::scip`, with `Scip` in the prelude: MIQPs, lazy constraints, user cuts and branch-and-price. |
 | `macros` | no | `variable!`, `constraint!`, `objective!` and `sum!`. |
 | `serde` | no | Serialization of the plain data: programs (quadratic parts included), model classes, bounds, settings, outcomes, solutions, and the options and statuses of each backend enabled. |
 
@@ -284,8 +291,8 @@ it runs as a doctest, but for the two marked `ignore`:
   [Macros](https://github.com/FelixKahle/culmen/blob/main/docs/macros.md): variables, linear and quadratic expressions,
   constraints, objectives and keyed families, written with methods or with macros.
 - [Solving](https://github.com/FelixKahle/culmen/blob/main/docs/solving.md) and
-  [Callbacks](https://github.com/FelixKahle/culmen/blob/main/docs/callbacks.md): model classes, requests, settings,
-  outcomes, observers, stops and every callback event.
+  [Callbacks](https://github.com/FelixKahle/culmen/blob/main/docs/callbacks.md): model classes, the `Run` builder,
+  settings, outcomes, observers, stops and every callback event.
 - [HiGHS](https://github.com/FelixKahle/culmen/blob/main/docs/highs.md): options, threads, statuses, quadratic programs,
   callback contexts, and limitations.
 - [SCIP](https://github.com/FelixKahle/culmen/blob/main/docs/scip.md): building, options, statuses, quadratic programs,
@@ -296,6 +303,9 @@ it runs as a doctest, but for the two marked `ignore`:
   [Backends](https://github.com/FelixKahle/culmen/blob/main/docs/backends.md) for backend authors.
 
 The API reference is the rustdoc: `cargo doc --open -p culmen`.
+
+What changed in each release, and how code written for the one before moves over, is in the
+[changelog](https://github.com/FelixKahle/culmen/blob/main/CHANGELOG.md).
 
 ## Examples
 
@@ -320,12 +330,12 @@ node of SCIP's search, and `lazy_constraints` cuts subtours off a round trip as 
 | [`culmen`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen) | The crate to depend on: re-exports, a `prelude`, and the `highs`, `scip` and `macros` features. |
 | [`culmen_core`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_core) | The program as data, the modelling layer, the backend seam and the solve API. No solver and no `unsafe`. |
 | [`culmen_highs`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_highs) | The HiGHS backend: every callback as a typed, safe context, typed options and every status. |
-| [`culmen_scip`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_scip) | The SCIP backend: every generic event through SCIP plugins, pricing included, typed options and every status. |
+| [`culmen_scip`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_scip) | The SCIP backend: every generic event and every search handler through SCIP plugins, pricing included, typed options and every status. |
 | [`culmen_macros`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_macros) | The modelling macros, which expand to `culmen_core`'s methods. |
 | [`culmen_testing`](https://github.com/FelixKahle/culmen/tree/main/crates/culmen_testing) | Dev-only: an exact reference solver, property-test strategies and hard instances. |
 
-`culmen_core::Script` is an in-memory backend that replays scripted events, for testing code that drives a solve
-without a solver.
+`culmen::script::Script` is an in-memory backend that replays scripted events, for testing code that drives a
+solve without a solver.
 
 ## Development
 

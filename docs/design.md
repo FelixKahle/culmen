@@ -57,8 +57,18 @@ say what was refused. Code never writes `.unwrap()` to make a literal.
 ## Plain data and sealed values
 
 A type without an invariant is plain data with `pub` fields and no getters: `ProgramPlan`, `ProgramColumn`,
-`Constraint`, `LinExpr`, `Settings`, `Solution`, `Progress`, `HighsOptions`, `HighsStatus`. You build them with struct
-literals and `..Default::default()`, read and change their fields directly, and match on them.
+`NewCol`, `Constraint`, `LinExpr`, `Settings`, `Solution`, `Progress`, `HighsOptions`, `HighsStatus`. You build them
+with struct literals and `..Default::default()`, read and change their fields directly, and match on them.
+
+Plain data has no setters, with one exception: a method that chains is kept where it converts its input, appends to
+a list, or replaces a default the constructor named, since a literal would spell out those defaults. It covers
+exactly these types: `ProgramColumn` and `NewCol` (`cost`, `bounds`, `name`, and `entry`/`entries` on `NewCol`),
+built from their integrality (`ProgramColumn::integer().cost(1)`, `NewCol::continuous().entry(row, 2)`);
+`HighsOptions::option` and `ScipOptions::param`, which append a solver option by name; and `Var`. The three column
+builders share one shape: `.bounds(..)` takes anything that converts into a `Bounds`, so a literal interval is
+`bounds!(0.0, 40.0)`, checked when compiled. `Var` alone also has `.lower(..)` and `.upper(..)` for numbers known only
+at run time, which `Model::build` checks, naming the variable. For that reason `Var` keeps its fields private: they
+hold ends nothing has checked yet, which only the model reads.
 
 A type with an invariant keeps its fields private behind a checked constructor: `Bounds`, `Program`, the gaps. Their
 fields cannot be written from outside, not even all at once:
@@ -73,51 +83,87 @@ Constructors take what converts into their input without loss, so a caller passe
 `Bounds` where a `Var` is wanted, and an owned or borrowed value alike. A conversion that can fail is never implicit;
 it is a `TryFrom` or a `new` returning `Result`, so the refusal is visible where the value is made.
 
-## Which types may grow: `#[non_exhaustive]`
+## One address per item
 
-Whether a public type is `#[non_exhaustive]` follows from what a user does with it, the same in every crate:
+Each public item has one path, chosen by who names it. The crate root holds what code that models and solves names:
+the model and the program, `Solver` and `Run`, settings and outcomes, the callback and handler traits, the context
+traits a handler calls, the capability traits a generic bound names (`LazyConstraints`, `DualAnalysis`, …), the
+analyses' data and the errors. `Backend` is there too, since generic consumer code bounds on it. `culmen::script` holds
+the scripted test backend and what only it needs; `culmen::backend` holds what only code implementing or driving a
+backend names (`Hooks`, `Relay`, `Edit`, `Priced`, `Watch`, `Unsupported`, the `check_*` helpers). Each
+solver's own types are at the root of its crate, `culmen::highs` or `culmen::scip`, and a submodule holds only free
+functions whose names read right with it (`culmen::highs::files::read`), and the types those functions take and
+return stay at the crate root (`culmen::highs::ModelFormat`). Nothing is re-exported a second time for
+convenience; the prelude, a selection of root items and the backend types, is the one exception.
 
-- **A struct with `pub` fields is never non-exhaustive.** Plain data is built with a struct literal and
-  `..Default::default()` and taken apart by destructuring, and Rust forbids both outside the crate for a
-  non-exhaustive struct. A new field is therefore a breaking change, made only in a breaking release. A struct with
-  private fields needs no attribute.
-- **An error enum is non-exhaustive**, and so is every enum that only an error carries as its detail
-  (`InvalidBounds`, `Misfit`, `Table`, `ExprPlace`, `UnsoundQp`, `Dimension`, `Number`, …). A check or a backend
-  learns new refusals; a caller matches the ones it handles and passes the rest on. Inside its crate the match stays
-  exhaustive, so an error's `Display` remains one exhaustive table.
-- **An enum that lists an open set of kinds is non-exhaustive**: a solver's own statuses, return codes, option values
-  and log or poll kinds (`ModelStatus`, `CallStatus`, `LpSolver`, `PollSource`, `Status`, `RetCode`, `Emphasis`,
-  `ParamValue`, …), which grow with the solver's versions, and culmen's own lists of kinds that a further feature
-  adds to (`ModelClass`, `ProgramFeature`, `Analysis`, `Phase`, `StopReason`, `Edit`, `Step`, `ScipEvent`,
-  `LazySource`, `HighsNative`, `ModelFormat`). Code that must handle every kind is told so by a declared set
-  instead (`Backend::CLASSES`, `FEATURES`, `ANALYSES`), which refuses what it does not list.
-- **An enum whose variants its meaning closes stays exhaustive**, so that code which must handle every case is
-  checked to: `Sense`, `Integrality`, `Outcome`, `Objectives`, `Combination`, `PriceMode`, `Start`, `NewRow`,
-  `Side`, `Bound`, `Line`, `BasisStatus`, `LogLevel`, `ScriptStatus`, `Switch`, `OnOff`, and `Unsupported`, which
-  has no variant. A new variant there changes what every match must do, so it is a breaking change by design.
+## Public types are exhaustive
 
-`culmen_testing` is not published and is used only inside the workspace, where a change and every match it breaks
-land in one commit; it follows the rules for structs and leaves its enums exhaustive.
+Every public enum and every public struct is exhaustive, in every crate: none is marked non-exhaustive, and none
+will be.
+
+- **A consumer's `match` is checked.** A `match` on an error, a status, an `Edit` or a `StopReason` names every
+  variant and needs no wildcard arm, so the compiler tells the code that matches when a variant appears. A wildcard
+  arm written only to satisfy a non-exhaustive enum would hide that variant, and a backend that loaded the program
+  whole for an `Edit` it did not know would hide it as a silent loss of its warm start.
+- **Growth is a breaking release.** A new variant, a new field or a new error is a breaking change, made only in a
+  breaking release, which for culmen at 0.x is a minor version bump: a `0.5` dependency never sees a variant `0.5`
+  did not have. Plain data with `pub` fields keeps its struct literal and `..Default::default()` outside its crate,
+  and every error's `Display` stays one exhaustive table.
+- **What must be closed at run time is a declared set.** A backend lists the classes and features it takes
+  (`Backend::CLASSES`, `FEATURES`), and the `Solver` refuses any other with a typed error, so a class a later version
+  adds is refused by a backend that does not declare it rather than reaching it.
+
+### A solver's own codes
+
+An enum that mirrors a solver's codes (`ModelStatus`, `CallStatus`, `SolutionStatus`, `HighsLogType`,
+`HighsQueryOrigin`, `Status`, `RetCode`) lists every value of the solver version its `-sys` crate builds, with the
+header that defines them named in its docs. Converting a C integer into it is still a partial function, so the
+conversion is total and honest:
+
+- **A value the pinned headers rule out is a typed error.** The conversion returns the backend's error carrying the
+  raw value and the call that gave it, `HighsError::Unlisted { code, raw, call }` or `ScipError::Unlisted { code,
+  raw, call }`, where `code` names the enumeration (`HighsCode`, `ScipCode`). It never panics, and it never maps the value onto a listed variant: an
+  unknown model status is not a failure, an unknown solution status is not "none", an unknown call status is not an
+  error code. A value HiGHS passes to a callback is held like a panic, stops the run at the next poll, and fails the
+  solve with that error once HiGHS returns; inside an action, which can only return an `ActionError`, it is the
+  `Refused` reason, which names the value.
+- **A value that is open-ended in normal operation is a variant.** Where the solver itself documents values beyond
+  a fixed list, the enum carries them in an explicit variant holding the raw value, whose docs say when it occurs.
+  No enum of HiGHS 1.16 or SCIP 10 that culmen reads needs one today.
+- **An enum that only goes into the solver** (`LpSolver`, `PresolveMode`, `Emphasis`, `ParamValue`, …) has no
+  conversion from the solver, and is exhaustive like any other.
 
 ## The solver-neutral seam
 
 `culmen_core` knows no solver. A solver plugs in by implementing [`Backend`](backends.md#the-seam), an open trait:
 
-- **Events are typed and declared.** A backend names one context type per event kind and lists what it delivers
-  in `Backend::EVENTS`. An event it cannot deliver takes `Unsupported`, an enum with no values, so a callback for it
-  compiles everywhere and never runs on that backend. Pricing, which changes how a solver searches, is declared
-  apart, `Backend::PRICES`, and asked for apart, `Callback::prices`, so no set of events turns it on.
+- **Observational events are typed and declared.** A backend names one context type per observational event kind
+  and lists what it delivers in `Backend::EVENTS`. An event it cannot deliver takes `Unsupported`, an enum with no
+  values, so a callback for it compiles everywhere and never runs on that backend. A callback only watches, so asking
+  for every event costs a solver no reduction.
+- **What changes the search is a capability.** Lazy constraints, user cuts, heuristic solutions and pricing are traits
+  a backend implements or leaves out (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`), each naming the context
+  of its handler (`LazyHandler`, `CutHandler`, `HeuristicHandler`, `Pricer`). A handler is registered on the `Run`
+  of a solve only for a backend that has the capability, so a lazy constraint a solver would ignore, which would turn
+  a relaxation's optimum into a wrong answer, does not compile, and a backend gives up a reduction for a handler only
+  when one is registered.
 - **Model classes are declared.** A backend lists the classes of program it solves in `Backend::CLASSES`, and
-  `Solver::new` refuses any other class with a typed `LoadError::Unsupported` before the backend sees the program, the
-  same way for every backend.
+  `Solver::new` refuses any other class with a typed `LoadError::UnsupportedClass` before the backend sees the program,
+  the same way for every backend. A class is a property of the program, which edits change, so it stays a run-time
+  check.
+- **Capabilities of the backend are traits.** Taking a start and each analysis after a solve are traits a backend
+  implements or leaves out (`Starts`, `DualAnalysis`, …), and the `Solver` methods that need one exist only for a
+  backend that has it: `solver.duals()` on a backend without duals, or a start handed to a backend that takes none,
+  does not compile.
 - **Actions live where the solver honours them.** Only a poll context can interrupt, only a lazy context can add a
-  lazy constraint, only a heuristic context can supply a solution, only a price context can add a column. Calling an action at a point where the solver
-  would ignore it does not compile.
+  lazy constraint, only a heuristic context can supply a solution, only a price context can add a column. Calling an
+  action at a point where the solver would ignore it does not compile, and an action only some solvers honour, as
+  completing a partial heuristic solution, is an inherent method of their contexts.
 - **Extras stay with their backend.** Each context type is the backend's own; what one solver reports beyond the
   neutral traits is an inherent method or a native event. Generic code sees the traits; code for one backend sees
   everything.
-- **The convenient path is built on the seam, not beside it.** The request's stop and observer run as `Watch`, an
-  ordinary generic callback, so they work on every backend unchanged.
+- **The convenient path is built on the seam, not beside it.** The stop and the observer of a `Run` run as `Watch`,
+  an ordinary generic callback that the `Solver` runs before yours, so they work on every backend unchanged.
 - **Settings are neutral, options are the backend's.** `Settings` holds what every solver understands; a backend's
   own options hold the rest; settings apply after options, per solve.
 - **Outcomes are neutral, statuses are kept.** Each solve maps the solver's status onto `Outcome`, which holds
@@ -127,10 +173,10 @@ land in one commit; it follows the rules for structs and leaves its enums exhaus
 
 ## A solve never aborts
 
-A solve is something an application runs inside a service, so a defect in user code during a solve must not take
-the process down. A panic in an observer, a stop or a callback stops the solve as soon as the solver allows, and
-then continues unwinding out of `solve` on the caller's thread, where it can be caught. The backend stays usable.
-No profile sets `panic = "abort"`.
+A solve is something an application runs inside a service, so a defect in user code during a solve must not take the
+process down. A panic in an observer, a stop, a callback or a handler stops the solve as soon as the solver allows, and
+then continues unwinding out of `solve` on the caller's thread, where it can be caught. The backend stays usable. No
+profile sets `panic = "abort"`.
 
 The stop is cooperative: it is polled at the solver's poll points, and the solve ends with what it found, as an
 ordinary `Outcome::Stopped` with the best solution and bound.
@@ -144,7 +190,8 @@ block there carries a `// SAFETY:` comment saying why it is sound. The parts tha
 - **One instance, one owner.** A HiGHS instance is created with the `Highs` value that owns it and destroyed when
   that value drops, and every call that changes it borrows it mutably, so no two calls ever overlap on one instance.
   Destroying an instance also shuts down the HiGHS task scheduler of the destroying thread, so an instance dropped
-  while its thread is inside a run or a callback waits until that run ends and is destroyed then, on that thread.
+  while its thread is inside a run or a callback waits until a run ends on a thread that is then outside every run
+  and callback, and is destroyed there, which may be another thread than the one that dropped it.
 - **Callback data lives exactly as long as the run.** The data HiGHS's callback reaches lives on the stack of
   `solve`; it is installed just before HiGHS runs and uninstalled just after, before it is dropped, so no pointer
   outlives the run.
@@ -156,8 +203,8 @@ block there carries a `// SAFETY:` comment saying why it is sound. The parts tha
 - **Only fields HiGHS sets are read.** For each callback kind, the trampoline reads only the fields HiGHS sets for
   it, and arrays only within the lengths HiGHS reports.
 
-The rustdoc of `culmen_highs::callback` states these arguments in full. SCIP's backend keeps the same rules with
-plugins in place of a trampoline:
+The documentation of `culmen_highs`'s private `callback` module (`crates/culmen_highs/src/callback.rs`) states these
+arguments in full. SCIP's backend keeps the same rules with plugins in place of a trampoline:
 
 - **One instance, one owner.** A SCIP instance and every variable and constraint it created are owned by one value,
   released and freed when it drops, on every path; its methods that change SCIP borrow it mutably.
@@ -165,8 +212,8 @@ plugins in place of a trampoline:
   that outlives the instance; a solve installs its run, which lives on the stack of `solve`, in that slot for the call
   of `SCIPsolve` alone, and a guard clears it on every path before the run is dropped.
 - **Calls never overlap.** SCIP calls every plugin on the solving thread, one at a time; a plugin called inside
-  another's call finds the callback borrowed and does not deliver, and every change a context asks of SCIP is applied
-  after the callback returns, outside any borrow.
+  another's call finds the hooks borrowed and does not deliver, and every change a context asks of SCIP is applied
+  after the handler returns, outside any borrow.
 - **Panics never cross the C boundary.** A panic in a callback is caught in the plugin, which asks SCIP to stop and
   returns a result its callback allows; the panic resumes once `SCIPsolve` has returned.
 

@@ -37,7 +37,7 @@ impl RelativeGap {
     /// [`InvalidRelativeGap`] when `value` is not finite or below zero.
     pub const fn new(value: f64) -> Result<Self, InvalidRelativeGap> {
         if !value.is_finite() {
-            Err(InvalidRelativeGap::NotFinite)
+            Err(InvalidRelativeGap::NonFinite)
         } else if value < 0.0 {
             Err(InvalidRelativeGap::Negative)
         } else {
@@ -62,7 +62,7 @@ impl RelativeGap {
     pub const fn literal(value: f64) -> Self {
         match Self::new(value) {
             Ok(gap) => gap,
-            Err(InvalidRelativeGap::NotFinite) => panic!("RelativeGap: not a finite number"),
+            Err(InvalidRelativeGap::NonFinite) => panic!("RelativeGap: not a finite number"),
             Err(InvalidRelativeGap::Negative) => panic!("RelativeGap: below zero"),
         }
     }
@@ -90,10 +90,9 @@ impl fmt::Display for RelativeGap {
 
 /// Why [`RelativeGap::new`] refused a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum InvalidRelativeGap {
     /// The number is NaN or infinite.
-    NotFinite,
+    NonFinite,
     /// The number is below zero.
     Negative,
 }
@@ -101,7 +100,7 @@ pub enum InvalidRelativeGap {
 impl fmt::Display for InvalidRelativeGap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotFinite => write!(f, "RelativeGap: not a finite number"),
+            Self::NonFinite => write!(f, "RelativeGap: not a finite number"),
             Self::Negative => write!(f, "RelativeGap: below zero"),
         }
     }
@@ -120,7 +119,7 @@ impl core::error::Error for InvalidRelativeGap {}
 /// ```
 /// use culmen_core::{AbsoluteGap, InvalidAbsoluteGap, absolute_gap};
 /// assert_eq!(absolute_gap!(2.5).to_string(), "AbsoluteGap(2.5)");
-/// assert_eq!(AbsoluteGap::try_from(f64::NAN), Err(InvalidAbsoluteGap::NotFinite));
+/// assert_eq!(AbsoluteGap::try_from(f64::NAN), Err(InvalidAbsoluteGap::NonFinite));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 #[cfg_attr(
@@ -138,7 +137,7 @@ impl AbsoluteGap {
     /// [`InvalidAbsoluteGap`] when `value` is not finite or below zero.
     pub const fn new(value: f64) -> Result<Self, InvalidAbsoluteGap> {
         if !value.is_finite() {
-            Err(InvalidAbsoluteGap::NotFinite)
+            Err(InvalidAbsoluteGap::NonFinite)
         } else if value < 0.0 {
             Err(InvalidAbsoluteGap::Negative)
         } else {
@@ -163,7 +162,7 @@ impl AbsoluteGap {
     pub const fn literal(value: f64) -> Self {
         match Self::new(value) {
             Ok(gap) => gap,
-            Err(InvalidAbsoluteGap::NotFinite) => panic!("AbsoluteGap: not a finite number"),
+            Err(InvalidAbsoluteGap::NonFinite) => panic!("AbsoluteGap: not a finite number"),
             Err(InvalidAbsoluteGap::Negative) => panic!("AbsoluteGap: below zero"),
         }
     }
@@ -191,10 +190,9 @@ impl fmt::Display for AbsoluteGap {
 
 /// Why [`AbsoluteGap::new`] refused a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum InvalidAbsoluteGap {
     /// The number is NaN or infinite.
-    NotFinite,
+    NonFinite,
     /// The number is below zero.
     Negative,
 }
@@ -202,7 +200,7 @@ pub enum InvalidAbsoluteGap {
 impl fmt::Display for InvalidAbsoluteGap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotFinite => write!(f, "AbsoluteGap: not a finite number"),
+            Self::NonFinite => write!(f, "AbsoluteGap: not a finite number"),
             Self::Negative => write!(f, "AbsoluteGap: below zero"),
         }
     }

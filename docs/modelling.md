@@ -18,7 +18,7 @@ fn main() -> Result<(), culmen::ModelError> {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(4.0).name("x"));
     let ys = m.add_vars(3, |i| Var::binary().name(format!("y[{i}]")));
-    let r = m.add_named_constraint("link", (x - 4.0 * ys[0]).leq(0.0));
+    let r = m.add_constraint(("link", (x - 4.0 * ys[0]).leq(0.0)));
     m.maximize(x + ys[1]);
 
     assert_eq!((m.num_vars(), m.num_constraints()), (4, 1));
@@ -29,7 +29,8 @@ fn main() -> Result<(), culmen::ModelError> {
 }
 ```
 
-`add_vars(count, f)` adds `count` variables, the `i`-th made by `f(i)`, and returns their columns in order.
+`add_vars(count, f)` adds `count` variables, the `i`-th made by `f(i)`, and returns their columns in order. Like
+`add_var`, the closure may return a `Var` or `Bounds`.
 
 ## Variables
 
@@ -47,19 +48,21 @@ model is built.
 
 | Method | Effect |
 |---|---|
+| `.bounds(b)` | Sets both bounds from a [`Bounds`](program.md#bounds), such as `bounds!(0.0, 40.0)`, checked when compiled. |
 | `.lower(l)` | Sets the lower bound; `f64::NEG_INFINITY` for none. |
 | `.upper(u)` | Sets the upper bound; `f64::INFINITY` for none. |
-| `.bounds(l, u)` | Sets both. |
 | `.name(n)` | Names the variable in errors, logs and LP files. |
 
-Bounds take anything that converts into `f64` losslessly, so `Var::integer().bounds(0, 40)` needs no `.0`.
+`.bounds` takes a checked interval, as a program column's and a new column's `.bounds` do. `.lower` and `.upper` take
+numbers known only at run time, anything that converts into `f64` losslessly, so `Var::integer().upper(40)` needs no
+`.0`; `build` checks them and names the variable when they are no interval.
 A [`Bounds`](program.md#bounds) value converts into a continuous `Var` in those bounds, so `add_var` takes it directly:
 
 ```rust
 use culmen::prelude::*;
 
 let mut m = Model::new();
-let stock = m.add_var(Var::integer().bounds(0, 40).name("stock"));
+let stock = m.add_var(Var::integer().bounds(bounds!(0.0, 40.0)).name("stock"));
 let flow = m.add_var(bounds!(0.0, 12.5));
 m.add_var(Var::binary());
 m.add_var(Var::free());
@@ -80,14 +83,14 @@ objective), and it uses the [feature](program.md#features) `SemiContinuous` or `
 
 ```rust
 use culmen::prelude::*;
-use culmen::{Integrality, ModelClass, ModelError};
+use culmen::{ModelClass, ModelError};
 
 fn main() -> Result<(), ModelError> {
     let mut m = Model::new();
     // Off, or between 20 and 80 units.
-    let load = m.add_var(Var::semi_continuous().bounds(20, 80).name("load"));
+    let load = m.add_var(Var::semi_continuous().bounds(bounds!(20.0, 80.0)).name("load"));
     // Off, or 2 to 6 whole trucks.
-    let trucks = m.add_var(Var::semi_integer().bounds(2, 6).name("trucks"));
+    let trucks = m.add_var(Var::semi_integer().bounds(bounds!(2.0, 6.0)).name("trucks"));
     m.add_constraint((load + 10 * trucks).geq(15));
     m.minimize(2 * load + 5 * trucks);
     let program = m.build()?;
@@ -121,7 +124,10 @@ The operators combine them:
 | `e * 2.0`, `2.0 * e`, `e * 2`, `2 * e`, `e / 2.0`, `e / 2`, `-e` with `e` a `LinExpr` | `LinExpr` |
 | `e += b`, `e -= b` with `b` any linear item; `e *= 2.0`, `e /= 2.0` | in place |
 
-Numbers are `f64` or `i32`. To sum many items, use `LinExpr::sum`, `Iterator::sum` or `collect`; each takes any
+A number is any type that converts into `f64` without loss: `f64`, `f32`, `i32`, `i16`, `i8`, `u32`, `u16`, `u8`, so
+`x.leq(capacity)` takes a `u32` capacity and `x * count` a `u16` count. A number on the left of `*`, `+` or `-` is an
+`f64` or an `i32` only (`2 * x`, `2.0 * x`, `1 - x`; write `x * count` for another type): with more types on the left,
+an unsuffixed literal would fit several and `(2 * x).leq(4)` could not infer its type. To sum many items, use `LinExpr::sum`, `Iterator::sum` or `collect`; each takes any
 iterator of linear items and builds a single expression, and `extend` adds them to an expression:
 
 ```rust
@@ -145,12 +151,12 @@ let point: culmen::TiVec<Col, f64> = vec![1.0, 2.0, 4.0].into();
 assert_eq!(load.value(&point), 4.0 + 10.0 + 24.0);
 ```
 
-`LinExpr::new()` is the expression zero. `From` converts a `Col`, a `Term`, an `f64` or an `i32` into a `LinExpr`, and a
+`LinExpr::new()` is the expression zero. `From` converts a `Col`, a `Term` or a number into a `LinExpr`, and a
 `Col` into a `Term`. `LinExpr::value(&values)` evaluates the expression at a point, such as a solution's values; it
 panics when a term's column has no value there.
 
-The trait behind all of this is `Linear`: anything that adds to an expression. `Col`, `Term`, `LinExpr`, `&LinExpr`,
-`f64` and `i32` implement it, and every operator, sum and comparison takes `impl Linear`.
+The trait behind all of this is `Linear`: anything that adds to an expression. `Col`, `Term`, `LinExpr`, `&LinExpr`
+and the number types implement it, and every operator, sum and comparison takes `impl Linear`.
 
 ## Quadratic expressions
 
@@ -172,13 +178,12 @@ A product of two linear items is quadratic, for an objective:
 
 `QuadExpr::sum`, `Iterator::sum` and `collect` add up quadratic items and `extend` adds them to an expression,
 `QuadExpr::add_term(first, second, coefficient)` adds one product, `QuadExpr::value(&values)` evaluates the expression
-at a point, and `From` converts a `QuadTerm`, a `LinExpr`, a `Col`, a `Term`, an `f64` or an `i32` into a `QuadExpr`.
+at a point, and `From` converts a `QuadTerm`, a `LinExpr`, a `Col`, a `Term` or a number into a `QuadExpr`.
 The trait behind them is `Quadratic`, which every `Linear` item, `QuadTerm`, `QuadExpr` and `&QuadExpr` implement; the
 objective setters take `impl Quadratic`.
 
 ```rust
 use culmen::prelude::*;
-use culmen::QuadExpr;
 
 let mut m = Model::new();
 let x = m.add_var(Var::free());
@@ -236,8 +241,13 @@ assert_eq!((band.lower, band.upper), (-1.0, 1.0));
 | Method | Adds |
 |---|---|
 | `m.add_constraint(c)` | An unnamed constraint; returns its `Row`. |
-| `m.add_named_constraint(name, c)` | A named constraint; returns its `Row`. |
-| `m.add_constraint_map(keys, f)` | One named constraint per key; see [Keyed families](#keyed-families). |
+| `m.add_constraint((name, c))` | A named constraint; returns its `Row`. |
+| `m.add_constraint(row)` | A `ProgramRow`, its bounds, terms and name as program data; returns its `Row`. |
+| `m.add_constraint_map(keys, f)` | One constraint per key, usually named; see [Keyed families](#keyed-families). |
+
+`add_constraint` takes anything that converts into a `NewRow`, and so does `Solver::add_row`
+([Editing](solving.md#editing-a-loaded-program)): a constraint is added to a model and appended to a loaded program in
+the same words, `m.add_constraint(("cap", x.leq(4)))` and `solver.add_row(("cap", x.leq(4)))`.
 
 ## The objective
 
@@ -293,19 +303,24 @@ fn main() -> Result<(), ModelError> {
 
 ## Several objectives
 
-`m.add_objective(objective)` adds a further linear objective and returns its `ObjectiveId`; the model's own
-objective, set by `minimize` and its kin, is `ObjectiveId::FIRST`, and further ones follow in the order added. An
-`Objective` is built like a `Var`: `Objective::minimize(expr)` or `Objective::maximize(expr)`, then `.tolerance(..)`
-and `.weight(..)`. How the objectives combine is `m.set_combination(..)`:
+A further linear objective is added with its rank, which says how the model's objectives combine:
 
-- `Combination::Lexicographic` (the default): the model's own objective first, then each further one in order,
-  each over the points that keep every earlier objective within its `Tolerance` of the optimum its stage found. The
-  order is the priority. A `Tolerance` allows `min(absolute, relative · |f*|)` from an optimum `f*`, leaving out an
-  absent part; `Tolerance::EXACT`, the default, allows nothing. `m.set_objective_tolerance(..)` sets the own
-  objective's.
-- `Combination::Blended`: one objective, `Σ s · w · f` over every objective `f` with its `Weight` `w` and `s` one to
-  minimize and minus one to maximize, is minimized. `Weight::ONE` is the default; `m.set_objective_weight(..)` sets
-  the own objective's.
+- `m.add_stage(objective, tolerance)` adds the next stage of a lexicographic solve: the model's own objective first,
+  then each stage in order, each over the points that keep every earlier objective within its `Tolerance` of the
+  optimum its stage found. The order is the priority. A `Tolerance` allows `min(absolute, relative · |f*|)` from an
+  optimum `f*`, leaving out an absent part; `Tolerance::EXACT` allows nothing. `m.set_objective_tolerance(..)` sets
+  the own objective's, `Tolerance::EXACT` until set.
+- `m.add_weighted(objective, weight)` adds a part of a blend: one objective, `Σ s · w · f` over every objective `f`
+  with its `Weight` `w` and `s` one to minimize and minus one to maximize, is minimized.
+  `m.set_objective_weight(..)` sets the own objective's, `Weight::ONE` until set.
+
+Each returns the objective's `ObjectiveId`; the model's own objective, set by `minimize` and its kin, is
+`ObjectiveId::FIRST`, and further ones follow in the order added. An `Objective` is its sense and expression,
+`Objective::minimize(expr)` or `Objective::maximize(expr)`. A stage has no weight and a weighted objective no
+tolerance, so neither can be given where it would go unused; a model that ranks some objectives one way and some the
+other is refused by `build` with `ModelError::MixedObjectives`, naming the first objective ranked unlike the first
+ranked one, and a tolerance or weight of the own objective without a further objective with
+`ModelError::RankAlone`.
 
 The objectives are linear: beside a further objective, `build` refuses a quadratic term in the own objective with
 `ModelError::QuadraticWithObjectives`. The program records them as its [`Objectives`](program.md#several-objectives),
@@ -314,25 +329,28 @@ objective's value, indexed by `ObjectiveId`.
 
 ```rust
 use culmen::prelude::*;
-use culmen::{Combination, ObjectiveId};
+use culmen::{Combination, ModelError, ObjectiveId};
 
-fn main() -> Result<(), culmen::ModelError> {
+fn main() -> Result<(), ModelError> {
     // Serve at least 10 units at the least cost; among the cheapest plans, the least emissions.
     let mut m = Model::new();
     let coal = m.add_var(Var::continuous().name("coal"));
     let gas = m.add_var(Var::continuous().upper(6).name("gas"));
     m.add_constraint((coal + gas).geq(10));
     m.minimize(2 * coal + 2 * gas);
-    let co2 = m.add_objective(Objective::minimize(3 * coal + gas));
+    let co2 = m.add_stage(Objective::minimize(3 * coal + gas), Tolerance::EXACT);
     let program = m.build()?;
     let values = program.objective_values(culmen::TiSlice::from_ref(&[4.0, 6.0]));
     assert_eq!((values[ObjectiveId::FIRST], values[co2]), (20.0, 18.0));
 
-    // Allow the cost to rise by up to 1 for the emissions' sake, or blend the two at a price of 0.5 per unit.
+    // Allow the cost to rise by up to 1 for the emissions' sake.
     m.set_objective_tolerance(Tolerance { absolute: Some(absolute_gap!(1.0)), relative: None });
-    m.set_combination(Combination::Blended);
-    m.set_objective_weight(weight!(2.0));
     assert!(m.build().is_ok());
+
+    // A weighted objective beside the stage is refused.
+    let noise = m.add_weighted(Objective::minimize(coal), weight!(0.5));
+    let mixed = ModelError::MixedObjectives { objective: noise, combination: Combination::Lexicographic };
+    assert_eq!(m.build().unwrap_err(), mixed);
     Ok(())
 }
 ```
@@ -342,7 +360,7 @@ fn main() -> Result<(), culmen::ModelError> {
 Most models index variables and constraints by domain keys: products, locations, pairs of them. A family keeps the
 handle of each key.
 
-- `m.add_var_map(keys, |key| var)` adds one variable per key and returns a `VarMap<K>`.
+- `m.add_var_map(keys, |key| var)` adds one variable per key, a `Var` or `Bounds`, and returns a `VarMap<K>`.
 - `m.add_constraint_map(keys, |key| (name, constraint))` adds one named constraint per key and returns a
   `ConstraintMap<K>`.
 
@@ -435,7 +453,39 @@ A name is optional on every variable and constraint. It appears in [`ModelError`
 messages, in solver logs, and in [LP files](program.md#lp-files); an unnamed variable is shown by its column, `Col(3)`,
 and an unnamed constraint by its row. `m.var_name(col)` and `m.constraint_name(row)` read a name back, `None` when
 there is none or the model has no such handle; `program.columns()[col].name` and `program.row(row).name()` read it from
-the built program. Names need not be unique.
+the built program, and `program.col_named(name)` and `program.row_named(name)` find the first column or row of a
+name. Names need not be unique.
+
+## Coming from gurobipy
+
+Each everyday gurobipy move has one culmen call; the handles the model returns read and edit everything after.
+
+| gurobipy | culmen |
+|---|---|
+| `m.addVar(lb=0, ub=4, vtype=GRB.INTEGER, name="n")` | `m.add_var(Var::integer().upper(4).name("n"))` |
+| `m.addVars(I, J, vtype=GRB.BINARY, name="x")` | `m.add_var_map(product(&I, &J), \|(i, j)\| Var::binary().name(..))`, or `variable!(m, x[i in I, j in J], Bin)` |
+| `m.addConstr(x + y <= 4, name="cap")` | `m.add_constraint(("cap", (x + y).leq(4)))`, or `constraint!(m, cap, x + y <= 4)` |
+| `m.addConstrs((.. for i in I), name="c")` | `m.add_constraint_map(I, \|&i\| (format!("c[{i}]"), ..))`, or `constraint!(m, c[i in I], ..)` |
+| `quicksum(..)`, `x.sum("*", j)` | `LinExpr::sum(..)`, `sum!(x[i, j] for i in I)` |
+| `m.setObjective(e, GRB.MAXIMIZE)` | `m.maximize(e)`, `m.set_objective(Sense::Maximize, e)` |
+| `m.setObjectiveN(e, index, priority, weight, abstol, reltol)` | `m.add_stage(Objective::minimize(e), tolerance)` or `m.add_weighted(Objective::minimize(e), weight)`: one or the other in a model, stages ranked by the order they are added, with no blend within a priority |
+| `m.optimize()` | `let mut solver = Solver::new(Highs::new(), m.build()?)?; let solved = solver.solve()?;` |
+| `m.Params.TimeLimit = 10` | `solver.run().time_limit(Duration::from_secs(10)).solve()?` |
+| `m.status`, `x.X`, `m.ObjVal`, `m.ObjBound` | `solved.outcome`, `solution.values[x]`, `outcome.objective()`, `outcome.bound()` |
+| `m.Runtime`, `m.NodeCount`, `m.IterCount` | `solved.elapsed`, `solved.nodes`, `solved.iterations` |
+| `c.Pi`, `x.RC` | `solver.duals()?.rows[c]`, `.cols[x]` |
+| `m.getVarByName("x")`, `m.getConstrByName("cap")` | `program.col_named("x")`, `program.row_named("cap")` |
+| `m.getRow(c)`, `m.getCol(x)`, `m.getCoeff(c, x)` | `program.row(c)`, `program.col_entries(x)`, `program.coefficient(c, x)` |
+| `x.LB = 1`, `x.UB = 0`, `c.RHS = 4`, `x.Obj = 3`, `m.ModelSense = GRB.MAXIMIZE` (then re-solve) | `solver.set_col_lower([(x, 1)])`, `solver.set_col_upper([(x, 0)])`, `solver.set_row_upper([(c, 4)])` (on a `≤` row), `solver.set_col_costs([(x, 3)])`, `solver.set_sense(Sense::Maximize)`; `set_col_bounds([(x, bounds!(1.0, 4.0))])` sets both ends |
+| `m.chgCoeff(c, x, 2)` (then re-solve) | `solver.set_coefficients([(c, x, 2)])` |
+| `m.write("model.lp")` | `program.write_lp(File::create("model.lp")?)` |
+| `x.Start = 1` | `solver.run().start(vec![(x, 1.0)])` |
+| `m.cbLazy`, `m.cbCut`, `m.cbSetSolution` | a `LazyHandler`, `CutHandler` or `HeuristicHandler` on `solver.run()` ([Callbacks](callbacks.md)) |
+| `m.computeIIS()`, `m.feasRelax(..)` | `solver.iis()`, `solver.feasibility_relaxation(&weights)` ([Analysis](analysis.md)) |
+
+Comparisons are methods (`leq`, `geq`, `equals`, `between`) or the `constraint!` macro, since Rust's `<=` returns a
+`bool`. Indicator, SOS, piecewise-linear and other general constraints, a solution pool and parameter tuning have
+no culmen form yet.
 
 ## Building and `ModelError`
 
@@ -467,7 +517,7 @@ use culmen::prelude::*;
 use culmen::ModelError;
 
 let mut m = Model::new();
-m.add_var(Var::integer().bounds(5, 2).name("stock"));
+m.add_var(Var::integer().lower(5).upper(2).name("stock"));
 let error = m.build().unwrap_err();
 assert!(matches!(error, ModelError::VarBounds { .. }));
 assert_eq!(
@@ -477,7 +527,7 @@ assert_eq!(
 
 let mut m = Model::new();
 let x = m.add_var(Var::continuous().name("x"));
-m.add_named_constraint("big", (1e308 * x + 1e308 * x).leq(1.0));
+m.add_constraint(("big", (1e308 * x + 1e308 * x).leq(1.0)));
 let error = m.build().unwrap_err();
 assert_eq!(error.to_string(), "Model: constraint `big` has the non-finite coefficient inf on variable `x`");
 

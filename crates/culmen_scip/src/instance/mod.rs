@@ -19,7 +19,8 @@ use core::ptr::{self, NonNull};
 
 use std::time::Instant;
 
-use culmen_core::{Callback, Col, Events, Priced, QuadObjective, Row, Solution, Start, TiVec};
+use culmen_core::backend::{Hooks, Priced};
+use culmen_core::{Col, QuadObjective, Row, Solution, Start, TiVec};
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_VAR, SCIPactivatePricer,
     SCIPaddSolFree, SCIPcheckSol, SCIPcheckSolOrig, SCIPcreate, SCIPcreatePartialSol, SCIPcreateProbBasic,
@@ -248,6 +249,31 @@ impl Instance {
         (active, modifiable)
     }
 
+    /// The variables of the columns the last solve priced, in the order of their ids.
+    #[cfg(test)]
+    pub(crate) fn priced_vars(&self) -> &[NonNull<SCIP_VAR>] {
+        &self.priced
+    }
+
+    /// The model locks SCIP holds on `var`, down and up.
+    #[cfg(test)]
+    pub(crate) fn model_locks(&self, var: NonNull<SCIP_VAR>) -> (i32, i32) {
+        let model = scip_sys::SCIP_LockType_SCIP_LOCKTYPE_MODEL;
+        // SAFETY: `var` is a live variable of the instance; the getters read its lock counts.
+        unsafe {
+            (
+                scip_sys::SCIPvarGetNLocksDownType(var.as_ptr(), model),
+                scip_sys::SCIPvarGetNLocksUpType(var.as_ptr(), model),
+            )
+        }
+    }
+
+    /// The locks the culmen plugins keep on `var`: the lazy-constraint handler's, down and up.
+    #[cfg(test)]
+    pub(crate) fn kept_locks(&self, var: NonNull<SCIP_VAR>) -> (i32, i32) {
+        self.slot().lazy_locks_on(var)
+    }
+
     /// Whether the objective has a quadratic part, which SCIP holds as an epigraph.
     pub(crate) const fn quadratic(&self) -> bool {
         self.epigraph.is_some()
@@ -315,23 +341,27 @@ impl Instance {
         Ok(())
     }
 
-    /// Solves the problem, delivering the events `wanted` to `callback` and handing every column it prices to
-    /// `priced`; a panic of the callback is returned, not resumed. The instance holds the priced columns' variables
-    /// afterwards, so its best solution has a value for each.
+    /// Solves the problem, delivering events to `hooks` and handing every column its pricer prices to `priced`, the
+    /// sink the hooks gave; a panic of a callback or handler is returned, not resumed. The instance holds the priced
+    /// columns' variables afterwards, so its best solution has a value for each.
     ///
-    /// The callback's run is installed in the slot for the call of `SCIPsolve` alone, and SCIP reads the columns
-    /// through shared references during it.
-    pub(crate) fn solve(
-        &mut self,
-        callback: &mut dyn Callback<Scip>,
-        wanted: Events,
-        start: Instant,
-        priced: &mut Priced,
-    ) -> Ran {
+    /// The run is installed in the slot for the call of `SCIPsolve` alone, and SCIP reads the columns through shared
+    /// references during it.
+    pub(crate) fn solve<'h>(&mut self, hooks: Hooks<'h, Scip>, priced: Option<&'h mut Priced>, start: Instant) -> Ran {
         let this: &Self = self;
         // SAFETY: the instance is live, holds the columns and rows, and is in its problem stage, as configuring left
         // it.
-        let run = unsafe { Run::new(this.raw(), callback, wanted, start, this.columns(), &this.conss, priced) };
+        let run = unsafe {
+            Run::new(
+                this.raw(),
+                this.slot(),
+                hooks,
+                priced,
+                start,
+                this.columns(),
+                &this.conss,
+            )
+        };
         let solved = {
             let _installed = this.slot().install(&run);
             // SAFETY: the instance is live and borrowed exclusively by the caller, and holds its problem; the run its
@@ -351,25 +381,32 @@ impl Instance {
     }
 
     /// SCIP's account of the last solve.
-    pub(crate) fn status(&self) -> ScipStatus {
+    ///
+    /// # Errors
+    ///
+    /// [`ScipError::Unlisted`] for a status SCIP 10 does not define.
+    pub(crate) fn status(&self) -> Result<ScipStatus, ScipError> {
+        // SAFETY: the instance is live; the getters read the statistics of the last solve.
+        let (status, solutions_found) = unsafe { (SCIPgetStatus(self.raw()), SCIPgetNSolsFound(self.raw())) };
+        Ok(ScipStatus {
+            status: Status::from_raw(status, "SCIPgetStatus")?,
+            solutions_found: u64::try_from(solutions_found).unwrap_or(0),
+        })
+    }
+
+    /// The best bound the last solve proved on the objective, offset included, in the program's sense; `None` when it
+    /// proved none, as for an infeasible program.
+    pub(crate) fn dual_bound(&self) -> Option<f64> {
+        // SAFETY: the instance is live; the getter reads the last solve's bound.
+        self.finite(unsafe { SCIPgetDualbound(self.raw()) })
+    }
+
+    /// The branch-and-bound nodes of the last solve, across restarts, and its LP iterations.
+    pub(crate) fn work(&self) -> (u64, u64) {
         let count = |n: i64| u64::try_from(n).unwrap_or(0);
         // SAFETY: the instance is live; the getters read the statistics of the last solve.
-        let (status, dual_bound, nodes, lp_iterations, solutions_found) = unsafe {
-            (
-                SCIPgetStatus(self.raw()),
-                SCIPgetDualbound(self.raw()),
-                SCIPgetNTotalNodes(self.raw()),
-                SCIPgetNLPIterations(self.raw()),
-                SCIPgetNSolsFound(self.raw()),
-            )
-        };
-        ScipStatus {
-            status: Status::from_raw(status),
-            dual_bound: self.finite(dual_bound),
-            nodes: count(nodes),
-            lp_iterations: count(lp_iterations),
-            solutions_found: count(solutions_found),
-        }
+        let (nodes, iterations) = unsafe { (SCIPgetNTotalNodes(self.raw()), SCIPgetNLPIterations(self.raw())) };
+        (count(nodes), count(iterations))
     }
 
     /// The best solution of the last solve, its objective in the program's sense with the offset; `None` when SCIP

@@ -16,11 +16,12 @@ use core::fmt;
 use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use culmen_core::backend::Unsupported;
+use culmen_core::script::{Script, ScriptError};
 use culmen_core::{
-    Backend, Bounds, Callback, Col, Constraint, EditError, Events, Integrality, InvalidBounds, LinExpr, Linear, Model,
+    Backend, Bounds, Col, Constraint, EditError, Events, Integrality, InvalidBounds, LinExpr, Linear, Model,
     ModelClass, ModelClasses, NewCol, NewRow, Outcome, Program, ProgramColumn, ProgramFeature, ProgramFeatures,
-    ProgramPlan, ProgramRow, Request, Row, Script, ScriptError, Sense, Settings, SolveError, Solved, Solver, Term,
-    Unsupported, Var, bounds,
+    ProgramPlan, ProgramRow, Row, Sense, Settings, SolveError, Solved, Solver, Term, Var, bounds,
 };
 use culmen_testing::mirror::{Call, Edited, Faults, Mirror, MirrorError};
 use culmen_testing::op::{Applied, EditOp};
@@ -40,7 +41,7 @@ fn base() -> (Program, Col, Col, Row, Row) {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(4).name("x"));
     let y = m.add_var(Var::continuous().upper(3).name("y"));
-    let cap = m.add_named_constraint("cap", (x + y).leq(5));
+    let cap = m.add_constraint(("cap", (x + y).leq(5)));
     let floor = m.add_constraint((x - y).geq(-1));
     m.minimize(2.0 * x + 3.0 * y + 1);
     (m.build().unwrap(), x, y, cap, floor)
@@ -120,6 +121,89 @@ fn test_set_col_bounds_changes_only_those_bounds_and_the_last_given_holds() {
 }
 
 #[test]
+fn test_one_end_of_a_bound_changes_and_the_other_is_kept() {
+    let (_, x, y, cap, floor) = base();
+    let mut solver = mirrored();
+    solver.set_col_lower([(x, 5), (x, 1)]).unwrap();
+    solver.set_col_upper([(y, 2)]).unwrap();
+    solver.set_row_upper([(cap, 4)]).unwrap();
+    solver.set_row_lower([(floor, -2)]).unwrap();
+    let mut want = base_plan();
+    want.columns[x].bounds = bounds!(1.0, 4.0);
+    want.columns[y].bounds = bounds!(0.0, 2.0);
+    want.rows[cap].bounds = bounds!(f64::NEG_INFINITY, 4.0);
+    want.rows[floor].bounds = bounds!(-2.0, f64::INFINITY);
+    let want = want.build().unwrap();
+    assert_eq!(solver.program(), &want);
+    assert_eq!(
+        last_call(&solver),
+        &Call::Edit(Edited::RowBounds(vec![floor]), want.clone())
+    );
+    assert_in_sync(&solver);
+
+    // An end beyond the other is refused, all or none, before the backend sees it.
+    let refused = solver.set_col_upper([(y, 3.0), (x, 0.5)]);
+    assert_eq!(
+        refused,
+        Err(EditError::ColEnd {
+            col: x,
+            source: InvalidBounds::Empty { lower: 1.0, upper: 0.5 }
+        })
+    );
+    assert_eq!(
+        solver.set_row_lower([(cap, f64::INFINITY)]),
+        Err(EditError::RowEnd {
+            row: cap,
+            source: InvalidBounds::LowerIsPlusInfinity
+        })
+    );
+    assert_eq!(
+        solver.set_col_lower([(Col::new(9), 0)]),
+        Err(EditError::UnknownCol { col: Col::new(9) })
+    );
+    assert_eq!(solver.program(), &want);
+    assert_in_sync(&solver);
+}
+
+#[test]
+fn test_set_coefficients_changes_adds_and_takes_out_entries() {
+    let (_, x, y, cap, floor) = base();
+    let mut solver = mirrored();
+    let given = [(floor, y, 0.0), (cap, x, 3.0), (cap, x, 2.0)];
+    solver.set_coefficients(given).unwrap();
+    let mut want = base_plan();
+    want.rows[cap].terms = vec![(x, 2.0), (y, 1.0)];
+    want.rows[floor].terms = vec![(x, 1.0)];
+    let want = want.build().unwrap();
+    assert_eq!(solver.program(), &want);
+    let entries = vec![(cap, x), (floor, y)];
+    assert_eq!(
+        last_call(&solver),
+        &Call::Edit(Edited::Coefficients(entries), want.clone())
+    );
+    solver.set_coefficients([(floor, y, -4)]).unwrap();
+    assert_eq!(
+        solver.program().row(floor).entries().collect::<Vec<_>>(),
+        [(x, 1.0), (y, -4.0)]
+    );
+    assert_in_sync(&solver);
+
+    let before = solver.program().clone();
+    let nan = solver.set_coefficients([(cap, y, 5.0), (floor, x, f64::NAN)]);
+    assert!(matches!(nan, Err(EditError::NonFiniteCoefficient { row, col, .. }) if row == floor && col == x));
+    assert_eq!(
+        solver.set_coefficients([(Row::new(7), x, 1.0)]),
+        Err(EditError::UnknownRow { row: Row::new(7) })
+    );
+    assert_eq!(
+        solver.set_coefficients([(cap, Col::new(7), 1.0)]),
+        Err(EditError::UnknownCol { col: Col::new(7) })
+    );
+    assert_eq!(solver.program(), &before);
+    assert_in_sync(&solver);
+}
+
+#[test]
 fn test_set_col_costs_changes_the_own_objective_and_takes_integers() {
     let (_, _, y, ..) = base();
     let mut solver = mirrored();
@@ -130,6 +214,140 @@ fn test_set_col_costs_changes_the_own_objective_and_takes_integers() {
     assert_eq!(solver.program(), &want);
     assert_eq!(last_call(&solver), &Call::Edit(Edited::ColCosts(vec![y]), want));
     assert_in_sync(&solver);
+}
+
+#[test]
+fn test_set_sense_and_set_offset_change_only_the_own_objective_sense_and_offset() {
+    let mut solver = mirrored();
+    solver.set_sense(Sense::Maximize).unwrap();
+    let mut want = base_plan();
+    want.sense = Sense::Maximize;
+    let maximized = want.clone().build().unwrap();
+    assert_eq!(solver.program(), &maximized);
+    assert_eq!(last_call(&solver), &Call::Edit(Edited::Sense, maximized));
+    solver.set_offset(-2).unwrap();
+    want.offset = -2.0;
+    let want = want.build().unwrap();
+    assert_eq!(solver.program(), &want);
+    assert_eq!(last_call(&solver), &Call::Edit(Edited::Offset, want.clone()));
+    assert_eq!(
+        solver.set_offset(f64::INFINITY),
+        Err(EditError::NonFiniteOffset { value: f64::INFINITY })
+    );
+    assert_eq!(solver.program(), &want);
+    assert_in_sync(&solver);
+}
+
+#[test]
+fn test_set_objective_replaces_every_cost_the_offset_the_sense_and_the_quadratic_part() {
+    let (_, x, y, ..) = base();
+    let mut solver = mirrored();
+    solver
+        .set_objective(Sense::Maximize, 4 * y + 2 * y - x * x - 3)
+        .unwrap();
+    let mut want = base_plan();
+    want.sense = Sense::Maximize;
+    want.offset = -3.0;
+    want.columns[x].cost = 0.0;
+    want.columns[y].cost = 6.0;
+    want.quadratic = vec![(x, x, -1.0)];
+    let want = want.build().unwrap();
+    assert_eq!(solver.program(), &want);
+    assert_eq!(solver.program().class(), ModelClass::Qp);
+    assert_eq!(last_call(&solver), &Call::Edit(Edited::Objective, want));
+    assert_in_sync(&solver);
+
+    // A quadratic part convex for one sense is not concave for the other, so the sense alone cannot flip; the whole
+    // objective can, and back to linear.
+    assert_eq!(
+        solver.set_sense(Sense::Minimize),
+        Err(EditError::NonConvexObjective {
+            sense: Sense::Minimize,
+            col: x
+        })
+    );
+    solver.set_objective(Sense::Minimize, x * x + y).unwrap();
+    solver.set_objective(Sense::Minimize, 2.0 * x + 3.0 * y + 1).unwrap();
+    assert_eq!(solver.program(), &base().0);
+    assert_in_sync(&solver);
+}
+
+#[test]
+fn test_set_objective_refuses_what_a_model_would_and_changes_nothing() {
+    let (program, x, y, ..) = base();
+    let mut solver = mirrored();
+    let refusals: [(culmen_core::QuadExpr, Sense, Refusal); 6] = [
+        (
+            Col::new(5) + x * x,
+            Sense::Minimize,
+            EditError::UnknownCol { col: Col::new(5) },
+        ),
+        (
+            (x * 1e308 + x * 1e308).into(),
+            Sense::Minimize,
+            EditError::NonFiniteCost {
+                col: x,
+                value: f64::INFINITY,
+            },
+        ),
+        (
+            (y + f64::NEG_INFINITY).into(),
+            Sense::Minimize,
+            EditError::NonFiniteOffset {
+                value: f64::NEG_INFINITY,
+            },
+        ),
+        (
+            (f64::INFINITY * x * y).into(),
+            Sense::Minimize,
+            EditError::NonFiniteQuadCoefficient {
+                first: x,
+                second: y,
+                value: f64::INFINITY,
+            },
+        ),
+        (
+            x * x - y * y,
+            Sense::Minimize,
+            EditError::NonConvexObjective {
+                sense: Sense::Minimize,
+                col: y,
+            },
+        ),
+        (
+            (x * x).into(),
+            Sense::Maximize,
+            EditError::NonConvexObjective {
+                sense: Sense::Maximize,
+                col: x,
+            },
+        ),
+    ];
+    for (objective, sense, refusal) in refusals {
+        assert_eq!(solver.set_objective(sense, objective), Err(refusal));
+        assert_eq!(solver.program(), &program);
+    }
+    assert_in_sync(&solver);
+
+    // A square beside further objectives, and a quadratic part for a backend without QPs.
+    let mut m = Model::new();
+    let z = m.add_var(Var::continuous().upper(1));
+    m.minimize(z);
+    m.add_stage(culmen_core::Objective::maximize(z), culmen_core::Tolerance::EXACT);
+    let mut several = Solver::new(Script::optimal(0.0, vec![0.0]), m.build().unwrap()).unwrap();
+    assert_eq!(
+        several.set_objective(Sense::Minimize, z * z),
+        Err(EditError::QuadraticWithObjectives)
+    );
+    let mut lp = Solver::new(Plain::<false>::default(), program).unwrap();
+    assert_eq!(
+        lp.set_objective(Sense::Minimize, x * x),
+        Err(EditError::UnsupportedClass {
+            class: ModelClass::Qp,
+            supported: ModelClasses::of(&[ModelClass::Lp])
+        })
+    );
+    assert_eq!(lp.backend().loads, 1);
 }
 
 #[test]
@@ -275,17 +493,17 @@ fn test_add_col_drops_entries_that_cancel_and_takes_a_bare_column() {
     let mut solver = mirrored();
     let cancelled = solver
         .add_col(NewCol {
-            column: ProgramColumn::continuous(0.0, Bounds::NON_NEGATIVE),
+            column: ProgramColumn::continuous(),
             entries: vec![(cap, 1.0), (cap, -1.0)],
         })
         .unwrap();
-    let open = solver.add_col(ProgramColumn::binary(1.0)).unwrap();
+    let open = solver.add_col(ProgramColumn::binary().cost(1.0)).unwrap();
     assert_eq!((cancelled, open), (Col::new(2), Col::new(3)));
     assert_eq!(
         solver.program().row(cap).entries().collect::<Vec<_>>(),
         [(x, 1.0), (y, 1.0)]
     );
-    assert_eq!(solver.program().columns()[open], ProgramColumn::binary(1.0));
+    assert_eq!(solver.program().columns()[open], ProgramColumn::binary().cost(1.0));
     assert_eq!(solver.program().class(), ModelClass::Milp);
     assert_in_sync(&solver);
 }
@@ -294,16 +512,13 @@ fn test_add_col_drops_entries_that_cancel_and_takes_a_bare_column() {
 fn test_add_cols_returns_the_new_columns_in_order_after_every_column_before() {
     let mut solver = mirrored();
     let cols = solver
-        .add_cols([
-            ProgramColumn::continuous(1.0, Bounds::FREE),
-            ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE),
-        ])
+        .add_cols([ProgramColumn::free().cost(1.0), ProgramColumn::continuous().cost(2.0)])
         .unwrap()
         .collect::<Vec<_>>();
     assert_eq!(cols, [Col::new(2), Col::new(3)]);
     let mut want = base_plan();
-    want.columns.push(ProgramColumn::continuous(1.0, Bounds::FREE));
-    want.columns.push(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
+    want.columns.push(ProgramColumn::free().cost(1.0));
+    want.columns.push(ProgramColumn::continuous().cost(2.0));
     let want = want.build().unwrap();
     assert_eq!(solver.program(), &want);
     assert_eq!(last_call(&solver), &Call::Edit(Edited::NewCols(cols), want));
@@ -315,9 +530,7 @@ fn test_ids_handed_out_keep_their_meaning_through_edits() {
     let (program, x, y, cap, floor) = base();
     let mut solver = mirrored();
     solver.add_row(y.leq(1)).unwrap();
-    solver
-        .add_col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE))
-        .unwrap();
+    solver.add_col(ProgramColumn::continuous().cost(1.0)).unwrap();
     solver.set_row_bounds([(floor, ..)]).unwrap();
     let edited = solver.program();
     assert_eq!(
@@ -437,7 +650,7 @@ fn refusals() -> Vec<Case> {
         ),
         (
             |s, _, _, _| {
-                let column = ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE);
+                let column = ProgramColumn::continuous().cost(1.0);
                 s.add_col(NewCol {
                     column,
                     entries: vec![(Row::new(9), 1.0)],
@@ -447,10 +660,7 @@ fn refusals() -> Vec<Case> {
             EditError::UnknownRow { row: Row::new(9) },
         ),
         (
-            |s, _, _, _| {
-                s.add_col(ProgramColumn::continuous(f64::INFINITY, Bounds::NON_NEGATIVE))
-                    .map(drop)
-            },
+            |s, _, _, _| s.add_col(ProgramColumn::continuous().cost(f64::INFINITY)).map(drop),
             EditError::NonFiniteCost {
                 col: new_col,
                 value: inf,
@@ -458,7 +668,7 @@ fn refusals() -> Vec<Case> {
         ),
         (
             |s, _, _, cap| {
-                let column = ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE);
+                let column = ProgramColumn::continuous().cost(1.0);
                 s.add_col(NewCol {
                     column,
                     entries: vec![(cap, f64::INFINITY)],
@@ -473,7 +683,7 @@ fn refusals() -> Vec<Case> {
         ),
         (
             |s, _, _, cap| {
-                let column = ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE);
+                let column = ProgramColumn::continuous().cost(1.0);
                 s.add_col(NewCol {
                     column,
                     entries: vec![(cap, 1e308), (cap, 1e308)],
@@ -488,7 +698,7 @@ fn refusals() -> Vec<Case> {
         ),
         (
             |s, _, _, _| {
-                s.add_col(ProgramColumn::semi_continuous(1.0, bounds!(0.0, 1.0)))
+                s.add_col(ProgramColumn::semi_continuous().cost(1.0).bounds(bounds!(0.0, 1.0)))
                     .map(drop)
             },
             EditError::SemiBounds {
@@ -513,7 +723,7 @@ fn test_each_refusal_names_what_is_at_fault_and_changes_nothing() {
 
 #[test]
 fn test_every_edit_error_displays_its_sentence_and_its_source() {
-    let cases: [(EditError<ScriptError>, &str, bool); 9] = [
+    let cases: [(EditError<ScriptError>, &str, bool); 16] = [
         (
             EditError::UnknownCol { col: Col::new(3) },
             "Solver: the program has no Col(3)",
@@ -551,6 +761,23 @@ fn test_every_edit_error_displays_its_sentence_and_its_source() {
             true,
         ),
         (
+            EditError::ColEnd {
+                col: Col::new(1),
+                source: InvalidBounds::Empty { lower: 5.0, upper: 4.0 },
+            },
+            "Solver: Col(1) with one end set would have invalid bounds: Bounds: the lower end 5 exceeds the upper end \
+             4",
+            true,
+        ),
+        (
+            EditError::RowEnd {
+                row: Row::new(0),
+                source: InvalidBounds::LowerIsPlusInfinity,
+            },
+            "Solver: Row(0) with one end set would have invalid bounds: Bounds: the lower end is +inf",
+            true,
+        ),
+        (
             EditError::SemiBounds {
                 col: Col::new(2),
                 bounds: bounds!(0.0, 1.0),
@@ -559,7 +786,42 @@ fn test_every_edit_error_displays_its_sentence_and_its_source() {
             false,
         ),
         (
-            EditError::Unsupported {
+            EditError::NonFiniteOffset { value: f64::NAN },
+            "Solver: the objective offset NaN is not finite",
+            false,
+        ),
+        (
+            EditError::NonFiniteQuadCoefficient {
+                first: Col::new(0),
+                second: Col::new(1),
+                value: f64::INFINITY,
+            },
+            "Solver: the quadratic coefficient inf of Col(0) · Col(1) is not finite",
+            false,
+        ),
+        (
+            EditError::NonConvexObjective {
+                sense: Sense::Minimize,
+                col: Col::new(1),
+            },
+            "Solver: the quadratic objective would not be convex in the block of Col(1)",
+            false,
+        ),
+        (
+            EditError::NonConvexObjective {
+                sense: Sense::Maximize,
+                col: Col::new(0),
+            },
+            "Solver: the quadratic objective would not be concave in the block of Col(0)",
+            false,
+        ),
+        (
+            EditError::QuadraticWithObjectives,
+            "Solver: the objective would have a quadratic part beside further objectives",
+            false,
+        ),
+        (
+            EditError::UnsupportedClass {
                 class: ModelClass::Milp,
                 supported: ModelClasses::of(&[ModelClass::Lp]),
             },
@@ -612,10 +874,6 @@ impl<const MILP: bool> Backend for Plain<MILP> {
     type Progress<'a> = Unsupported;
     type Poll<'a> = Unsupported;
     type Solution<'a> = Unsupported;
-    type Lazy<'a> = Unsupported;
-    type Cut<'a> = Unsupported;
-    type Heuristic<'a> = Unsupported;
-    type Price<'a> = Unsupported;
     type Native<'a> = Unsupported;
 
     const EVENTS: Events = Events::NONE;
@@ -630,16 +888,13 @@ impl<const MILP: bool> Backend for Plain<MILP> {
         Ok(())
     }
 
-    fn solve(
-        &mut self,
-        _: &Settings,
-        _: &mut dyn Callback<Self>,
-        _: &mut culmen_core::Priced,
-    ) -> Result<Solved<()>, Never> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::backend::Hooks<'_, Self>) -> Result<Solved<()>, Never> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),
             elapsed: Duration::ZERO,
+            nodes: None,
+            iterations: None,
         })
     }
 }
@@ -656,7 +911,7 @@ fn test_the_default_edit_reloads_the_whole_program() {
 fn test_an_lp_backend_refuses_an_integer_column_before_it_sees_the_edit() {
     let (program, _, y, ..) = base();
     let mut solver = Solver::new(Plain::<false>::default(), program.clone()).unwrap();
-    let milp = EditError::Unsupported {
+    let milp = EditError::UnsupportedClass {
         class: ModelClass::Milp,
         supported: ModelClasses::of(&[ModelClass::Lp]),
     };
@@ -664,7 +919,7 @@ fn test_an_lp_backend_refuses_an_integer_column_before_it_sees_the_edit() {
         solver.set_col_integrality([(y, Integrality::Integer)]),
         Err(milp.clone())
     );
-    assert_eq!(solver.add_col(ProgramColumn::binary(1.0)), Err(milp));
+    assert_eq!(solver.add_col(ProgramColumn::binary().cost(1.0)), Err(milp));
     assert_eq!(solver.program(), &program);
     assert_eq!(solver.backend().loads, 1);
 }
@@ -684,7 +939,7 @@ fn test_a_backend_without_semi_columns_refuses_one_before_it_sees_the_edit() {
         Err(refusal.clone())
     );
     assert_eq!(
-        solver.add_col(ProgramColumn::semi_continuous(1.0, bounds!(1.0, 2.0))),
+        solver.add_col(ProgramColumn::semi_continuous().cost(1.0).bounds(bounds!(1.0, 2.0))),
         Err(refusal)
     );
     assert_eq!(solver.program(), &before);
@@ -695,7 +950,7 @@ fn test_a_backend_without_semi_columns_refuses_one_before_it_sees_the_edit() {
 fn test_a_refused_edit_restores_the_program_and_reloads_it() {
     let (program, x, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults.refuse_edits = 1;
+    solver.options_mut().refuse_edits = 1;
     assert_eq!(
         solver.set_col_costs([(x, 9.0)]),
         Err(EditError::Backend(MirrorError::Injected))
@@ -718,7 +973,7 @@ fn test_a_refused_edit_restores_the_program_and_reloads_it() {
 fn test_a_refused_add_row_hands_out_no_row() {
     let (_, x, y, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults.refuse_edits = 1;
+    solver.options_mut().refuse_edits = 1;
     assert!(solver.add_row(x.leq(1)).is_err());
     assert_eq!(solver.add_row(y.leq(2)), Ok(Row::new(2)));
     assert_eq!(solver.program().num_rows(), 3);
@@ -733,7 +988,7 @@ fn test_a_refused_add_row_hands_out_no_row() {
 fn test_a_failed_restore_is_made_good_before_the_next_solve() {
     let (program, x, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         refuse_loads: 1,
         ..Faults::default()
@@ -744,7 +999,7 @@ fn test_a_failed_restore_is_made_good_before_the_next_solve() {
     );
     assert_eq!(solver.program(), &program);
     assert_eq!(solver.backend().held(), None);
-    solver.solve(Request::new()).unwrap();
+    solver.solve().unwrap();
     assert_eq!(last_call(&solver), &Call::Load(program));
     assert_in_sync(&solver);
 }
@@ -753,17 +1008,17 @@ fn test_a_failed_restore_is_made_good_before_the_next_solve() {
 fn test_a_reload_that_fails_again_fails_the_next_solve_and_a_later_one_reloads() {
     let (program, x, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         refuse_loads: 2,
         ..Faults::default()
     };
     assert!(solver.set_col_costs([(x, 9.0)]).is_err());
     assert!(matches!(
-        solver.solve(Request::new()),
+        solver.solve(),
         Err(SolveError::Backend(MirrorError::Injected))
     ));
-    solver.solve(Request::new()).unwrap();
+    solver.solve().unwrap();
     assert_eq!(solver.program(), &program);
     assert_in_sync(&solver);
 }
@@ -772,7 +1027,7 @@ fn test_a_reload_that_fails_again_fails_the_next_solve_and_a_later_one_reloads()
 fn test_an_edit_on_a_solver_out_of_sync_reloads_first() {
     let (program, x, y, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         refuse_loads: 1,
         ..Faults::default()
@@ -796,7 +1051,7 @@ fn test_an_edit_on_a_solver_out_of_sync_reloads_first() {
 fn test_an_edit_on_a_solver_whose_reload_fails_is_refused_unchanged() {
     let (program, x, y, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         refuse_loads: 2,
         ..Faults::default()
@@ -814,7 +1069,7 @@ fn test_an_edit_on_a_solver_whose_reload_fails_is_refused_unchanged() {
 fn test_a_panicking_edit_leaves_the_solver_to_reload_before_its_next_solve() {
     let (_, x, ..) = base();
     let mut solver = mirrored();
-    solver.backend_mut().faults.panic_edits = 1;
+    solver.options_mut().panic_edits = 1;
     let edited = catch_unwind(AssertUnwindSafe(|| solver.set_col_costs([(x, 9.0)])));
     assert!(edited.is_err());
     let mut tried = base_plan();
@@ -824,7 +1079,7 @@ fn test_a_panicking_edit_leaves_the_solver_to_reload_before_its_next_solve() {
         &Call::Edit(Edited::ColCosts(vec![x]), tried.build().unwrap()),
         "the panic came from the backend"
     );
-    solver.solve(Request::new()).unwrap();
+    solver.solve().unwrap();
     assert_eq!(last_call(&solver), &Call::Load(solver.program().clone()));
     assert_in_sync(&solver);
 }
@@ -858,11 +1113,15 @@ fn returned(op: &EditOp, before: &Program, after: &Program) -> Applied {
 fn is_empty(op: &EditOp) -> bool {
     match op {
         EditOp::ColBounds(items) => items.is_empty(),
+        EditOp::ColLower(items) | EditOp::ColUpper(items) => items.is_empty(),
+        EditOp::RowLower(items) | EditOp::RowUpper(items) => items.is_empty(),
+        EditOp::Coefficients(items) => items.is_empty(),
         EditOp::ColCosts(items) => items.is_empty(),
         EditOp::ColIntegrality(items) => items.is_empty(),
         EditOp::RowBounds(items) => items.is_empty(),
         EditOp::AddRows(items) => items.is_empty(),
         EditOp::AddCols(items) => items.is_empty(),
+        EditOp::Sense(_) | EditOp::Offset(_) | EditOp::Objective { .. } => false,
     }
 }
 
@@ -921,7 +1180,7 @@ proptest! {
         for (op, &(refuse_edit, refuse_load)) in ops.iter().zip(&faults) {
             let before = solver.program().clone();
             let want = edit_plan(&before, op, ModelClasses::ALL, ProgramFeatures::ALL);
-            solver.backend_mut().faults = Faults {
+            *solver.options_mut() = Faults {
                 refuse_edits: usize::from(refuse_edit),
                 refuse_loads: usize::from(refuse_load),
                 ..Faults::default()
@@ -941,9 +1200,9 @@ proptest! {
                     prop_assert_eq!(solver.program(), &before);
                 }
             }
-            solver.solve(Request::new()).unwrap();
+            solver.solve().unwrap();
             prop_assert_eq!(solver.backend().held(), Some(solver.program()));
-            solver.backend_mut().faults = Faults::default();
+            *solver.options_mut() = Faults::default();
         }
     }
 }

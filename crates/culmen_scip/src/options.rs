@@ -8,6 +8,8 @@ use core::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::NotAscii;
+
 /// The options a [`Scip`](crate::Scip) backend applies before every solve, after resetting SCIP's parameters and
 /// before the solve's [`Settings`](culmen_core::Settings).
 ///
@@ -15,11 +17,11 @@ use serde::{Deserialize, Serialize};
 /// emphases, so a parameter set by name overrides what an emphasis chose for it.
 ///
 /// ```
-/// use culmen_scip::{Emphasis, ScipOptions};
+/// use culmen_scip::{Emphasis, ParamValue, ScipOptions};
 ///
 /// let options = ScipOptions { heuristics: Some(Emphasis::Off), ..ScipOptions::default() }
 ///     .param("limits/maxorigsol", 5)
-///     .param("lp/initalgorithm", 'd');
+///     .param("lp/initalgorithm", ParamValue::Char('d'));
 /// assert_eq!(options.params.len(), 2);
 /// ```
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -51,7 +53,6 @@ impl ScipOptions {
 /// One of SCIP's emphasis settings for a group of plugins: SCIP's `SCIP_PARAMSETTING`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum Emphasis {
     /// SCIP's default parameters for the group.
     Default,
@@ -89,7 +90,6 @@ pub struct ScipParam {
 /// A parameter value of one of SCIP's six types.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum ParamValue {
     /// A `SCIP_Bool` parameter.
     Bool(bool),
@@ -99,7 +99,8 @@ pub enum ParamValue {
     Longint(i64),
     /// A `SCIP_Real` parameter; written in the form of [`culmen_core::serde_real`], so an infinity reads back.
     Real(#[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real"))] f64),
-    /// A `char` parameter; SCIP takes only ASCII characters.
+    /// A `char` parameter; SCIP takes only ASCII characters. `ParamValue::try_from(c)` refuses any other where the
+    /// value is made; one written into the variant directly is refused when the solve sets it.
     Char(char),
     /// A string parameter.
     String(String),
@@ -142,9 +143,16 @@ impl From<f64> for ParamValue {
     }
 }
 
-impl From<char> for ParamValue {
-    fn from(value: char) -> Self {
-        Self::Char(value)
+/// A `char` parameter's value, refused unless ASCII.
+impl TryFrom<char> for ParamValue {
+    type Error = NotAscii;
+
+    fn try_from(value: char) -> Result<Self, NotAscii> {
+        if value.is_ascii() {
+            Ok(Self::Char(value))
+        } else {
+            Err(NotAscii(value))
+        }
     }
 }
 

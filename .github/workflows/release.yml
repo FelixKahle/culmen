@@ -16,7 +16,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   # The workspace's `rust-version`; the release builds with exactly that toolchain.
-  RUST_TOOLCHAIN: "1.99"
+  RUST_TOOLCHAIN: "1.100"
 
 jobs:
   publish:

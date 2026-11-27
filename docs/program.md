@@ -20,11 +20,13 @@ A `ProgramPlan` is a program as plain data, with `pub` fields, checked into a `P
 | `quadratic` | The objective's quadratic terms as `(Col, Col, f64)`, each `(i, j, q)` adding `q · xᵢ · xⱼ`; empty for a linear objective. See [The quadratic part](#the-quadratic-part). |
 | `objectives` | Further linear objectives and how they combine, `Objectives::Single` for none. See [Several objectives](#several-objectives). |
 
-`plan.col(column)` pushes a column and returns its `Col`; `plan.row(bounds, terms)` pushes an unnamed row and
-returns its `Row`, its bounds anything that converts into `Bounds` (`..` for a free row).
-`ProgramColumn::continuous(cost, bounds)`, `ProgramColumn::integer(cost, bounds)`, `ProgramColumn::binary(cost)`,
-`ProgramColumn::semi_continuous(cost, bounds)` and `ProgramColumn::semi_integer(cost, bounds)` make columns without a
-name; the fields are public, so set `name` directly.
+`plan.col(column)` pushes a `ProgramColumn` and returns its `Col`; `plan.row(row)` pushes a `ProgramRow` and returns
+its `Row`. A row is given as the record or as its parts: `(bounds, terms)` for an unnamed row, `(name, bounds, terms)`
+for a named one, the bounds anything that converts into `Bounds` (`..` for a free row). A `ProgramColumn` is built
+by chaining, as a [`Var`](modelling.md#variables) is: `ProgramColumn::continuous()`, `free()`, `integer()`,
+`binary()`, `semi_continuous()` or `semi_integer()`, costing nothing and in the bounds its integrality names
+(`[0, +inf)`, `(-inf, +inf)`, `[0, 1]` for a binary) until `.cost(..)`, `.bounds(..)` and `.name(..)` say otherwise.
+A semi column needs its bounds set; the build checks them. The fields stay public, as plain data.
 
 ```rust
 use culmen::{Bounds, ProgramColumn, ProgramPlan, Sense, bounds};
@@ -33,11 +35,10 @@ fn main() -> Result<(), culmen::ProgramError> {
     // Maximize 3x + 2y subject to x + y <= 4 and x + 3y <= 6, with x, y >= 0.
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
-    let x = plan.col(ProgramColumn { name: Some("x".into()), ..ProgramColumn::continuous(3.0, Bounds::NON_NEGATIVE) });
-    let y = plan.col(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
-    let total = plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]);
-    plan.row(bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0), (x, 0.5), (x, -0.5)]);
-    plan.rows[total].name = Some("total".into());
+    let x = plan.col(ProgramColumn::continuous().cost(3).name("x"));
+    let y = plan.col(ProgramColumn::continuous().cost(2));
+    let total = plan.row(("total", bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]));
+    plan.row((bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0), (x, 0.5), (x, -0.5)]));
 
     let program = plan.build()?;
     assert_eq!((program.num_cols(), program.num_rows(), program.num_entries()), (2, 2, 4));
@@ -61,15 +62,17 @@ A `Program` is read through methods; it has no public fields and no constructor 
 |---|---|
 | `sense()`, `offset()` | The objective's sense and constant. |
 | `num_cols()`, `num_rows()`, `num_entries()` | The counts; entries are the non-zero coefficients. |
-| `is_mip()` | Whether any column is integer, semi-continuous or semi-integer. |
 | `quadratic()` | The objective's [quadratic part](#the-quadratic-part), a `QuadObjective`. |
 | `objectives()` | The further objectives and how they combine, an [`Objectives`](#several-objectives). |
-| `class()` | The [`ModelClass`](#model-classes): `Lp`, `Milp`, `Qp` or `Miqp`. |
+| `class()` | The [`ModelClass`](#model-classes): `Lp`, `Milp`, `Qp` or `Miqp`; `class().is_discrete()` says whether any column is integer, semi-continuous or semi-integer. |
 | `features()` | The [`ProgramFeatures`](#features) it uses beyond its class. |
-| `cols()`, `rows()` | Every `Col`, every `Row`, in order. |
+| `cols()`, `rows()` | Every `Col`, every `Row`, in order: a `Cols` or `Rows` run, the type `Solver::add_cols` and `add_rows` return too. It is an iterator that also answers `len()`, `is_empty()`, `contains(id)`, `start()` and `end()`, and a borrowed run iterates without being used up (`for col in &cols`). |
 | `columns()` | The columns' `ProgramColumn` data, indexed by `Col`: `program.columns()[x]`. |
 | `row_bounds()` | The rows' bounds, indexed by `Row`. |
 | `row(row)` | A [`RowView`](#row-views-and-iterators) of one row: its bounds, name and entries. |
+| `col_entries(col)` | One column's entries as `(Row, f64)`, sorted by row; each step searches a row, since the matrix is stored by rows. |
+| `coefficient(row, col)` | The coefficient of `col` in `row`, zero for none. |
+| `col_named(name)`, `row_named(name)` | The first column or row of that name, `None` for none; a search through every one. |
 | `matrix()` | The whole matrix in compressed row form, a `RowMatrix { starts, cols, values }`. |
 | `objective_value(values)`, `objective_values(values)`, `activities(values)`, `max_violation(values)` | See [Checking a point](#checking-a-point). |
 | `to_lp_string()`, `write_lp(out)` | See [LP files](#lp-files). |
@@ -177,9 +180,9 @@ use culmen::{ProgramColumn, ProgramPlan, TiVec, bounds};
 
 fn main() -> Result<(), culmen::ProgramError> {
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::binary(1.0));
-    let y = plan.col(ProgramColumn::binary(1.0));
-    let r = plan.row(bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]);
+    let x = plan.col(ProgramColumn::binary().cost(1.0));
+    let y = plan.col(ProgramColumn::binary().cost(1.0));
+    let r = plan.row((bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]));
     let program = plan.build()?;
 
     let row = program.row(r);
@@ -224,8 +227,8 @@ use culmen::{Bounds, ProgramColumn, ProgramPlan, TiSlice};
 fn main() -> Result<(), culmen::ProgramError> {
     // x² + 2xy + 3y², written with the cross term split in both orders.
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free());
+    let y = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(y, x, 1.0), (x, x, 1.0), (x, y, 1.0), (y, y, 3.0)];
     let program = plan.build()?;
 
@@ -258,16 +261,15 @@ one interval; further objectives do not change the class, and are a [feature](#f
 | `ModelClass::Qp` | none | convex quadratic |
 | `ModelClass::Miqp` | some | convex quadratic |
 
-`is_integer()` and `is_quadratic()` read the two properties back, and a class displays as its abbreviation: `LP`,
+`is_discrete()` and `is_quadratic()` read the two properties back, and a class displays as its abbreviation: `LP`,
 `MILP`, `QP`, `MIQP`. A backend declares the classes it solves as a `ModelClasses` set, and
-[`Solver::new`](solving.md#model-classes-and-refusal) refuses any other. `ModelClass` is non-exhaustive: quadratic
-constraints would come as further classes, which a backend that does not declare them refuses.
+[`Solver::new`](solving.md#model-classes-and-refusal) refuses any other.
 
 ```rust
 use culmen::{ModelClass, ModelClasses};
 
 let linear = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]);
-let classes = linear | ModelClass::Qp.into();
+let classes = linear | ModelClass::Qp;
 assert!(classes.contains(ModelClass::Qp) && !classes.contains(ModelClass::Miqp));
 assert_eq!(classes & linear, linear);
 assert_eq!(classes.iter().collect::<Vec<_>>(), [ModelClass::Lp, ModelClass::Milp, ModelClass::Qp]);
@@ -279,15 +281,15 @@ assert_eq!(ModelClasses::ALL.len(), 4);
 `ModelClasses` is a small set: `NONE`, `ALL`, `of(&[..])` in a `const`, `From<ModelClass>`, `contains` (one class)
 and `contains_all` (a set), `union`, `intersection`, `difference` and `complement` (also `|`, `&`, `-`, `!`, `|=`,
 `&=`, `-=`), `len`, `is_empty`, an `iter()` that runs both ways, `FromIterator` and `Extend` of classes.
-`ProgramFeatures` and `Analyses` are the same set over their own elements, from one implementation.
+`ProgramFeatures` is the same set over its own elements, from one implementation.
 
 ## Features
 
 `program.features()` is a `ProgramFeatures` set of what the program uses beyond its class, each a `ProgramFeature`:
-`SemiContinuous` and `SemiInteger` for a column of that kind, `MultipleObjectives` for a further objective. A fourth,
-`StartSolution`, belongs to a solve's [start](solving.md#starts), never to a program. A backend declares the features
-it takes in `Backend::FEATURES`, and [`Solver::new`](solving.md#model-classes-and-refusal) refuses a program using
-any other. `ProgramFeature` is non-exhaustive; `ProgramFeatures` is a set like `ModelClasses`, with the same methods.
+`SemiContinuous` and `SemiInteger` for a column of that kind, `MultipleObjectives` for a further objective. A
+[start](solving.md#starts) is no feature: it belongs to a solve, and a backend takes one by implementing `Starts`. A
+backend declares the features it takes in `Backend::FEATURES`, and
+[`Solver::new`](solving.md#model-classes-and-refusal) refuses a program using any other. `ProgramFeatures` is a set like `ModelClasses`, with the same methods.
 
 ```rust
 use culmen::prelude::*;
@@ -295,13 +297,13 @@ use culmen::{ProgramFeature, ProgramFeatures};
 
 fn main() -> Result<(), culmen::ModelError> {
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(1, 4));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 4.0)));
     m.maximize(x);
-    m.add_objective(Objective::minimize(x));
+    m.add_stage(Objective::minimize(x), Tolerance::EXACT);
     let features = m.build()?.features();
     assert_eq!(features, ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::MultipleObjectives]));
     assert_eq!(features.to_string(), "{semi-continuous columns, multiple objectives}");
-    assert!(!features.contains(ProgramFeature::StartSolution));
+    assert!(!features.contains(ProgramFeature::SemiInteger));
     Ok(())
 }
 ```
@@ -332,8 +334,8 @@ use culmen::{Bounds, LinearObjective, Objectives, ProgramColumn, ProgramPlan, Se
 fn main() -> Result<(), culmen::ProgramError> {
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
-    let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-    let y = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
+    let x = plan.col(ProgramColumn::continuous().cost(1.0));
+    let y = plan.col(ProgramColumn::continuous().cost(1.0));
     let second = LinearObjective { sense: Sense::Minimize, terms: vec![(y, 1.0), (y, 1.0)], offset: 0.0 };
     plan.objectives = Objectives::Lexicographic {
         first: Tolerance::EXACT,
@@ -363,7 +365,7 @@ use culmen::prelude::*;
 
 fn main() -> Result<(), culmen::ModelError> {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(0, 3));
+    let x = m.add_var(Var::integer().bounds(bounds!(0.0, 3.0)));
     let y = m.add_var(Var::continuous());
     m.add_constraint((x + y).leq(4.0));
     m.maximize(2.0 * x + y + 1.0);
@@ -380,8 +382,8 @@ fn main() -> Result<(), culmen::ModelError> {
 ## LP files
 
 `program.to_lp_string()` writes the program in the CPLEX LP file format, a `Result<String, LpFileError>`, and
-`program.write_lp(&mut out)` writes it into any `fmt::Write`. The output is for reading by eye or by another solver
-while debugging:
+`program.write_lp(out)` writes it to any `io::Write`, such as `File::create("model.lp")?` or a `&mut Vec<u8>`,
+through a buffer it flushes. The output is for reading by eye or by another solver while debugging:
 
 - Names are reduced to the characters the format allows, and a name that is one of the format's keywords (`max`,
   `sos`, `end`, …, in any case) is prefixed `_`. An unnamed column is written `x<index>` and an unnamed row
@@ -393,9 +395,9 @@ while debugging:
 - Integer and semi-integer columns are listed under `General`, semi-continuous and semi-integer ones under
   `Semi-Continuous`: a column in both is semi-integer, as CPLEX and HiGHS read it. Bounds equal to the format's
   default `0 ..` are not written.
-- A program with further objectives is refused with `LpFileError::Unsupported { feature: MultipleObjectives }`, before
+- A program with further objectives is refused with `LpFileError::UnsupportedFeature { feature: MultipleObjectives }`, before
   anything is written: CPLEX's multi-objective sections combine tolerances otherwise than `Tolerance` does, and
-  HiGHS cannot read them. `LpFileError::Write` carries the writer's own error.
+  HiGHS cannot read them. `LpFileError::Write` carries the writer's own `io::Error`.
 - A quadratic part is written doubled in the format's brackets halved: `x² + 2xy` as `[ 2 x ^ 2 + 2 x * y ] / 2`.
   HiGHS reads it back as the same objective.
 
@@ -404,9 +406,9 @@ use culmen::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(0, 5).name("x"));
+    let x = m.add_var(Var::integer().bounds(bounds!(0.0, 5.0)).name("x"));
     let y = m.add_var(Var::free().name("y"));
-    m.add_named_constraint("band", (x - y).between(-1, 1));
+    m.add_constraint(("band", (x - y).between(-1, 1)));
     m.maximize(3.0 * x + y);
     let text = m.build()?.to_lp_string()?;
     assert_eq!(
@@ -437,23 +439,23 @@ other check: their types already guarantee them. Otherwise it returns a `Program
 | `NonFiniteOffset { value }` | `Program: the objective offset {value} is not finite` |
 | `NonFiniteCost { col, value }` | `Program: the cost {value} of {col:?} is not finite` |
 | `NonFiniteCoefficient { row, col, value }` | `Program: the coefficient {value} of {col:?} in {row:?} is not finite` |
-| `UnknownColumn { row, col }` | `Program: {row:?} names {col:?}, which the plan does not have` |
-| `UnknownQuadColumn { col }` | `Program: a quadratic term names {col:?}, which the plan does not have` |
+| `UnknownCol { row, col }` | `Program: {row:?} names {col:?}, which the plan does not have` |
+| `UnknownQuadCol { col }` | `Program: a quadratic term names {col:?}, which the plan does not have` |
 | `NonFiniteQuadCoefficient { first, second, value }` | `Program: the quadratic coefficient {value} of {first:?} · {second:?} is not finite` |
 | `NonConvexObjective { sense, col }` | `Program: the quadratic objective is not convex in the block of {col:?}`, or `not concave` to maximize |
 | `SemiBounds { col, bounds }` | `Program: the semi column {col:?} has the bounds {bounds}, not 0 < lower <= upper < +inf` |
 | `NonFiniteObjectiveOffset { objective, value }` | `Program: the offset {value} of {objective:?} is not finite` |
 | `NonFiniteObjectiveCoefficient { objective, col, value }` | `Program: the coefficient {value} of {col:?} in {objective:?} is not finite` |
-| `UnknownObjectiveColumn { objective, col }` | `Program: {objective:?} names {col:?}, which the plan does not have` |
+| `UnknownObjectiveCol { objective, col }` | `Program: {objective:?} names {col:?}, which the plan does not have` |
 | `QuadraticWithObjectives` | `Program: the objective has a quadratic part beside further objectives` |
 
 ```rust
 use culmen::{Col, ProgramColumn, ProgramError, ProgramPlan, Row, bounds};
 
 let mut plan = ProgramPlan::new();
-let x = plan.col(ProgramColumn::binary(1.0));
-plan.row(bounds!(0.0, 1.0), [(x, 1.0), (Col::new(7), 1.0)]);
-assert_eq!(plan.build(), Err(ProgramError::UnknownColumn { row: Row::new(0), col: Col::new(7) }));
+let x = plan.col(ProgramColumn::binary().cost(1.0));
+plan.row((bounds!(0.0, 1.0), [(x, 1.0), (Col::new(7), 1.0)]));
+assert_eq!(plan.build(), Err(ProgramError::UnknownCol { row: Row::new(0), col: Col::new(7) }));
 ```
 
 A model reports the same defects as a [`ModelError`](modelling.md#building-and-modelerror), in the model's own names.

@@ -25,81 +25,99 @@ pub struct ProgramColumn {
     pub name: Option<String>,
 }
 
+/// Built by chaining from its integrality, as a [`Var`](crate::Var) is: a column costs nothing and lies in the bounds
+/// its constructor names until given others, and the plan's build checks it.
+///
+/// ```
+/// use culmen_core::{Integrality, ProgramColumn, ProgramPlan, bounds};
+/// let mut plan = ProgramPlan::new();
+/// let x = plan.col(ProgramColumn::continuous().cost(2.5));
+/// let y = plan.col(ProgramColumn::semi_continuous().cost(1).bounds(bounds!(2.0, 10.0)).name("y"));
+/// let program = plan.build()?;
+/// assert_eq!(program.columns()[x].cost, 2.5);
+/// assert_eq!(program.columns()[y].integrality, Integrality::SemiContinuous);
+/// # Ok::<(), culmen_core::ProgramError>(())
+/// ```
 impl ProgramColumn {
-    /// A continuous column.
-    ///
-    /// ```
-    /// use culmen_core::{Bounds, ProgramColumn};
-    /// let c = ProgramColumn::continuous(2.5, Bounds::NON_NEGATIVE);
-    /// assert_eq!(c.cost, 2.5);
-    /// ```
-    #[must_use]
-    pub const fn continuous(cost: f64, bounds: Bounds) -> Self {
+    /// A column of `integrality` in `bounds`, costing nothing and unnamed.
+    const fn of(integrality: Integrality, bounds: Bounds) -> Self {
         Self {
-            cost,
+            cost: 0.0,
             bounds,
-            integrality: Integrality::Continuous,
+            integrality,
             name: None,
         }
     }
 
-    /// An integer column.
+    /// A continuous column, zero and above.
     #[must_use]
-    pub const fn integer(cost: f64, bounds: Bounds) -> Self {
-        Self {
-            cost,
-            bounds,
-            integrality: Integrality::Integer,
-            name: None,
-        }
+    pub const fn continuous() -> Self {
+        Self::of(Integrality::Continuous, Bounds::NON_NEGATIVE)
+    }
+
+    /// A continuous column without bounds.
+    #[must_use]
+    pub const fn free() -> Self {
+        Self::of(Integrality::Continuous, Bounds::FREE)
+    }
+
+    /// An integer column, zero and above.
+    #[must_use]
+    pub const fn integer() -> Self {
+        Self::of(Integrality::Integer, Bounds::NON_NEGATIVE)
     }
 
     /// A binary column: integer, between zero and one.
     #[must_use]
-    pub const fn binary(cost: f64) -> Self {
-        Self::integer(cost, Bounds::BINARY)
+    pub const fn binary() -> Self {
+        Self::of(Integrality::Integer, Bounds::BINARY)
     }
 
-    /// A semi-continuous column: zero, or any value in `bounds`, which the plan's build checks are
-    /// `lower ..= upper` with `0 < lower` and `upper` finite.
-    ///
-    /// ```
-    /// use culmen_core::{Integrality, ProgramColumn, ProgramPlan, bounds};
-    /// let mut plan = ProgramPlan::new();
-    /// let x = plan.col(ProgramColumn::semi_continuous(1.0, bounds!(2.0, 10.0)));
-    /// assert_eq!(plan.build()?.columns()[x].integrality, Integrality::SemiContinuous);
-    /// # Ok::<(), culmen_core::ProgramError>(())
-    /// ```
+    /// A semi-continuous column: zero, or any value in its bounds, which it needs: the plan's build and the edits
+    /// check that they are `lower ..= upper` with `0 < lower` and `upper` finite.
     #[must_use]
-    pub const fn semi_continuous(cost: f64, bounds: Bounds) -> Self {
-        Self {
-            cost,
-            bounds,
-            integrality: Integrality::SemiContinuous,
-            name: None,
-        }
+    pub const fn semi_continuous() -> Self {
+        Self::of(Integrality::SemiContinuous, Bounds::NON_NEGATIVE)
     }
 
-    /// A semi-integer column: zero, or a whole value in `bounds`, checked as for
-    /// [`ProgramColumn::semi_continuous`].
+    /// A semi-integer column: zero, or a whole value in its bounds, which it needs as
+    /// [`ProgramColumn::semi_continuous`] does.
     #[must_use]
-    pub const fn semi_integer(cost: f64, bounds: Bounds) -> Self {
-        Self {
-            cost,
-            bounds,
-            integrality: Integrality::SemiInteger,
-            name: None,
-        }
+    pub const fn semi_integer() -> Self {
+        Self::of(Integrality::SemiInteger, Bounds::NON_NEGATIVE)
+    }
+
+    /// The objective coefficient.
+    #[must_use]
+    pub fn cost(mut self, cost: impl Into<f64>) -> Self {
+        self.cost = cost.into();
+        self
+    }
+
+    /// The values the column may take.
+    #[must_use]
+    pub fn bounds(mut self, bounds: impl Into<Bounds>) -> Self {
+        self.bounds = bounds.into();
+        self
+    }
+
+    /// The column's name in diagnostics and LP files.
+    #[must_use]
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 }
 
-/// A column to append to a [`Solver`](crate::Solver)'s program: its data and its coefficients in rows the program
-/// already has.
+/// A column to append to a [`Solver`](crate::Solver)'s program or to price in: its data and its coefficients in rows
+/// the program already has.
 ///
-/// Its coefficient in every further objective is zero, and it has no quadratic term.
+/// Built by chaining as a [`ProgramColumn`] is, with its entries after it, and checked when it is appended. Its
+/// coefficient in every further objective is zero, and it has no quadratic term.
 ///
 /// ```
-/// use culmen_core::{Bounds, Linear, Model, NewCol, ProgramColumn, Script, Solver, Var};
+/// use culmen_core::{Linear, Model, NewCol, Solver, Var};
+/// use culmen_core::script::Script;
 ///
 /// // Cover the demands a and b, one pattern each so far.
 /// let mut m = Model::new();
@@ -111,14 +129,11 @@ impl ProgramColumn {
 /// let mut solver = Solver::new(Script::optimal(2.0, vec![1.0, 1.0]), m.build()?)?;
 ///
 /// // A pattern covering both.
-/// let both = solver.add_col(NewCol {
-///     column: ProgramColumn::continuous(1.5, Bounds::NON_NEGATIVE),
-///     entries: vec![(a, 1.0), (b, 1.0)],
-/// })?;
+/// let both = solver.add_col(NewCol::continuous().cost(1.5).entry(a, 1).entry(b, 1))?;
 /// assert_eq!(solver.program().row(a).entries().last(), Some((both, 1.0)));
 ///
 /// // A column in no row.
-/// let spare = solver.add_col(ProgramColumn::continuous(0.0, Bounds::NON_NEGATIVE))?;
+/// let spare = solver.add_col(NewCol::binary())?;
 /// assert_eq!(solver.program().columns()[spare].cost, 0.0);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -132,13 +147,93 @@ pub struct NewCol {
     pub entries: Vec<(Row, f64)>,
 }
 
-/// A column in no row.
-impl From<ProgramColumn> for NewCol {
-    fn from(column: ProgramColumn) -> Self {
+/// The constructors and setters of [`ProgramColumn`], with entries after them.
+impl NewCol {
+    /// The column `column` in no row yet.
+    const fn of(column: ProgramColumn) -> Self {
         Self {
             column,
             entries: Vec::new(),
         }
+    }
+
+    /// A continuous column, zero and above, as [`ProgramColumn::continuous`].
+    #[must_use]
+    pub const fn continuous() -> Self {
+        Self::of(ProgramColumn::continuous())
+    }
+
+    /// A continuous column without bounds, as [`ProgramColumn::free`].
+    #[must_use]
+    pub const fn free() -> Self {
+        Self::of(ProgramColumn::free())
+    }
+
+    /// An integer column, zero and above, as [`ProgramColumn::integer`].
+    #[must_use]
+    pub const fn integer() -> Self {
+        Self::of(ProgramColumn::integer())
+    }
+
+    /// A binary column, as [`ProgramColumn::binary`].
+    #[must_use]
+    pub const fn binary() -> Self {
+        Self::of(ProgramColumn::binary())
+    }
+
+    /// A semi-continuous column, which needs bounds, as [`ProgramColumn::semi_continuous`].
+    #[must_use]
+    pub const fn semi_continuous() -> Self {
+        Self::of(ProgramColumn::semi_continuous())
+    }
+
+    /// A semi-integer column, which needs bounds, as [`ProgramColumn::semi_integer`].
+    #[must_use]
+    pub const fn semi_integer() -> Self {
+        Self::of(ProgramColumn::semi_integer())
+    }
+
+    /// The cost in the program's own objective.
+    #[must_use]
+    pub fn cost(mut self, cost: impl Into<f64>) -> Self {
+        self.column.cost = cost.into();
+        self
+    }
+
+    /// The values the column may take.
+    #[must_use]
+    pub fn bounds(mut self, bounds: impl Into<Bounds>) -> Self {
+        self.column.bounds = bounds.into();
+        self
+    }
+
+    /// The column's name in diagnostics and LP files.
+    #[must_use]
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.column.name = Some(name.into());
+        self
+    }
+
+    /// Adds the coefficient in `row`; coefficients of a repeated row add up.
+    #[must_use]
+    pub fn entry(mut self, row: Row, coefficient: impl Into<f64>) -> Self {
+        self.entries.push((row, coefficient.into()));
+        self
+    }
+
+    /// Adds a coefficient per row, as [`NewCol::entry`] adds one.
+    #[must_use]
+    pub fn entries<T: Into<f64>>(mut self, entries: impl IntoIterator<Item = (Row, T)>) -> Self {
+        self.entries
+            .extend(entries.into_iter().map(|(row, coefficient)| (row, coefficient.into())));
+        self
+    }
+}
+
+/// A column in no row.
+impl From<ProgramColumn> for NewCol {
+    fn from(column: ProgramColumn) -> Self {
+        Self::of(column)
     }
 }
 
@@ -157,6 +252,27 @@ pub struct ProgramRow {
     pub name: Option<String>,
 }
 
+/// An unnamed row of its bounds and terms.
+impl<B: Into<Bounds>, T: IntoIterator<Item = (Col, f64)>> From<(B, T)> for ProgramRow {
+    fn from((bounds, terms): (B, T)) -> Self {
+        Self {
+            bounds: bounds.into(),
+            terms: terms.into_iter().collect(),
+            name: None,
+        }
+    }
+}
+
+/// A named row of its bounds and terms.
+impl<N: Into<String>, B: Into<Bounds>, T: IntoIterator<Item = (Col, f64)>> From<(N, B, T)> for ProgramRow {
+    fn from((name, bounds, terms): (N, B, T)) -> Self {
+        Self {
+            name: Some(name.into()),
+            ..(bounds, terms).into()
+        }
+    }
+}
+
 /// A program as plain data, checked into a [`Program`] by [`ProgramPlan::build`].
 ///
 /// Its objective is `Σ cost · x + Σ q · xᵢ · xⱼ + offset`, the quadratic terms `(i, j, q)` in
@@ -168,10 +284,10 @@ pub struct ProgramRow {
 /// // Maximize 3x + 2y subject to x + y <= 4, x + 3y <= 6, x, y >= 0.
 /// let mut plan = ProgramPlan::new();
 /// plan.sense = Sense::Maximize;
-/// let x = plan.col(ProgramColumn::continuous(3.0, Bounds::NON_NEGATIVE));
-/// let y = plan.col(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
-/// plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]);
-/// plan.row(bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0)]);
+/// let x = plan.col(ProgramColumn::continuous().cost(3.0));
+/// let y = plan.col(ProgramColumn::continuous().cost(2.0));
+/// plan.row((bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]));
+/// plan.row((bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0)]));
 /// let program = plan.build()?;
 /// assert_eq!((program.num_cols(), program.num_rows()), (2, 2));
 /// # Ok::<(), culmen_core::ProgramError>(())
@@ -220,22 +336,21 @@ impl ProgramPlan {
         self.columns.push_and_get_key(column)
     }
 
-    /// Adds an unnamed row and returns its handle.
+    /// Adds a row and returns its handle: a [`ProgramRow`], or its parts as `(bounds, terms)` for an unnamed row and
+    /// `(name, bounds, terms)` for a named one, the bounds anything that converts into [`Bounds`].
     ///
     /// ```
-    /// use culmen_core::{Bounds, ProgramColumn, ProgramPlan};
+    /// use culmen_core::{Bounds, ProgramColumn, ProgramPlan, bounds};
     ///
     /// let mut plan = ProgramPlan::new();
-    /// let x = plan.col(ProgramColumn::binary(1.0));
-    /// let free = plan.row(.., [(x, 1.0)]);
+    /// let x = plan.col(ProgramColumn::binary().cost(1));
+    /// let free = plan.row((.., [(x, 1.0)]));
+    /// let cap = plan.row(("cap", bounds!(0.0, 1.0), [(x, 2.0)]));
     /// assert_eq!(plan.rows[free].bounds, Bounds::FREE);
+    /// assert_eq!(plan.rows[cap].name.as_deref(), Some("cap"));
     /// ```
-    pub fn row(&mut self, bounds: impl Into<Bounds>, terms: impl IntoIterator<Item = (Col, f64)>) -> Row {
-        self.rows.push_and_get_key(ProgramRow {
-            bounds: bounds.into(),
-            terms: terms.into_iter().collect(),
-            name: None,
-        })
+    pub fn row(&mut self, row: impl Into<ProgramRow>) -> Row {
+        self.rows.push_and_get_key(row.into())
     }
 
     /// Checks every number and every handle, every semi column's bounds, the convexity of the quadratic part and its

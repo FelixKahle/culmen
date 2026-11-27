@@ -50,6 +50,9 @@ impl Instance {
         let infinity = self.infinity();
         // A convex quadratic form is never negative and a concave one never positive, so the bound cuts off no point
         // of the epigraph, and it hands SCIP's relaxation a bound on `t` that SCIP otherwise finds only by branching.
+        // A form the convexity check admits within `Program::CONVEXITY_TOLERANCE` may dip below zero by up to that
+        // tolerance times its scale times `|x|²`, which the bound then adds to the objective: negligible but for
+        // large values.
         let (lower, upper) = match program.sense() {
             Sense::Minimize => (0.0, infinity),
             Sense::Maximize => (-infinity, 0.0),

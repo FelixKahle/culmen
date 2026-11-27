@@ -10,8 +10,9 @@
 use core::mem;
 
 use itertools::Itertools;
+use typed_index_collections::TiVec;
 
-use super::{Bounds, Col, Integrality, NewCol, Program, ProgramRow, Row};
+use super::{Bounds, Col, Integrality, NewCol, Program, ProgramRow, QuadObjective, Row, Sense};
 
 impl Program {
     /// Sets a column's bounds and returns the bounds it had.
@@ -48,6 +49,77 @@ impl Program {
     /// When the program has no row `row`.
     pub(crate) fn replace_row_bounds(&mut self, row: Row, bounds: Bounds) -> Bounds {
         mem::replace(&mut self.row_bounds[row], bounds)
+    }
+
+    /// Sets the coefficient of `col` in `row`, zero taking the entry out, and returns the coefficient it had, zero for
+    /// none; the row stays sorted by column.
+    ///
+    /// # Panics
+    ///
+    /// When the program has no row `row`.
+    pub(crate) fn replace_coefficient(&mut self, (row, col): (Row, Col), value: f64) -> f64 {
+        let (from, to) = (self.row_starts[row.index()], self.row_starts[row.index() + 1]);
+        let at = from + self.entry_cols[from..to].partition_point(|&c| c < col);
+        let held = at < to && self.entry_cols[at] == col;
+        let old = if held { self.entry_values[at] } else { 0.0 };
+        let shift: isize = match (held, value != 0.0) {
+            (true, true) => {
+                self.entry_values[at] = value;
+                0
+            }
+            (true, false) => {
+                self.entry_cols.remove(at);
+                self.entry_values.remove(at);
+                -1
+            }
+            (false, true) => {
+                self.entry_cols.insert(at, col);
+                self.entry_values.insert(at, value);
+                1
+            }
+            (false, false) => 0,
+        };
+        for start in &mut self.row_starts[row.index() + 1..] {
+            *start = start
+                .checked_add_signed(shift)
+                .expect("Program: a row start moves within the entries");
+        }
+        old
+    }
+
+    /// Sets the sense of the program's own objective and returns the sense it had.
+    pub(crate) const fn replace_sense(&mut self, sense: Sense) -> Sense {
+        mem::replace(&mut self.sense, sense)
+    }
+
+    /// Sets the offset of the program's own objective and returns the offset it had.
+    pub(crate) const fn replace_offset(&mut self, offset: f64) -> f64 {
+        mem::replace(&mut self.offset, offset)
+    }
+
+    /// Replaces the program's own objective and returns the one it had.
+    ///
+    /// # Panics
+    ///
+    /// When `objective` does not hold one cost per column of the program.
+    pub(crate) fn replace_objective(&mut self, objective: OwnObjective) -> OwnObjective {
+        assert_eq!(
+            objective.costs.len(),
+            self.num_cols(),
+            "Program::replace_objective: the objective holds one cost per column"
+        );
+        let costs = self
+            .columns
+            .iter_mut()
+            .zip(objective.costs)
+            .map(|(column, cost)| mem::replace(&mut column.cost, cost))
+            .collect();
+        OwnObjective {
+            sense: self.replace_sense(objective.sense),
+            costs,
+            offset: self.replace_offset(objective.offset),
+            quadratic: mem::replace(&mut self.quadratic, objective.quadratic),
+        }
     }
 
     /// Appends rows, as [`Program::from_plan`] appends a plan's.
@@ -138,6 +210,15 @@ impl Program {
     }
 }
 
+/// A program's own objective: its sense, one cost per column, its offset and its quadratic part.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct OwnObjective {
+    pub(crate) sense: Sense,
+    pub(crate) costs: TiVec<Col, f64>,
+    pub(crate) offset: f64,
+    pub(crate) quadratic: QuadObjective,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,10 +227,10 @@ mod tests {
     /// Two columns, two rows: `x + y` in `[0, 4]`, `-x` free.
     fn program() -> Program {
         let mut plan = ProgramPlan::new();
-        let x = plan.col(ProgramColumn::continuous(1.0, Bounds::NON_NEGATIVE));
-        let y = plan.col(ProgramColumn::continuous(2.0, Bounds::NON_NEGATIVE));
-        plan.row(bounds!(0.0, 4.0), [(x, 1.0), (y, 1.0)]);
-        plan.row(Bounds::FREE, [(x, -1.0)]);
+        let x = plan.col(ProgramColumn::continuous().cost(1.0));
+        let y = plan.col(ProgramColumn::continuous().cost(2.0));
+        plan.row((bounds!(0.0, 4.0), [(x, 1.0), (y, 1.0)]));
+        plan.row((Bounds::FREE, [(x, -1.0)]));
         plan.build().unwrap()
     }
 
@@ -159,11 +240,11 @@ mod tests {
         let mut program = before.clone();
         program.push_cols([
             NewCol {
-                column: ProgramColumn::binary(0.0),
+                column: ProgramColumn::binary(),
                 entries: vec![(Row::new(1), 3.0)],
             },
             NewCol {
-                column: ProgramColumn::binary(1.0),
+                column: ProgramColumn::binary().cost(1.0),
                 entries: vec![(Row::new(0), 2.0), (Row::new(1), -1.0)],
             },
         ]);
@@ -184,5 +265,37 @@ mod tests {
         );
         program.truncate(2, 2);
         assert_eq!(program, before);
+    }
+
+    #[test]
+    fn test_replacing_coefficients_and_putting_them_back_restores_the_program() {
+        let before = program();
+        let mut program = before.clone();
+        let (x, y) = (Col::new(0), Col::new(1));
+        let (cap, free) = (Row::new(0), Row::new(1));
+        assert_eq!(program.replace_coefficient((free, y), 5.0), 0.0);
+        assert_eq!(program.replace_coefficient((cap, x), 0.0), 1.0);
+        assert_eq!(program.replace_coefficient((cap, y), -2.0), 1.0);
+        assert_eq!(program.row(cap).entries().collect::<Vec<_>>(), [(y, -2.0)]);
+        assert_eq!(program.row(free).entries().collect::<Vec<_>>(), [(x, -1.0), (y, 5.0)]);
+        assert_eq!(program.replace_coefficient((free, x), 0.0), -1.0);
+        assert_eq!(program.row(free).entries().collect::<Vec<_>>(), [(y, 5.0)]);
+        program.replace_coefficient((free, x), -1.0);
+        program.replace_coefficient((free, y), 0.0);
+        program.replace_coefficient((cap, y), 1.0);
+        program.replace_coefficient((cap, x), 1.0);
+        assert_eq!(program, before);
+    }
+
+    #[test]
+    #[should_panic(expected = "one cost per column")]
+    fn test_replacing_the_objective_with_too_few_costs_panics() {
+        let mut program = program();
+        program.replace_objective(OwnObjective {
+            sense: Sense::Minimize,
+            costs: TiVec::from(vec![1.0]),
+            offset: 0.0,
+            quadratic: QuadObjective::default(),
+        });
     }
 }

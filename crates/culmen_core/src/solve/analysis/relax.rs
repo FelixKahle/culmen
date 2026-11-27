@@ -39,7 +39,7 @@ impl Penalty {
     /// [`InvalidPenalty`] when `value` is not finite or below zero.
     pub const fn new(value: f64) -> Result<Self, InvalidPenalty> {
         if !value.is_finite() {
-            Err(InvalidPenalty::NotFinite)
+            Err(InvalidPenalty::NonFinite)
         } else if value < 0.0 {
             Err(InvalidPenalty::Negative)
         } else {
@@ -64,7 +64,7 @@ impl Penalty {
     pub const fn literal(value: f64) -> Self {
         match Self::new(value) {
             Ok(penalty) => penalty,
-            Err(InvalidPenalty::NotFinite) => panic!("Penalty: not a finite number"),
+            Err(InvalidPenalty::NonFinite) => panic!("Penalty: not a finite number"),
             Err(InvalidPenalty::Negative) => panic!("Penalty: below zero"),
         }
     }
@@ -92,10 +92,9 @@ impl fmt::Display for Penalty {
 
 /// Why [`Penalty::new`] refused a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum InvalidPenalty {
     /// The number is NaN or infinite.
-    NotFinite,
+    NonFinite,
     /// The number is below zero.
     Negative,
 }
@@ -103,7 +102,7 @@ pub enum InvalidPenalty {
 impl fmt::Display for InvalidPenalty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotFinite => write!(f, "Penalty: not a finite number"),
+            Self::NonFinite => write!(f, "Penalty: not a finite number"),
             Self::Negative => write!(f, "Penalty: below zero"),
         }
     }
@@ -140,8 +139,9 @@ pub struct Weights {
 }
 
 impl Weights {
-    /// The same price for every column bound but a semi column's, which stays hard, and the same for every row, for
-    /// `program`.
+    /// Every bound and row of `program` hard: a relaxation with these weights violates nothing.
+    ///
+    /// Each table can be changed after, as its fields are public; the other constructors price whole tables at once.
     ///
     /// ```
     /// use culmen_core::{Linear, Model, Var, Weights, penalty};
@@ -149,12 +149,45 @@ impl Weights {
     /// let mut m = Model::new();
     /// let x = m.add_var(Var::continuous());
     /// let cap = m.add_constraint(x.leq(4.0));
-    /// let weights = Weights::uniform(&m.build()?, None, Some(penalty!(1.0)));
-    /// assert_eq!((weights.lower[x], weights.rows[cap]), (None, Some(penalty!(1.0))));
+    /// let program = m.build()?;
+    /// let mut weights = Weights::hard(&program);
+    /// weights.rows[cap] = Some(penalty!(10.0));
+    /// assert_eq!((weights.lower[x], weights.rows[cap]), (None, Some(penalty!(10.0))));
+    /// assert_eq!(Weights::soft_rows(&program, penalty!(1.0)).rows[cap], Some(penalty!(1.0)));
+    /// assert_eq!(Weights::soft_bounds(&program, penalty!(1.0)).upper[x], Some(penalty!(1.0)));
+    /// assert_eq!(Weights::soft(&program, penalty!(2.0)), Weights {
+    ///     rows: Weights::soft_rows(&program, penalty!(2.0)).rows,
+    ///     ..Weights::soft_bounds(&program, penalty!(2.0))
+    /// });
     /// # Ok::<(), culmen_core::ModelError>(())
     /// ```
     #[must_use]
-    pub fn uniform(program: &Program, cols: Option<Penalty>, rows: Option<Penalty>) -> Self {
+    pub fn hard(program: &Program) -> Self {
+        Self::priced(program, None, None)
+    }
+
+    /// Every row of `program` soft at `penalty` per unit, every column bound hard.
+    #[must_use]
+    pub fn soft_rows(program: &Program, penalty: Penalty) -> Self {
+        Self::priced(program, None, Some(penalty))
+    }
+
+    /// Every column bound of `program` soft at `penalty` per unit but a semi column's, which stays hard, every row
+    /// hard.
+    #[must_use]
+    pub fn soft_bounds(program: &Program, penalty: Penalty) -> Self {
+        Self::priced(program, Some(penalty), None)
+    }
+
+    /// Every row and every column bound of `program` soft at `penalty` per unit, but a semi column's bounds, which
+    /// stay hard.
+    #[must_use]
+    pub fn soft(program: &Program, penalty: Penalty) -> Self {
+        Self::priced(program, Some(penalty), Some(penalty))
+    }
+
+    /// `cols` for every column bound but a semi column's, which stays hard, and `rows` for every row of `program`.
+    fn priced(program: &Program, cols: Option<Penalty>, rows: Option<Penalty>) -> Self {
         let col = |c: &crate::ProgramColumn| cols.filter(|_| !c.integrality.is_semi());
         Self {
             lower: program.columns().iter().map(col).collect(),

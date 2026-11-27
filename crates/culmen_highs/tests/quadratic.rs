@@ -14,11 +14,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use culmen_core::{
-    Backend, Bounds, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, Outcome, Phase, PollContext, Program,
-    ProgramColumn, ProgramPlan, Progress, QuadExpr, Request, Sense, Solution, SolutionContext, SolveError, Solved,
-    Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
+    Backend, Bounds, Col, Context, Event, Events, LinExpr, Linear, LoadError, Model, ModelClass, Outcome, Phase,
+    PollContext, Program, ProgramColumn, ProgramPlan, Progress, QuadExpr, Sense, Solution, SolutionContext, SolveError,
+    Solved, Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
 };
-use culmen_highs::{Highs, HighsError, HighsOptions, LpSolver, PollSource};
+use culmen_highs::{Highs, HighsError, HighsOptions, HighsPollSource, LpSolver};
 use culmen_testing::reference::close;
 use culmen_testing::strategy::small_qp;
 use proptest::prelude::*;
@@ -26,7 +26,7 @@ use proptest::prelude::*;
 /// The optimum HiGHS finds, which the test expects to exist.
 fn optimum(program: &Program) -> Solution {
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!("expected an optimum, got {solved:?}")
     };
@@ -90,8 +90,8 @@ fn test_a_square_and_a_cross_term_reach_highs_at_their_written_weight() {
     assert_point(&optimum(&m.build().unwrap()), -3.0, &[2.0, -1.0]);
 
     let mut plan = ProgramPlan::new();
-    let x = plan.col(ProgramColumn::continuous(-3.0, Bounds::FREE));
-    let y = plan.col(ProgramColumn::continuous(0.0, Bounds::FREE));
+    let x = plan.col(ProgramColumn::free().cost(-3.0));
+    let y = plan.col(ProgramColumn::free());
     plan.quadratic = vec![(y, y, 1.0), (y, x, 0.5), (x, x, 1.0), (x, y, 0.5)];
     assert_point(&optimum(&plan.build().unwrap()), -3.0, &[2.0, -1.0]);
 }
@@ -128,7 +128,7 @@ fn test_the_qp_iteration_limit_stops_the_active_set_solver() {
         ..HighsOptions::default()
     };
     let mut solver = Solver::new(Highs::with_options(options), m.build().unwrap()).unwrap();
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     assert!(
         matches!(
             solved.outcome,
@@ -139,8 +139,8 @@ fn test_the_qp_iteration_limit_stops_the_active_set_solver() {
         ),
         "{solved:?}"
     );
-    solver.backend_mut().options_mut().qp_iteration_limit = None;
-    let solved = solver.solve(Request::new()).unwrap();
+    solver.options_mut().qp_iteration_limit = None;
+    let solved = solver.solve().unwrap();
     // Each coordinate drops by (15 - 1) / 5 = 2.8 to (-1.8, -0.8, 0.2, 1.2, 2.2), at 5 · 2.8² = 39.2.
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!("{solved:?}")
@@ -158,7 +158,13 @@ fn test_a_qp_with_bounds_alone_leaves_its_starting_point() {
     let mut plan = ProgramPlan::new();
     let x: Vec<Col> = [0.0, 0.0, 0.0, -1.0]
         .into_iter()
-        .map(|cost| plan.col(ProgramColumn::continuous(cost, Bounds::new(0.0, 1.0).unwrap())))
+        .map(|cost| {
+            plan.col(
+                ProgramColumn::continuous()
+                    .cost(cost)
+                    .bounds(Bounds::new(0.0, 1.0).unwrap()),
+            )
+        })
         .collect();
     plan.quadratic = vec![
         (x[0], x[0], 2.05),
@@ -187,12 +193,18 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
     let boxes = [(0.0, 3.0, 0.0), (-2.0, 0.0, -5.0), (-1.0, 1.0, 0.0), (-3.0, -1.0, -2.0)];
     let x: Vec<Col> = boxes
         .into_iter()
-        .map(|(lower, upper, cost)| plan.col(ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
+        .map(|(lower, upper, cost)| {
+            plan.col(
+                ProgramColumn::continuous()
+                    .cost(cost)
+                    .bounds(Bounds::new(lower, upper).unwrap()),
+            )
+        })
         .collect();
     let exactly_12 = Bounds::new(12.0, 12.0).unwrap();
-    plan.row(exactly_12, [(x[0], 2.0), (x[1], -3.0), (x[2], -1.0), (x[3], -3.0)]);
+    plan.row((exactly_12, [(x[0], 2.0), (x[1], -3.0), (x[2], -1.0), (x[3], -3.0)]));
     let range = Bounds::new(-0.5, 3.5).unwrap();
-    plan.row(range, [(x[0], 1.0), (x[1], -2.0), (x[2], 1.0), (x[3], 1.0)]);
+    plan.row((range, [(x[0], 1.0), (x[1], -2.0), (x[2], 1.0), (x[3], 1.0)]));
     plan.quadratic = vec![
         (x[0], x[0], 4.55),
         (x[0], x[1], -9.0),
@@ -205,9 +217,7 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
         (x[2], x[3], -12.0),
         (x[3], x[3], 5.05),
     ];
-    let solved = Solver::new(Highs::new(), plan.build().unwrap())
-        .unwrap()
-        .solve(Request::new());
+    let solved = Solver::new(Highs::new(), plan.build().unwrap()).unwrap().solve();
     match solved {
         Ok(Solved {
             outcome: Outcome::Optimal(solution),
@@ -229,9 +239,15 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
     let boxes = [(0.0, 2.0, 0.0), (-2.0, 2.0, -3.0), (1.0, 5.0, -2.0), (-1.0, 1.0, 0.0)];
     let x: Vec<Col> = boxes
         .into_iter()
-        .map(|(lower, upper, cost)| plan.col(ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
+        .map(|(lower, upper, cost)| {
+            plan.col(
+                ProgramColumn::continuous()
+                    .cost(cost)
+                    .bounds(Bounds::new(lower, upper).unwrap()),
+            )
+        })
         .collect();
-    plan.row(Bounds::new(-1.0, 0.0).unwrap(), [(x[1], -2.0), (x[3], -1.0)]);
+    plan.row((Bounds::new(-1.0, 0.0).unwrap(), [(x[1], -2.0), (x[3], -1.0)]));
     plan.quadratic = vec![
         (x[0], x[0], 5.05),
         (x[0], x[1], 3.0),
@@ -244,10 +260,7 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
         (x[3], x[3], 5.05),
     ];
     let program = plan.build().unwrap();
-    match Solver::new(Highs::new(), program.clone())
-        .unwrap()
-        .solve(Request::new())
-    {
+    match Solver::new(Highs::new(), program.clone()).unwrap().solve() {
         Ok(Solved {
             outcome: Outcome::Optimal(solution),
             ..
@@ -265,13 +278,19 @@ fn test_a_qp_optimum_is_valued_as_its_point() {
     let boxes = [(1.0, 4.0, -5.0), (0.0, 3.0, -1.0), (-2.0, 2.0, -2.0), (-1.0, 0.0, 1.0)];
     let x: Vec<Col> = boxes
         .into_iter()
-        .map(|(lower, upper, cost)| plan.col(ProgramColumn::continuous(cost, Bounds::new(lower, upper).unwrap())))
+        .map(|(lower, upper, cost)| {
+            plan.col(
+                ProgramColumn::continuous()
+                    .cost(cost)
+                    .bounds(Bounds::new(lower, upper).unwrap()),
+            )
+        })
         .collect();
-    plan.row(
+    plan.row((
         Bounds::new(-13.0, -11.0).unwrap(),
         [(x[0], -3.0), (x[1], -3.0), (x[2], 3.0), (x[3], 2.0)],
-    );
-    plan.row(Bounds::new(0.0, 2.0).unwrap(), [(x[1], 1.0), (x[2], -1.0), (x[3], 3.0)]);
+    ));
+    plan.row((Bounds::new(0.0, 2.0).unwrap(), [(x[1], 1.0), (x[2], -1.0), (x[3], 3.0)]));
     plan.quadratic = vec![
         (x[0], x[0], 0.55),
         (x[0], x[1], -1.0),
@@ -285,10 +304,7 @@ fn test_a_qp_optimum_is_valued_as_its_point() {
         (x[3], x[3], 0.55),
     ];
     let program = plan.build().unwrap();
-    match Solver::new(Highs::new(), program.clone())
-        .unwrap()
-        .solve(Request::new())
-    {
+    match Solver::new(Highs::new(), program.clone()).unwrap().solve() {
         Ok(Solved {
             outcome: Outcome::Optimal(best),
             ..
@@ -319,7 +335,7 @@ fn test_a_miqp_is_refused_before_highs_sees_it() {
     let error = Solver::new(Highs::new(), program).unwrap_err();
     assert_eq!(
         error,
-        LoadError::Unsupported {
+        LoadError::UnsupportedClass {
             class: ModelClass::Miqp,
             supported: Highs::CLASSES,
         }
@@ -335,9 +351,8 @@ fn test_highs_itself_cannot_solve_a_miqp() {
     // The declaration matches HiGHS 1.16: loaded around the class check, a MIQP fails at the run.
     let mut highs = Highs::new();
     highs.load(&miqp()).unwrap();
-    let mut priced = culmen_core::Priced::new(&miqp(), Highs::CLASSES);
     let error = highs
-        .solve(&culmen_core::Settings::new(), &mut (), &mut priced)
+        .solve(&culmen_core::Settings::new(), culmen_core::backend::Hooks::new())
         .unwrap_err();
     assert!(matches!(error, HighsError::Run { .. }), "{error:?}");
 }
@@ -347,25 +362,22 @@ struct Kinds(Events);
 
 impl culmen_core::Callback<Highs> for Kinds {
     fn log(&mut self, _: &mut culmen_highs::HighsLog<'_>) {
-        self.0 |= Events::LOG;
+        self.0 |= Event::Log;
     }
-    fn progress(&mut self, _: &mut culmen_highs::HighsMipProgress) {
-        self.0 |= Events::PROGRESS;
+    fn progress(&mut self, _: &mut culmen_highs::HighsProgress) {
+        self.0 |= Event::Progress;
     }
     fn poll(&mut self, _: &mut culmen_highs::HighsPoll<'_>) {
-        self.0 |= Events::POLL;
+        self.0 |= Event::Poll;
     }
     fn feasible(&mut self, _: &mut culmen_highs::HighsSolution<'_>) {
-        self.0 |= Events::FEASIBLE;
+        self.0 |= Event::Feasible;
     }
     fn incumbent(&mut self, _: &mut culmen_highs::HighsSolution<'_>) {
-        self.0 |= Events::INCUMBENT;
-    }
-    fn heuristic(&mut self, _: &mut culmen_highs::HighsHeuristic<'_>) {
-        self.0 |= Events::HEURISTIC;
+        self.0 |= Event::Incumbent;
     }
     fn native(&mut self, _: &mut culmen_highs::HighsNative) {
-        self.0 |= Events::NATIVE;
+        self.0 |= Event::Native;
     }
 }
 
@@ -383,14 +395,14 @@ fn projection() -> Program {
 fn test_a_qp_solve_reports_its_log_its_polls_and_its_first_feasible_point() {
     let mut solver = Solver::new(Highs::new(), projection()).unwrap();
     let mut kinds = Kinds(Events::NONE);
-    solver.solve_with(Request::new(), &mut kinds).unwrap();
-    assert_eq!(kinds.0, Events::LOG | Events::POLL | Events::FEASIBLE);
+    solver.run().callback(&mut kinds).solve().unwrap();
+    assert_eq!(kinds.0, Event::Log | Event::Poll | Event::Feasible);
 }
 
 /// Every QP poll's source, interrupting at the first when asked to.
 #[derive(Default)]
 struct Polls {
-    sources: Vec<PollSource>,
+    sources: Vec<HighsPollSource>,
     phases: Vec<Phase>,
     interrupt: bool,
 }
@@ -409,12 +421,12 @@ impl culmen_core::Callback<Highs> for Polls {
 fn test_a_qp_poll_reports_qp_iterations_and_interrupts_the_solve() {
     let mut solver = Solver::new(Highs::new(), projection()).unwrap();
     let mut watched = Polls::default();
-    let solved = solver.solve_with(Request::new(), &mut watched).unwrap();
+    let solved = solver.run().callback(&mut watched).solve().unwrap();
     assert!(matches!(solved.outcome, Outcome::Optimal(_)), "{solved:?}");
     // HiGHS polls once after the starting point, before the first iteration, then at every iteration.
-    assert_eq!(watched.sources.first(), Some(&PollSource::Qp { iterations: 0 }));
+    assert_eq!(watched.sources.first(), Some(&HighsPollSource::Qp { iterations: 0 }));
     assert!(
-        watched.sources.iter().all(|s| matches!(s, PollSource::Qp { .. })),
+        watched.sources.iter().all(|s| matches!(s, HighsPollSource::Qp { .. })),
         "{:?}",
         watched.sources
     );
@@ -424,8 +436,8 @@ fn test_a_qp_poll_reports_qp_iterations_and_interrupts_the_solve() {
         interrupt: true,
         ..Polls::default()
     };
-    let solved = solver.solve_with(Request::new(), &mut interrupting).unwrap();
-    assert_eq!(interrupting.sources, [PollSource::Qp { iterations: 0 }]);
+    let solved = solver.run().callback(&mut interrupting).solve().unwrap();
+    assert_eq!(interrupting.sources, [HighsPollSource::Qp { iterations: 0 }]);
     assert!(
         matches!(
             solved.outcome,
@@ -446,7 +458,7 @@ fn test_a_stop_ends_a_qp_solve_as_interrupted() {
         true
     });
     let mut solver = Solver::new(Highs::new(), projection()).unwrap();
-    let solved = solver.solve(Request::new().stop(&stop)).unwrap();
+    let solved = solver.run().stop(&stop).solve().unwrap();
     assert_eq!(polled.load(Ordering::Relaxed), 1);
     assert!(
         matches!(
@@ -481,7 +493,7 @@ fn test_the_first_feasible_point_of_a_qp_is_feasible_and_valued_on_the_program()
     let program = projection();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     let mut feasible = Feasible::default();
-    solver.solve_with(Request::new(), &mut feasible).unwrap();
+    solver.run().callback(&mut feasible).solve().unwrap();
     let [(objective, values, mip, progress)] = feasible.0.as_slice() else {
         panic!("expected one feasible point, got {:?}", feasible.0)
     };
@@ -593,7 +605,7 @@ const QP_CASES: u32 = 200;
 fn check_qp_optimum(program: &Program, fractions: &[Vec<f64>], unsolved: &Unsolved) -> Result<(), TestCaseError> {
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
     // HiGHS's QP solver could fail to terminate on such a QP; the time limit ends it.
-    let best = match solver.solve(Request::new().time_limit(Duration::from_secs(2))) {
+    let best = match solver.run().time_limit(Duration::from_secs(2)).solve() {
         Ok(Solved {
             outcome: Outcome::Optimal(best),
             ..
@@ -678,7 +690,7 @@ proptest! {
         let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
         let mut feasible = Feasible::default();
         // The time limit ends a solve HiGHS's QP solver does not; the point comes before its iterations.
-        let _ = solver.solve_with(Request::new().time_limit(Duration::from_secs(2)), &mut feasible);
+        let _ = solver.run().time_limit(Duration::from_secs(2)).callback(&mut feasible).solve();
         prop_assert!(feasible.0.len() <= 1, "{:?}", feasible.0);
         for (objective, values, mip, _) in &feasible.0 {
             let values = TiSlice::from_ref(values.as_slice());

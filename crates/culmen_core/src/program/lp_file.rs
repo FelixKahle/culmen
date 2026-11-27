@@ -5,7 +5,8 @@
 
 use core::fmt;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::io;
 
 use typed_index_collections::TiVec;
 
@@ -30,13 +31,13 @@ impl Program {
     ///
     /// let mut plan = ProgramPlan::new();
     /// plan.sense = Sense::Maximize;
-    /// let x = plan.col(ProgramColumn::binary(3.0));
-    /// plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]);
+    /// let x = plan.col(ProgramColumn::binary().cost(3.0));
+    /// plan.row((bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]));
     /// let text = plan.clone().build()?.to_lp_string()?;
     /// assert!(text.starts_with("Maximize\n obj: 3 x0\nSubject To\n r0: 2 x0 <= 1\n"));
     ///
     /// plan.sense = Sense::Minimize;
-    /// let y = plan.col(ProgramColumn::continuous(0.0, bounds!(0.0, 1.0)));
+    /// let y = plan.col(ProgramColumn::continuous().bounds(bounds!(0.0, 1.0)));
     /// plan.quadratic = vec![(x, x, 1.0), (x, y, -1.5), (y, y, 1.0)];
     /// let text = plan.build()?.to_lp_string()?;
     /// assert!(text.starts_with("Minimize\n obj: 3 x0 + [ 2 x0 ^ 2 - 3 x0 * x1 + 2 x1 ^ 2 ] / 2\n"));
@@ -45,26 +46,80 @@ impl Program {
     ///
     /// # Errors
     ///
-    /// [`LpFileError::Unsupported`] for a program with [`ProgramFeature::MultipleObjectives`]: CPLEX's multi-objective
-    /// sections combine tolerances otherwise than [`Tolerance`](super::Tolerance) states, and HiGHS cannot read them.
+    /// [`LpFileError::UnsupportedFeature`] for a program with [`ProgramFeature::MultipleObjectives`]: CPLEX's
+    /// multi-objective sections combine tolerances otherwise than [`Tolerance`](super::Tolerance) states, and HiGHS
+    /// cannot read them.
     pub fn to_lp_string(&self) -> Result<String, LpFileError> {
+        self.writable()?;
         let mut out = String::new();
-        self.write_lp(&mut out)?;
+        self.write_text(&mut out)
+            .map_err(|error| LpFileError::Write(io::Error::other(error)))?;
         Ok(out)
     }
 
-    /// Writes the program in the CPLEX LP file format, as [`Program::to_lp_string`] describes.
+    /// Writes the program in the CPLEX LP file format to `out`, as [`Program::to_lp_string`] describes: a file, a
+    /// socket, a `Vec<u8>`, or `&mut` any of them. The text goes through a buffer, which is flushed before it returns.
+    ///
+    /// ```
+    /// use culmen_core::{ProgramColumn, ProgramPlan, bounds};
+    ///
+    /// let mut plan = ProgramPlan::new();
+    /// let x = plan.col(ProgramColumn::binary().cost(3));
+    /// plan.row((bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]));
+    /// let mut out = Vec::new();
+    /// plan.build()?.write_lp(&mut out)?;
+    /// assert!(out.starts_with(b"Minimize\n obj: 3 x0\n"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///
-    /// [`LpFileError::Unsupported`] as [`Program::to_lp_string`] states, before anything is written;
-    /// [`LpFileError::Write`] for the writer's error.
-    pub fn write_lp(&self, out: &mut impl fmt::Write) -> Result<(), LpFileError> {
+    /// [`LpFileError::UnsupportedFeature`] as [`Program::to_lp_string`] states, before anything is written;
+    /// [`LpFileError::Write`] for the writer's error, after which `out` may hold part of the file.
+    pub fn write_lp(&self, mut out: impl io::Write) -> Result<(), LpFileError> {
+        self.write_lp_to(&mut out)
+    }
+
+    /// [`Program::write_lp`] to a writer named once.
+    ///
+    /// # Errors
+    ///
+    /// As [`Program::write_lp`].
+    fn write_lp_to(&self, out: &mut dyn io::Write) -> Result<(), LpFileError> {
+        self.writable()?;
+        let mut text = IoText {
+            out: io::BufWriter::new(out),
+            error: None,
+        };
+        // A write fails only when the writer did, whose error the adapter kept.
+        let written = self
+            .write_text(&mut text)
+            .map_err(|error| text.error.take().unwrap_or_else(|| io::Error::other(error)));
+        written
+            .and_then(|()| io::Write::flush(&mut text.out))
+            .map_err(LpFileError::Write)
+    }
+
+    /// Checks that the format as written here can state the program.
+    ///
+    /// # Errors
+    ///
+    /// [`LpFileError::UnsupportedFeature`] for a program with [`ProgramFeature::MultipleObjectives`].
+    fn writable(&self) -> Result<(), LpFileError> {
         if self.objectives.are_several() {
-            return Err(LpFileError::Unsupported {
+            return Err(LpFileError::UnsupportedFeature {
                 feature: ProgramFeature::MultipleObjectives,
             });
         }
+        Ok(())
+    }
+
+    /// Writes the program, which [`Program::writable`] accepts, as text.
+    ///
+    /// # Errors
+    ///
+    /// The writer's error.
+    fn write_text(&self, out: &mut impl fmt::Write) -> fmt::Result {
         let labels = Labels::of(self);
         self.write_objective(out, &labels)?;
         out.write_str("Subject To\n")?;
@@ -72,8 +127,7 @@ impl Program {
         self.write_bounds(out, &labels)?;
         self.write_section(out, &labels, "General", Integrality::is_integral)?;
         self.write_section(out, &labels, "Semi-Continuous", Integrality::is_semi)?;
-        out.write_str("End\n")?;
-        Ok(())
+        out.write_str("End\n")
     }
 
     /// Writes a section listing the columns whose integrality `listed` picks, unless it lists none.
@@ -288,27 +342,46 @@ impl Wanted {
 ///
 /// # Panics
 ///
-/// Never: each text taken rules out at most one of a line's candidates, so one of the first `taken + 1` is free.
+/// Never: each text taken rules out at most one of a line's candidates, so one of the first `taken + 1` from any
+/// start is free.
 fn unique(wanted: Vec<Wanted>, reserved: &[&str]) -> Vec<String> {
+    labelled(wanted, reserved).0
+}
+
+/// The labels [`unique`] gives, and how many candidates were tried for them.
+///
+/// # Panics
+///
+/// Never, as [`unique`] states.
+fn labelled(wanted: Vec<Wanted>, reserved: &[&str]) -> (Vec<String>, usize) {
     let mut taken: HashSet<String> = reserved.iter().map(|&r| r.to_owned()).collect();
     let mut labels: Vec<Option<String>> = wanted
         .iter()
         .map(|line| (line.named && line.fits(&line.base, &taken)).then(|| line.claim(line.base.clone(), &mut taken)))
         .collect();
+    // The first candidate not yet tried for each base and suffixes: a candidate tried before was taken then, and what
+    // is taken stays taken, so every one before it is still taken.
+    let mut next: HashMap<(&str, &[&str]), usize> = HashMap::new();
+    let mut tried = 0;
     for (line, label) in wanted.iter().zip(&mut labels) {
         if label.is_none() {
-            let candidates = (0..=taken.len()).map(|k| match k {
-                0 => line.base.clone(),
-                k => format!("{}~{k}", line.base),
+            let first = next.entry((line.base.as_str(), line.suffixes)).or_insert(0);
+            let candidates = (*first..=*first + taken.len()).map(|k| match k {
+                0 => (k, line.base.clone()),
+                k => (k, format!("{}~{k}", line.base)),
             });
-            let mut free = candidates.filter(|candidate| line.fits(candidate, &taken));
-            let chosen = free
+            let mut free = candidates.filter(|(_, candidate)| {
+                tried += 1;
+                line.fits(candidate, &taken)
+            });
+            let (k, chosen) = free
                 .next()
                 .expect("Labels: one of the first `taken + 1` candidates is free");
+            *first = k + 1;
             *label = Some(line.claim(chosen, &mut taken));
         }
     }
-    labels.into_iter().flatten().collect()
+    (labels.into_iter().flatten().collect(), tried)
 }
 
 /// Writes ` c what` for the first term of a sum and ` + c what` or ` - c what` for any other, `-c` first when
@@ -355,29 +428,37 @@ fn label(name: Option<&str>, prefix: char, index: usize) -> String {
     out
 }
 
-/// Why [`Program::write_lp`] wrote no LP file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
+/// Text written to an [`io::Write`], keeping the writer's error, which [`fmt::Error`] cannot carry.
+struct IoText<W: io::Write> {
+    out: W,
+    error: Option<io::Error>,
+}
+
+impl<W: io::Write> fmt::Write for IoText<W> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        self.out.write_all(text.as_bytes()).map_err(|error| {
+            self.error = Some(error);
+            fmt::Error
+        })
+    }
+}
+
+/// Why [`Program::write_lp`] or [`Program::to_lp_string`] wrote no LP file.
+#[derive(Debug)]
 pub enum LpFileError {
     /// The program uses a feature the LP file format as written here cannot state.
-    Unsupported {
+    UnsupportedFeature {
         /// The feature.
         feature: ProgramFeature,
     },
     /// The writer failed.
-    Write(fmt::Error),
-}
-
-impl From<fmt::Error> for LpFileError {
-    fn from(error: fmt::Error) -> Self {
-        Self::Write(error)
-    }
+    Write(io::Error),
 }
 
 impl fmt::Display for LpFileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported { feature } => write!(f, "LP file: a program with {feature} cannot be written"),
+            Self::UnsupportedFeature { feature } => write!(f, "LP file: a program with {feature} cannot be written"),
             Self::Write(error) => write!(f, "LP file: the writer failed: {error}"),
         }
     }
@@ -386,8 +467,28 @@ impl fmt::Display for LpFileError {
 impl core::error::Error for LpFileError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::Unsupported { .. } => None,
+            Self::UnsupportedFeature { .. } => None,
             Self::Write(error) => Some(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lines_named_alike_are_labelled_apart_with_a_few_tries_each() {
+        const LINES: usize = 3_000;
+        let wanted = (0..LINES)
+            .map(|_| Wanted::new(Some("flow"), "flow".to_owned(), &[""]))
+            .collect();
+        let (labels, tried) = labelled(wanted, &[]);
+        let expected: Vec<String> = core::iter::once("flow".to_owned())
+            .chain((1..LINES).map(|k| format!("flow~{k}")))
+            .collect();
+        assert_eq!(labels, expected);
+        // Each line after the first tries the candidates its base has not handed out yet: one, not all before it.
+        assert!(tried <= 2 * LINES, "{tried} candidates tried for {LINES} lines");
     }
 }

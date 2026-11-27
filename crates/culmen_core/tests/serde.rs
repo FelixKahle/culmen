@@ -14,9 +14,9 @@ use core::fmt::Debug;
 use core::time::Duration;
 
 use culmen_core::{
-    AbsoluteGap, Bounds, Col, Integrality, Linear, Model, ModelClass, ModelClasses, Outcome, Phase, PriceMode, Program,
-    ProgramError, ProgramPlan, Progress, RelativeGap, Row, Sense, Settings, Solution, Solved, StopReason, Var,
-    absolute_gap, bounds, relative_gap, threads,
+    AbsoluteGap, Bounds, Col, Event, Events, FeasibilityTolerance, Integrality, Linear, LogLevel, Model, ModelClass,
+    ModelClasses, Outcome, Phase, PriceMode, Program, ProgramError, ProgramPlan, Progress, RelativeGap, Row, Sense,
+    Settings, Solution, Solved, StopReason, Var, absolute_gap, bounds, feasibility_tolerance, relative_gap, threads,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -29,9 +29,9 @@ fn round_trip<T: Serialize + DeserializeOwned + PartialEq + Debug>(value: &T) {
 
 fn sample_lp() -> Program {
     let mut m = Model::new();
-    let x = m.add_var(Var::integer().bounds(0.0, 4.0).name("x"));
+    let x = m.add_var(Var::integer().bounds(bounds!(0.0, 4.0)).name("x"));
     let y = m.add_var(Var::free());
-    m.add_named_constraint("c", (x + 2.0 * y).leq(3.0));
+    m.add_constraint(("c", (x + 2.0 * y).leq(3.0)));
     m.add_constraint((x - y).geq(-1.0));
     m.maximize(x + y + 1.5);
     m.build().unwrap()
@@ -63,9 +63,15 @@ fn test_plain_data_round_trips() {
     round_trip(&ModelClasses::of(&[ModelClass::Lp, ModelClass::Qp]));
     round_trip(&ModelClasses::NONE);
     round_trip(&ModelClasses::ALL);
+    round_trip(&Event::Incumbent);
+    round_trip(&(Event::Log | Event::Poll));
+    round_trip(&Events::NONE);
+    round_trip(&Events::ALL);
     round_trip(&Settings {
         time_limit: Some(Duration::from_millis(1500)),
         threads: Some(threads!(2)),
+        feasibility_tolerance: Some(feasibility_tolerance!(1e-5)),
+        optimality_tolerance: Some(feasibility_tolerance!(1e-8)),
         ..Settings::new()
     });
     let progress = Progress {
@@ -91,10 +97,15 @@ fn test_plain_data_round_trips() {
     round_trip(&Outcome::InfeasibleOrUnbounded);
     round_trip(&PriceMode::ReducedCost { objective: 4.5 });
     round_trip(&PriceMode::Farkas);
+    for level in [LogLevel::Error, LogLevel::Warning, LogLevel::Info, LogLevel::Detail] {
+        round_trip(&level);
+    }
     round_trip(&Solved {
         outcome: Outcome::Infeasible,
         status: 8_i32,
         elapsed: Duration::from_secs(1),
+        nodes: Some(3),
+        iterations: None,
     });
 }
 
@@ -105,6 +116,11 @@ fn test_checked_types_are_checked_as_they_are_read() {
     assert!(error.to_string().starts_with("RelativeGap: below zero"), "{error}");
     let error = serde_json::from_str::<AbsoluteGap>("-1").unwrap_err();
     assert!(error.to_string().starts_with("AbsoluteGap: below zero"), "{error}");
+    let error = serde_json::from_str::<FeasibilityTolerance>("0.5").unwrap_err();
+    assert!(
+        error.to_string().starts_with("FeasibilityTolerance: above 1e-3"),
+        "{error}"
+    );
     let unlimited = serde_json::to_string(&Settings::new()).unwrap();
     let none = unlimited.replace(r#""solution_limit":null"#, r#""solution_limit":0"#);
     assert_ne!(none, unlimited);
@@ -126,6 +142,10 @@ fn test_the_quadratic_part_is_checked_as_it_is_read() {
     assert_eq!(
         serde_json::to_string(&ModelClasses::of(&[ModelClass::Milp, ModelClass::Lp])).unwrap(),
         r#"["Lp","Milp"]"#
+    );
+    assert_eq!(
+        serde_json::to_string(&(Event::Poll | Event::Log)).unwrap(),
+        r#"["Log","Poll"]"#
     );
     let mut plan = ProgramPlan::from(sample_qp());
     plan.sense = Sense::Minimize;

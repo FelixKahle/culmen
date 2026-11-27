@@ -24,7 +24,7 @@ pub struct Term {
 /// A linear expression `Σ coefficient · col + constant`.
 ///
 /// Plain data: terms may repeat a column and are added up when the model is built. Expressions come from the
-/// operators on [`Col`], [`Term`], `LinExpr`, `f64` and `i32`, from [`LinExpr::sum`], `Iterator::sum` or `collect`,
+/// operators on [`Col`], [`Term`], `LinExpr` and numbers, from [`LinExpr::sum`], `Iterator::sum` or `collect`,
 /// from `extend`, and from [`LinExpr::add_term`]:
 ///
 /// ```
@@ -93,7 +93,8 @@ impl LinExpr {
     }
 }
 
-/// Anything that adds to a linear expression: [`Col`], [`Term`], [`LinExpr`], `&LinExpr`, `f64` and `i32`.
+/// Anything that adds to a linear expression: [`Col`], [`Term`], [`LinExpr`], `&LinExpr`, and every number type that
+/// converts into `f64` without loss (`f64`, `f32`, `i32`, `i16`, `i8`, `u32`, `u16`, `u8`) as a constant.
 ///
 /// It is the bound the operators, [`LinExpr::sum`] and the comparisons take, and its comparison methods turn an
 /// expression into a [`Constraint`] without the macros:
@@ -209,17 +210,27 @@ impl Linear for &LinExpr {
     }
 }
 
-impl Linear for f64 {
-    fn add_to(self, expr: &mut LinExpr, scale: f64) {
-        expr.constant += scale * self;
-    }
+/// A number as a constant, for every primitive that converts into `f64` without loss.
+macro_rules! linear_numbers {
+    ($($number:ty),*) => {$(
+        impl Linear for $number {
+            fn add_to(self, expr: &mut LinExpr, scale: f64) {
+                expr.constant += scale * f64::from(self);
+            }
+        }
+
+        impl From<$number> for LinExpr {
+            fn from(constant: $number) -> Self {
+                Self {
+                    terms: Vec::new(),
+                    constant: f64::from(constant),
+                }
+            }
+        }
+    )*};
 }
 
-impl Linear for i32 {
-    fn add_to(self, expr: &mut LinExpr, scale: f64) {
-        expr.constant += scale * f64::from(self);
-    }
-}
+linear_numbers!(i8, i16, i32, u8, u16, u32, f32, f64);
 
 impl<T: Linear> Sum<T> for LinExpr {
     fn sum<I: Iterator<Item = T>>(iter: I) -> Self {
@@ -268,8 +279,9 @@ impl<T: Linear> SubAssign<T> for LinExpr {
     }
 }
 
-impl MulAssign<f64> for LinExpr {
-    fn mul_assign(&mut self, rhs: f64) {
+impl<S: Into<f64>> MulAssign<S> for LinExpr {
+    fn mul_assign(&mut self, rhs: S) {
+        let rhs = rhs.into();
         for term in &mut self.terms {
             term.coefficient *= rhs;
         }
@@ -277,8 +289,9 @@ impl MulAssign<f64> for LinExpr {
     }
 }
 
-impl DivAssign<f64> for LinExpr {
-    fn div_assign(&mut self, rhs: f64) {
+impl<S: Into<f64>> DivAssign<S> for LinExpr {
+    fn div_assign(&mut self, rhs: S) {
+        let rhs = rhs.into();
         for term in &mut self.terms {
             term.coefficient /= rhs;
         }
@@ -336,21 +349,17 @@ macro_rules! scalar_sum_ops {
 scalar_sum_ops!(f64 => Col, Term, LinExpr);
 scalar_sum_ops!(i32 => Col, Term, LinExpr);
 
-/// Scaling a column or a term, by a number on either side, gives a [`Term`].
+/// Scaling a column or a term gives a [`Term`]: by any number on the right, and by an `f64` or `i32` on the left.
+///
+/// A number on the left takes only these two types: with more, an unsuffixed literal such as the `2` of
+/// `(2 * x).leq(4)` would fit several impls, and the method call on the product could not infer its type.
 macro_rules! term_scale_ops {
     ($($ty:ty),*) => {$(
-        impl Mul<f64> for $ty {
+        impl<S: Into<f64>> Mul<S> for $ty {
             type Output = Term;
-            fn mul(self, rhs: f64) -> Term {
+            fn mul(self, rhs: S) -> Term {
                 let t = Term::from(self);
-                Term { col: t.col, coefficient: t.coefficient * rhs }
-            }
-        }
-
-        impl Mul<i32> for $ty {
-            type Output = Term;
-            fn mul(self, rhs: i32) -> Term {
-                self * f64::from(rhs)
+                Term { col: t.col, coefficient: t.coefficient * rhs.into() }
             }
         }
 
@@ -368,18 +377,11 @@ macro_rules! term_scale_ops {
             }
         }
 
-        impl Div<f64> for $ty {
+        impl<S: Into<f64>> Div<S> for $ty {
             type Output = Term;
-            fn div(self, rhs: f64) -> Term {
+            fn div(self, rhs: S) -> Term {
                 let t = Term::from(self);
-                Term { col: t.col, coefficient: t.coefficient / rhs }
-            }
-        }
-
-        impl Div<i32> for $ty {
-            type Output = Term;
-            fn div(self, rhs: i32) -> Term {
-                self / f64::from(rhs)
+                Term { col: t.col, coefficient: t.coefficient / rhs.into() }
             }
         }
 
@@ -400,9 +402,9 @@ impl From<Col> for Term {
     }
 }
 
-impl Mul<f64> for LinExpr {
+impl<S: Into<f64>> Mul<S> for LinExpr {
     type Output = Self;
-    fn mul(mut self, rhs: f64) -> Self {
+    fn mul(mut self, rhs: S) -> Self {
         self *= rhs;
         self
     }
@@ -415,13 +417,6 @@ impl Mul<LinExpr> for f64 {
     }
 }
 
-impl Mul<i32> for LinExpr {
-    type Output = Self;
-    fn mul(self, rhs: i32) -> Self {
-        self * f64::from(rhs)
-    }
-}
-
 impl Mul<LinExpr> for i32 {
     type Output = LinExpr;
     fn mul(self, rhs: LinExpr) -> LinExpr {
@@ -429,18 +424,11 @@ impl Mul<LinExpr> for i32 {
     }
 }
 
-impl Div<f64> for LinExpr {
+impl<S: Into<f64>> Div<S> for LinExpr {
     type Output = Self;
-    fn div(mut self, rhs: f64) -> Self {
+    fn div(mut self, rhs: S) -> Self {
         self /= rhs;
         self
-    }
-}
-
-impl Div<i32> for LinExpr {
-    type Output = Self;
-    fn div(self, rhs: i32) -> Self {
-        self / f64::from(rhs)
     }
 }
 
@@ -460,21 +448,6 @@ impl From<Col> for LinExpr {
 impl From<Term> for LinExpr {
     fn from(term: Term) -> Self {
         term.into_expr()
-    }
-}
-
-impl From<f64> for LinExpr {
-    fn from(constant: f64) -> Self {
-        Self {
-            terms: Vec::new(),
-            constant,
-        }
-    }
-}
-
-impl From<i32> for LinExpr {
-    fn from(constant: i32) -> Self {
-        Self::from(f64::from(constant))
     }
 }
 

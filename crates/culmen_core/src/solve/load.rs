@@ -14,12 +14,13 @@ use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 /// and [`Backend::FEATURES`](crate::Backend::FEATURES) before the backend sees the program.
 ///
 /// ```
-/// use culmen_core::{LoadError, Model, ModelClass, ModelClasses, Script, Solver, Var};
+/// use culmen_core::{LoadError, Model, ModelClass, ModelClasses, Solver, Var};
+/// use culmen_core::script::Script;
 ///
 /// let mut m = Model::new();
 /// let x = m.add_var(Var::continuous());
 /// m.minimize(x * x);
-/// let error = LoadError::<std::io::Error>::Unsupported {
+/// let error = LoadError::<std::io::Error>::UnsupportedClass {
 ///     class: m.build()?.class(),
 ///     supported: ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]),
 /// };
@@ -28,10 +29,9 @@ use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum LoadError<E> {
     /// The backend does not solve the program's class.
-    Unsupported {
+    UnsupportedClass {
         /// The program's class.
         class: ModelClass,
         /// The classes the backend solves.
@@ -51,7 +51,7 @@ pub enum LoadError<E> {
 impl<E: fmt::Display> fmt::Display for LoadError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported { class, supported } => {
+            Self::UnsupportedClass { class, supported } => {
                 write!(f, "Solver: the backend solves {supported}, not a {class}")
             }
             Self::UnsupportedFeature { feature, supported } => {
@@ -65,7 +65,7 @@ impl<E: fmt::Display> fmt::Display for LoadError<E> {
 impl<E: core::error::Error + 'static> core::error::Error for LoadError<E> {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::Unsupported { .. } | Self::UnsupportedFeature { .. } => None,
+            Self::UnsupportedClass { .. } | Self::UnsupportedFeature { .. } => None,
             Self::Backend(error) => Some(error),
         }
     }

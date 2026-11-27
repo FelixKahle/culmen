@@ -12,12 +12,12 @@
 
 use culmen_core::{
     Analysis, AnalysisError, Backend, Bounds, Col, EditError, Integrality, LinExpr, Linear, Model, ModelClass, NewCol,
-    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Request, Settings, Solution, SolveError, Solver, Var,
-    bounds, relative_gap,
+    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Sense, Settings, Solution, SolveError, Solver, Tolerance,
+    Var, bounds, relative_gap,
 };
-use culmen_highs::{Highs, HighsError, HighsOptions, Switch};
+use culmen_highs::{Highs, HighsError, HighsOptions};
 use culmen_testing::instances::assignment;
-use culmen_testing::mirror::{Faults, Mirror, MirrorError};
+use culmen_testing::mirror::{Call, Faults, Mirror, MirrorError};
 use culmen_testing::reference::{Reference, close, edit_plan, solve};
 use culmen_testing::strategy::{small_lp, small_qp, small_semi, with_edits};
 use culmen_testing::tolerance::Tolerances;
@@ -29,9 +29,7 @@ fn try_solve_exactly<B: Backend>(solver: &mut Solver<B>) -> Result<Outcome, Solv
         relative_gap: Some(relative_gap!(0.0)),
         ..Settings::new()
     };
-    solver
-        .solve(Request::new().settings_from(exact))
-        .map(|solved| solved.outcome)
+    solver.run().settings(exact).solve().map(|solved| solved.outcome)
 }
 
 /// Solves with a relative gap of zero and returns the outcome.
@@ -87,7 +85,7 @@ fn test_a_chain_of_edits_reaches_each_hand_worked_optimum() {
     // A new column z in [0, 1] worth 2, in the free cut row; then the cut back at x + y + z <= 0.5.
     let z = solver
         .add_col(NewCol {
-            column: ProgramColumn::continuous(2.0, bounds!(0.0, 1.0)),
+            column: ProgramColumn::continuous().cost(2.0).bounds(bounds!(0.0, 1.0)),
             entries: vec![(cut, 1.0)],
         })
         .unwrap();
@@ -98,6 +96,78 @@ fn test_a_chain_of_edits_reaches_each_hand_worked_optimum() {
         solver.program().row(cut).entries().collect::<Vec<_>>(),
         [(x, 1.0), (y, 1.0), (z, 1.0)]
     );
+}
+
+#[test]
+fn test_coefficients_are_changed_added_and_taken_out_in_place() {
+    // Maximize x + y over x + y <= 4, x, y in [0, 3]: 4. With the row 2x + y <= 4 instead: 3.5 at (0.5, 3); with y
+    // taken out of the row: 5 at (2, 3); with y put back at 3, 2x + 3y <= 4: 2 at (2, 0) or (0, 4/3).
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(3));
+    let y = m.add_var(Var::continuous().upper(3));
+    let cap = m.add_constraint((x + y).leq(4.0));
+    m.maximize(x + y);
+    let mut solver = Solver::new(Mirror::new(Highs::new()), m.build().unwrap()).unwrap();
+    assert!(close(optimum(&mut solver), 4.0, 1e-9));
+    solver.set_coefficients([(cap, x, 2.0)]).unwrap();
+    assert!(close(optimum(&mut solver), 3.5, 1e-9));
+    solver.set_coefficients([(cap, y, 0.0)]).unwrap();
+    assert!(close(optimum(&mut solver), 5.0, 1e-9));
+    solver.set_coefficients([(cap, y, 3.0)]).unwrap();
+    assert!(close(optimum(&mut solver), 2.0, 1e-9));
+    // Every edit was in place: the program was loaded once.
+    let loads = solver
+        .backend()
+        .calls
+        .iter()
+        .filter(|call| matches!(call, Call::Load(_)))
+        .count();
+    assert_eq!(loads, 1);
+    assert_eq!(solver.backend().held(), Some(solver.program()));
+}
+
+#[test]
+fn test_the_objective_is_edited_in_place_and_a_new_quadratic_part_reloads() {
+    // Minimize x + 2y over x + y >= 1, x, y in [0, 4]: 1 at (1, 0). Maximized: 12 at (4, 4).
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(4));
+    let y = m.add_var(Var::continuous().upper(4));
+    m.add_constraint((x + y).geq(1));
+    m.minimize(x + 2 * y);
+    let mut solver = Solver::new(Mirror::new(Highs::new()), m.build().unwrap()).unwrap();
+    assert!(close(optimum(&mut solver), 1.0, 1e-9));
+    solver.set_sense(Sense::Maximize).unwrap();
+    assert!(close(optimum(&mut solver), 12.0, 1e-9));
+    solver.set_offset(-2).unwrap();
+    assert!(close(optimum(&mut solver), 10.0, 1e-9));
+    // Maximize 3x - y + 1: 13 at (4, 0), in place since the quadratic part stays empty.
+    solver.set_objective(Sense::Maximize, 3 * x - y + 1).unwrap();
+    assert!(close(optimum(&mut solver), 13.0, 1e-9));
+    // Minimize (x - 2)² + y = x² - 4x + 4 + y: 0 at (2, 0), a QP HiGHS loads whole.
+    solver.set_objective(Sense::Minimize, x * x - 4 * x + 4 + y).unwrap();
+    assert!(close(optimum(&mut solver), 0.0, 1e-7));
+    // Back to minimizing x + 2y.
+    solver.set_objective(Sense::Minimize, x + 2 * y).unwrap();
+    assert!(close(optimum(&mut solver), 1.0, 1e-9));
+    assert_eq!(solver.backend().held(), Some(solver.program()));
+}
+
+#[test]
+fn test_a_sense_edit_beside_further_objectives_passes_them_again() {
+    // Minimize x + y, then maximize x, over x, y in [0, 1]: (0, 0). With the own objective maximized: (1, 1).
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1));
+    let y = m.add_var(Var::continuous().upper(1));
+    m.minimize(x + y);
+    m.add_stage(Objective::maximize(x), Tolerance::EXACT);
+    let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
+    assert!(close(optimum(&mut solver), 0.0, 1e-9));
+    solver.set_sense(Sense::Maximize).unwrap();
+    assert!(close(optimum(&mut solver), 2.0, 1e-9));
+    solver.set_offset(0.5).unwrap();
+    assert!(close(optimum(&mut solver), 2.5, 1e-9));
+    solver.set_objective(Sense::Minimize, y - x).unwrap();
+    assert!(close(optimum(&mut solver), -1.0, 1e-9));
 }
 
 #[test]
@@ -116,7 +186,7 @@ fn test_column_generation_finds_the_cheaper_pattern() {
 
     let both = solver
         .add_col(NewCol {
-            column: ProgramColumn::continuous(1.5, Bounds::NON_NEGATIVE),
+            column: ProgramColumn::continuous().cost(1.5),
             entries: vec![(a, 1.0), (b, 1.0)],
         })
         .unwrap();
@@ -136,12 +206,12 @@ fn test_adding_a_column_beside_further_objectives_solves() {
     let x = m.add_var(Var::continuous().upper(1));
     let y = m.add_var(Var::continuous().upper(1));
     m.minimize(x + y);
-    m.add_objective(Objective::maximize(x));
+    m.add_stage(Objective::maximize(x), Tolerance::EXACT);
     let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
     assert!(close(optimum(&mut solver), 0.0, 1e-9));
 
     let z = solver
-        .add_col(ProgramColumn::continuous(-1.0, bounds!(0.0, 1.0)))
+        .add_col(ProgramColumn::continuous().cost(-1.0).bounds(bounds!(0.0, 1.0)))
         .unwrap();
     let Outcome::Optimal(solution) = solve_exactly(&mut solver) else {
         panic!("expected an optimum")
@@ -175,7 +245,7 @@ fn test_adding_rows_to_a_qp_without_rows_solves_it_right() {
 #[test]
 fn test_a_semi_column_beyond_the_highs_limit_is_refused_and_the_solver_still_solves() {
     let mut m = Model::new();
-    let x = m.add_var(Var::semi_continuous().bounds(1, 10));
+    let x = m.add_var(Var::semi_continuous().bounds(bounds!(1.0, 10.0)));
     m.maximize(x);
     let program = m.build().unwrap();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
@@ -198,7 +268,7 @@ fn test_an_integer_column_in_a_qp_is_refused_as_a_miqp() {
     m.minimize((x - 1) * (x - 1));
     let program = m.build().unwrap();
     let mut solver = Solver::new(Highs::new(), program.clone()).unwrap();
-    let miqp = EditError::Unsupported {
+    let miqp = EditError::UnsupportedClass {
         class: ModelClass::Miqp,
         supported: Highs::CLASSES,
     };
@@ -206,7 +276,7 @@ fn test_an_integer_column_in_a_qp_is_refused_as_a_miqp() {
         solver.set_col_integrality([(x, Integrality::Integer)]),
         Err(miqp.clone())
     );
-    assert_eq!(solver.add_col(ProgramColumn::binary(0.0)), Err(miqp));
+    assert_eq!(solver.add_col(ProgramColumn::binary()), Err(miqp));
     assert_eq!(solver.program(), &program);
     assert!(close(optimum(&mut solver), 0.0, 1e-6));
 }
@@ -253,7 +323,7 @@ fn test_a_highs_edit_failing_after_it_applied_is_undone_by_a_reload() {
     let mut solver = Solver::new(Mirror::new(Highs::new()), program.clone()).unwrap();
     assert!(close(optimum(&mut solver), 2.0, 1e-9));
 
-    solver.backend_mut().faults = Faults {
+    *solver.options_mut() = Faults {
         refuse_edits: 1,
         ..Faults::default()
     };
@@ -264,6 +334,7 @@ fn test_a_highs_edit_failing_after_it_applied_is_undone_by_a_reload() {
     assert_eq!(solver.program(), &program);
     assert!(close(optimum(&mut solver), 2.0, 1e-9));
     assert_eq!(solver.backend().held(), Some(solver.program()));
+    assert!(solver.duals().is_ok(), "the mirror forwards HiGHS's analyses");
 }
 
 /// The LP relaxation of a generalized assignment problem, with presolve off so a fresh solve and a warm one count
@@ -273,16 +344,15 @@ fn relaxed_assignment() -> (Program, HighsOptions) {
     for column in &mut plan.columns {
         column.integrality = Integrality::Continuous;
     }
-    let options = HighsOptions {
-        presolve: Some(Switch::Off),
-        ..HighsOptions::default()
-    };
+    // Every solve of these tests runs without presolve, so the options hold it, by HiGHS's name, beside the
+    // settings of each solve.
+    let options = HighsOptions::default().option("presolve", "off");
     (plan.build().unwrap(), options)
 }
 
 /// The simplex iterations and solution of an optimal solve.
 fn iterations_and_solution(solver: &mut Solver<Highs>) -> (u64, Solution) {
-    let solved = solver.solve(Request::new()).unwrap();
+    let solved = solver.solve().unwrap();
     let Outcome::Optimal(solution) = solved.outcome else {
         panic!("expected an optimum, got {:?}", solved.outcome)
     };
@@ -406,9 +476,9 @@ proptest! {
         for (op, &refuse) in ops.iter().zip(&faults) {
             let before = solver.program().clone();
             let want = edit_plan(&before, op, Highs::CLASSES, Highs::FEATURES);
-            solver.backend_mut().faults.refuse_edits = usize::from(refuse);
+            solver.options_mut().refuse_edits = usize::from(refuse);
             let got = op.apply(&mut solver);
-            solver.backend_mut().faults = Faults::default();
+            *solver.options_mut() = Faults::default();
             match (&got, want) {
                 (Ok(_), Ok(want)) => prop_assert_eq!(solver.program(), &want),
                 (Err(EditError::Backend(MirrorError::Injected)), Ok(_)) if refuse => {

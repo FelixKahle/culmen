@@ -22,6 +22,7 @@ use typed_index_collections::{TiSlice, TiVec};
 
 pub use bounds::{Bounds, Integrality, InvalidBounds, Sense};
 pub use class::{ModelClass, ModelClasses, ModelClassesIter};
+pub(crate) use edit::OwnObjective;
 pub use features::{ProgramFeature, ProgramFeatures, ProgramFeaturesIter};
 pub use ids::{Col, Cols, Row, Rows};
 pub use lp_file::LpFileError;
@@ -31,7 +32,7 @@ pub use objectives::{
 pub use plan::{NewCol, ProgramColumn, ProgramPlan, ProgramRow};
 pub use quad::{HessianEntries, QuadEntries, QuadObjective};
 pub(crate) use quad::{check_convex, hessian_value, merge_pairs};
-pub use row::{RowEntries, RowView};
+pub use row::{ColEntries, RowEntries, RowView};
 
 /// A linear, mixed-integer or convex quadratic program: minimize or maximize
 /// `cost · x + Σ q · xᵢ · xⱼ + offset` over `x` with every column in its bounds, the integer columns whole, every
@@ -51,11 +52,11 @@ pub use row::{RowEntries, RowView};
 ///
 /// let mut plan = ProgramPlan::new();
 /// plan.sense = Sense::Maximize;
-/// let x = plan.col(ProgramColumn::binary(5.0));
-/// let y = plan.col(ProgramColumn::binary(4.0));
-/// let r = plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0), (x, 0.0)]);
+/// let x = plan.col(ProgramColumn::binary().cost(5.0));
+/// let y = plan.col(ProgramColumn::binary().cost(4.0));
+/// let r = plan.row((bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0), (x, 0.0)]));
 /// let program = plan.build()?;
-/// assert!(program.is_mip());
+/// assert!(program.class().is_discrete());
 /// assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(x, 1.0), (y, 1.0)]);
 /// # Ok::<(), culmen_core::ProgramError>(())
 /// ```
@@ -132,12 +133,6 @@ impl Program {
         self.entry_values.len()
     }
 
-    /// Whether any column is integer, semi-continuous or semi-integer: whether its values are not one interval.
-    #[must_use]
-    pub fn is_mip(&self) -> bool {
-        self.integralities().any(Integrality::is_discrete)
-    }
-
     /// The quadratic part of the objective, empty for a linear objective.
     #[must_use]
     pub const fn quadratic(&self) -> &QuadObjective {
@@ -172,17 +167,16 @@ impl Program {
         &self.objectives
     }
 
-    /// What the program uses beyond its [`class`](Program::class): semi columns and multiple objectives; never
-    /// [`ProgramFeature::StartSolution`], which belongs to a solve.
+    /// What the program uses beyond its [`class`](Program::class): semi columns and multiple objectives.
     ///
     /// ```
-    /// use culmen_core::{Model, Objective, ProgramFeature, ProgramFeatures, Var};
+    /// use culmen_core::{Model, Objective, ProgramFeature, ProgramFeatures, Tolerance, Var, bounds};
     ///
     /// let mut m = Model::new();
-    /// let x = m.add_var(Var::semi_continuous().bounds(2, 10));
+    /// let x = m.add_var(Var::semi_continuous().bounds(bounds!(2.0, 10.0)));
     /// m.minimize(x);
     /// assert_eq!(m.build()?.features(), ProgramFeature::SemiContinuous.into());
-    /// m.add_objective(Objective::maximize(x));
+    /// m.add_stage(Objective::maximize(x), Tolerance::EXACT);
     /// let both = ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::MultipleObjectives]);
     /// assert_eq!(m.build()?.features(), both);
     /// # Ok::<(), culmen_core::ModelError>(())
@@ -193,8 +187,13 @@ impl Program {
     }
 
     /// The class the program would have with columns of these integralities, as many as it would have.
-    pub(crate) fn class_with(&self, mut integralities: impl Iterator<Item = Integrality>) -> ModelClass {
-        match (integralities.any(Integrality::is_discrete), self.quadratic.is_empty()) {
+    pub(crate) fn class_with(&self, integralities: impl Iterator<Item = Integrality>) -> ModelClass {
+        Self::class_of(integralities, !self.quadratic.is_empty())
+    }
+
+    /// The class of a program with columns of these integralities and a quadratic part when `quadratic`.
+    pub(crate) fn class_of(mut integralities: impl Iterator<Item = Integrality>, quadratic: bool) -> ModelClass {
+        match (integralities.any(Integrality::is_discrete), !quadratic) {
             (false, true) => ModelClass::Lp,
             (true, true) => ModelClass::Milp,
             (false, false) => ModelClass::Qp,
@@ -217,7 +216,7 @@ impl Program {
     }
 
     /// Each column's integrality, in order.
-    fn integralities(&self) -> impl Iterator<Item = Integrality> + '_ {
+    pub(crate) fn integralities(&self) -> impl Iterator<Item = Integrality> + '_ {
         self.columns.iter().map(|c| c.integrality)
     }
 
@@ -269,6 +268,75 @@ impl Program {
             &self.entry_cols[range.clone()],
             &self.entry_values[range],
         )
+    }
+
+    /// The coefficient of `col` in `row`; zero when the row has no entry for it.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous());
+    /// let y = m.add_var(Var::continuous());
+    /// let cap = m.add_constraint((2 * x + y).leq(4));
+    /// let only = m.add_constraint(x.geq(1));
+    /// let program = m.build()?;
+    /// assert_eq!((program.coefficient(cap, x), program.coefficient(only, y)), (2.0, 0.0));
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// When the program has no row `row`.
+    #[must_use]
+    pub fn coefficient(&self, row: Row, col: Col) -> f64 {
+        let view = self.row(row);
+        view.position(col).map_or(0.0, |i| view.value_at(i))
+    }
+
+    /// The entries of one column as `(row, coefficient)`, sorted by row: its column of the matrix, which is stored by
+    /// rows, so each step searches one row.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous());
+    /// let y = m.add_var(Var::continuous());
+    /// let a = m.add_constraint((2 * x + y).leq(4));
+    /// m.add_constraint(y.geq(1));
+    /// let c = m.add_constraint((x - y).equals(0));
+    /// let program = m.build()?;
+    /// assert_eq!(program.col_entries(x).collect::<Vec<_>>(), [(a, 2.0), (c, 1.0)]);
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    pub fn col_entries(&self, col: Col) -> ColEntries<'_> {
+        ColEntries::new(self, col)
+    }
+
+    /// The first column named `name`, `None` when no column is; a search through every column.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous().name("x"));
+    /// let cap = m.add_constraint(("cap", x.leq(4)));
+    /// let program = m.build()?;
+    /// assert_eq!((program.col_named("x"), program.row_named("cap")), (Some(x), Some(cap)));
+    /// assert_eq!(program.col_named("y"), None);
+    /// # Ok::<(), culmen_core::ModelError>(())
+    /// ```
+    #[must_use]
+    pub fn col_named(&self, name: &str) -> Option<Col> {
+        self.columns
+            .iter_enumerated()
+            .find_map(|(col, c)| (c.name.as_deref() == Some(name)).then_some(col))
+    }
+
+    /// The first row named `name`, `None` when no row is; a search through every row.
+    #[must_use]
+    pub fn row_named(&self, name: &str) -> Option<Row> {
+        self.row_names
+            .iter_enumerated()
+            .find_map(|(row, n)| (n.as_deref() == Some(name)).then_some(row))
     }
 
     /// The whole constraint matrix in compressed row form.
@@ -447,7 +515,7 @@ pub(crate) const fn semi_bounds(bounds: Bounds) -> bool {
 /// # Errors
 ///
 /// [`ProgramError::QuadraticWithObjectives`], or for the first further objective at fault
-/// [`ProgramError::NonFiniteObjectiveOffset`], [`ProgramError::UnknownObjectiveColumn`] or
+/// [`ProgramError::NonFiniteObjectiveOffset`], [`ProgramError::UnknownObjectiveCol`] or
 /// [`ProgramError::NonFiniteObjectiveCoefficient`].
 fn check_objectives(plan: &ProgramPlan) -> Result<(), ProgramError> {
     let quadratic = QuadObjective::from_terms(plan.quadratic.iter().copied());
@@ -480,7 +548,7 @@ impl BadTerm<Col> {
     /// The error of a row holding this term.
     const fn in_row(self, row: Row) -> ProgramError {
         match self {
-            Self::Unknown(col) => ProgramError::UnknownColumn { row, col },
+            Self::Unknown(col) => ProgramError::UnknownCol { row, col },
             Self::NonFinite(col, value) => ProgramError::NonFiniteCoefficient { row, col, value },
         }
     }
@@ -488,7 +556,7 @@ impl BadTerm<Col> {
     /// The error of a further objective holding this term.
     const fn in_objective(self, objective: ObjectiveId) -> ProgramError {
         match self {
-            Self::Unknown(col) => ProgramError::UnknownObjectiveColumn { objective, col },
+            Self::Unknown(col) => ProgramError::UnknownObjectiveCol { objective, col },
             Self::NonFinite(col, value) => ProgramError::NonFiniteObjectiveCoefficient { objective, col, value },
         }
     }
@@ -516,13 +584,13 @@ pub(crate) fn bad_term<I: Copy + Ord + Into<usize>>(terms: &[(I, f64)], count: u
 ///
 /// # Errors
 ///
-/// [`ProgramError::UnknownQuadColumn`] or [`ProgramError::NonFiniteQuadCoefficient`] for the first defective term, as
+/// [`ProgramError::UnknownQuadCol`] or [`ProgramError::NonFiniteQuadCoefficient`] for the first defective term, as
 /// given or merged, a square whose Hessian value overflows included, or [`ProgramError::NonConvexObjective`].
 fn check_quadratic(plan: &ProgramPlan) -> Result<(), ProgramError> {
     let num_cols = plan.columns.len();
     plan.quadratic.iter().try_for_each(|&(first, second, value)| {
         match [first, second].into_iter().find(|col| col.index() >= num_cols) {
-            Some(col) => Err(ProgramError::UnknownQuadColumn { col }),
+            Some(col) => Err(ProgramError::UnknownQuadCol { col }),
             None => finite_quad(first, second, value),
         }
     })?;
@@ -591,7 +659,6 @@ impl TryFrom<ProgramPlan> for Program {
 
 /// Why a [`ProgramPlan`] could not be built.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum ProgramError {
     /// The objective offset is NaN or infinite.
     NonFiniteOffset {
@@ -615,14 +682,14 @@ pub enum ProgramError {
         value: f64,
     },
     /// A row's term names a column the plan does not have.
-    UnknownColumn {
+    UnknownCol {
         /// The row.
         row: Row,
         /// The column named.
         col: Col,
     },
     /// A quadratic term names a column the plan does not have.
-    UnknownQuadColumn {
+    UnknownQuadCol {
         /// The column named.
         col: Col,
     },
@@ -669,7 +736,7 @@ pub enum ProgramError {
         value: f64,
     },
     /// A further objective's term names a column the plan does not have.
-    UnknownObjectiveColumn {
+    UnknownObjectiveCol {
         /// The objective.
         objective: ObjectiveId,
         /// The column named.
@@ -690,10 +757,10 @@ impl fmt::Display for ProgramError {
                     "Program: the coefficient {value} of {col:?} in {row:?} is not finite"
                 )
             }
-            Self::UnknownColumn { row, col } => {
+            Self::UnknownCol { row, col } => {
                 write!(f, "Program: {row:?} names {col:?}, which the plan does not have")
             }
-            Self::UnknownQuadColumn { col } => {
+            Self::UnknownQuadCol { col } => {
                 write!(
                     f,
                     "Program: a quadratic term names {col:?}, which the plan does not have"
@@ -730,7 +797,7 @@ impl fmt::Display for ProgramError {
                 f,
                 "Program: the coefficient {value} of {col:?} in {objective:?} is not finite"
             ),
-            Self::UnknownObjectiveColumn { objective, col } => {
+            Self::UnknownObjectiveCol { objective, col } => {
                 write!(f, "Program: {objective:?} names {col:?}, which the plan does not have")
             }
             Self::QuadraticWithObjectives => {
@@ -775,10 +842,7 @@ mod tests {
         let parts = (number(), columns, prop::collection::vec(row, 0..4), squares);
         parts.prop_map(|(offset, costs, rows, squares)| ProgramPlan {
             offset,
-            columns: costs
-                .into_iter()
-                .map(|cost| ProgramColumn::continuous(cost, Bounds::FREE))
-                .collect(),
+            columns: costs.into_iter().map(|cost| ProgramColumn::free().cost(cost)).collect(),
             rows: rows.into(),
             quadratic: squares
                 .into_iter()

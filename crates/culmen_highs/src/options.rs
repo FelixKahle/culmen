@@ -4,18 +4,17 @@
 //! HiGHS's options: the commonly used ones typed, any other by name.
 
 use core::fmt;
-use core::num::NonZeroU64;
-use core::time::Duration;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+use culmen_core::{RelativeGap, relative_gap};
 
 use crate::HighsError;
 
 /// An option value of one of HiGHS's four kinds.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum OptionValue {
     /// A `bool` option.
     Bool(bool),
@@ -105,13 +104,6 @@ impl ToOption for u64 {
     }
 }
 
-impl ToOption for NonZeroU64 {
-    /// A limit that cannot be zero, as [`u64`]'s.
-    fn to_option(&self, name: &'static str) -> Result<OptionValue, HighsError> {
-        self.get().to_option(name)
-    }
-}
-
 impl ToOption for f64 {
     fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
         Ok(OptionValue::Double(*self))
@@ -121,12 +113,6 @@ impl ToOption for f64 {
 impl ToOption for String {
     fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
         Ok(OptionValue::String(self.clone()))
-    }
-}
-
-impl ToOption for Duration {
-    fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
-        Ok(OptionValue::Double(self.as_secs_f64()))
     }
 }
 
@@ -143,7 +129,11 @@ pub(crate) fn limit(value: u64) -> OptionValue {
 pub(crate) fn exact(name: &'static str, value: u64) -> Result<OptionValue, HighsError> {
     i32::try_from(value)
         .map(OptionValue::Int)
-        .map_err(|_| HighsError::OutOfRange { name, value })
+        .map_err(|_| HighsError::OutOfRange {
+            name,
+            value,
+            max: i32::MAX.unsigned_abs().into(),
+        })
 }
 
 /// Off, on, or HiGHS's choice: `presolve`, `parallel`, `run_crossover`.
@@ -169,30 +159,18 @@ impl ToOption for Switch {
     }
 }
 
-/// Off or on: `ranging`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub enum OnOff {
-    /// Off.
-    Off,
-    /// On.
-    On,
-}
-
-impl ToOption for OnOff {
-    fn to_option(&self, _: &'static str) -> Result<OptionValue, HighsError> {
-        let value = match self {
-            Self::Off => "off",
-            Self::On => "on",
-        };
-        Ok(OptionValue::from(value))
-    }
+/// A switch HiGHS takes as the string `"on"` or `"off"`, as `ranging`, from a `bool`.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "a typed option's conversion returns the result every other conversion returns"
+)]
+fn on_off(value: &bool, _: &'static str) -> Result<OptionValue, HighsError> {
+    Ok(OptionValue::from(if *value { "on" } else { "off" }))
 }
 
 /// The LP or QP solver: `solver`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum LpSolver {
     /// HiGHS decides.
     Choose,
@@ -232,7 +210,6 @@ impl ToOption for LpSolver {
 /// The LP solver inside the MIP solver: `mip_lp_solver`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum MipLpSolver {
     /// HiGHS decides.
     Choose,
@@ -263,7 +240,6 @@ impl ToOption for MipLpSolver {
 /// The interior-point solver inside the MIP solver: `mip_ipm_solver`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum MipIpmSolver {
     /// HiGHS decides.
     Choose,
@@ -291,7 +267,6 @@ impl ToOption for MipIpmSolver {
 /// The simplex strategy: `simplex_strategy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum SimplexStrategy {
     /// HiGHS decides.
     Choose,
@@ -321,7 +296,6 @@ impl ToOption for SimplexStrategy {
 /// The simplex scaling strategy: `simplex_scale_strategy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum ScaleStrategy {
     /// No scaling.
     Off,
@@ -351,7 +325,6 @@ impl ToOption for ScaleStrategy {
 /// A simplex edge-weight strategy: `simplex_dual_edge_weight_strategy`, `simplex_primal_edge_weight_strategy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum EdgeWeight {
     /// HiGHS decides.
     Choose,
@@ -378,7 +351,6 @@ impl ToOption for EdgeWeight {
 /// Which presolve rules HiGHS allows: `presolve_mode`, HiGHS's `PresolveMode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
 pub enum PresolveMode {
     /// HiGHS decides: the light rules for a PDLP solver, every rule otherwise.
     Choose,
@@ -404,39 +376,67 @@ impl ToOption for PresolveMode {
 
 /// Declares the typed options: the struct, its field docs, and the list of `(name, value)` it sets.
 macro_rules! options {
-    ($($(#[$doc:meta])* $field:ident: $ty:ty = $name:literal,)*) => {
+    (@value $value:ident, $name:literal) => {
+        $value.to_option($name)
+    };
+    (@value $value:ident, $name:literal, $convert:path) => {
+        $convert($value, $name)
+    };
+    ($($(#[$doc:meta])* $field:ident: $ty:ty = $name:literal $(as $convert:path)?,)*) => {
         /// HiGHS's options for every solve of a [`Highs`](crate::Highs) backend.
         ///
         /// The commonly used options are typed fields, each named as HiGHS names it and `None` for HiGHS's default;
         /// any other option is set by name through [`HighsOptions::option`], after the typed ones. The
-        /// [`Settings`](culmen_core::Settings) of a solve apply after both, so a per-solve limit always wins.
+        /// [`Settings`](culmen_core::Settings) of a solve apply after both, so a per-solve limit always wins. What
+        /// `Settings` types (the time limit, the gaps, the feasibility and optimality tolerances, threads, the seed,
+        /// presolve, the node and solution limits, the console) has no field here; set by HiGHS's name, such an option
+        /// holds for every solve whose settings leave it unset.
         ///
         /// An `f64` field is written in the form of [`culmen_core::serde_real`], so an infinity reads back.
         ///
-        /// A `u64` field is a limit, and one beyond HiGHS's integers is HiGHS's largest integer, its "no limit". A
-        /// `u32` field is an exact integer, and one beyond HiGHS's integers fails the solve with
-        /// [`HighsError::OutOfRange`].
+        /// A `u64` field is a limit or a count, and one beyond HiGHS's integers is HiGHS's largest integer: for a
+        /// limit its "no limit", for a count or threshold the largest HiGHS takes. A `u32` field is an exact integer,
+        /// and one beyond HiGHS's integers fails the solve with [`HighsError::OutOfRange`].
         ///
         /// ```
-        /// use core::time::Duration;
-        /// use culmen_highs::{HighsOptions, OptionValue, Switch};
+        /// use culmen_highs::{HighsOptions, LpSolver, OptionValue};
         ///
         /// let options = HighsOptions {
-        ///     presolve: Some(Switch::Off),
+        ///     solver: Some(LpSolver::Simplex),
         ///     mip_heuristic_effort: Some(0.2),
-        ///     time_limit: Some(Duration::from_secs(10)),
         ///     ..HighsOptions::default()
         /// }
         /// .option("mip_pool_soft_limit", 5000);
-        /// assert_eq!(options.raw[0].name, "mip_pool_soft_limit");
-        /// assert_eq!(options.raw[0].value, OptionValue::Int(5000));
+        /// assert_eq!(options.options[0].name, "mip_pool_soft_limit");
+        /// assert_eq!(options.options[0].value, OptionValue::Int(5000));
         /// ```
-        #[derive(Clone, Debug, Default, PartialEq)]
+        #[derive(Clone, Debug, PartialEq)]
         #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
         pub struct HighsOptions {
             $($(#[$doc])* #[doc = concat!("\n\nHiGHS's `", $name, "`.")] pub $field: Option<$ty>,)*
             /// Further options by HiGHS's name, set in order after the typed ones.
-            pub raw: Vec<RawOption>,
+            pub options: Vec<HighsOption>,
+            /// The largest relative primal-dual objective error, `|P - D| / (1 + |P| + |D|)`, at which a QP optimum
+            /// HiGHS reports is taken as optimal; above it the solve fails with
+            /// [`HighsError::UnsoundQp`](crate::HighsError::UnsoundQp). The backend's own threshold, not a HiGHS
+            /// option; `1e-5` by default.
+            ///
+            /// HiGHS's QP solver can report optimality at a point whose primal and dual objectives disagree by tens of
+            /// percent, and that point need not even be feasible: 1.15 did so after its iterates turned NaN, and 1.16
+            /// still does on a small share of edited QPs. On random convex QPs its correct optima stay below `1e-6`; a
+            /// badly scaled QP may need a looser threshold.
+            pub qp_objective_error: RelativeGap,
+        }
+
+        /// Every HiGHS option at HiGHS's default, and the default `qp_objective_error`.
+        impl Default for HighsOptions {
+            fn default() -> Self {
+                Self {
+                    $($field: None,)*
+                    options: Vec::new(),
+                    qp_objective_error: relative_gap!(1e-5),
+                }
+            }
         }
 
         impl HighsOptions {
@@ -448,7 +448,7 @@ macro_rules! options {
             pub(crate) fn assignments(&self) -> Result<Vec<(&'static str, OptionValue)>, HighsError> {
                 let mut set = Vec::new();
                 $(if let Some(value) = &self.$field {
-                    set.push(($name, value.to_option($name)?));
+                    set.push(($name, options!(@value value, $name $(, $convert)?)?));
                 })*
                 Ok(set)
             }
@@ -457,8 +457,6 @@ macro_rules! options {
 }
 
 options! {
-    /// Whether to presolve.
-    presolve: Switch = "presolve",
     /// Which presolve rules HiGHS allows when it presolves.
     presolve_mode: PresolveMode = "presolve_mode",
     /// The LP or QP solver.
@@ -467,10 +465,8 @@ options! {
     parallel: Switch = "parallel",
     /// Whether to run crossover after an interior-point solve.
     run_crossover: Switch = "run_crossover",
-    /// The time limit.
-    time_limit: Duration = "time_limit",
     /// Whether to compute cost, bound and right-hand-side ranging.
-    ranging: OnOff = "ranging",
+    ranging: bool = "ranging" as on_off,
     /// The magnitude at which a cost counts as infinite.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     infinite_cost: f64 = "infinite_cost",
@@ -486,12 +482,6 @@ options! {
     /// One tolerance for every feasibility and optimality measure.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     kkt_tolerance: f64 = "kkt_tolerance",
-    /// The primal feasibility tolerance.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    primal_feasibility_tolerance: f64 = "primal_feasibility_tolerance",
-    /// The dual feasibility tolerance.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    dual_feasibility_tolerance: f64 = "dual_feasibility_tolerance",
     /// The primal residual tolerance.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     primal_residual_tolerance: f64 = "primal_residual_tolerance",
@@ -507,10 +497,6 @@ options! {
     /// The objective value at which a MIP stops.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     objective_target: f64 = "objective_target",
-    /// The random seed.
-    random_seed: u32 = "random_seed",
-    /// The number of threads; 0 lets HiGHS choose.
-    threads: u32 = "threads",
     /// The exponent of a power-of-two scaling of the objective.
     user_objective_scale: i32 = "user_objective_scale",
     /// The exponent of a power-of-two scaling of the bounds.
@@ -532,24 +518,18 @@ options! {
     /// Whether HiGHS writes a log at all. Every solve turns it on before applying these options, so `false` here
     /// silences log events and leaves [`HighsStatus::last_error`](crate::HighsStatus::last_error) empty.
     output_flag: bool = "output_flag",
-    /// Whether the log goes to standard output.
-    log_to_console: bool = "log_to_console",
     /// A file the log is written to.
     log_file: String = "log_file",
     /// Whether the MIP solver detects symmetry.
     mip_detect_symmetry: bool = "mip_detect_symmetry",
     /// Whether the MIP solver may restart.
     mip_allow_restart: bool = "mip_allow_restart",
-    /// The MIP node limit.
-    mip_max_nodes: u64 = "mip_max_nodes",
     /// The limit on nodes whose estimate exceeds the cutoff.
     mip_max_stall_nodes: u64 = "mip_max_stall_nodes",
     /// The node limit when completing a partial start.
     mip_max_start_nodes: u64 = "mip_max_start_nodes",
     /// The MIP leaf-node limit.
     mip_max_leaves: u64 = "mip_max_leaves",
-    /// The number of improving solutions after which a MIP stops; HiGHS takes no fewer than one.
-    mip_max_improving_sols: NonZeroU64 = "mip_max_improving_sols",
     /// Whether MIP presolve runs only at the root.
     mip_root_presolve_only: bool = "mip_root_presolve_only",
     /// The age at which dynamic LP rows leave the MIP relaxation.
@@ -562,9 +542,6 @@ options! {
     mip_pscost_minreliable: u64 = "mip_pscost_minreliable",
     /// The clique-table size at which conflict-graph queries run in parallel.
     mip_min_cliquetable_entries_for_parallelism: u64 = "mip_min_cliquetable_entries_for_parallelism",
-    /// The integrality tolerance.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    mip_feasibility_tolerance: f64 = "mip_feasibility_tolerance",
     /// The share of effort spent on heuristics, from 0 to 1.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     mip_heuristic_effort: f64 = "mip_heuristic_effort",
@@ -582,12 +559,6 @@ options! {
     mip_heuristic_run_shifting: bool = "mip_heuristic_run_shifting",
     /// Whether cuts are separated at nodes other than the root.
     mip_allow_cut_separation_at_nodes: bool = "mip_allow_cut_separation_at_nodes",
-    /// The relative gap at which a MIP counts as solved.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    mip_rel_gap: f64 = "mip_rel_gap",
-    /// The absolute gap at which a MIP counts as solved.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    mip_abs_gap: f64 = "mip_abs_gap",
     /// The least time between two lines of the MIP log, in seconds.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     mip_min_logging_interval: f64 = "mip_min_logging_interval",
@@ -609,8 +580,6 @@ options! {
     qp_iteration_limit: u64 = "qp_iteration_limit",
     /// The largest null space the active-set QP solver works with.
     qp_nullspace_limit: u64 = "qp_nullspace_limit",
-    /// Whether to solve the continuous relaxation of a MIP.
-    solve_relaxation: bool = "solve_relaxation",
     /// Whether HiGHS may end as infeasible-or-unbounded without trying to tell which; it ends so either way when it
     /// cannot tell.
     allow_unbounded_or_infeasible: bool = "allow_unbounded_or_infeasible",
@@ -622,7 +591,7 @@ impl HighsOptions {
     /// Adds an option by HiGHS's name, set after the typed ones and every earlier one.
     #[must_use]
     pub fn option(mut self, name: impl Into<String>, value: impl Into<OptionValue>) -> Self {
-        self.raw.push(RawOption {
+        self.options.push(HighsOption {
             name: name.into(),
             value: value.into(),
         });
@@ -633,7 +602,7 @@ impl HighsOptions {
 /// An option set by HiGHS's name, beside the typed fields of [`HighsOptions`].
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct RawOption {
+pub struct HighsOption {
     /// HiGHS's name of the option.
     pub name: String,
     /// The value set.
@@ -651,12 +620,12 @@ mod tests {
     const HIGHS_LARGEST: u64 = 2_147_483_647;
 
     #[test]
-    fn test_seeds_and_thread_counts_beyond_highs_integers_are_refused() {
-        let with = |seed, threads| {
+    fn test_exact_integers_beyond_highs_integers_are_refused_and_limits_are_none() {
+        let with = |concurrency, age| {
             HighsOptions {
-                random_seed: Some(seed),
-                threads: Some(threads),
-                mip_max_nodes: Some(u64::MAX),
+                simplex_max_concurrency: Some(concurrency),
+                mip_lp_age_limit: Some(age),
+                mip_max_leaves: Some(u64::MAX),
                 ..HighsOptions::default()
             }
             .assignments()
@@ -664,25 +633,40 @@ mod tests {
         assert_eq!(
             with(7, 2),
             Ok(vec![
-                ("random_seed", OptionValue::Int(7)),
-                ("threads", OptionValue::Int(2)),
-                ("mip_max_nodes", OptionValue::Int(2_147_483_647)),
+                ("simplex_max_concurrency", OptionValue::Int(7)),
+                ("mip_max_leaves", OptionValue::Int(2_147_483_647)),
+                ("mip_lp_age_limit", OptionValue::Int(2)),
             ])
         );
         assert_eq!(
             with(u32::MAX, 2),
             Err(HighsError::OutOfRange {
-                name: "random_seed",
-                value: 4_294_967_295
+                name: "simplex_max_concurrency",
+                value: 4_294_967_295,
+                max: 2_147_483_647,
             })
         );
         assert_eq!(
             with(7, 2_147_483_648),
             Err(HighsError::OutOfRange {
-                name: "threads",
-                value: 2_147_483_648
+                name: "mip_lp_age_limit",
+                value: 2_147_483_648,
+                max: 2_147_483_647,
             })
         );
+    }
+
+    #[test]
+    fn test_ranging_is_highs_string_switch() {
+        let with = |ranging| {
+            HighsOptions {
+                ranging: Some(ranging),
+                ..HighsOptions::default()
+            }
+            .assignments()
+        };
+        assert_eq!(with(true), Ok(vec![("ranging", OptionValue::from("on"))]));
+        assert_eq!(with(false), Ok(vec![("ranging", OptionValue::from("off"))]));
     }
 
     #[test]
@@ -690,7 +674,6 @@ mod tests {
         let mut every = Vec::new();
         for s in [Switch::Off, Switch::Choose, Switch::On] {
             every.push(HighsOptions {
-                presolve: Some(s),
                 parallel: Some(s),
                 run_crossover: Some(s),
                 ..HighsOptions::default()
@@ -707,7 +690,7 @@ mod tests {
                 ..HighsOptions::default()
             });
         }
-        for r in [OnOff::Off, OnOff::On] {
+        for r in [false, true] {
             every.push(HighsOptions {
                 ranging: Some(r),
                 ..HighsOptions::default()
@@ -811,7 +794,7 @@ mod tests {
             if value <= HIGHS_LARGEST {
                 prop_assert_eq!(kept, Ok(OptionValue::Int(i32::try_from(value).unwrap())));
             } else {
-                prop_assert_eq!(kept, Err(HighsError::OutOfRange { name: "random_seed", value }));
+                prop_assert_eq!(kept, Err(HighsError::OutOfRange { name: "random_seed", value, max: HIGHS_LARGEST }));
             }
         }
 
