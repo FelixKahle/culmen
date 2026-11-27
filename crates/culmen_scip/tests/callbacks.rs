@@ -452,6 +452,66 @@ fn test_an_invalid_lazy_constraint_is_refused_typed() {
     );
 }
 
+/// Maximize `y` over a binary `y` beside a column `x` fixed at `1e10` by its bounds, which presolve removes from SCIP's
+/// problem as a fixed variable.
+fn fixed_beside_binary() -> (Program, Col, Col) {
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().bounds(1e10, 1e10));
+    let y = m.add_var(Var::binary());
+    m.maximize(y);
+    (m.build().unwrap(), x, y)
+}
+
+/// Adds `1e11·x + y <= 0` at every candidate, whose fixed `x` adds up to the constant 1e21, beyond SCIP's infinity;
+/// keeps what `add_lazy` answered.
+struct BeyondFixed {
+    x: Col,
+    y: Col,
+    answers: Vec<Result<(), ActionError>>,
+}
+
+impl LazyHandler<Scip> for BeyondFixed {
+    fn lazy(&mut self, ctx: &mut <Scip as LazyConstraints>::Lazy<'_>) {
+        assert!(self.answers.len() < 1000, "the lazy handler ran without end");
+        self.answers.push(ctx.add_lazy((1e11 * self.x + self.y).leq(0)));
+    }
+}
+
+#[test]
+fn test_a_lazy_constraint_whose_fixed_columns_add_up_beyond_scips_infinity_is_refused_typed() {
+    let (program, x, y) = fixed_beside_binary();
+    let mut handler = BeyondFixed {
+        x,
+        y,
+        answers: Vec::new(),
+    };
+    let settings = Settings {
+        node_limit: Some(100),
+        ..exact()
+    };
+    // Without heuristics no solution is checked in presolve, before SCIP fixes `x`: a constraint added then is taken
+    // and meets SCIP's refusal at the next enforcement, as the test below shows.
+    let quiet = ScipOptions {
+        heuristics: Some(Emphasis::Off),
+        ..ScipOptions::default()
+    };
+    let solved = Solver::new(Scip::with_options(quiet), program)
+        .unwrap()
+        .run()
+        .settings(settings)
+        .lazy(&mut handler)
+        .solve()
+        .unwrap();
+    assert_eq!(solved.outcome.objective(), Some(1.0), "nothing refused is added");
+    assert!(!handler.answers.is_empty(), "{solved:?}");
+    for answer in &handler.answers {
+        assert!(
+            matches!(answer, Err(ActionError::Refused(reason)) if reason.contains("infinite")),
+            "{answer:?}"
+        );
+    }
+}
+
 /// The knapsack of the cutting-planes example, its items whole: value and weight of each.
 const ITEMS: [(f64, f64); 8] = [
     (16.0, 9.0),

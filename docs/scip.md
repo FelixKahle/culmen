@@ -388,6 +388,11 @@ one. `add_lazy` adds a constraint the candidate may violate:
   added while it checks a solution, so a constraint added at `Check` waits in the handler, which rejects every later
   candidate violating it, until the next enforcement adds it.
 - A constraint added again, the same terms and bounds as one kept, is not added twice.
+- SCIP holds a constraint over the variables it keeps: it replaces a column presolve fixed or aggregated by its value
+  or representation, and refuses a constraint whose columns then add up to a number at least its infinity (`1e20`).
+  `add_lazy` refuses such a constraint with `ActionError::Refused`, as SCIP stands when it is called. A constraint
+  added at `Check` before presolve fixed its columns, as for a start, may meet SCIP's refusal only at the enforcement
+  that adds it; the solve then stops and fails with `ScipError::Call` naming `SCIPcreateConsBasicLinear`.
 
 A solve with a lazy-constraint handler gives up what reasons only about the constraints SCIP holds: every variable is locked against
 dual reductions, symmetry handling is off (`misc/usesymmetry = 0`) and so are SCIP's strong and weak dual reductions

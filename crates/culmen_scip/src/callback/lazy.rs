@@ -45,7 +45,7 @@ use scip_sys::{
 };
 
 use super::locks::Applied;
-use super::{Delivered, Run, Slot, checked, sides, slot};
+use super::{Delivered, Run, Slot, checked, representable, sides, slot};
 use crate::columns::Columns;
 use crate::error::check;
 use crate::{RetCode, ScipError};
@@ -139,6 +139,10 @@ pub enum ScipLazySource {
 /// it.
 #[derive(Debug)]
 pub struct ScipLazy<'a> {
+    scip: *mut SCIP,
+    cols: Columns<'a>,
+    /// The variables of the columns priced so far.
+    priced: &'a [NonNull<SCIP_VAR>],
     progress: Progress,
     objective: f64,
     candidate: &'a TiSlice<Col, f64>,
@@ -172,10 +176,15 @@ impl LazyContext for ScipLazy<'_> {
     ///
     /// # Errors
     ///
-    /// Besides the core errors, [`ActionError::Refused`] for a number SCIP would read as infinite, or more terms
-    /// than SCIP's `int` counts.
+    /// Besides the core errors, [`ActionError::Refused`] for a number SCIP would read as infinite, more terms than
+    /// SCIP's `int` counts, or columns SCIP has fixed or aggregated that add up to a number SCIP would read as
+    /// infinite, as SCIP stands now.
     fn add_lazy(&mut self, constraint: Constraint) -> Result<(), ActionError> {
         let row = checked(&constraint, self.candidate.len(), self.infinity)?;
+        // SAFETY: the instance is the run's, live while the callback runs, and holds the columns and the priced ones;
+        // `checked` found every column of the row among them.
+        unsafe { representable(self.scip, self.cols, self.priced, &row, self.infinity) }
+            .map_err(ActionError::Refused)?;
         self.added.push(row);
         Ok(())
     }
@@ -192,8 +201,12 @@ impl Run<'_, '_> {
     ) -> Option<Vec<AddedRow>> {
         let progress = self.progress(scip);
         let mut added = Vec::new();
+        let priced = self.priced_vars.borrow();
         let delivered = self.deliver(scip, |hooks| {
             hooks.lazy(&mut ScipLazy {
+                scip,
+                cols: self.cols,
+                priced: &priced,
                 progress,
                 objective,
                 candidate,
@@ -357,6 +370,12 @@ unsafe fn add_cons(
         code: RetCode::InvalidData,
     };
     let len = c_int::try_from(vars.len()).map_err(|_| invalid.clone())?;
+    // A constraint added at a check waits for an enforcement, and presolve may have fixed its columns since; SCIP would
+    // refuse it then, and abort a debug SCIP.
+    // SAFETY: the caller vouches for the instance, which holds `cols` and `priced`.
+    if unsafe { representable(scip, cols, priced, row, infinity) }.is_err() {
+        return Err(invalid);
+    }
     let (lhs, rhs) = sides(row, infinity);
     let mut cons: *mut SCIP_CONS = ptr::null_mut();
     // SAFETY: the instance is live and solving, where a constraint over transformed variables is created; `vars` and
