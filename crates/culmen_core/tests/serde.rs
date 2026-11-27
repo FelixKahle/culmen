@@ -14,9 +14,9 @@ use core::fmt::Debug;
 use core::time::Duration;
 
 use culmen_core::{
-    AbsoluteGap, Bounds, Col, Event, Events, Integrality, Linear, Model, ModelClass, ModelClasses, Outcome, Phase,
-    PriceMode, Program, ProgramError, ProgramPlan, Progress, RelativeGap, Row, Sense, Settings, Solution, Solved,
-    StopReason, Var, absolute_gap, bounds, relative_gap, threads,
+    AbsoluteGap, Bounds, Col, Event, Events, FeasibilityTolerance, Integrality, Linear, Model, ModelClass,
+    ModelClasses, Outcome, Phase, PriceMode, Program, ProgramError, ProgramPlan, Progress, RelativeGap, Row, Sense,
+    Settings, Solution, Solved, StopReason, Var, absolute_gap, bounds, feasibility_tolerance, relative_gap, threads,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -70,6 +70,8 @@ fn test_plain_data_round_trips() {
     round_trip(&Settings {
         time_limit: Some(Duration::from_millis(1500)),
         threads: Some(threads!(2)),
+        feasibility_tolerance: Some(feasibility_tolerance!(1e-5)),
+        optimality_tolerance: Some(feasibility_tolerance!(1e-8)),
         ..Settings::new()
     });
     let progress = Progress {
@@ -111,6 +113,11 @@ fn test_checked_types_are_checked_as_they_are_read() {
     assert!(error.to_string().starts_with("RelativeGap: below zero"), "{error}");
     let error = serde_json::from_str::<AbsoluteGap>("-1").unwrap_err();
     assert!(error.to_string().starts_with("AbsoluteGap: below zero"), "{error}");
+    let error = serde_json::from_str::<FeasibilityTolerance>("0.5").unwrap_err();
+    assert!(
+        error.to_string().starts_with("FeasibilityTolerance: above 1e-3"),
+        "{error}"
+    );
     let unlimited = serde_json::to_string(&Settings::new()).unwrap();
     let none = unlimited.replace(r#""solution_limit":null"#, r#""solution_limit":0"#);
     assert_ne!(none, unlimited);

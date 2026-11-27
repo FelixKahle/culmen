@@ -55,18 +55,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `HighsOptions` is plain data. Each documented HiGHS option is a field named as HiGHS names it, `None` for HiGHS's
 default: `presolve_mode`, `solver`, `parallel`, `run_crossover`, `ranging`, the tolerances
-(`primal_feasibility_tolerance`, `dual_feasibility_tolerance`, `optimality_tolerance`, `kkt_tolerance`, …),
+(`optimality_tolerance`, `kkt_tolerance`, the residual tolerances, …),
 `objective_bound` and `objective_target`, the simplex options (`simplex_strategy`, `simplex_scale_strategy`, the edge
 weights, the iteration and update limits, `simplex_max_concurrency`), the logging options (`output_flag`, `log_file`),
 the MIP options (the leaf and stall limits, the cut-pool limits, `mip_heuristic_effort` and each heuristic's switch,
-`mip_feasibility_tolerance`, `mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and
+`mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and
 tolerances, the active-set QP solver's `qp_iteration_limit` and `qp_nullspace_limit`, `allow_unbounded_or_infeasible`
 and `presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field. A `u64` field is a limit, and one
 beyond HiGHS's integers is HiGHS's largest integer, its "no limit"; a `u32` field is an exact integer, such as
 `simplex_max_concurrency`, and one beyond HiGHS's integers is refused.
 
-What [`Settings`](solving.md#settings) types has no field: the time limit, the gaps, the thread count, the seed,
-presolve, the node and solution limits and the console are set per solve, with the invariants their types hold. A
+What [`Settings`](solving.md#settings) types has no field: the time limit, the gaps, the feasibility and optimality
+tolerances (`primal_feasibility_tolerance`, `mip_feasibility_tolerance`, `dual_feasibility_tolerance`), the thread
+count, the seed, presolve, the node and solution limits and the console are set per solve, with the invariants their types hold. A
 standing value across solves is an option by name, such as `.option("presolve", "off")` or
 `.option("time_limit", 30.0)`, which holds for every solve whose settings leave it unset.
 

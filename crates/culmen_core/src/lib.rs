@@ -76,6 +76,7 @@
 )]
 
 pub mod backend;
+mod feasibility;
 mod gap;
 mod model;
 mod program;
@@ -85,6 +86,7 @@ pub mod serde_real;
 mod set;
 mod solve;
 
+pub use feasibility::{FeasibilityTolerance, InvalidFeasibilityTolerance};
 pub use gap::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, RelativeGap};
 pub use model::{
     Combination, Constraint, ConstraintMap, ExprPlace, Handles, IndexSet, Keyed, KeyedIter, Keys, LinExpr, Linear,

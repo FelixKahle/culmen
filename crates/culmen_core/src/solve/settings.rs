@@ -9,7 +9,7 @@ use core::time::Duration;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::{AbsoluteGap, RelativeGap};
+use crate::{AbsoluteGap, FeasibilityTolerance, RelativeGap};
 
 /// What a solve may spend and when it may stop early, in terms every backend maps to its own parameters.
 ///
@@ -37,6 +37,12 @@ pub struct Settings {
     pub relative_gap: Option<RelativeGap>,
     /// The absolute gap, in objective units, at which a MIP counts as solved.
     pub absolute_gap: Option<AbsoluteGap>,
+    /// The largest violation of a bound, a row or, in a MIP, integrality that a solution may have and still count as
+    /// feasible, in the program's units. HiGHS measures it absolutely; SCIP relative to the larger of the two values
+    /// compared when that exceeds one.
+    pub feasibility_tolerance: Option<FeasibilityTolerance>,
+    /// The largest reduced cost of the wrong sign at which an LP, a relaxation included, counts as optimal.
+    pub optimality_tolerance: Option<FeasibilityTolerance>,
     /// The number of threads the solver may use.
     pub threads: Option<NonZeroUsize>,
     /// The seed of the solver's random choices, for reproducible runs.
@@ -62,6 +68,8 @@ impl Settings {
             time_limit: None,
             relative_gap: None,
             absolute_gap: None,
+            feasibility_tolerance: None,
+            optimality_tolerance: None,
             threads: None,
             seed: None,
             presolve: None,

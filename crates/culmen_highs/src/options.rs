@@ -388,8 +388,8 @@ macro_rules! options {
         /// The commonly used options are typed fields, each named as HiGHS names it and `None` for HiGHS's default;
         /// any other option is set by name through [`HighsOptions::option`], after the typed ones. The
         /// [`Settings`](culmen_core::Settings) of a solve apply after both, so a per-solve limit always wins. What
-        /// `Settings` types (the time limit, the gaps, threads, the seed, presolve, the node and solution limits, the
-        /// console) has no field here; set by HiGHS's name, such an option holds for every solve whose settings leave
+        /// `Settings` types (the time limit, the gaps, the feasibility and optimality tolerances, threads, the seed,
+        /// presolve, the node and solution limits, the console) has no field here; set by HiGHS's name, such an option holds for every solve whose settings leave
         /// it unset.
         ///
         /// An `f64` field is written in the form of [`culmen_core::serde_real`], so an infinity reads back.
@@ -482,12 +482,6 @@ options! {
     /// One tolerance for every feasibility and optimality measure.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     kkt_tolerance: f64 = "kkt_tolerance",
-    /// The primal feasibility tolerance.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    primal_feasibility_tolerance: f64 = "primal_feasibility_tolerance",
-    /// The dual feasibility tolerance.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    dual_feasibility_tolerance: f64 = "dual_feasibility_tolerance",
     /// The primal residual tolerance.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     primal_residual_tolerance: f64 = "primal_residual_tolerance",
@@ -548,9 +542,6 @@ options! {
     mip_pscost_minreliable: u64 = "mip_pscost_minreliable",
     /// The clique-table size at which conflict-graph queries run in parallel.
     mip_min_cliquetable_entries_for_parallelism: u64 = "mip_min_cliquetable_entries_for_parallelism",
-    /// The integrality tolerance.
-    #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
-    mip_feasibility_tolerance: f64 = "mip_feasibility_tolerance",
     /// The share of effort spent on heuristics, from 0 to 1.
     #[cfg_attr(feature = "serde", serde(with = "culmen_core::serde_real::option"))]
     mip_heuristic_effort: f64 = "mip_heuristic_effort",

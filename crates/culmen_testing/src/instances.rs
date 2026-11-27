@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Instances hard enough that a solver searches for seconds: generalized assignment problems.
+//! Instances hard enough that a solver searches for seconds: generalized assignment problems; and instances whose
+//! outcome turns on a solver's tolerances.
 
 use culmen_core::{LinExpr, Linear, Model, Program, Var, VarMap, product};
 
@@ -60,4 +61,34 @@ pub fn assignment(products: usize, locations: usize, seed: u64, offset: f64) -> 
         program: m.build().expect("a valid model"),
         x,
     }
+}
+
+/// Two columns in `[0, 1]` held to `x + y >= 1` and `x + y <= 1 - 1e-5`, integer or not, minimizing `x`: infeasible by
+/// `1e-5`, so infeasible to the solvers' default feasibility tolerances (`1e-6` and below) and feasible to `1e-4`.
+/// Integer, its one point a tolerance admits has `x + y = 1`.
+#[must_use]
+pub fn infeasible_by_a_hair(integer: bool) -> Program {
+    let mut m = Model::new();
+    let kind = if integer { Var::integer() } else { Var::continuous() };
+    let x = m.add_var(kind.clone().upper(1));
+    let y = m.add_var(kind.upper(1));
+    m.add_constraint((x + y).geq(1));
+    m.add_constraint((x + y).leq(1.0 - 1e-5));
+    m.minimize(x);
+    m.build().expect("a valid model")
+}
+
+/// Minimize `x - 1e-4 y` over `y - x <= 1`, `x, y >= 0`: the optimum is `-1e-4` at `(0, 1)`, which an LP solver
+/// started at the origin finds only when it counts the reduced cost `-1e-4` of `y` as wrong, so not to an optimality
+/// tolerance of `1e-3`, where the origin, objective zero, counts as optimal. The cost of `x` keeps the largest cost
+/// at one, so a solver that scales the objective to it leaves that reduced cost as it is, and no column has an upper
+/// bound, so the objective is bounded only through the row and only an LP proves the optimum.
+#[must_use]
+pub fn flat_costs() -> Program {
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous());
+    let y = m.add_var(Var::continuous());
+    m.add_constraint((y - x).leq(1));
+    m.minimize(x - 1e-4 * y);
+    m.build().expect("a valid model")
 }

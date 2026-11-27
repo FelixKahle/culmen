@@ -186,6 +186,8 @@ the backend's options for the one solve they are passed to.
 | `time_limit` | `Option<Duration>` | The wall-clock time the solve may take. |
 | `relative_gap` | `Option<RelativeGap>` | The relative gap between best solution and best bound at which a MIP counts as solved. |
 | `absolute_gap` | `Option<AbsoluteGap>` | The absolute gap, in objective units, at which a MIP counts as solved. |
+| `feasibility_tolerance` | `Option<FeasibilityTolerance>` | The largest violation of a bound, a row or, in a MIP, integrality that a solution may have and still count as feasible; `feasibility_tolerance!(1e-6)` writes a literal one, from `1e-10` to `1e-3`, the range both HiGHS and SCIP take. |
+| `optimality_tolerance` | `Option<FeasibilityTolerance>` | The largest reduced cost of the wrong sign at which an LP counts as optimal. |
 | `threads` | `Option<NonZeroUsize>` | The number of threads the solver may use. |
 | `seed` | `Option<u32>` | The seed of the solver's random choices, for reproducible runs. |
 | `presolve` | `Option<bool>` | Whether the solver presolves first. |
@@ -226,8 +228,9 @@ and SCIP side by side.
 
 ## Checked literals
 
-A gap is a finite number, zero or above, and a thread count or a solution limit is not zero. The types say so:
-`RelativeGap`, `AbsoluteGap`, `NonZeroUsize` and `NonZeroU64` cannot hold anything else. Their literals are written
+A gap is a finite number, zero or above, a tolerance lies from `1e-10` to `1e-3`, and a thread count or a solution
+limit is not zero. The types say so: `RelativeGap`, `AbsoluteGap`, `FeasibilityTolerance`, `NonZeroUsize` and
+`NonZeroU64` cannot hold anything else. Their literals are written
 with macros that check them when the code is compiled, so a bad literal never reaches a running program:
 
 ```rust
@@ -237,7 +240,9 @@ let gap = relative_gap!(0.01);
 let units = absolute_gap!(2.5);
 let four = threads!(4);
 let first = solutions!(1);
+let feasible = feasibility_tolerance!(1e-7);
 assert_eq!((gap.get(), units.get(), four.get(), first.get()), (0.01, 2.5, 4, 1));
+assert_eq!(feasible.get(), 1e-7);
 assert_eq!(gap.to_string(), "RelativeGap(0.01)");
 ```
 

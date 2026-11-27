@@ -209,6 +209,8 @@ already allow a solver that calls back from other threads.
 | `time_limit` | `time_limit` (clock zeroed per run) | `TimeLimit` | `limits/time` (SCIP's clock restarts with each solve) |
 | `relative_gap` | `mip_rel_gap` | `MIPGap` | `limits/gap` |
 | `absolute_gap` | `mip_abs_gap` | `MIPGapAbs` | `limits/absgap` |
+| `feasibility_tolerance` | `primal_feasibility_tolerance` and `mip_feasibility_tolerance`, which in a MIP also bounds integrality | `FeasibilityTol` and `IntFeasTol` | `numerics/feastol` (relative above magnitude one; it also bounds integrality) |
+| `optimality_tolerance` | `dual_feasibility_tolerance` | `OptimalityTol` | `numerics/dualfeastol` |
 | `threads` | `threads` (per-thread scheduler; a conflicting count is an error, and one above `i32::MAX` is refused) | `Threads` | none: `SCIPsolve` is sequential, and SCIP's concurrent solve would run copies without culmen's plugins, so the setting has no effect |
 | `seed` | `random_seed` (one above `i32::MAX` is refused, not clamped) | `Seed` | `randomization/randomseedshift` (one above `i32::MAX` is refused) |
 | `presolve` | `presolve` = `"on"` / `"off"` | `Presolve` = `-1` / `0` | `false`: `SCIPsetPresolving` `OFF`, after the options' parameters; `true`: the options' presolving emphasis unless it is `Off`, leaving every presolving parameter as the options set it |

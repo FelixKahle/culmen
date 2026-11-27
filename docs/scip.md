@@ -146,6 +146,8 @@ asks for it.
 | `time_limit` | `limits/time`, in seconds; SCIP's clock restarts with each solve while `misc/resetstat` keeps its default |
 | `relative_gap` | `limits/gap` |
 | `absolute_gap` | `limits/absgap` |
+| `feasibility_tolerance` | `numerics/feastol`, relative to the larger of the values compared when that exceeds one; it also bounds how far an integer column may lie from a whole number |
+| `optimality_tolerance` | `numerics/dualfeastol`, which SCIP also hands its LP solver |
 | `threads` | nothing; see [Threads](#threads) |
 | `seed` | `randomization/randomseedshift`; a seed above `i32::MAX` is refused |
 | `presolve` | `false`: `SCIPsetPresolving` to `Off`, after the options' parameters, so it wins over them; `true`: the options' `presolving` emphasis is skipped when it is `Off`, and a presolving parameter set by name stays as set |

@@ -692,6 +692,14 @@ fn settings_assignments(settings: &Settings) -> Result<Vec<(&'static str, Option
     if let Some(gap) = settings.absolute_gap {
         set.push(("mip_abs_gap", OptionValue::Double(gap.get())));
     }
+    if let Some(tolerance) = settings.feasibility_tolerance {
+        // HiGHS holds an LP to the first and a MIP, its integrality included, to the second.
+        set.push(("primal_feasibility_tolerance", OptionValue::Double(tolerance.get())));
+        set.push(("mip_feasibility_tolerance", OptionValue::Double(tolerance.get())));
+    }
+    if let Some(tolerance) = settings.optimality_tolerance {
+        set.push(("dual_feasibility_tolerance", OptionValue::Double(tolerance.get())));
+    }
     if let Some(threads) = settings.threads {
         // A `usize` beyond `u64` exceeds HiGHS's integers as much as `u64::MAX` does.
         let threads = u64::try_from(threads.get()).unwrap_or(u64::MAX);
@@ -980,11 +988,13 @@ mod tests {
             time_limit: Some(core::time::Duration::from_millis(1500)),
             relative_gap: Some(culmen_core::relative_gap!(0.01)),
             absolute_gap: Some(culmen_core::absolute_gap!(0.5)),
-            threads: NonZeroUsize::new(2),
+            feasibility_tolerance: Some(culmen_core::feasibility_tolerance!(1e-5)),
+            optimality_tolerance: Some(culmen_core::feasibility_tolerance!(1e-8)),
+            threads: Some(culmen_core::threads!(2)),
             seed: Some(7),
             presolve: Some(false),
             node_limit: Some(100),
-            solution_limit: core::num::NonZeroU64::new(3),
+            solution_limit: Some(culmen_core::solutions!(3)),
             console: true,
         };
         assert_eq!(
@@ -993,6 +1003,9 @@ mod tests {
                 ("time_limit", OptionValue::Double(1.5)),
                 ("mip_rel_gap", OptionValue::Double(0.01)),
                 ("mip_abs_gap", OptionValue::Double(0.5)),
+                ("primal_feasibility_tolerance", OptionValue::Double(1e-5)),
+                ("mip_feasibility_tolerance", OptionValue::Double(1e-5)),
+                ("dual_feasibility_tolerance", OptionValue::Double(1e-8)),
                 ("threads", OptionValue::Int(2)),
                 ("random_seed", OptionValue::Int(7)),
                 ("presolve", OptionValue::String("off".to_owned())),

@@ -51,6 +51,8 @@
 //! | `time_limit` | `limits/time`, in seconds, from the start of the solve while `misc/resetstat` keeps its default |
 //! | `relative_gap` | `limits/gap` |
 //! | `absolute_gap` | `limits/absgap` |
+//! | `feasibility_tolerance` | `numerics/feastol`, relative to the larger of the values compared when that exceeds one, integrality included |
+//! | `optimality_tolerance` | `numerics/dualfeastol` |
 //! | `threads` | nothing to set: the solve is sequential, so it uses one thread, within any limit |
 //! | `seed` | `randomization/randomseedshift`, at most `i32::MAX` |
 //! | `presolve` | `false`: `SCIPsetPresolving` off, after the options' parameters; `true`: the options' presolving emphasis unless it is `Off`, before their parameters, which it leaves as set |
@@ -336,6 +338,12 @@ fn settings_params(settings: &Settings) -> Result<Vec<(&'static str, ParamValue)
     if let Some(gap) = settings.absolute_gap {
         set.push(("limits/absgap", ParamValue::Real(gap.get())));
     }
+    if let Some(tolerance) = settings.feasibility_tolerance {
+        set.push(("numerics/feastol", ParamValue::Real(tolerance.get())));
+    }
+    if let Some(tolerance) = settings.optimality_tolerance {
+        set.push(("numerics/dualfeastol", ParamValue::Real(tolerance.get())));
+    }
     if let Some(seed) = settings.seed {
         let seed = int("randomization/randomseedshift", seed.into())?;
         set.push(("randomization/randomseedshift", ParamValue::Int(seed)));
@@ -575,11 +583,12 @@ pub fn version() -> Version {
 
 #[cfg(test)]
 mod tests {
-    use core::num::NonZeroU64;
     use core::time::Duration;
 
     use culmen_core::backend::Priced;
-    use culmen_core::{ProgramColumn, ProgramPlan, absolute_gap, bounds, relative_gap, threads};
+    use culmen_core::{
+        ProgramColumn, ProgramPlan, absolute_gap, bounds, feasibility_tolerance, relative_gap, solutions, threads,
+    };
 
     use super::*;
 
@@ -589,11 +598,13 @@ mod tests {
             time_limit: Some(Duration::from_millis(1500)),
             relative_gap: Some(relative_gap!(0.01)),
             absolute_gap: Some(absolute_gap!(0.5)),
+            feasibility_tolerance: Some(feasibility_tolerance!(1e-5)),
+            optimality_tolerance: Some(feasibility_tolerance!(1e-8)),
             threads: Some(threads!(4)),
             seed: Some(7),
             presolve: Some(false),
             node_limit: Some(100),
-            solution_limit: NonZeroU64::new(3),
+            solution_limit: Some(solutions!(3)),
             console: true,
         };
         assert_eq!(
@@ -602,6 +613,8 @@ mod tests {
                 ("limits/time", ParamValue::Real(1.5)),
                 ("limits/gap", ParamValue::Real(0.01)),
                 ("limits/absgap", ParamValue::Real(0.5)),
+                ("numerics/feastol", ParamValue::Real(1e-5)),
+                ("numerics/dualfeastol", ParamValue::Real(1e-8)),
                 ("randomization/randomseedshift", ParamValue::Int(7)),
                 ("limits/nodes", ParamValue::Longint(100)),
                 ("limits/bestsol", ParamValue::Int(3)),

@@ -9,13 +9,14 @@
 )]
 
 use culmen_core::{
-    Backend, Integrality, LinExpr, Linear, Model, Outcome, Settings, SolveError, Solver, StopReason, Var, solutions,
-    threads,
+    Backend, Integrality, LinExpr, Linear, Model, Outcome, Settings, SolveError, Solver, StopReason, Var,
+    feasibility_tolerance, solutions, threads,
 };
 use culmen_highs::{
     CallStatus, Dimension, Highs, HighsError, HighsOption, HighsOptions, ModelStatus, OptionValue, SimplexStrategy,
     SolutionStatus, Version,
 };
+use culmen_testing::instances::{flat_costs, infeasible_by_a_hair};
 
 fn infeasible(integer: bool) -> Model {
     let mut m = Model::new();
@@ -533,4 +534,57 @@ fn test_a_mip_never_reports_its_relaxations_optimum_as_its_own() {
         .set_col_integrality([(x, Integrality::Continuous), (y, Integrality::Continuous)])
         .unwrap();
     assert_eq!(solver.solve().unwrap().outcome.objective(), Some(1.5));
+}
+
+#[test]
+fn test_the_feasibility_tolerance_admits_a_hair_of_infeasibility() {
+    for integer in [false, true] {
+        let program = infeasible_by_a_hair(integer);
+        let strict = Solver::new(Highs::new(), program.clone()).unwrap().solve().unwrap();
+        assert!(
+            matches!(strict.outcome, Outcome::Infeasible),
+            "integer {integer}: {:?}",
+            strict.outcome
+        );
+        let loose = Settings {
+            feasibility_tolerance: Some(feasibility_tolerance!(1e-4)),
+            ..Settings::new()
+        };
+        let solved = Solver::new(Highs::new(), program.clone())
+            .unwrap()
+            .run()
+            .settings(loose)
+            .solve()
+            .unwrap();
+        let Outcome::Optimal(solution) = &solved.outcome else {
+            panic!("integer {integer}: {:?}", solved.outcome)
+        };
+        let violation = program.max_violation(&solution.values);
+        assert!(violation > 1e-6 && violation <= 1e-4, "integer {integer}: {violation}");
+    }
+}
+
+#[test]
+fn test_the_optimality_tolerance_takes_a_flat_reduced_cost_as_optimal() {
+    let program = flat_costs();
+    let solve = |optimality_tolerance| {
+        let settings = Settings {
+            presolve: Some(false),
+            optimality_tolerance,
+            ..Settings::new()
+        };
+        let solved = Solver::new(Highs::new(), program.clone())
+            .unwrap()
+            .run()
+            .settings(settings)
+            .solve()
+            .unwrap();
+        match solved.outcome {
+            Outcome::Optimal(solution) => solution.objective,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert!((solve(None) - -1e-4).abs() <= 1e-12, "{}", solve(None));
+    let loose = solve(Some(feasibility_tolerance!(1e-3)));
+    assert!(loose.abs() <= 1e-12, "{loose}");
 }

@@ -237,7 +237,7 @@ pub mod prelude {
         Backend, Bounds, Col, Constraint, ConstraintMap, Improvement, IndexSet, Integrality, LinExpr, Linear, LogLine,
         Model, NewCol, Objective, Observer, Outcome, Program, Progress, QuadExpr, Quadratic, Row, Sense, Settings,
         Solution, SolveError, Solved, Solver, Start, Stop, StopReason, TiSlice, TiVec, Tolerance, Var, VarMap,
-        absolute_gap, bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
+        absolute_gap, bounds, feasibility_tolerance, product, relative_gap, set, solutions, stop_fn, threads, weight,
     };
     // A callback names the events it asks for.
     pub use culmen_core::{Callback, Event, Events};

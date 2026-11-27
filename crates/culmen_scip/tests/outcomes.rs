@@ -13,9 +13,10 @@ use core::time::Duration;
 
 use culmen_core::{
     Bounds, Col, LinExpr, Linear, Model, ModelClass, Outcome, Program, ProgramColumn, ProgramPlan, Sense, Settings,
-    Solution, Solved, Solver, StopReason, Var, bounds, relative_gap, solutions,
+    Solution, Solved, Solver, StopReason, Var, bounds, feasibility_tolerance, relative_gap, solutions,
 };
 use culmen_scip::{Emphasis, Scip, ScipOptions, ScipStatus, Status};
+use culmen_testing::instances::{flat_costs, infeasible_by_a_hair};
 
 fn solve(program: Program) -> Solved<ScipStatus> {
     solve_with(Scip::new(), program, Settings::new())
@@ -577,4 +578,57 @@ fn test_the_objective_edits_reach_each_hand_worked_optimum() {
     solver.set_objective(Sense::Minimize, x * x - 4 * x + 4 + y).unwrap();
     assert!(best(&mut solver).abs() < 1e-6);
     assert_eq!(solver.program().class(), ModelClass::Miqp);
+}
+
+#[test]
+fn test_the_feasibility_tolerance_admits_a_hair_of_infeasibility() {
+    for integer in [false, true] {
+        let program = infeasible_by_a_hair(integer);
+        let strict = Solver::new(Scip::new(), program.clone()).unwrap().solve().unwrap();
+        assert!(
+            matches!(strict.outcome, Outcome::Infeasible),
+            "integer {integer}: {:?}",
+            strict.outcome
+        );
+        let loose = Settings {
+            feasibility_tolerance: Some(feasibility_tolerance!(1e-4)),
+            ..Settings::new()
+        };
+        let solved = Solver::new(Scip::new(), program.clone())
+            .unwrap()
+            .run()
+            .settings(loose)
+            .solve()
+            .unwrap();
+        let Outcome::Optimal(solution) = &solved.outcome else {
+            panic!("integer {integer}: {:?}", solved.outcome)
+        };
+        let violation = program.max_violation(&solution.values);
+        assert!(violation > 1e-6 && violation <= 1e-4, "integer {integer}: {violation}");
+    }
+}
+
+#[test]
+fn test_the_optimality_tolerance_takes_a_flat_reduced_cost_as_optimal() {
+    let program = flat_costs();
+    let solve = |optimality_tolerance| {
+        let settings = Settings {
+            presolve: Some(false),
+            optimality_tolerance,
+            ..Settings::new()
+        };
+        let solved = Solver::new(Scip::new(), program.clone())
+            .unwrap()
+            .run()
+            .settings(settings)
+            .solve()
+            .unwrap();
+        match solved.outcome {
+            Outcome::Optimal(solution) => solution.objective,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert!((solve(None) - -1e-4).abs() <= 1e-12, "{}", solve(None));
+    let loose = solve(Some(feasibility_tolerance!(1e-3)));
+    assert!(loose.abs() <= 1e-12, "{loose}");
 }

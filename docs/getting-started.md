@@ -45,7 +45,7 @@ build and inspect models, write LP files, or drive a backend of your own.
 `NewCol`, `TiVec`, `TiSlice`, `Program`, `Sense`, `Solver`, `Settings`, `Start`, `Outcome`, `Solution`, `Solved`,
 `SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`, `LogLine`, `Stop`, `Backend`, `IndexSet`, `VarMap`,
 `ConstraintMap`, the functions `product`, `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`,
-`absolute_gap!`, `weight!`, `threads!` and `solutions!`, `Callback` with `Event` and `Events`, the
+`absolute_gap!`, `feasibility_tolerance!`, `weight!`, `threads!` and `solutions!`, `Callback` with `Event` and `Events`, the
 [context traits](callbacks.md#contexts) a callback or handler calls (`Context`, `LogContext`, `PollContext`,
 `LazyContext` and the rest) with the `PriceMode` a pricer reads, the [search capabilities and their
 handlers](callbacks.md#search-handlers) (`LazyConstraints` and `LazyHandler`, `UserCuts` and `CutHandler`,
