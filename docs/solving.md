@@ -110,7 +110,7 @@ sets, so the last call of a method is the one that counts:
 | `.time_limit(duration)` | The wall-clock time the solve may take, and nothing else: the other settings stay, and a later `.settings(..)` replaces it. | every backend |
 | `.stop(&stop)` | The [`Stop`](callbacks.md#stop) polled while the solve runs. | every backend |
 | `.observer(&mut observer)` | The [`Observer`](callbacks.md#observer) of progress, improving solutions and log lines. | every backend |
-| `.progress_interval(duration)` | The least time between two progress reports; `Watch::DEFAULT_PROGRESS_INTERVAL`, one second, unless set. | every backend |
+| `.progress_interval(duration)` | The least time between two progress reports; one second unless set. | every backend |
 | `.callback(&mut callback)` | The [`Callback`](callbacks.md#callback), run after the stop and the observer, with the backend's full context types. | every backend |
 | `.start(start)` | The [start](#starts) the search begins from. | `B: Starts` |
 | `.lazy(&mut h)`, `.cut(&mut h)`, `.lazy_and_cut(&mut h)`, `.heuristic(&mut h)`, `.pricer(&mut p)` | The [search handlers](callbacks.md#search-handlers). | `B: LazyConstraints`, `UserCuts`, both, `Heuristics`, `Prices` |

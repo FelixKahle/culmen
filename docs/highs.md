@@ -371,8 +371,8 @@ the free row added or dropped with it, so the load keeps that one rule in one pl
 semi column whose upper bound would exceed `Highs::SEMI_UPPER_LIMIT` is refused with `HighsError::SemiUpper` before
 HiGHS sees the edit, but the refusal comes from the backend: the `Solver` then loads the program before the edit
 again, which costs a full load, and the last solve's result is no longer read. A call HiGHS refuses is
-`HighsError::Edit { call }`, naming it; HiGHS 1.15 could fail halfway through adding columns, after it extended
-some of its arrays, so the `Solver` then loads the program before the edit again too.
+`HighsError::Edit { call }`, naming it. No test has shown HiGHS 1.16 failing halfway through an edit, but the backend
+does not rely on that: the `Solver` then loads the program before the edit again too.
 
 Appending columns costs time in the size of the whole matrix on both sides: the program inserts each new column's
 entries at the ends of their rows, and the backend gathers the new columns' entries from every row. So append the

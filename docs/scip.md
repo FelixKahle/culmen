@@ -755,7 +755,7 @@ the call or parameter and SCIP's return code, and the message is on standard err
 ## Limitations
 
 - **No semi columns and no several objectives.** `Scip::FEATURES` is empty, so `Solver::new` refuses a program with a
-  semi-continuous or semi-integer column or with further objectives ([Starts](#starts)).
+  semi-continuous or semi-integer column or with further objectives ([Features](backends.md#features)).
 - **No analyses.** `Scip` implements none of the analysis traits, so `Solver<Scip>` has no `duals`, `basis`,
   `ranging`, rays, `iis` or `feasibility_relaxation` method ([Analysis](analysis.md)).
 - **No partial heuristic solutions.** `ScipHeuristic` has no `supply_partial`; a partial solution is a sparse start

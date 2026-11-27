@@ -99,8 +99,7 @@ impl<'s, 'h, B: Backend> Run<'s, 'h, B> {
         self
     }
 
-    /// The least time between two progress reports to the observer; [`Watch::DEFAULT_PROGRESS_INTERVAL`] when not
-    /// set.
+    /// The least time between two progress reports to the observer; one second when not set.
     pub const fn progress_interval(mut self, interval: Duration) -> Self {
         self.progress_interval = interval;
         self

@@ -47,7 +47,7 @@ for every backend, before the backend is asked, and refuses with a typed `Analys
 | `Class { analysis, class }` | The analysis is not defined for the program's class. |
 | `Feature { analysis, feature }` | The analysis is not defined for a feature the program uses, as duals for several objectives. |
 | `Misfit(Misfit)` | A basis or weights do not fit the program: `Length { table, expected, found }`, `BasicCount { expected, found }`, `Status { line, status }` for a line put at a bound it does not have, or `SoftSemiBound { col }` for weights pricing a semi column's bound. |
-| `NotSolved { analysis }` | It reads a solve and there is none: no solve since the program was loaded, the last one failed or panicked once it reached the backend, or a later edit, `set_basis`, `iis` or `feasibility_relaxation` replaced its result. A solve refused before the backend sees it, as for a start that does not fit, keeps the last solve readable. |
+| `NotSolved { analysis }` | It reads a solve and there is none: no solve since the program was loaded, the last one failed or panicked once it reached the backend, the last one priced columns (its result is for the program before them), or a later edit, `set_basis`, `iis` or `feasibility_relaxation` replaced its result; and for `duals`, `basis` and `ranging`, which read the backend's state, a ray asked for since, for which the backend may have run again. A solve refused before the backend sees it, as for a start that does not fit, keeps the last solve readable. |
 | `NotOptimal { analysis }` | It reads an optimal solve and the last one did not end `Optimal`. |
 | `Backend(E)` | The backend failed; for HiGHS, `HighsError::Analysis(analysis)`. |
 
