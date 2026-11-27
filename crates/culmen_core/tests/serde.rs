@@ -31,7 +31,7 @@ fn sample_lp() -> Program {
     let mut m = Model::new();
     let x = m.add_var(Var::integer().bounds(0.0, 4.0).name("x"));
     let y = m.add_var(Var::free());
-    m.add_named_constraint("c", (x + 2.0 * y).leq(3.0));
+    m.add_constraint(("c", (x + 2.0 * y).leq(3.0)));
     m.add_constraint((x - y).geq(-1.0));
     m.maximize(x + y + 1.5);
     m.build().unwrap()

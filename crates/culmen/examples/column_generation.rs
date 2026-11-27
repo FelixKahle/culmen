@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .zip(&only)
         .enumerate()
         .map(|(i, (&(width, demand), &x))| {
-            m.add_named_constraint(format!("demand[{i}]"), ((ROLL / width).floor() * x).geq(demand))
+            m.add_constraint((format!("demand[{i}]"), ((ROLL / width).floor() * x).geq(demand)))
         })
         .collect();
     m.minimize(LinExpr::sum(only.iter().copied()));

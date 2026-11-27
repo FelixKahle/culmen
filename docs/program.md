@@ -405,7 +405,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
     let x = m.add_var(Var::integer().bounds(0, 5).name("x"));
     let y = m.add_var(Var::free().name("y"));
-    m.add_named_constraint("band", (x - y).between(-1, 1));
+    m.add_constraint(("band", (x - y).between(-1, 1)));
     m.maximize(3.0 * x + y);
     let text = m.build()?.to_lp_string()?;
     assert_eq!(

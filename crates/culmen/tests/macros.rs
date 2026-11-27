@@ -169,7 +169,7 @@ fn test_a_quadratic_objective_written_both_ways_builds_the_same_program() {
 
     let mut plain = Model::new();
     let x_plain = plain.add_var_map(items.clone(), |&i| Var::continuous().name(format!("x[{i}]")));
-    plain.add_named_constraint("budget", LinExpr::sum(items.clone().map(|i| x_plain[i])).leq(4));
+    plain.add_constraint(("budget", LinExpr::sum(items.clone().map(|i| x_plain[i])).leq(4)));
     let squares = QuadExpr::sum(items.clone().map(|i| x_plain[i] * x_plain[i]));
     let linear = LinExpr::sum(items.clone().map(|i| -2.0 * target[i] * x_plain[i]));
     plain.minimize(squares + linear);

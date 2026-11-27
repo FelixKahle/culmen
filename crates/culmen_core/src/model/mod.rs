@@ -152,11 +152,63 @@ impl From<Bounds> for Var {
     }
 }
 
-/// A row of a [`Model`]: the constraint and its name.
+/// A constraint to add to a [`Model`] or append to a [`Solver`](crate::Solver)'s program: a model constraint, named or
+/// not, or a program row. [`Model::add_constraint`] and [`Solver::add_row`](crate::Solver::add_row) take anything that
+/// converts into one, so both read alike.
+///
+/// ```
+/// use culmen_core::{Linear, Model, NewRow, Var};
+///
+/// let mut m = Model::new();
+/// let x = m.add_var(Var::continuous());
+/// let unnamed = NewRow::from(x.leq(4));
+/// let named = NewRow::from(("cut", x.geq(1)));
+/// assert!(matches!(unnamed, NewRow::Constraint { name: None, .. }));
+/// assert!(matches!(named, NewRow::Constraint { name: Some(ref n), .. } if n == "cut"));
+/// ```
 #[derive(Clone, Debug, PartialEq)]
-struct Named {
-    constraint: Constraint,
-    name: Option<String>,
+pub enum NewRow {
+    /// A constraint as a model writes it; its constant moves into its bounds as [`Model::build`] moves it.
+    Constraint {
+        /// The constraint.
+        constraint: Constraint,
+        /// The row's name in diagnostics and LP files; `None` names it by its index.
+        name: Option<String>,
+    },
+    /// A row as program data; its terms may repeat a column and add up, and terms that cancel to zero are dropped.
+    Row(ProgramRow),
+}
+
+/// An unnamed row.
+impl From<Constraint> for NewRow {
+    fn from(constraint: Constraint) -> Self {
+        Self::Constraint { constraint, name: None }
+    }
+}
+
+/// A named row: `("capacity", load.leq(10))`.
+impl<N: Into<String>> From<(N, Constraint)> for NewRow {
+    fn from((name, constraint): (N, Constraint)) -> Self {
+        Self::Constraint {
+            constraint,
+            name: Some(name.into()),
+        }
+    }
+}
+
+impl From<ProgramRow> for NewRow {
+    fn from(row: ProgramRow) -> Self {
+        Self::Row(row)
+    }
+}
+
+impl NewRow {
+    /// The row's name; `None` names it by its index.
+    fn name(&self) -> Option<&str> {
+        match self {
+            Self::Constraint { name, .. } | Self::Row(ProgramRow { name, .. }) => name.as_deref(),
+        }
+    }
 }
 
 /// A linear, mixed-integer or convex quadratic model, written with handles, expressions and constraints and built
@@ -177,7 +229,7 @@ struct Named {
 /// let mut m = Model::new();
 /// let take = m.add_vars(3, |i| Var::binary().name(format!("take[{i}]")));
 /// let load = LinExpr::sum((0..3).map(|i| weight[i] * take[i]));
-/// let cap = m.add_named_constraint("capacity", load.leq(10.0));
+/// let cap = m.add_constraint(("capacity", load.leq(10.0)));
 /// m.set_objective(Sense::Maximize, (0..3).map(|i| value[i] * take[i]).sum::<LinExpr>());
 ///
 /// let program = m.build()?;
@@ -189,7 +241,7 @@ struct Named {
 #[derive(Clone, Debug, Default)]
 pub struct Model {
     vars: TiVec<Col, Var>,
-    rows: TiVec<Row, Named>,
+    rows: TiVec<Row, NewRow>,
     sense: Sense,
     objective: QuadExpr,
     further: Vec<Objective>,
@@ -276,20 +328,23 @@ impl Model {
         map
     }
 
-    /// Adds an unnamed constraint and returns its row.
-    pub fn add_constraint(&mut self, constraint: Constraint) -> Row {
-        self.rows.push_and_get_key(Named { constraint, name: None })
+    /// Adds a constraint and returns its row: a [`Constraint`], a named one as `(name, constraint)`, or a
+    /// [`ProgramRow`], as [`NewRow`] lists.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous());
+    /// let cap = m.add_constraint(("cap", x.leq(4)));
+    /// let floor = m.add_constraint(x.geq(1));
+    /// assert_eq!((m.constraint_name(cap), m.constraint_name(floor)), (Some("cap"), None));
+    /// ```
+    pub fn add_constraint(&mut self, constraint: impl Into<NewRow>) -> Row {
+        self.rows.push_and_get_key(constraint.into())
     }
 
-    /// Adds a named constraint and returns its row.
-    pub fn add_named_constraint(&mut self, name: impl Into<String>, constraint: Constraint) -> Row {
-        self.rows.push_and_get_key(Named {
-            constraint,
-            name: Some(name.into()),
-        })
-    }
-
-    /// Adds a constraint per key, named and made by `constraint(&key)`, and returns them keyed.
+    /// Adds a constraint per key, made by `constraint(&key)` as [`Model::add_constraint`] takes it, usually named as
+    /// `(name, constraint)`, and returns them keyed.
     ///
     /// ```
     /// use culmen_core::{Linear, LinExpr, Model, Var, product};
@@ -305,15 +360,14 @@ impl Model {
     ///
     /// When `keys` repeats a key.
     #[track_caller]
-    pub fn add_constraint_map<K: Hash + Eq + Clone, N: Into<String>>(
+    pub fn add_constraint_map<K: Hash + Eq + Clone, R: Into<NewRow>>(
         &mut self,
         keys: impl IntoIterator<Item = K>,
-        mut constraint: impl FnMut(&K) -> (N, Constraint),
+        mut constraint: impl FnMut(&K) -> R,
     ) -> ConstraintMap<K> {
         let mut map = ConstraintMap::new();
         for key in keys {
-            let (name, c) = constraint(&key);
-            let row = self.add_named_constraint(name, c);
+            let row = self.add_constraint(constraint(&key));
             map.insert(key, row);
         }
         map
@@ -410,7 +464,7 @@ impl Model {
     /// A constraint's name, `None` when it has none or the model has no such constraint.
     #[must_use]
     pub fn constraint_name(&self, row: Row) -> Option<&str> {
-        self.rows.get(row)?.name.as_deref()
+        self.rows.get(row)?.name()
     }
 
     /// Checks every number and handle and builds the program; the model stays as it is, to be changed and built again.
@@ -443,7 +497,7 @@ impl Model {
         plan.rows = self
             .rows
             .iter_enumerated()
-            .map(|(row, named)| self.build_row(row, named))
+            .map(|(row, new)| self.build_row(row, new))
             .collect::<Result<_, _>>()?;
         // The checks above are the program's own, made in the model's terms: every bound is a `Bounds`, a semi
         // column's as the program needs, every cost and offset finite, every row's and objective's terms known and
@@ -640,22 +694,26 @@ impl Model {
         })
     }
 
-    /// One constraint as a checked plan row, its constant moved into its bounds and its repeated columns merged.
+    /// One constraint as a checked plan row, a model constraint's constant moved into its bounds and its repeated
+    /// columns merged.
     ///
     /// # Errors
     ///
     /// [`ModelError::UnknownVar`], [`ModelError::Coefficient`] or [`ModelError::ConstraintBounds`].
-    fn build_row(&self, row: Row, named: &Named) -> Result<ProgramRow, ModelError> {
-        let c = &named.constraint;
-        let terms = self.row_terms(row, &c.expr)?;
-        let bounds = c.row_bounds().map_err(|source| ModelError::ConstraintBounds {
+    fn build_row(&self, row: Row, new: &NewRow) -> Result<ProgramRow, ModelError> {
+        let (bounds, given) = match new {
+            NewRow::Constraint { constraint, .. } => (constraint.row_bounds(), constraint.row_terms()),
+            NewRow::Row(data) => (Ok(data.bounds), data.terms.clone()),
+        };
+        let terms = self.row_terms(row, given)?;
+        let bounds = bounds.map_err(|source| ModelError::ConstraintBounds {
             constraint: self.model_constraint(row),
             source,
         })?;
         Ok(ProgramRow {
             bounds,
             terms,
-            name: named.name.clone(),
+            name: new.name().map(str::to_owned),
         })
     }
 
@@ -664,18 +722,18 @@ impl Model {
     /// # Errors
     ///
     /// [`ModelError::UnknownVar`] or [`ModelError::Coefficient`] for the first defective term.
-    fn row_terms(&self, row: Row, expr: &LinExpr) -> Result<Vec<(Col, f64)>, ModelError> {
-        for term in &expr.terms {
-            if term.col.index() >= self.vars.len() {
+    fn row_terms(&self, row: Row, given: Vec<(Col, f64)>) -> Result<Vec<(Col, f64)>, ModelError> {
+        for &(col, value) in &given {
+            if col.index() >= self.vars.len() {
                 return Err(ModelError::UnknownVar {
                     place: ExprPlace::Constraint(self.model_constraint(row)),
-                    col: term.col,
+                    col,
                 });
             }
-            self.check_coefficient(row, term.col, term.coefficient)?;
+            self.check_coefficient(row, col, value)?;
         }
         // The program adds repeated columns up the same way, so a sum that passes here passes there.
-        let merged = merge_terms(expr.terms.iter().map(|t| (t.col, t.coefficient)).collect());
+        let merged = merge_terms(given);
         for &(col, value) in &merged {
             self.check_coefficient(row, col, value)?;
         }

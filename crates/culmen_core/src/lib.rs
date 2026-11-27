@@ -87,8 +87,8 @@ mod solve;
 pub use gap::{AbsoluteGap, InvalidAbsoluteGap, InvalidRelativeGap, RelativeGap};
 pub use model::{
     Combination, Constraint, ConstraintMap, ExprPlace, Handles, IndexSet, Keyed, KeyedIter, Keys, LinExpr, Linear,
-    Members, Model, ModelConstraint, ModelError, ModelVar, Objective, Product, QuadExpr, QuadTerm, Quadratic, Summand,
-    Term, Values, Var, VarMap, product, set,
+    Members, Model, ModelConstraint, ModelError, ModelVar, NewRow, Objective, Product, QuadExpr, QuadTerm, Quadratic,
+    Summand, Term, Values, Var, VarMap, product, set,
 };
 pub use program::{
     Bounds, Col, Cols, FurtherObjectives, HessianEntries, Integrality, InvalidBounds, InvalidWeight, LinearObjective,
@@ -103,9 +103,9 @@ pub use script::{
 pub use solve::{
     ActionError, AddedRow, Backend, Callback, Context, CutContext, CutHandler, Edit, EditError, Events, EventsIter,
     HeuristicContext, HeuristicHandler, Heuristics, Hooks, Improvement, LazyConstraints, LazyContext, LazyHandler,
-    LoadError, LogContext, LogLevel, LogLine, NewRow, Observer, Outcome, Phase, PollContext, PriceContext, PriceMode,
-    Priced, Pricer, Prices, Progress, ProgressContext, Relay, Run, Settings, Solution, SolutionContext, SolveError,
-    Solved, Solver, Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, UserCuts, Watch, stop_fn,
+    LoadError, LogContext, LogLevel, LogLine, Observer, Outcome, Phase, PollContext, PriceContext, PriceMode, Priced,
+    Pricer, Prices, Progress, ProgressContext, Relay, Run, Settings, Solution, SolutionContext, SolveError, Solved,
+    Solver, Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, UserCuts, Watch, stop_fn,
 };
 pub use solve::{
     Analysis, AnalysisError, Basis, BasisAnalysis, BasisStatus, Bound, Configurable, DualAnalysis, Duals, Iis,

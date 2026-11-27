@@ -344,7 +344,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut m = Model::new();
     let take = m.add_var_map(["cork", "glass", "tin"], |item| Var::binary().name(format!("take[{item}]")));
     let weight = 3.0 * take["cork"] + 4.0 * take["glass"] + 2.0 * take["tin"];
-    let cap = m.add_named_constraint("capacity", weight.clone().leq(6.0));
+    let cap = m.add_constraint(("capacity", weight.clone().leq(6.0)));
     m.maximize(5.0 * take["cork"] + 6.0 * take["glass"] + 3.0 * take["tin"]);
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;
@@ -371,7 +371,7 @@ relaxation, a column priced in by column generation, a variable fixed in a dive.
 | `set_col_costs([(col, cost), ..])` | Columns' costs in the program's own objective. |
 | `set_col_integrality([(col, integrality), ..])` | Columns' integrality. |
 | `set_row_bounds([(row, bounds), ..])` | Rows' bounds; `..`, `Bounds::FREE`, switches a row off. |
-| `add_row(row)`, `add_rows(rows)` | Appends rows and returns them: a `Constraint` as a model writes it, a `(name, constraint)` pair, or a `ProgramRow`. |
+| `add_row(row)`, `add_rows(rows)` | Appends rows and returns them: anything [`Model::add_constraint`](modelling.md#constraints) takes, a `Constraint`, a `(name, constraint)` pair or a `ProgramRow`. |
 | `add_col(column)`, `add_cols(columns)` | Appends columns and returns them: a `NewCol` (a `ProgramColumn` with its `entries` in existing rows), or a bare `ProgramColumn` in no row. |
 
 Every edit keeps these rules:

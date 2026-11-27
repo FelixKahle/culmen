@@ -72,9 +72,9 @@ fn mixed() -> Program {
     let y = m.add_var(Var::free().name("y"));
     let z = m.add_var(Var::semi_continuous().bounds(2, 10).name("z"));
     let w = m.add_var(Var::semi_integer().bounds(1, 7).name("w"));
-    m.add_named_constraint("band", (x - y + z).between(-1, 4));
-    m.add_named_constraint("floor", (x + w).geq(1.5));
-    m.add_named_constraint("roof", (y + w).leq(9));
+    m.add_constraint(("band", (x - y + z).between(-1, 4)));
+    m.add_constraint(("floor", (x + w).geq(1.5)));
+    m.add_constraint(("roof", (y + w).leq(9)));
     m.maximize(3.0 * x + y - z + 2 * w + 1.5);
     m.build().unwrap()
 }
@@ -124,10 +124,10 @@ fn test_culmens_lp_file_tells_every_column_and_row_apart_whatever_their_names() 
     let c = m.add_var(Var::continuous().bounds(0, 4).name("c d"));
     let d = m.add_var(Var::continuous().bounds(0, 4).name("c_d"));
     // A named row `r1` beside unnamed row 1, and a ranged row `band` beside a row named `band_lo`.
-    m.add_named_constraint("r1", (x - y).geq(1));
+    m.add_constraint(("r1", (x - y).geq(1)));
     m.add_constraint((a - b).geq(1));
-    m.add_named_constraint("band", (c - d).between(1, 3));
-    m.add_named_constraint("band_lo", (c + d).leq(5));
+    m.add_constraint(("band", (c - d).between(1, 3)));
+    m.add_constraint(("band_lo", (c + d).leq(5)));
     m.minimize(x + 2 * y + a + b + c + d);
     let program = m.build().unwrap();
     let read = read_lp_string(&program);
@@ -148,7 +148,7 @@ fn test_a_semi_column_with_equal_bounds_round_trips_in_both_formats() {
     let mut m = Model::new();
     let x = m.add_var(Var::semi_continuous().bounds(5, 5).name("x"));
     let y = m.add_var(Var::semi_integer().bounds(3, 3).name("y"));
-    m.add_named_constraint("cap", (x + y).leq(4));
+    m.add_constraint(("cap", (x + y).leq(4)));
     m.maximize(x + 2 * y);
     let program = m.build().unwrap();
     for format in [ModelFormat::Mps, ModelFormat::Lp] {

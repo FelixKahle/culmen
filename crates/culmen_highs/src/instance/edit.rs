@@ -462,7 +462,7 @@ mod tests {
         let mut m = Model::new();
         let x = m.add_var(Var::continuous().upper(4).name("x"));
         let y = m.add_var(Var::continuous().upper(4));
-        let cap = m.add_named_constraint("cap", (x + y).leq(5));
+        let cap = m.add_constraint(("cap", (x + y).leq(5)));
         let floor = m.add_constraint((x - y).geq(-1));
         m.maximize(x + 2.0 * y);
         let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();

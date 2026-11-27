@@ -46,9 +46,8 @@ pub fn variable(input: TokenStream) -> TokenStream {
 /// A constraint as a value, `constraint!(lhs <= rhs)`; added, `constraint!(model, lhs <= rhs)`; added by name and
 /// bound to a local, `constraint!(model, name, lhs <= rhs)`; or a family, `constraint!(model, name[i in I], body)`.
 /// The relation is `<=`, `>=`, `==`, or a range `lo <= expr <= hi` or `hi >= expr >= lo`, each side evaluated once
-/// in the order written. Expands to `Linear::leq`, `Linear::geq`,
-/// `Linear::equals` or `Linear::between`, and `Model::add_constraint`, `Model::add_named_constraint` or
-/// `Model::add_constraint_map`.
+/// in the order written. Expands to `Linear::leq`, `Linear::geq`, `Linear::equals` or `Linear::between`, and
+/// `Model::add_constraint`, given `(name, constraint)` for a named one, or `Model::add_constraint_map`.
 #[proc_macro]
 pub fn constraint(input: TokenStream) -> TokenStream {
     expand(input, constraint_tokens)
@@ -324,7 +323,7 @@ fn constraint_tokens(root: &TokenStream2, input: TokenStream2) -> syn::Result<To
                 }
                 None => {
                     let text = name.to_string();
-                    quote!((#model).add_named_constraint(#text, #c))
+                    quote!((#model).add_constraint((#text, #c)))
                 }
             };
             // A constraint's handle is a convenience most models never read, so its binding is marked as read.

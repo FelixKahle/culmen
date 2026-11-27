@@ -31,7 +31,7 @@ pub use context::{
     ActionError, AddedRow, Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext,
     PriceMode, ProgressContext, SolutionContext, Unsupported,
 };
-pub use edit::{Edit, EditError, NewRow};
+pub use edit::{Edit, EditError};
 pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
 pub use hooks::{CutHandler, HeuristicHandler, Hooks, LazyHandler, Pricer, Relay};
 pub use load::LoadError;

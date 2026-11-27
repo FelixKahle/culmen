@@ -10,8 +10,8 @@
 
 use culmen_core::{
     Bounds, Col, Constraint, ExprPlace, Integrality, InvalidBounds, LinExpr, Linear, Model, ModelConstraint,
-    ModelError, ModelVar, ProgramColumn, ProgramError, ProgramPlan, Row, Sense, Term, TiSlice, TiVec, Var, VarMap,
-    bounds, product, set,
+    ModelError, ModelVar, ProgramColumn, ProgramError, ProgramPlan, ProgramRow, Row, Sense, Term, TiSlice, TiVec, Var,
+    VarMap, bounds, product, set,
 };
 use proptest::prelude::*;
 
@@ -106,7 +106,7 @@ fn test_model_errors_name_the_variable_or_constraint() {
 
     let mut m = Model::new();
     let x2 = m.add_var(Var::continuous().name("flow"));
-    m.add_named_constraint("cap", (f64::NAN * x2).leq(1.0));
+    m.add_constraint(("cap", (f64::NAN * x2).leq(1.0)));
     let error = m.build().unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -128,7 +128,7 @@ fn test_model_errors_name_the_variable_or_constraint() {
     m.minimize(x + 1.0);
     assert!(matches!(m.build(), Err(ModelError::UnknownVar { place: ExprPlace::Objective, col }) if col == x));
     let mut m = Model::new();
-    let row = m.add_named_constraint("cap", (2.0 * x).leq(1.0));
+    let row = m.add_constraint(("cap", (2.0 * x).leq(1.0)));
     let error = m.build().unwrap_err();
     assert_eq!(
         error,
@@ -150,7 +150,7 @@ fn test_model_errors_name_the_variable_or_constraint() {
 fn test_model_names_a_constraint_whose_repeated_terms_sum_past_finite() {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().name("flow"));
-    let row = m.add_named_constraint("cap", (1e308 * x + 1e308 * x).leq(1.0));
+    let row = m.add_constraint(("cap", (1e308 * x + 1e308 * x).leq(1.0)));
     assert_eq!(
         m.build().unwrap_err(),
         ModelError::Coefficient {
@@ -320,6 +320,42 @@ fn test_keyed_families_are_read_by_a_borrowed_key() {
 }
 
 #[test]
+fn test_a_model_takes_a_constraint_named_or_not_or_a_program_row_as_a_solver_does() {
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous());
+    let y = m.add_var(Var::continuous());
+    let unnamed = m.add_constraint((x + y).leq(4));
+    let named = m.add_constraint(("cap", (x + 1).leq(3)));
+    let data = m.add_constraint(ProgramRow {
+        bounds: bounds!(1.0, 2.0),
+        terms: vec![(y, 1.0), (x, 2.0), (y, 1.0)],
+        name: Some("data".to_owned()),
+    });
+    let family = m.add_constraint_map(0..2, |&i| x.geq(f64::from(i as u8)));
+    assert_eq!(m.constraint_name(family[&1]), None);
+    let program = m.build().unwrap();
+    assert_eq!(program.row(unnamed).name(), None);
+    assert_eq!(
+        (program.row(named).name(), program.row(named).bounds()),
+        (Some("cap"), bounds!(f64::NEG_INFINITY, 2.0))
+    );
+    assert_eq!(program.row(data).entries().collect::<Vec<_>>(), [(x, 2.0), (y, 2.0)]);
+    assert_eq!(program.row(data).name(), Some("data"));
+
+    // A program row is checked in the model's terms.
+    m.add_constraint(ProgramRow {
+        bounds: Bounds::FREE,
+        terms: vec![(Col::new(9), 1.0)],
+        name: Some("stray".to_owned()),
+    });
+    assert!(matches!(
+        m.build(),
+        Err(ModelError::UnknownVar { place: ExprPlace::Constraint(ModelConstraint { name: Some(n), .. }), col })
+            if n == "stray" && col == Col::new(9)
+    ));
+}
+
+#[test]
 fn test_a_family_of_variables_is_made_from_bounds() {
     let mut m = Model::new();
     let flow = m.add_var_map(
@@ -343,8 +379,8 @@ fn test_lp_file_writes_every_section() {
     let mut m = Model::new();
     let x = m.add_var(Var::integer().bounds(-2.0, 5.0).name("x[1]"));
     let y = m.add_var(Var::free().name("1y"));
-    m.add_named_constraint("range", (x + y).between(-1.0, 4.0));
-    m.add_named_constraint("fix", (x - y).equals(0.0));
+    m.add_constraint(("range", (x + y).between(-1.0, 4.0)));
+    m.add_constraint(("fix", (x - y).equals(0.0)));
     m.minimize(x - 2.0 * y + 3.0);
     let text = m.build().unwrap().to_lp_string().unwrap();
     let expected = "Minimize\n obj: 1 x_1_ - 2 _1y + 3\nSubject To\n range_lo: 1 x_1_ + 1 _1y >= -1\n \
@@ -361,7 +397,7 @@ fn test_lp_file_escapes_names_the_format_reserves() {
     let x = m.add_var(Var::integer().upper(3).name("max"));
     let y = m.add_var(Var::continuous().upper(3).name("SOS"));
     let z = m.add_var(Var::continuous().upper(3).name("Minimize"));
-    m.add_named_constraint("min", (x + y + z).geq(1));
+    m.add_constraint(("min", (x + y + z).geq(1)));
     m.minimize(2.0 * x + y + z);
     let text = m.build().unwrap().to_lp_string().unwrap();
     let expected = "Minimize\n obj: 2 _max + 1 _SOS + 1 _Minimize\nSubject To\n _min: 1 _max + 1 _SOS + 1 _Minimize >= 1\n\
@@ -377,11 +413,11 @@ fn test_lp_file_labels_every_column_and_row_apart() {
     let y = m.add_var(Var::continuous());
     let a = m.add_var(Var::continuous().name("a"));
     let b = m.add_var(Var::continuous().name("a"));
-    m.add_named_constraint("r1", (x - y).geq(1));
+    m.add_constraint(("r1", (x - y).geq(1)));
     m.add_constraint((a - b).geq(1));
-    m.add_named_constraint("band", (x + a).between(1, 3));
-    m.add_named_constraint("band_lo", (y + b).leq(5));
-    m.add_named_constraint("obj", (x + b).leq(7));
+    m.add_constraint(("band", (x + a).between(1, 3)));
+    m.add_constraint(("band_lo", (y + b).leq(5)));
+    m.add_constraint(("obj", (x + b).leq(7)));
     m.minimize(x + 2 * y + a + b);
     let text = m.build().unwrap().to_lp_string().unwrap();
     let expected = "Minimize\n obj: 1 x1 + 2 x1~1 + 1 a + 1 a~1\nSubject To\n r1: 1 x1 - 1 x1~1 >= 1\n \
@@ -460,7 +496,7 @@ proptest! {
 fn test_row_views_read_bounds_name_and_entries_both_ways() {
     let mut m = Model::new();
     let x = m.add_vars(3, |_| Var::continuous());
-    let r = m.add_named_constraint("mix", (2 * x[2] + x[0] - x[1]).leq(4.0));
+    let r = m.add_constraint(("mix", (2 * x[2] + x[0] - x[1]).leq(4.0)));
     let program = m.build().unwrap();
     let row = program.row(r);
     assert_eq!(row.bounds(), bounds!(f64::NEG_INFINITY, 4.0));

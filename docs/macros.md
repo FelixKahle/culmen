@@ -230,7 +230,7 @@ Each form beside the calls it writes:
 | `constraint!(e <= f)` | `Linear::leq(e, f)`; also `geq`, `equals` |
 | `constraint!(lo <= e <= hi)` | `Linear::between(e, lo, hi)` |
 | `constraint!(m, e == f)` | `m.add_constraint(Linear::equals(e, f))` |
-| `constraint!(m, c, e >= f)` | `let c = m.add_named_constraint("c", Linear::geq(e, f));` |
+| `constraint!(m, c, e >= f)` | `let c = m.add_constraint(("c", Linear::geq(e, f)));` |
 | `constraint!(m, c[i in I], e <= f)` | `let c = m.add_constraint_map(keys, \|&i\| (format!("c[{i}]"), Linear::leq(e, f)));` |
 | `objective!(m, Min, e)` | `m.set_objective(Sense::Minimize, e)` |
 | `sum!(e for i in I, j in J if g)` | a `LinExpr` (linear `e`) or `QuadExpr` (quadratic `e`), each `e` added with `Summand::add_into` in nested `for` loops |

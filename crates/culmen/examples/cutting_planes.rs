@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Var::continuous().upper(1.0).name(format!("take[{}]", ITEMS[i].0))
     });
     let weight = LinExpr::sum(ITEMS.iter().zip(&take).map(|(&(_, _, weight), &x)| weight * x));
-    m.add_named_constraint("capacity", weight.leq(CAPACITY));
+    m.add_constraint(("capacity", weight.leq(CAPACITY)));
     m.maximize(LinExpr::sum(
         ITEMS.iter().zip(&take).map(|(&(_, value, _), &x)| value * x),
     ));

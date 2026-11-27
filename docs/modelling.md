@@ -18,7 +18,7 @@ fn main() -> Result<(), culmen::ModelError> {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(4.0).name("x"));
     let ys = m.add_vars(3, |i| Var::binary().name(format!("y[{i}]")));
-    let r = m.add_named_constraint("link", (x - 4.0 * ys[0]).leq(0.0));
+    let r = m.add_constraint(("link", (x - 4.0 * ys[0]).leq(0.0)));
     m.maximize(x + ys[1]);
 
     assert_eq!((m.num_vars(), m.num_constraints()), (4, 1));
@@ -240,8 +240,13 @@ assert_eq!((band.lower, band.upper), (-1.0, 1.0));
 | Method | Adds |
 |---|---|
 | `m.add_constraint(c)` | An unnamed constraint; returns its `Row`. |
-| `m.add_named_constraint(name, c)` | A named constraint; returns its `Row`. |
-| `m.add_constraint_map(keys, f)` | One named constraint per key; see [Keyed families](#keyed-families). |
+| `m.add_constraint((name, c))` | A named constraint; returns its `Row`. |
+| `m.add_constraint(row)` | A `ProgramRow`, its bounds, terms and name as program data; returns its `Row`. |
+| `m.add_constraint_map(keys, f)` | One constraint per key, usually named; see [Keyed families](#keyed-families). |
+
+`add_constraint` takes anything that converts into a `NewRow`, and so does `Solver::add_row`
+([Editing](solving.md#editing-a-loaded-program)): a constraint is added to a model and appended to a loaded program in
+the same words, `m.add_constraint(("cap", x.leq(4)))` and `solver.add_row(("cap", x.leq(4)))`.
 
 ## The objective
 
@@ -481,7 +486,7 @@ assert_eq!(
 
 let mut m = Model::new();
 let x = m.add_var(Var::continuous().name("x"));
-m.add_named_constraint("big", (1e308 * x + 1e308 * x).leq(1.0));
+m.add_constraint(("big", (1e308 * x + 1e308 * x).leq(1.0)));
 let error = m.build().unwrap_err();
 assert_eq!(error.to_string(), "Model: constraint `big` has the non-finite coefficient inf on variable `x`");
 

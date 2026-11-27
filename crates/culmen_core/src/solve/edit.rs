@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use super::{Backend, Solver, lack};
 use crate::program::{BadColumn, BadTerm, bad_column, bad_term, merge_terms};
 use crate::{
-    Bounds, Col, Cols, Constraint, Integrality, InvalidBounds, ModelClass, ModelClasses, NewCol, Program,
-    ProgramColumn, ProgramFeature, ProgramFeatures, ProgramRow, Row, Rows,
+    Bounds, Col, Cols, Integrality, InvalidBounds, ModelClass, ModelClasses, NewCol, NewRow, Program, ProgramColumn,
+    ProgramFeature, ProgramFeatures, ProgramRow, Row, Rows,
 };
 
 /// What one edit changed in a [`Solver`]'s program; the new values are read from the program.
@@ -58,55 +58,6 @@ pub enum Edit {
         /// The columns, the program's last.
         cols: Cols,
     },
-}
-
-/// A row to append to a [`Solver`]'s program: a model constraint, named or not, or a program row.
-///
-/// ```
-/// use culmen_core::{Linear, Model, NewRow, Var};
-///
-/// let mut m = Model::new();
-/// let x = m.add_var(Var::continuous());
-/// let unnamed = NewRow::from(x.leq(4));
-/// let named = NewRow::from(("cut", x.geq(1)));
-/// assert!(matches!(unnamed, NewRow::Constraint { name: None, .. }));
-/// assert!(matches!(named, NewRow::Constraint { name: Some(ref n), .. } if n == "cut"));
-/// ```
-#[derive(Clone, Debug, PartialEq)]
-pub enum NewRow {
-    /// A constraint as a model writes it; its constant moves into its bounds as
-    /// [`Model::build`](crate::Model::build) moves it.
-    Constraint {
-        /// The constraint.
-        constraint: Constraint,
-        /// The row's name in diagnostics and LP files; `None` names it by its index.
-        name: Option<String>,
-    },
-    /// A row as program data; its terms may repeat a column and add up, and terms that cancel to zero are dropped.
-    Row(ProgramRow),
-}
-
-/// An unnamed row.
-impl From<Constraint> for NewRow {
-    fn from(constraint: Constraint) -> Self {
-        Self::Constraint { constraint, name: None }
-    }
-}
-
-/// A named row, given as the closures of [`Model::add_constraint_map`](crate::Model::add_constraint_map) give it.
-impl<N: Into<String>> From<(N, Constraint)> for NewRow {
-    fn from((name, constraint): (N, Constraint)) -> Self {
-        Self::Constraint {
-            constraint,
-            name: Some(name.into()),
-        }
-    }
-}
-
-impl From<ProgramRow> for NewRow {
-    fn from(row: ProgramRow) -> Self {
-        Self::Row(row)
-    }
 }
 
 /// Why a [`Solver`] refused an edit.
@@ -294,7 +245,8 @@ impl<B: Backend> Solver<B> {
         self.apply_row_bounds(latest(bounds.into_iter().map(|(row, bounds)| (row, bounds.into()))))
     }
 
-    /// Appends a row and returns it.
+    /// Appends a row and returns it: a [`Constraint`](crate::Constraint), a named one as `(name, constraint)`, or a
+    /// [`ProgramRow`], as [`NewRow`] lists and [`Model::add_constraint`](crate::Model::add_constraint) takes them.
     ///
     /// # Errors
     ///

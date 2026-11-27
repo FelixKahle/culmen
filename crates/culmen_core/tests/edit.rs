@@ -40,7 +40,7 @@ fn base() -> (Program, Col, Col, Row, Row) {
     let mut m = Model::new();
     let x = m.add_var(Var::continuous().upper(4).name("x"));
     let y = m.add_var(Var::continuous().upper(3).name("y"));
-    let cap = m.add_named_constraint("cap", (x + y).leq(5));
+    let cap = m.add_constraint(("cap", (x + y).leq(5)));
     let floor = m.add_constraint((x - y).geq(-1));
     m.minimize(2.0 * x + 3.0 * y + 1);
     (m.build().unwrap(), x, y, cap, floor)

@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Σ weight · take <= 10, and maximize Σ value · take.
     let weight = LinExpr::sum(items.iter().map(|&(name, _, weight)| weight * take[name]));
-    m.add_named_constraint("capacity", weight.leq(10.0));
+    m.add_constraint(("capacity", weight.leq(10.0)));
     m.maximize(LinExpr::sum(items.iter().map(|&(name, value, _)| value * take[name])));
 
     // Build the checked program, load it into HiGHS, and solve with HiGHS's defaults.

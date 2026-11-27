@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Var::binary().name(format!("take[{name}]"))
     });
     let weight = LinExpr::sum(items.iter().map(|&(name, _, weight)| weight * take[name]));
-    m.add_named_constraint("capacity", weight.leq(capacity));
+    m.add_constraint(("capacity", weight.leq(capacity)));
     m.maximize(LinExpr::sum(items.iter().map(|&(name, value, _)| value * take[name])));
 
     let mut solver = Solver::new(Highs::new(), m.build()?)?;

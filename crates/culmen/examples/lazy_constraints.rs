@@ -109,10 +109,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     for (town, &(name, ..)) in TOWNS.iter().enumerate() {
         let touching = road.iter().filter(|&(&(a, b), _)| a == town || b == town);
-        m.add_named_constraint(
+        m.add_constraint((
             format!("two[{name}]"),
             LinExpr::sum(touching.map(|(_, &x)| x)).equals(2),
-        );
+        ));
     }
     m.minimize(LinExpr::sum(road.iter().map(|(&(a, b), &x)| distance(a, b) * x)));
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
