@@ -78,14 +78,16 @@ use scip_sys::{
     SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_STAGE, SCIP_Stage_SCIP_STAGE_EXITPRESOLVE, SCIP_Stage_SCIP_STAGE_EXITSOLVE,
     SCIP_Stage_SCIP_STAGE_FREETRANS, SCIP_Stage_SCIP_STAGE_INITPRESOLVE, SCIP_Stage_SCIP_STAGE_PRESOLVED,
     SCIP_Stage_SCIP_STAGE_PRESOLVING, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_Stage_SCIP_STAGE_SOLVED,
-    SCIP_Stage_SCIP_STAGE_SOLVING, SCIP_Stage_SCIP_STAGE_TRANSFORMED, SCIP_VAR, SCIPgetDualbound, SCIPgetNLPIterations,
-    SCIPgetNOrigBinVars, SCIPgetNOrigIntVars, SCIPgetNTotalNodes, SCIPgetObjsense, SCIPgetPrimalbound,
-    SCIPgetProbvarLinearSum, SCIPgetStage, SCIPinfinity, SCIPinterruptSolve,
+    SCIP_Stage_SCIP_STAGE_SOLVING, SCIP_Stage_SCIP_STAGE_TRANSFORMED, SCIP_VAR, SCIP_Varstatus_SCIP_VARSTATUS_MULTAGGR,
+    SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNOrigBinVars, SCIPgetNOrigIntVars, SCIPgetNTotalNodes, SCIPgetNVars,
+    SCIPgetObjsense, SCIPgetPrimalbound, SCIPgetProbvarSum, SCIPgetStage, SCIPinfinity, SCIPinterruptSolve,
+    SCIPvarGetMultaggrConstant, SCIPvarGetMultaggrNVars, SCIPvarGetMultaggrScalars, SCIPvarGetMultaggrVars,
+    SCIPvarGetStatus,
 };
 
 use crate::columns::Columns;
 use crate::error::check;
-use crate::{RetCode, Scip, ScipError};
+use crate::{Scip, ScipError};
 
 /// A caught panic's payload, resumed once `SCIPsolve` has returned.
 pub(crate) type Payload = Box<dyn Any + Send>;
@@ -595,12 +597,14 @@ fn checked(constraint: &Constraint, num_cols: usize, infinity: f64) -> Result<Ad
 }
 
 /// Checks that SCIP can hold `row` as a linear constraint over the variables it keeps now: SCIP replaces each fixed,
-/// aggregated or negated variable of a constraint it creates after presolve by its active representation
-/// (`SCIPgetProbvarLinearSum`), moving the constant that adds up into the sides, and refuses a constant of at least its
-/// infinity in magnitude (`SCIPcreateConsLinear` in `cons_linear.c` of SCIP 10.0.2: `SCIP_INVALIDDATA`, and
-/// `SCIPABORT` on a debug SCIP). So every coefficient of the representation, its constant, and each finite side less
-/// the constant stay below SCIP's infinity. Before SCIP's transformed problem exists no variable is represented, and
-/// the row is taken as given.
+/// aggregated, negated or multi-aggregated variable of a constraint it creates after presolve by its active
+/// representation (`SCIPgetProbvarLinearSum` in `SCIPcreateConsLinear`, `cons_linear.c` of SCIP 10.0.2), moving the
+/// constant that adds up into the sides, and refuses a constant of at least its infinity in magnitude
+/// (`SCIP_INVALIDDATA`); a debug SCIP aborts on it before, as each variable's share of the constant is added
+/// (`var.c:5263`). So every share of the constant, the constant, every coefficient of the representation and each finite
+/// side less the constant stay below SCIP's infinity. The representation is walked here, through
+/// `SCIPgetProbvarSum` for each variable, never through `SCIPgetProbvarLinearSum`, which carries that abort. Before
+/// SCIP's transformed problem exists no variable is represented, and the row is taken as given.
 ///
 /// # Errors
 ///
@@ -618,7 +622,7 @@ unsafe fn representable(
 ) -> Result<(), String> {
     // SAFETY: the instance is live; the call reads its stage.
     let stage = unsafe { SCIPgetStage(scip) };
-    if !(SCIP_Stage_SCIP_STAGE_TRANSFORMED..=SCIP_Stage_SCIP_STAGE_EXITSOLVE).contains(&stage) || row.terms.is_empty() {
+    if !(SCIP_Stage_SCIP_STAGE_TRANSFORMED..=SCIP_Stage_SCIP_STAGE_EXITSOLVE).contains(&stage) {
         return Ok(());
     }
     let mut given = Vec::with_capacity(row.terms.len());
@@ -628,22 +632,12 @@ unsafe fn representable(
         given.push((var, value));
     }
     // SAFETY: the stage is checked above, and every variable is a transformed one of the instance.
-    let (vals, constant) = unsafe { active(scip, &given) }?;
-    let beyond = |value: f64| value.abs() >= infinity;
-    if beyond(constant) {
-        return Err(format!(
-            "the columns SCIP has fixed or aggregated add up to the constant {constant}, which SCIP reads as infinite, \
-             from {infinity} on"
-        ));
-    }
-    if let Some(value) = vals.into_iter().find(|&value| beyond(value)) {
-        return Err(format!(
-            "the columns SCIP has aggregated add up to the coefficient {value}, which SCIP reads as infinite, from \
-             {infinity} on"
-        ));
-    }
+    let constant = unsafe { active(scip, given, infinity) }?;
     let ends = [row.bounds.lower(), row.bounds.upper()];
-    if let Some(end) = ends.into_iter().find(|end| end.is_finite() && beyond(end - constant)) {
+    if let Some(end) = ends
+        .into_iter()
+        .find(|end| end.is_finite() && (end - constant).abs() >= infinity)
+    {
         return Err(format!(
             "the bound {end} less the constant {constant} of the columns SCIP has fixed or aggregated is one SCIP \
              reads as infinite, from {infinity} on"
@@ -652,53 +646,77 @@ unsafe fn representable(
     Ok(())
 }
 
-/// The coefficients and the constant of `given`, a linear sum of transformed variables, over the active variables
-/// SCIP represents them by now (`SCIPgetProbvarLinearSum`).
+/// The constant of `given`, a linear sum of transformed variables, over the active variables SCIP represents them by
+/// now, after checking that every share of it, the constant itself and every coefficient of the representation stay
+/// below `infinity`.
 ///
 /// # Errors
 ///
-/// Why SCIP refused, as a sentence.
+/// Why SCIP could not hold the sum, as a sentence.
 ///
 /// # Safety
 ///
 /// `scip` is a live instance from its transformed stage to its exitsolve stage, and every variable of `given` one of
 /// its transformed variables.
-unsafe fn active(scip: *mut SCIP, given: &[(*mut SCIP_VAR, f64)]) -> Result<(Vec<f64>, f64), String> {
-    let refused = |code| ScipError::Call {
-        call: "SCIPgetProbvarLinearSum",
-        code,
-    };
-    // The first call names the room the representation needs; the second, with that room, fits it.
-    let mut room = given.len();
-    for _ in 0..2 {
-        let (mut vars, mut vals): (Vec<_>, Vec<_>) = given.iter().copied().unzip();
-        vars.resize(room, ptr::null_mut());
-        vals.resize(room, 0.0);
-        let mut len = c_int::try_from(given.len()).map_err(|_| refused(RetCode::InvalidData).to_string())?;
-        let size = c_int::try_from(room).map_err(|_| refused(RetCode::InvalidData).to_string())?;
-        let (mut constant, mut required) = (0.0, 0);
-        // SAFETY: the caller vouches for the instance, its stage and the variables; `vars` and `vals` hold `len`
-        // entries of the sum and `size` slots SCIP may write, and the rest are locals to write to.
-        let code = unsafe {
-            SCIPgetProbvarLinearSum(
-                scip,
-                vars.as_mut_ptr(),
-                vals.as_mut_ptr(),
-                &raw mut len,
-                size,
-                &raw mut constant,
-                &raw mut required,
+unsafe fn active(scip: *mut SCIP, mut given: Vec<(*mut SCIP_VAR, f64)>, infinity: f64) -> Result<f64, String> {
+    let beyond = |what: &str, value: f64| {
+        (value.abs() >= infinity).then(|| {
+            format!(
+                "the columns SCIP has fixed or aggregated add up to the {what} {value}, which SCIP reads as infinite, \
+                 from {infinity} on"
             )
+        })
+    };
+    // Each step resolves one variable; a multi-aggregated one hands on its terms, and SCIP's aggregation graph has no
+    // cycle, so the walk ends. The bound turns a walk that does not into a refusal.
+    // SAFETY: the instance is live; the call reads its number of variables.
+    let vars = usize::try_from(unsafe { SCIPgetNVars(scip) }).unwrap_or(0);
+    let bound = (vars + 1).saturating_mul(given.len() + 1).saturating_mul(4);
+    let (mut constant, mut coefficients) = (0.0, BTreeMap::<usize, f64>::new());
+    for _ in 0..bound {
+        let Some((mut var, mut scalar)) = given.pop() else {
+            if let Some(&value) = coefficients.values().find(|value| value.abs() >= infinity) {
+                return Err(beyond("coefficient", value).unwrap_or_default());
+            }
+            return Ok(constant);
         };
-        check("SCIPgetProbvarLinearSum", code).map_err(|error| error.to_string())?;
-        let required = usize::try_from(required).unwrap_or(0);
-        if required <= room {
-            vals.truncate(usize::try_from(len).unwrap_or(0));
-            return Ok((vals, constant));
+        let mut share = 0.0;
+        // SAFETY: the caller vouches for the instance, its stage and `var`; the rest are locals to write to.
+        let code = unsafe { SCIPgetProbvarSum(scip, &raw mut var, &raw mut scalar, &raw mut share) };
+        check("SCIPgetProbvarSum", code).map_err(|error| error.to_string())?;
+        constant += share;
+        if let Some(why) = beyond("constant", share).or_else(|| beyond("constant", constant)) {
+            return Err(why);
         }
-        room = required;
+        if var.is_null() || scalar == 0.0 {
+            continue;
+        }
+        // SAFETY: `var` is a transformed variable of the instance, as SCIP resolved it.
+        if unsafe { SCIPvarGetStatus(var) } == SCIP_Varstatus_SCIP_VARSTATUS_MULTAGGR {
+            // SAFETY: as above; a multi-aggregated variable holds its terms and constant.
+            let (n, terms, scalars, offset) = unsafe {
+                (
+                    usize::try_from(SCIPvarGetMultaggrNVars(var)).unwrap_or(0),
+                    SCIPvarGetMultaggrVars(var),
+                    SCIPvarGetMultaggrScalars(var),
+                    SCIPvarGetMultaggrConstant(var),
+                )
+            };
+            constant += scalar * offset;
+            if let Some(why) = beyond("constant", scalar * offset).or_else(|| beyond("constant", constant)) {
+                return Err(why);
+            }
+            for k in 0..n {
+                // SAFETY: SCIP's arrays of the multi-aggregation hold `n` entries each.
+                given.push(unsafe { (*terms.add(k), scalar * *scalars.add(k)) });
+            }
+        } else {
+            *coefficients.entry(var.addr()).or_insert(0.0) += scalar;
+        }
     }
-    Err(refused(RetCode::InvalidResult).to_string())
+    Err(format!(
+        "SCIP's representation of the columns took more than {bound} steps to resolve"
+    ))
 }
 
 /// A row's bounds in SCIP's terms, an infinite end as SCIP's infinity.
