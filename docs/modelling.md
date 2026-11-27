@@ -468,7 +468,7 @@ Each everyday gurobipy move has one culmen call; the handles the model returns r
 | `m.addConstrs((.. for i in I), name="c")` | `m.add_constraint_map(I, \|&i\| (format!("c[{i}]"), ..))`, or `constraint!(m, c[i in I], ..)` |
 | `quicksum(..)`, `x.sum("*", j)` | `LinExpr::sum(..)`, `sum!(x[i, j] for i in I)` |
 | `m.setObjective(e, GRB.MAXIMIZE)` | `m.maximize(e)`, `m.set_objective(Sense::Maximize, e)` |
-| `m.setObjectiveN(e, index, priority, weight, abstol, reltol)` | `m.add_stage(Objective::minimize(e), tolerance)` or `m.add_weighted(Objective::minimize(e), weight)` |
+| `m.setObjectiveN(e, index, priority, weight, abstol, reltol)` | `m.add_stage(Objective::minimize(e), tolerance)` or `m.add_weighted(Objective::minimize(e), weight)`: one or the other in a model, stages ranked by the order they are added, with no blend within a priority |
 | `m.optimize()` | `let mut solver = Solver::new(Highs::new(), m.build()?)?; let solved = solver.solve()?;` |
 | `m.Params.TimeLimit = 10` | `solver.run().time_limit(Duration::from_secs(10)).solve()?` |
 | `m.status`, `x.X`, `m.ObjVal`, `m.ObjBound` | `solved.outcome`, `solution.values[x]`, `outcome.objective()`, `outcome.bound()` |
