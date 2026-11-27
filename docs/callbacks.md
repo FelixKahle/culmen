@@ -477,10 +477,10 @@ A `ConstraintHandler<B>` is a rule over the program's columns that only the hand
 as a constraint: a rule no linear inequality states, such as "no two of these columns take the same value", with the
 handler's own propagation, branching and presolve. It is registered with `Run::constraint`, only for a backend that
 implements `CustomConstraints`. The `Script` backend implements all of it, so a handler can be written and tested
-against scripted points and nodes. [SCIP](scip.md#constraint-handlers) implements it in part: it asks `check`,
-`enforce`, `propagate` and `explain`, and takes added constraints, tightenings, cutoffs and the bounds a cutoff names,
-which its conflict analysis may learn from; it refuses branching with `ActionError::Refused`, does not call `presolve`
-yet, and enforces `Candidates::Fractional` as `Candidates::Integral`. HiGHS does not implement it.
+against scripted points and nodes. [SCIP](scip.md#constraint-handlers) implements it in part: it asks `check` and
+`enforce`, and takes added constraints and cutoffs; it refuses tightening, branching and conflicts with
+`ActionError::Refused`, does not call `propagate`, `explain` or `presolve` yet, and enforces `Candidates::Fractional`
+as `Candidates::Integral`. HiGHS does not implement it.
 
 `check` is the one method a handler must write; each of the others has a default that is always sound.
 
@@ -511,12 +511,8 @@ What a handler promises, and what each call may do:
 - **`explain` answers for a tightening.** A tightening with a `Reason`, the handler's own tag, may later be explained:
   `explain` names, with `because`, bounds as they were before the tightening that imply it, and returns
   `Explained::Complete`. An explanation that names too few bounds makes the solver learn a false conflict and lose
-  solutions; when in doubt, return `Explained::Unknown`, which is always sound. The bounds an inference rests on are
-  often more than those that set it off: a column pushed off a value `v` by another column fixed at `v` rises past `v`
-  only because it was at least `v` before, so its own lower bound belongs to the explanation too
-  (`ctx.inferred()` names the column and the end). `cut_off_because` names the bounds that make a node infeasible on
-  the same terms: every point the program and the rule accept lies outside the box they give, with the original
-  bounds elsewhere.
+  solutions; when in doubt, return `Explained::Unknown`, which is always sound. `cut_off_because` names the bounds
+  that make a node infeasible on the same terms.
 - **`presolve` narrows the program.** It may tighten the global bounds, add constraints and declare the program
   infeasible, each valid for every point the program and the rule accept: never a reduction that only keeps one
   optimum.
@@ -631,16 +627,11 @@ impl<B: CustomConstraints> ConstraintHandler<B> for AllDifferent {
     }
 
     fn explain(&mut self, ctx: &mut B::Explain<'_>) -> Explained {
-        // The tightening rested on the column at position `reason` being fixed, both its bounds, and on the tightened
-        // end of the inferred column being at that value before: x ≥ v and x ≠ v give x ≥ v + 1.
+        // The tightening rested on the column at position `reason` being fixed: both its bounds.
         let Some(&a) = usize::try_from(ctx.reason().0).ok().and_then(|i| self.cols.get(i)) else {
             return Explained::Unknown;
         };
-        let inferred = ctx.inferred();
-        let named = ctx
-            .because(a, Bound::Lower)
-            .and_then(|()| ctx.because(a, Bound::Upper))
-            .and_then(|()| ctx.because(inferred.col, inferred.end));
+        let named = ctx.because(a, Bound::Lower).and_then(|()| ctx.because(a, Bound::Upper));
         if named.is_ok() { Explained::Complete } else { Explained::Unknown }
     }
 }

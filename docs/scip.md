@@ -445,8 +445,7 @@ subtours.
 
 A `ConstraintHandler<Scip>` runs on SCIP's constraint handler `culmen-handler`, which holds no constraints of its own
 and is checked and enforced after every constraint handler of SCIP's, integrality included, and before the
-lazy-constraint handler, and on culmen's propagator `culmen`, which propagates every node and explains the bounds the
-handler tightened. In this release SCIP asks `check`, `enforce`, `propagate` and `explain`:
+lazy-constraint handler. In this release SCIP asks `check` and `enforce`:
 
 - `check` judges every solution SCIP checks before storing it: a heuristic's, a start, a sub-SCIP's, a supplied one,
   one kept from the solve before (`ScipCheck::source()` is `CandidateSource::Check`). It is also asked first at every
@@ -455,64 +454,19 @@ handler tightened. In this release SCIP asks `check`, `enforce`, `propagate` and
   integer one, and only when `check` rejected it. SCIP stores a point every enforcement accepted without checking it
   again, so asking `check` first is what keeps a rejected point out.
 - An enforcement resolves the point by adding constraints (`add_constraint`: a global linear constraint for the rest of
-  the solve, `SCIPaddCons`), by tightening bounds (`tighten`), or by cutting the node off (`cut_off`, or
-  `cut_off_because` naming the bounds that make it infeasible). Doing nothing leaves the point to SCIP's branching on
-  an unfixed integer column. Branching into children of the handler's own (`branch`) is refused with
-  `ActionError::Refused` in this release, after the checks every backend makes (`Exclusive`, `UnknownColumn`,
-  `NotInvolved`).
-- `propagate` is asked at every node, in each of SCIP's propagation rounds before, during and after the node's LP,
-  after SCIP's own constraint handlers have propagated it, and at the probing nodes SCIP's probing and strong
-  branching create. It tightens bounds (`tighten`) or cuts the node off (`cut_off`, `cut_off_because`).
-  `ScipPropagate::depth()` and `ScipEnforce::depth()` give the node's depth: a tightening at depth 0, the root, holds
-  for the rest of the solve.
-- `explain` is asked when SCIP's conflict analysis resolves a bound the handler tightened with a `Reason`, from
-  `propagate` or from `enforce`. `inferred()` is the bound SCIP asks for, which may be weaker than the one set,
-  `reason()` the handler's tag, and `bounds_before(col)` each column's bounds just before the tightening, read at
-  SCIP's index of that bound change; the context offers no other bounds. The bounds named with `because` reach SCIP's
-  conflict analysis only when `explain` answers `Explained::Complete`; on `Explained::Unknown` they are dropped and
-  SCIP keeps the tightening as if it were a branching decision. A tightening without a reason is never explained.
-- `presolve` is not called yet, so `ScipPresolve` has no values. A declaration of `Candidates::Fractional` is enforced
-  as `Candidates::Integral`: the handler sees every point SCIP would accept, but no LP point with a fractional integer
-  column.
+  the solve, `SCIPaddCons`) or by cutting the node off (`cut_off`). Doing nothing leaves the point to SCIP's branching
+  on an unfixed integer column. Tightening a bound, branching into children of the handler's own and cutting off with
+  a conflict (`tighten`, `branch`, `cut_off_because`) are refused with `ActionError::Refused` in this release, after
+  the checks every backend makes (`Exclusive`, `UnknownColumn`, `NotInvolved`); SCIP does not call `propagate`,
+  `explain` or `presolve` yet, so `ScipPropagate`, `ScipExplain` and `ScipPresolve` have no values. A declaration of
+  `Candidates::Fractional` is enforced as `Candidates::Integral`: the handler sees every point SCIP would accept, but no
+  LP point with a fractional integer column.
 
-A tightening goes to the column's variable in SCIP's transformed problem: with a reason as an inference of culmen's
-propagator (`SCIPinferVarLbProp`/`UbProp`), which SCIP's conflict analysis resolves through `explain`, and without one
-as a plain bound change (`SCIPtightenVarLb`/`Ub`). SCIP translates it to the active variable when presolve aggregated
-or negated the column; a column presolve fixed takes a tightening that keeps its value as nothing and one that
-excludes it as an empty domain. SCIP cannot change the bounds of a column presolve multi-aggregated, and aborts a debug
-build that tries, so such a tightening is refused with `ActionError::Refused` when the handler asks for it.
-`Locks::All` turns multi-aggregation off and `Locks::Only` marks every column it lists (see below), so a column the
-handler may tighten stays writable as long as SCIP's presolvers honour those settings. An end SCIP reads as
-infinite (`1e20` and beyond) is refused too, as SCIP would silently ignore it. SCIP skips a tightening smaller than its
-bound strengthening tolerance, which is sound and counts as no change.
-
-`cut_off_because` hands the named bounds at the node to SCIP's conflict analysis before the node is cut off
-(`SCIPinitConflictAnalysis`, `SCIPaddConflictLb`/`Ub`, `SCIPanalyzeConflict`), as valid everywhere in the tree: the
-handler's rule and the program hold everywhere, so the named bounds exclude every accepted point anywhere. SCIP may
-learn a global conflict constraint from them, and resolves each named bound the handler tightened with a reason by
-asking `explain`. The analysis runs only where SCIP analyses conflicts: while solving or probing, below the root, and
-with `conflict/enable` on; elsewhere the cutoff is plain. SCIP also gives up a conflict that would involve more than
-`conflict/maxvarsfac` (15 %) of the integer variables, at least `conflict/minmaxvars` (0) of them, so in a program of
-a handful of columns it learns nothing unless `conflict/minmaxvars` is raised through `ScipOptions::params`. A
-tightening SCIP itself finds empties a domain cuts the node off plainly; a handler that wants SCIP to learn from such a
-node names its bounds with `cut_off_because`.
-
-A false explanation is a wrong answer, not a slower one. An explanation that answers `Complete` with bounds that do not
-imply the inferred bound, or a `cut_off_because` whose bounds do not exclude every accepted point, makes SCIP learn a
-global conflict constraint that cuts off feasible points in every later node and after restarts, and the solve
-reports a wrong optimum or infeasibility as proven. Nothing in SCIP detects it. When in doubt, answer `Unknown` and
-cut off plainly, which is always sound.
-
-The handler never names SCIP's result: the plugin derives it from what was recorded and what SCIP reports. In
-enforcement, `check` accepting is `FEASIBLE`; a cutoff, or a tightening SCIP reports as emptying a domain, is
-`CUTOFF`; a constraint not added before in the solve that the point violates by SCIP's feasibility tolerance is
-`CONSADDED`, so SCIP solves the node again with it, its tightenings applied too; a tightening that SCIP reports as
-moving a bound is `REDUCEDDOM`; and nothing changed is `INFEASIBLE`, which SCIP resolves by branching on an unfixed
-integer column, or, at a node of a pure integer problem without a pricer where every integer column is fixed, by
-cutting the node off. In propagation, a cutoff or an emptied domain is `CUTOFF`, a moved bound `REDUCEDDOM`, and
-nothing `DIDNOTFIND`; a panic or a busy handler is `DIDNOTRUN`. An explanation is `SUCCESS` with its bounds handed to
-SCIP when it answers `Complete`, and `DIDNOTFIND` otherwise, as it is for a variable that is no column's or a bound
-SCIP asks for that is stronger than the one the handler set. Two cases end the solve with a typed
+The handler never names SCIP's result: the plugin derives it from what was recorded and what SCIP reports. `check`
+accepting is `FEASIBLE`; a cutoff is `CUTOFF`; a constraint not added before in the solve that the point violates by
+SCIP's feasibility tolerance is `CONSADDED`, so SCIP solves the node again with it; and nothing changed is
+`INFEASIBLE`, which SCIP resolves by branching on an unfixed integer column, or, at a node of a pure integer problem
+without a pricer where every integer column is fixed, by cutting the node off. Two cases end the solve with a typed
 error instead of a hang or SCIP's own failure:
 
 | Error | When |
@@ -537,13 +491,12 @@ ways as it is created, whatever the declaration, and every lock is undone exactl
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::scip::{ScipCheck, ScipEnforce, ScipExplain, ScipPropagate};
+use culmen::scip::{ScipCheck, ScipEnforce};
 
 /// No two of `cols` take the same value: a rule no single linear inequality states.
 struct AllDifferent {
     cols: Vec<Col>,
     calls: usize,
-    propagated: usize,
 }
 
 impl AllDifferent {
@@ -580,49 +533,6 @@ impl ConstraintHandler<Scip> for AllDifferent {
             ctx.cut_off();
         }
     }
-
-    fn propagate(&mut self, ctx: &mut ScipPropagate<'_>) {
-        self.count();
-        self.propagated += 1;
-        // A column fixed at v takes v from either end of every other column's domain, tagged with its position.
-        for (i, &a) in self.cols.iter().enumerate() {
-            let Some(fixed) = ctx.bounds(a).filter(|b| b.lower() == b.upper()) else { continue };
-            let (v, reason) = (fixed.lower(), Reason(u32::try_from(i).expect("fewer than 2³² columns")));
-            for &b in self.cols.iter().filter(|&&b| b != a) {
-                let Some(other) = ctx.bounds(b) else { continue };
-                let narrowed = if other.lower() == v {
-                    Bounds::new(v + 1.0, other.upper())
-                } else if other.upper() == v {
-                    Bounds::new(other.lower(), v - 1.0)
-                } else {
-                    continue;
-                };
-                match narrowed {
-                    Ok(narrowed) => ctx.tighten(b, narrowed, Some(reason)).expect("an involved column"),
-                    // Both columns fixed at v: the node holds no accepted point, because of their four bounds.
-                    Err(_) => {
-                        let named = [(a, Bound::Lower), (a, Bound::Upper), (b, Bound::Lower), (b, Bound::Upper)];
-                        ctx.cut_off_because(&named).expect("columns of the problem");
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    fn explain(&mut self, ctx: &mut ScipExplain<'_>) -> Explained {
-        self.count();
-        // The fixed column's two bounds, and the tightened column's own end before: x ≥ v and x ≠ v give x ≥ v + 1.
-        let Some(&a) = usize::try_from(ctx.reason().0).ok().and_then(|i| self.cols.get(i)) else {
-            return Explained::Unknown;
-        };
-        let inferred = ctx.inferred();
-        let named = ctx
-            .because(a, Bound::Lower)
-            .and_then(|()| ctx.because(a, Bound::Upper))
-            .and_then(|()| ctx.because(inferred.col, inferred.end));
-        if named.is_ok() { Explained::Complete } else { Explained::Unknown }
-    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -633,7 +543,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     m.maximize(x[0] + 2.0 * x[1] + 3.0 * x[2]);
 
     let mut solver = Solver::new(Scip::new(), m.build()?)?;
-    let mut rule = AllDifferent { cols: x.clone(), calls: 0, propagated: 0 };
+    let mut rule = AllDifferent { cols: x.clone(), calls: 0 };
     let solved = solver
         .run()
         .settings(Settings { node_limit: Some(1000), ..Settings::new() })
@@ -643,7 +553,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let best = solved.outcome.solution().ok_or("no solution")?;
     assert_eq!(best.objective, 7.0);
     assert!(!rule.clash(&best.values.raw));
-    assert!(rule.propagated > 0);
     Ok(())
 }
 ```
@@ -952,9 +861,9 @@ the call or parameter and SCIP's return code, and the message is on standard err
 - **No native events and no branching event.** `NATIVE` is `Unsupported`, and there is no event to branch on the
   pricing problem, so branch-and-price branches on master columns only ([Pricing](#pricing)).
 - **No pricing on a quadratic objective.** `ScipError::PricingQuadratic` ([Pricing](#pricing)).
-- **A constraint handler does not branch or presolve.** It checks, enforces, propagates and explains; branching of its
-  own is refused, `presolve` is not called, `Candidates::Fractional` is enforced as `Integral`, the dual reductions
-  stay off for precise locks too, and a column presolve multi-aggregated cannot be tightened ([Constraint
+- **A constraint handler checks and enforces only.** It adds constraints and cuts nodes off; tightening, branching of
+  its own and conflicts are refused, `propagate`, `explain` and `presolve` are not called, `Candidates::Fractional` is
+  enforced as `Integral`, and the dual reductions stay off for precise locks too ([Constraint
   handlers](#constraint-handlers)).
 - **An interrupt acts after the current LP.** SCIP's LP solver runs without events, so a stop asked for during one LP
   solve, by a `Stop` or a poll's `interrupt`, acts when that LP ends; a long root LP delays it.
