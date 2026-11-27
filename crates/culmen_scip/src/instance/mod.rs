@@ -273,12 +273,6 @@ impl Instance {
         self.slot().lazy_locks_on(var)
     }
 
-    /// Makes the lazy-constraint handler meet SCIP refusing each constraint it adds, or not.
-    #[cfg(test)]
-    pub(crate) fn refuse_lazy(&self, refuse: bool) {
-        self.slot().refuse_lazy.set(refuse);
-    }
-
     /// Whether the objective has a quadratic part, which SCIP holds as an epigraph.
     pub(crate) const fn quadratic(&self) -> bool {
         self.epigraph.is_some()

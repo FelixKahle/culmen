@@ -105,10 +105,6 @@ pub(crate) struct Slot {
     /// The events the event handler caught on the transformed problem and their filter position; `None` when it
     /// caught none.
     caught: Cell<Option<(u64, c_int)>>,
-    /// Whether the lazy-constraint handler meets SCIP refusing each constraint it adds to SCIP's problem: a test's
-    /// stand-in for a refusal, since every refusal SCIP can give there aborts a debug SCIP before SCIP returns it.
-    #[cfg(test)]
-    pub(crate) refuse_lazy: Cell<bool>,
 }
 
 impl Slot {
@@ -120,8 +116,6 @@ impl Slot {
             console: Cell::new(false),
             lazy_locks: locks::Applied::new(),
             caught: Cell::new(None),
-            #[cfg(test)]
-            refuse_lazy: Cell::new(false),
         }
     }
 

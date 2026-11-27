@@ -18,9 +18,9 @@ use culmen_core::{
     ActionError, Backend, Callback, Col, Constraint, Context, CutContext, CutHandler, Events, Found, HeuristicContext,
     HeuristicHandler, Heuristics, LazyConstraints, LazyContext, LazyHandler, LinExpr, Linear, LogContext, LogLevel,
     Model, Observer, Outcome, Phase, PollContext, Program, ProgramPlan, ProgramRow, Progress, Script, Settings,
-    Solution, SolutionContext, Solver, Step, StopReason, Term, TiSlice, TiVec, UserCuts, Var, relative_gap,
+    Solution, SolutionContext, SolveError, Solver, Step, StopReason, Term, TiSlice, TiVec, UserCuts, Var, relative_gap,
 };
-use culmen_scip::{Emphasis, Scip, ScipEvent, ScipLazySource, ScipOptions};
+use culmen_scip::{Emphasis, RetCode, Scip, ScipError, ScipEvent, ScipLazySource, ScipOptions};
 use culmen_testing::instances::assignment;
 use culmen_testing::reference::{close, solve};
 use culmen_testing::strategy::small_lp;
@@ -510,6 +510,41 @@ fn test_a_lazy_constraint_whose_fixed_columns_add_up_beyond_scips_infinity_is_re
             "{answer:?}"
         );
     }
+}
+
+#[test]
+fn test_a_lazy_constraint_scip_refuses_in_enforcement_fails_the_solve_and_the_solver_solves_again() {
+    // The start is checked before presolve, where `x` is not fixed yet, so the constraint is taken and waits; presolve
+    // then fixes `x`, and the first enforcement finds the constraint's constant beyond SCIP's infinity.
+    let (program, x, y) = fixed_beside_binary();
+    let mut handler = BeyondFixed {
+        x,
+        y,
+        answers: Vec::new(),
+    };
+    let settings = Settings {
+        node_limit: Some(100),
+        ..exact()
+    };
+    let mut solver = Solver::new(Scip::new(), program).unwrap();
+    let start: TiVec<Col, f64> = vec![1e10, 1.0].into();
+    let failed = solver
+        .run()
+        .settings(settings.clone())
+        .start(start)
+        .lazy(&mut handler)
+        .solve();
+    assert_eq!(
+        failed.map(|solved| solved.outcome),
+        Err(SolveError::Backend(ScipError::Call {
+            call: "SCIPcreateConsBasicLinear",
+            code: RetCode::InvalidData,
+        }))
+    );
+    assert_eq!(handler.answers.first(), Some(&Ok(())), "{:?}", handler.answers);
+    // SCIP finished the failed solve cleanly, so the solver solves again.
+    let solved = solver.run().settings(settings).solve().unwrap();
+    assert_eq!(solved.outcome.objective(), Some(1.0));
 }
 
 /// The knapsack of the cutting-planes example, its items whole: value and weight of each.

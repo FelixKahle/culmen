@@ -237,13 +237,6 @@ impl Run<'_, '_> {
         };
         let mut violated = false;
         for (i, row) in waiting {
-            #[cfg(test)]
-            if self.slot.refuse_lazy.get() {
-                return Err(ScipError::Call {
-                    call: "SCIPaddCons",
-                    code: RetCode::Error,
-                });
-            }
             // The store is not borrowed while SCIP runs, which may write a message the callback is handed.
             // SAFETY: the caller's contract is `add_cons`'s.
             unsafe { add_cons(scip, self.cols, &self.priced_vars.borrow(), &row, self.infinity) }?;
