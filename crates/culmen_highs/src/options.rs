@@ -609,8 +609,6 @@ options! {
     qp_iteration_limit: u64 = "qp_iteration_limit",
     /// The largest null space the active-set QP solver works with.
     qp_nullspace_limit: u64 = "qp_nullspace_limit",
-    /// Whether to solve the continuous relaxation of a MIP.
-    solve_relaxation: bool = "solve_relaxation",
     /// Whether HiGHS may end as infeasible-or-unbounded without trying to tell which; it ends so either way when it
     /// cannot tell.
     allow_unbounded_or_infeasible: bool = "allow_unbounded_or_infeasible",

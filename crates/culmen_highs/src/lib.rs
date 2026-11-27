@@ -686,9 +686,18 @@ impl Backend for Highs {
     }
 
     /// Runs HiGHS on the loaded model, with the user-solution callback started only for a heuristic handler.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::NotLoaded`] before a load; the errors of [`HighsOptions`] and the settings; [`HighsError::Relaxation`]
+    /// for a MIP when the options set `solve_relaxation`; [`HighsError::Run`] and [`HighsError::UnsoundQp`] as the
+    /// outcome is read.
     fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<HighsStatus>, HighsError> {
         let loaded = self.loaded.as_ref().ok_or(HighsError::NotLoaded)?;
         configure(&mut self.instance, &self.options, settings)?;
+        if loaded.is_mip && self.instance.option_bool(c"solve_relaxation") == Some(true) {
+            return Err(HighsError::Relaxation);
+        }
         if let Some(blend) = loaded.combined.blend() {
             self.instance
                 .set_option("blend_multi_objectives", &OptionValue::Bool(blend))?;

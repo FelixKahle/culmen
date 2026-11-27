@@ -9,7 +9,8 @@
 )]
 
 use culmen_core::{
-    Backend, LinExpr, Linear, Model, Outcome, Settings, SolveError, Solver, StopReason, Var, solutions, threads,
+    Backend, Integrality, LinExpr, Linear, Model, Outcome, Settings, SolveError, Solver, StopReason, Var, solutions,
+    threads,
 };
 use culmen_highs::{
     CallStatus, Dimension, Highs, HighsError, HighsOptions, ModelStatus, OptionValue, RawOption, SimplexStrategy,
@@ -505,4 +506,27 @@ fn test_a_coefficient_highs_finds_excessive_is_refused_at_load_and_at_an_edit() 
     );
     // The solver holds the program before the edit again.
     assert_eq!(solver.solve().unwrap().outcome.objective(), Some(1.0));
+}
+
+#[test]
+fn test_a_mip_never_reports_its_relaxations_optimum_as_its_own() {
+    // The relaxation's optimum is x = y = 3/4, worth 3/2; the MIP's takes one of the two, worth 1.
+    let mut m = Model::new();
+    let x = m.add_var(Var::binary());
+    let y = m.add_var(Var::binary());
+    m.add_constraint((2.0 * x + 2.0 * y).leq(3.0));
+    m.maximize(x + y);
+    let relaxing = HighsOptions::default().option("solve_relaxation", true);
+    let mut solver = Solver::new(Highs::with_options(relaxing), m.build().unwrap()).unwrap();
+    assert_eq!(solver.solve(), Err(SolveError::Backend(HighsError::Relaxation)));
+    assert_eq!(
+        HighsError::Relaxation.to_string(),
+        "HiGHS: the option `solve_relaxation` would report a MIP's continuous relaxation as its optimum"
+    );
+
+    // Relaxing the program itself solves the relaxation, reported as the optimum of the program it is.
+    solver
+        .set_col_integrality([(x, Integrality::Continuous), (y, Integrality::Continuous)])
+        .unwrap();
+    assert_eq!(solver.solve().unwrap().outcome.objective(), Some(1.5));
 }

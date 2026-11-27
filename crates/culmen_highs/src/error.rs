@@ -89,6 +89,10 @@ pub enum HighsError {
         /// The program's feature HiGHS gets it wrong for.
         feature: ProgramFeature,
     },
+    /// The options set HiGHS's `solve_relaxation`, which solves a MIP's continuous relaxation in place of the MIP, so
+    /// its optimum would be reported as the program's; refused before HiGHS runs. Relaxing is the program's to state:
+    /// [`Solver::set_col_integrality`](culmen_core::Solver::set_col_integrality) makes the columns continuous.
+    Relaxation,
 }
 
 /// Why the backend does not trust the ending HiGHS's QP solver reported.
@@ -146,6 +150,10 @@ impl fmt::Display for HighsError {
             Self::AnalysisFeature { analysis, feature } => {
                 write!(f, "HiGHS: the {analysis} of a program with {feature} is refused")
             }
+            Self::Relaxation => write!(
+                f,
+                "HiGHS: the option `solve_relaxation` would report a MIP's continuous relaxation as its optimum"
+            ),
         }
     }
 }

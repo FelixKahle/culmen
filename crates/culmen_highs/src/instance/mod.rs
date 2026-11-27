@@ -21,15 +21,16 @@ use culmen_core::{
     Weight,
 };
 use highs_sys::{
-    Highs_clearLinearObjectives, Highs_getColName, Highs_getDoubleInfoValue, Highs_getHessianNumNz,
-    Highs_getInt64InfoValue, Highs_getIntInfoValue, Highs_getIntOptionValue, Highs_getModel, Highs_getModelStatus,
-    Highs_getNumCol, Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName, Highs_getSolution, Highs_passColName,
-    Highs_passLinearObjectives, Highs_passModel, Highs_passRowName, Highs_readModel, Highs_resetOptions, Highs_run,
-    Highs_setBoolOptionValue, Highs_setCallback, Highs_setDoubleOptionValue, Highs_setIntOptionValue,
-    Highs_setSparseSolution, Highs_setStringOptionValue, Highs_startCallback, Highs_stopCallback, Highs_writeModel,
-    Highs_zeroAllClocks, HighsCCallbackType, HighsInt, kHighsHessianFormatTriangular, kHighsMatrixFormatRowwise,
-    kHighsObjSenseMaximize, kHighsObjSenseMinimize, kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger,
-    kHighsVarTypeSemiContinuous, kHighsVarTypeSemiInteger,
+    Highs_clearLinearObjectives, Highs_getBoolOptionValue, Highs_getColName, Highs_getDoubleInfoValue,
+    Highs_getHessianNumNz, Highs_getInt64InfoValue, Highs_getIntInfoValue, Highs_getIntOptionValue, Highs_getModel,
+    Highs_getModelStatus, Highs_getNumCol, Highs_getNumNz, Highs_getObjectiveValue, Highs_getRowName,
+    Highs_getSolution, Highs_passColName, Highs_passLinearObjectives, Highs_passModel, Highs_passRowName,
+    Highs_readModel, Highs_resetOptions, Highs_run, Highs_setBoolOptionValue, Highs_setCallback,
+    Highs_setDoubleOptionValue, Highs_setIntOptionValue, Highs_setSparseSolution, Highs_setStringOptionValue,
+    Highs_startCallback, Highs_stopCallback, Highs_writeModel, Highs_zeroAllClocks, HighsCCallbackType, HighsInt,
+    kHighsHessianFormatTriangular, kHighsMatrixFormatRowwise, kHighsObjSenseMaximize, kHighsObjSenseMinimize,
+    kHighsStatusError, kHighsVarTypeContinuous, kHighsVarTypeInteger, kHighsVarTypeSemiContinuous,
+    kHighsVarTypeSemiInteger,
 };
 
 pub(crate) use analysis::{Penalties, RangingRecord, RawIis};
@@ -268,6 +269,16 @@ impl Instance {
         // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
         let status = unsafe { Highs_getIntOptionValue(self.raw(), name.as_ptr(), &raw mut value) };
         (status != kHighsStatusError).then_some(value)
+    }
+
+    /// The value of a `bool` option as HiGHS holds it, `None` when HiGHS does not know the name or it is not a `bool`
+    /// option.
+    pub(crate) fn option_bool(&self, name: &CStr) -> Option<bool> {
+        let mut value: HighsInt = 0;
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live, the name NUL-terminated, and `value` one integer to write.
+        let status = unsafe { Highs_getBoolOptionValue(self.raw(), name.as_ptr(), &raw mut value) };
+        (status != kHighsStatusError).then_some(value != 0)
     }
 
     /// A 64-bit integer info value, `None` when HiGHS does not know the name or has no valid info.

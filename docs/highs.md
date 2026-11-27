@@ -64,7 +64,7 @@ default: `presolve`, `presolve_mode`, `solver`, `parallel`, `run_crossover`, `ti
 `log_to_console`, `log_file`), the MIP options (`mip_rel_gap`, `mip_abs_gap`, the node, leaf, stall and solution
 limits, the cut-pool limits, `mip_heuristic_effort` and each heuristic's switch, `mip_feasibility_tolerance`,
 `mip_lp_solver`, `mip_ipm_solver`, …), the interior-point and PDLP limits and tolerances, the active-set QP solver's
-`qp_iteration_limit` and `qp_nullspace_limit`, `solve_relaxation`, `allow_unbounded_or_infeasible` and
+`qp_iteration_limit` and `qp_nullspace_limit`, `allow_unbounded_or_infeasible` and
 `presolve_reduction_limit`. The rustdoc of `HighsOptions` lists every field. A `u64` field is a limit, and one beyond
 HiGHS's integers is HiGHS's largest integer, its "no limit"; a `u32` field is an exact integer, such as `random_seed`
 or `threads`, and one beyond HiGHS's integers is refused.
@@ -87,7 +87,10 @@ A field whose HiGHS option takes one of a few values is an enum:
 appends a `RawOption { name, value }` to the `raw` field. The value is an `OptionValue`, one of HiGHS's four kinds
 (`Bool`, `Int`, `Double`, `String`), converted from a `bool`, `i32`, `f64`, `&str` or `String`. HiGHS checks the
 name and the value when the solve applies them; an unknown name or a value of the wrong kind or range is a
-[`HighsError::Option`](#errors).
+[`HighsError::Option`](#errors). One option is refused for a MIP however it is set: `solve_relaxation`, which has
+HiGHS solve the MIP's continuous relaxation and would report that optimum as the program's, fails the solve with
+[`HighsError::Relaxation`](#errors) before HiGHS runs. Relax the program instead, with
+[`Solver::set_col_integrality`](solving.md#editing-a-loaded-program).
 
 ```rust
 use culmen::highs::HighsOptions;
@@ -396,6 +399,7 @@ from.
 | `UnsoundQp(UnsoundQp)` | HiGHS's QP solver reported an ending its own measures or the model contradict: `NotANumber`, `ObjectiveError { error }` or `UnboundedInABox` ([Quadratic programs](#quadratic-programs)). |
 | `Analysis(Analysis)` | HiGHS refused or failed an analysis, as a basis it finds singular ([Analysis](analysis.md#highs)). |
 | `AnalysisFeature { analysis, feature }` | HiGHS 1.16 gets the analysis wrong for a program with the feature, as a feasibility relaxation with semi columns ([Analysis](analysis.md#highs)). |
+| `Relaxation` | The options set `solve_relaxation` for a MIP, which would report the relaxation's optimum as the program's ([Options](#options)). |
 
 ```rust
 use culmen::prelude::*;
