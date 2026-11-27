@@ -27,7 +27,7 @@
 //!
 //! | Enforcement | Result |
 //! |---|---|
-//! | a callback of the run panicked, or a plugin met an error | `CUTOFF`, SCIP is being stopped |
+//! | a callback of the run panicked | `CUTOFF`, SCIP is being stopped |
 //! | a pseudo solution worse than the incumbent | `DIDNOTRUN` |
 //! | a handler enforcing before rejected the point | `FEASIBLE`, without asking: the point is no candidate |
 //! | the handler is busy with an outer call | `INFEASIBLE` |
@@ -37,7 +37,7 @@
 //! | `enforce` added a constraint not added before that the point violates by SCIP's tolerance (its tightenings are applied too) | `CONSADDED` |
 //! | a tightening of `enforce` moved a bound, as SCIP reports it | `REDUCEDDOM` |
 //! | nothing changed, and SCIP can resolve the point: an integer variable is unfixed, the node is pure integer without an active pricer, the node has no LP yet, or the solve is stopping | `INFEASIBLE` |
-//! | nothing changed, and SCIP cannot | `CUTOFF`, SCIP is asked to stop, and the solve fails with [`ScipError::UnresolvedRejection`] |
+//! | nothing changed, and SCIP cannot | the solve fails with [`ScipError::UnresolvedRejection`] |
 //!
 //! SCIP resolves an unresolved `INFEASIBLE` by branching on an unfixed integer variable, cuts the node off when every
 //! integer variable is fixed and the problem has no continuous variable and no active pricer, and otherwise solves
@@ -412,8 +412,7 @@ impl Run<'_, '_> {
         active: &Active,
         asked: Asked,
     ) -> Result<SCIP_RESULT, ScipError> {
-        // SCIP is being stopped: every node is closed until it does.
-        if self.stopping() {
+        if self.panicked() {
             return Ok(SCIP_Result_SCIP_CUTOFF);
         }
         if asked.objinfeasible {
@@ -707,8 +706,8 @@ unsafe fn enforced(
         // SAFETY: SCIP enforces while solving, on `sol`.
         Some((run, active)) => match unsafe { run.enforce_handler(scip, sol, active, asked) } {
             Ok(verdict) => (verdict, SCIP_Retcode_SCIP_OKAY),
-            // The solve fails with the error once SCIP has stopped; the node is closed meanwhile.
-            Err(error) => (SCIP_Result_SCIP_CUTOFF, run.stop_with(scip, error)),
+            // The solve fails with the error; the result closes the node should SCIP read it.
+            Err(error) => (SCIP_Result_SCIP_CUTOFF, run.fail(error)),
         },
         None => (SCIP_Result_SCIP_FEASIBLE, SCIP_Retcode_SCIP_OKAY),
     };

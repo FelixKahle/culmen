@@ -78,13 +78,13 @@ pub(crate) use price::NAME as PRICER;
 pub use price::ScipPrice;
 pub use propagate::{ScipExplain, ScipPropagate};
 use scip_sys::{
-    SCIP, SCIP_CONS, SCIP_Objsense_SCIP_OBJSENSE_MAXIMIZE, SCIP_PROP, SCIP_RETCODE, SCIP_Retcode_SCIP_ERROR,
-    SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_STAGE, SCIP_Stage_SCIP_STAGE_EXITPRESOLVE, SCIP_Stage_SCIP_STAGE_EXITSOLVE,
-    SCIP_Stage_SCIP_STAGE_FREETRANS, SCIP_Stage_SCIP_STAGE_INITPRESOLVE, SCIP_Stage_SCIP_STAGE_PRESOLVED,
-    SCIP_Stage_SCIP_STAGE_PRESOLVING, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_Stage_SCIP_STAGE_SOLVED,
-    SCIP_Stage_SCIP_STAGE_SOLVING, SCIP_Stage_SCIP_STAGE_TRANSFORMED, SCIP_VAR, SCIPgetDualbound, SCIPgetNLPIterations,
-    SCIPgetNOrigBinVars, SCIPgetNOrigIntVars, SCIPgetNTotalNodes, SCIPgetObjsense, SCIPgetPrimalbound, SCIPgetStage,
-    SCIPinfinity, SCIPinterruptSolve,
+    SCIP, SCIP_CONS, SCIP_Objsense_SCIP_OBJSENSE_MAXIMIZE, SCIP_PROP, SCIP_RETCODE, SCIP_Retcode_SCIP_ERROR, SCIP_SOL,
+    SCIP_STAGE, SCIP_Stage_SCIP_STAGE_EXITPRESOLVE, SCIP_Stage_SCIP_STAGE_EXITSOLVE, SCIP_Stage_SCIP_STAGE_FREETRANS,
+    SCIP_Stage_SCIP_STAGE_INITPRESOLVE, SCIP_Stage_SCIP_STAGE_PRESOLVED, SCIP_Stage_SCIP_STAGE_PRESOLVING,
+    SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_Stage_SCIP_STAGE_SOLVED, SCIP_Stage_SCIP_STAGE_SOLVING,
+    SCIP_Stage_SCIP_STAGE_TRANSFORMED, SCIP_VAR, SCIPgetDualbound, SCIPgetNLPIterations, SCIPgetNOrigBinVars,
+    SCIPgetNOrigIntVars, SCIPgetNTotalNodes, SCIPgetObjsense, SCIPgetPrimalbound, SCIPgetStage, SCIPinfinity,
+    SCIPinterruptSolve,
 };
 
 use crate::columns::Columns;
@@ -423,21 +423,6 @@ impl<'a, 'h> Run<'a, 'h> {
     fn fail(&self, error: ScipError) -> SCIP_RETCODE {
         self.error.borrow_mut().get_or_insert(error);
         SCIP_Retcode_SCIP_ERROR
-    }
-
-    /// Keeps the first error a plugin met and asks SCIP to stop, for a callback that must not return an error code:
-    /// SCIP leaves a constraint handler's enforcement on an error without undoing its delay of the handler's constraint
-    /// updates (`cons.c:3525-3531`), which then outlives the solve and aborts a debug build of SCIP at the next one
-    /// (`cons.c:2524`). The solve fails with the error once `SCIPsolve` has returned, whatever SCIP's status.
-    fn stop_with(&self, scip: *mut SCIP, error: ScipError) -> SCIP_RETCODE {
-        self.error.borrow_mut().get_or_insert(error);
-        self.request_stop(scip);
-        SCIP_Retcode_SCIP_OKAY
-    }
-
-    /// Whether the run is ending: a callback panicked or a plugin met an error.
-    fn stopping(&self) -> bool {
-        self.panicked() || self.error.borrow().is_some()
     }
 
     /// Hands the hooks to `call`, unless a callback or handler of the run panicked or the hooks are busy; keeps a new
