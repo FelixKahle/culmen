@@ -50,7 +50,6 @@ mod lazy;
 mod locks;
 mod log;
 mod price;
-mod rows;
 
 use core::any::Any;
 use core::cell::{Cell, RefCell};
@@ -58,14 +57,19 @@ use core::ffi::c_int;
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 use core::time::Duration;
+use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 
-use culmen_core::{Col, Events, Found, Hooks, LogLevel, Phase, Priced, Progress, Row, Sense, TiSlice, TiVec};
+use culmen_core::context::check_constraint;
+use culmen_core::{
+    ActionError, AddedRow, Col, Constraint, Events, Found, Hooks, LogLevel, Phase, Priced, Progress, Row, Sense,
+    TiSlice, TiVec,
+};
 pub use cut::ScipCut;
 pub use events::{ScipEvent, ScipPoll, ScipProgress, ScipSolution};
 pub use heuristic::ScipHeuristic;
-pub use lazy::ScipLazy;
+pub use lazy::{LazySource, ScipLazy};
 pub use log::ScipLog;
 pub(crate) use price::NAME as PRICER;
 pub use price::ScipPrice;
@@ -82,21 +86,6 @@ use scip_sys::{
 use crate::columns::Columns;
 use crate::error::check;
 use crate::{Scip, ScipError};
-
-/// Where a candidate a handler judges comes from: the callback of SCIP's constraint handler that hands it over.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum CandidateSource {
-    /// A solution SCIP checks before storing it: a heuristic's, a start, a sub-SCIP's, a supplied one (`CONSCHECK`).
-    Check,
-    /// The LP solution of a node, which every constraint handler enforcing before the asking one accepted
-    /// (`CONSENFOLP`).
-    Lp,
-    /// The pseudo solution of a node whose LP is not solved, every variable at its better bound (`CONSENFOPS`).
-    Pseudo,
-    /// A relaxator's solution (`CONSENFORELAX`).
-    Relaxation,
-}
 
 /// A caught panic's payload, resumed once `SCIPsolve` has returned.
 pub(crate) type Payload = Box<dyn Any + Send>;
@@ -214,7 +203,7 @@ impl Drop for Installed<'_> {
 /// One solve's hooks and what its plugins share, on the solve's stack while `SCIPsolve` runs: what the run reads of
 /// the instance lives for `'a`, the hooks for `'h`.
 pub(crate) struct Run<'a, 'h> {
-    /// The instance's slot, which keeps the locks the handlers apply beyond the run.
+    /// The instance's slot, which keeps the locks the lazy-constraint handler applies beyond the run.
     slot: &'a Slot,
     /// The callback and the handlers, borrowed by one delivery at a time.
     hooks: RefCell<Hooks<'h, Scip>>,
@@ -549,6 +538,54 @@ impl core::fmt::Debug for Run<'_, '_> {
 /// A count SCIP reports, zero for a negative one.
 fn count(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
+}
+
+/// Checks a constraint a callback adds as a row SCIP can hold: known columns, finite coefficients and valid bounds,
+/// and every number below SCIP's infinity in magnitude, as given and added up per column, with no more terms than
+/// SCIP's `int` counts.
+///
+/// # Errors
+///
+/// The errors of [`check_constraint`]; [`ActionError::Refused`] for a number SCIP would read as infinite or a row
+/// too long.
+fn checked(constraint: &Constraint, num_cols: usize, infinity: f64) -> Result<AddedRow, ActionError> {
+    let row = check_constraint(constraint, num_cols)?;
+    // SCIP's linear handler adds up the coefficients of a column given twice, so their sum must stay finite to it.
+    let mut sums: BTreeMap<Col, f64> = BTreeMap::new();
+    for &(col, value) in &row.terms {
+        *sums.entry(col).or_insert(0.0) += value;
+    }
+    let given = row.terms.iter().copied().find(|(_, value)| value.abs() >= infinity);
+    if let Some((col, value)) = given.or_else(|| sums.into_iter().find(|(_, value)| value.abs() >= infinity)) {
+        return Err(ActionError::Refused(format!(
+            "the coefficient {value} of {col:?} is one SCIP reads as infinite, from {infinity} on"
+        )));
+    }
+    let ends = [row.bounds.lower(), row.bounds.upper()];
+    if let Some(end) = ends.into_iter().find(|end| end.is_finite() && end.abs() >= infinity) {
+        return Err(ActionError::Refused(format!(
+            "the bound {end} is one SCIP reads as infinite, from {infinity} on"
+        )));
+    }
+    if c_int::try_from(row.terms.len()).is_err() {
+        return Err(ActionError::Refused(format!(
+            "{} terms are more than SCIP's `int` counts",
+            row.terms.len()
+        )));
+    }
+    Ok(row)
+}
+
+/// A row's bounds in SCIP's terms, an infinite end as SCIP's infinity.
+fn sides(row: &AddedRow, infinity: f64) -> (f64, f64) {
+    let side = |end: f64| {
+        if end.is_infinite() {
+            end.signum() * infinity
+        } else {
+            end
+        }
+    };
+    (side(row.bounds.lower()), side(row.bounds.upper()))
 }
 
 /// Includes the message handler, before SCIP's default plugins so that it carries their messages too.

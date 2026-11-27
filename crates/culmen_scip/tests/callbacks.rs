@@ -20,7 +20,7 @@ use culmen_core::{
     Model, Observer, Outcome, Phase, PollContext, Program, ProgramPlan, ProgramRow, Progress, Script, Settings,
     Solution, SolutionContext, Solver, Step, StopReason, Term, TiSlice, TiVec, UserCuts, Var, relative_gap,
 };
-use culmen_scip::{CandidateSource, Emphasis, Scip, ScipEvent, ScipOptions};
+use culmen_scip::{Emphasis, LazySource, Scip, ScipEvent, ScipOptions};
 use culmen_testing::instances::assignment;
 use culmen_testing::reference::{close, solve};
 use culmen_testing::strategy::small_lp;
@@ -374,7 +374,7 @@ fn test_a_lazy_constraint_on_a_qp_moves_its_optimum() {
 
 /// Every lazy candidate's source, for one backend's own contexts.
 #[derive(Default)]
-struct Sources(Vec<CandidateSource>);
+struct Sources(Vec<LazySource>);
 
 impl LazyHandler<Scip> for Sources {
     fn lazy(&mut self, ctx: &mut <Scip as LazyConstraints>::Lazy<'_>) {
@@ -394,7 +394,7 @@ fn test_lazy_candidates_come_from_checked_solutions_and_node_lps() {
         .lazy(&mut sources)
         .solve()
         .unwrap();
-    assert!(sources.0.contains(&CandidateSource::Check), "{:?}", sources.0);
+    assert!(sources.0.contains(&LazySource::Check), "{:?}", sources.0);
 }
 
 #[test]

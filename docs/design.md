@@ -89,7 +89,7 @@ Whether a public type is `#[non_exhaustive]` follows from what a user does with 
   and log or poll kinds (`ModelStatus`, `CallStatus`, `LpSolver`, `PollSource`, `Status`, `RetCode`, `Emphasis`,
   `ParamValue`, …), which grow with the solver's versions, and culmen's own lists of kinds that a further feature
   adds to (`ModelClass`, `ProgramFeature`, `Analysis`, `Phase`, `StopReason`, `Edit`, `Step`, `ScipEvent`,
-  `CandidateSource`, `HighsNative`, `ModelFormat`). Code that must handle every kind is told so by a declared set
+  `LazySource`, `HighsNative`, `ModelFormat`). Code that must handle every kind is told so by a declared set
   instead (`Backend::CLASSES`, `FEATURES`), which refuses what it does not list.
 - **An enum whose variants its meaning closes stays exhaustive**, so that code which must handle every case is
   checked to: `Sense`, `Integrality`, `Outcome`, `Objectives`, `Combination`, `PriceMode`, `Start`, `NewRow`,

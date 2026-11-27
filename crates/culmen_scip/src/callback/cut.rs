@@ -22,8 +22,7 @@ use scip_sys::{
     SCIPreleaseRow, SCIPsepaGetData,
 };
 
-use super::rows::{checked, sides};
-use super::{Delivered, Run, Slot, slot};
+use super::{Delivered, Run, Slot, checked, sides, slot};
 use crate::columns::Columns;
 use crate::error::check;
 use crate::{RetCode, ScipError};

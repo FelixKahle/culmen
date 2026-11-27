@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The variable locks a handler without constraints applies to SCIP's transformed problem, kept so they are undone
-//! exactly.
+//! The variable locks the lazy-constraint handler, a handler without constraints, applies to SCIP's transformed
+//! problem, kept so they are undone exactly.
 //!
 //! SCIP calls such a handler's lock twice per transformed problem: to lock when the problem is created, with a run
 //! installed, and to unlock when it is freed, maybe with none (`S/cons.c:4276-4313`, `S/prob.c:461-470`, `625-633`
 //! of SCIP 10.0.2). A variable a pricer creates while solving exists at neither call, so it is locked when it is
-//! created; and a variable SCIP frees must hold no lock (`S/var.c:3669-3670`). So every lock a plugin applies goes
+//! created; and a variable SCIP frees must hold no lock (`S/var.c:3669-3670`). So every lock the handler applies goes
 //! into its [`Applied`] in the slot, which outlives the run, and the unlock undoes exactly what it holds, the priced
 //! variables' locks included.
 
@@ -20,7 +20,7 @@ use scip_sys::{SCIP, SCIP_LockType_SCIP_LOCKTYPE_MODEL, SCIP_VAR, SCIPaddVarLock
 use crate::ScipError;
 use crate::error::check;
 
-/// The model locks a plugin applied to the variables of SCIP's transformed problem, in order: each variable with the
+/// The model locks the handler applied to the variables of SCIP's transformed problem, in order: each variable with the
 /// number of locks down and up.
 #[derive(Debug)]
 pub(super) struct Applied(RefCell<Vec<(NonNull<SCIP_VAR>, c_int, c_int)>>);
