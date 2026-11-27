@@ -78,9 +78,9 @@
 //!
 //! | Event or handler | SCIP plugin | Context |
 //! |---|---|---|
-//! | `LOG` | the instance's message handler: each info message and warning, a whole line | [`ScipLog`] |
-//! | `POLL`, `PROGRESS` | an event handler: each presolve round, focused node, solved node LP and solved node | [`ScipPoll`], [`ScipProgress`] |
-//! | `FEASIBLE`, `INCUMBENT` | an event handler: each solution SCIP stores, a new best one as the incumbent too | [`ScipSolution`] |
+//! | `Log` | the instance's message handler: each info message and warning, a whole line | [`ScipLog`] |
+//! | `Poll`, `Progress` | an event handler: each presolve round, focused node, solved node LP and solved node | [`ScipPoll`], [`ScipProgress`] |
+//! | `Feasible`, `Incumbent` | an event handler: each solution SCIP stores, a new best one as the incumbent too | [`ScipSolution`] |
 //! | [`LazyHandler`](culmen_core::LazyHandler) | a constraint handler without constraints, checked and enforced after every other | [`ScipLazy`] |
 //! | [`CutHandler`](culmen_core::CutHandler) | a separator on each node's LP solution | [`ScipCut`] |
 //! | [`HeuristicHandler`](culmen_core::HeuristicHandler) | a primal heuristic before and after each node | [`ScipHeuristic`] |
@@ -167,7 +167,7 @@ pub use callback::{
     ScipSolution,
 };
 use culmen_core::{
-    Backend, Configurable, Events, Heuristics, Hooks, LazyConstraints, ModelClasses, Outcome, Prices, Program,
+    Backend, Configurable, Event, Events, Heuristics, Hooks, LazyConstraints, ModelClasses, Outcome, Prices, Program,
     Settings, Solved, Start, Starts, Unsupported, UserCuts,
 };
 pub use error::{Number, RetCode, ScipError};
@@ -179,13 +179,13 @@ use instance::{Group, Instance};
 /// The SCIP backend: the options every solve applies and, once a program is loaded, the SCIP instance holding it.
 ///
 /// ```
-/// use culmen_core::{Backend, Configurable, Events, ModelClass};
+/// use culmen_core::{Backend, Configurable, Event, Events, ModelClass};
 /// use culmen_scip::{Emphasis, Scip, ScipOptions};
 ///
 /// let scip = Scip::with_options(ScipOptions { heuristics: Some(Emphasis::Off), ..ScipOptions::default() });
 /// assert_eq!(scip.options().heuristics, Some(Emphasis::Off));
 /// assert!(Scip::CLASSES.contains(ModelClass::Miqp));
-/// assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE);
+/// assert_eq!(Scip::EVENTS, Events::ALL - Event::Native);
 /// ```
 #[derive(Debug, Default)]
 pub struct Scip {
@@ -388,7 +388,7 @@ impl Backend for Scip {
 
     /// Every observational event, each from a plugin the instance includes (the module documentation lists them); no
     /// native event.
-    const EVENTS: Events = Events::ALL.difference(Events::NATIVE);
+    const EVENTS: Events = Events::ALL.difference(Events::of(&[Event::Native]));
 
     /// Every class: a quadratic objective `q(x)` becomes an epigraph variable `t` with cost one, bounded by the
     /// quadratic constraint `q(x) - t <= 0` and `t >= 0` when minimizing, `q(x) - t >= 0` and `t <= 0` when

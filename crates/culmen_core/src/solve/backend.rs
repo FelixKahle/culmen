@@ -6,7 +6,7 @@
 use core::fmt;
 
 use super::context::{LogContext, PollContext, ProgressContext, SolutionContext};
-use crate::{Edit, Events, Hooks, ModelClasses, Program, ProgramFeatures, Settings, Solved};
+use crate::{Edit, Event, Events, Hooks, ModelClasses, Program, ProgramFeatures, Settings, Solved};
 
 /// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls the [`Hooks`] of the
 /// solve as the search goes.
@@ -41,15 +41,15 @@ pub trait Backend: Sized {
     type Error: core::error::Error + Send + Sync + 'static;
     /// The solver's own status at the end of a solve, kept for diagnostics.
     type Status: fmt::Debug + Clone + PartialEq + Send + 'static;
-    /// The context of a [`Events::LOG`] event.
+    /// The context of a [`Event::Log`] event.
     type Log<'a>: LogContext;
-    /// The context of a [`Events::PROGRESS`] event.
+    /// The context of a [`Event::Progress`] event.
     type Progress<'a>: ProgressContext;
-    /// The context of a [`Events::POLL`] event.
+    /// The context of a [`Event::Poll`] event.
     type Poll<'a>: PollContext;
-    /// The context of a [`Events::FEASIBLE`] or [`Events::INCUMBENT`] event.
+    /// The context of a [`Event::Feasible`] or [`Event::Incumbent`] event.
     type Solution<'a>: SolutionContext;
-    /// The context of a [`Events::NATIVE`] event: whatever only this solver reports.
+    /// The context of a [`Event::Native`] event: whatever only this solver reports.
     type Native<'a>: fmt::Debug;
 
     /// The observational events this backend delivers.
@@ -114,7 +114,7 @@ pub trait Backend: Sized {
 /// backend to reach its own context types. Two callbacks run together as a pair `(a, b)`, `a` first.
 ///
 /// ```
-/// use culmen_core::{Backend, Callback, Context, Events, PollContext};
+/// use culmen_core::{Backend, Callback, Context, Event, Events, PollContext};
 /// use std::time::Duration;
 ///
 /// /// Stops any backend's solve after a fixed time.
@@ -122,7 +122,7 @@ pub trait Backend: Sized {
 ///
 /// impl<B: Backend> Callback<B> for Deadline {
 ///     fn events(&self) -> Events {
-///         Events::POLL
+///         Event::Poll.into()
 ///     }
 ///     fn poll(&mut self, ctx: &mut B::Poll<'_>) {
 ///         if ctx.progress().elapsed >= self.0 {
@@ -198,50 +198,50 @@ impl<B: Backend, X: Callback<B>, Y: Callback<B>> Callback<B> for (X, Y) {
         self.0.events() | self.1.events()
     }
     fn log(&mut self, ctx: &mut B::Log<'_>) {
-        if self.0.events().contains(Events::LOG) {
+        if self.0.events().contains(Event::Log) {
             self.0.log(ctx);
         }
-        if self.1.events().contains(Events::LOG) {
+        if self.1.events().contains(Event::Log) {
             self.1.log(ctx);
         }
     }
     fn progress(&mut self, ctx: &mut B::Progress<'_>) {
-        if self.0.events().contains(Events::PROGRESS) {
+        if self.0.events().contains(Event::Progress) {
             self.0.progress(ctx);
         }
-        if self.1.events().contains(Events::PROGRESS) {
+        if self.1.events().contains(Event::Progress) {
             self.1.progress(ctx);
         }
     }
     fn poll(&mut self, ctx: &mut B::Poll<'_>) {
-        if self.0.events().contains(Events::POLL) {
+        if self.0.events().contains(Event::Poll) {
             self.0.poll(ctx);
         }
-        if self.1.events().contains(Events::POLL) {
+        if self.1.events().contains(Event::Poll) {
             self.1.poll(ctx);
         }
     }
     fn feasible(&mut self, ctx: &mut B::Solution<'_>) {
-        if self.0.events().contains(Events::FEASIBLE) {
+        if self.0.events().contains(Event::Feasible) {
             self.0.feasible(ctx);
         }
-        if self.1.events().contains(Events::FEASIBLE) {
+        if self.1.events().contains(Event::Feasible) {
             self.1.feasible(ctx);
         }
     }
     fn incumbent(&mut self, ctx: &mut B::Solution<'_>) {
-        if self.0.events().contains(Events::INCUMBENT) {
+        if self.0.events().contains(Event::Incumbent) {
             self.0.incumbent(ctx);
         }
-        if self.1.events().contains(Events::INCUMBENT) {
+        if self.1.events().contains(Event::Incumbent) {
             self.1.incumbent(ctx);
         }
     }
     fn native(&mut self, ctx: &mut B::Native<'_>) {
-        if self.0.events().contains(Events::NATIVE) {
+        if self.0.events().contains(Event::Native) {
             self.0.native(ctx);
         }
-        if self.1.events().contains(Events::NATIVE) {
+        if self.1.events().contains(Event::Native) {
             self.1.native(ctx);
         }
     }

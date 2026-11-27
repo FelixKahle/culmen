@@ -96,12 +96,12 @@ const DEFAULT_ABSOLUTE_GAP: f64 = 1e-6;
 /// The HiGHS backend: one HiGHS instance and the options every solve applies.
 ///
 /// ```
-/// use culmen_core::{Backend, Configurable, Events, ModelClass};
+/// use culmen_core::{Backend, Configurable, Event, ModelClass};
 /// use culmen_highs::{Highs, HighsOptions, Switch};
 ///
 /// let highs = Highs::with_options(HighsOptions { parallel: Some(Switch::Off), ..HighsOptions::default() });
 /// assert_eq!(highs.options().parallel, Some(Switch::Off));
-/// assert!(Highs::EVENTS.contains(Events::NATIVE));
+/// assert!(Highs::EVENTS.contains(Event::Native));
 /// assert!(!Highs::CLASSES.contains(ModelClass::Miqp), "HiGHS 1.16 refuses to solve a MIQP");
 /// ```
 #[derive(Debug)]

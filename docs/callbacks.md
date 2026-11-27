@@ -151,12 +151,12 @@ handler](#search-handlers), so a callback asking for every event costs a solver 
 
 | Method | Event | Context |
 |---|---|---|
-| `log` | `Events::LOG` | `B::Log<'_>`: [`LogContext`](#contexts) |
-| `progress` | `Events::PROGRESS` | `B::Progress<'_>`: `ProgressContext` |
-| `poll` | `Events::POLL` | `B::Poll<'_>`: `PollContext` |
-| `feasible` | `Events::FEASIBLE` | `B::Solution<'_>`: `SolutionContext` |
-| `incumbent` | `Events::INCUMBENT` | `B::Solution<'_>`: `SolutionContext` |
-| `native` | `Events::NATIVE` | `B::Native<'_>`: whatever only this backend reports |
+| `log` | `Event::Log` | `B::Log<'_>`: [`LogContext`](#contexts) |
+| `progress` | `Event::Progress` | `B::Progress<'_>`: `ProgressContext` |
+| `poll` | `Event::Poll` | `B::Poll<'_>`: `PollContext` |
+| `feasible` | `Event::Feasible` | `B::Solution<'_>`: `SolutionContext` |
+| `incumbent` | `Event::Incumbent` | `B::Solution<'_>`: `SolutionContext` |
+| `native` | `Event::Native` | `B::Native<'_>`: whatever only this backend reports |
 
 Write it once for every backend, `impl<B: Backend> Callback<B>`, and it sees each context through its neutral
 trait. Write it for one backend, `impl Callback<Highs>`, and it sees that backend's own context types, with
@@ -175,7 +175,7 @@ struct Deadline(Duration);
 
 impl<B: Backend> Callback<B> for Deadline {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn poll(&mut self, ctx: &mut B::Poll<'_>) {
         if ctx.progress().elapsed >= self.0 {
@@ -199,24 +199,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## `Events`
 
-`Events` is a set of observational event kinds: `NONE`, `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT`,
-`NATIVE`, and `ALL`. Combine sets with `|`, `&` and `-` (or `union`, `intersection` and `difference`), take every
-other event with `!` (`complement`), test them with `contains`, and iterate the single events with `iter()`;
-`Display` prints `{LOG, POLL}`. The search events are not in the set: no set of events registers a handler.
+`Events` is a set of the observational event kinds `Event::Log`, `Progress`, `Poll`, `Feasible`, `Incumbent` and
+`Native`, built and read as `ModelClasses` and `ProgramFeatures` are: `Event::Log | Event::Poll` is a set, as are
+`Events::NONE`, `Events::ALL` and the `const` form `Events::of(&[Event::Log, Event::Poll])`, and one event converts
+into a set with `into()`. Combine sets with `|`, `&` and `-` (or `union`, `intersection` and `difference`), take every
+other event with `!` (`complement`), test an event with `contains` and a set with `contains_all`, and iterate the
+events with `iter()`; `Display` prints `{log, poll}`, and serde writes the list of events. The search events are not
+in the set: no set of events registers a handler.
 
 ```rust
 use culmen::prelude::*;
 
-let wanted = Events::LOG | Events::POLL;
-assert!(wanted.contains(Events::POLL));
-assert!(!wanted.contains(Events::NATIVE));
+let wanted = Event::Log | Event::Poll;
+assert!(wanted.contains(Event::Poll));
+assert!(!wanted.contains(Event::Native));
 assert_eq!(wanted.len(), 2);
-assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
-assert_eq!((Events::ALL - Events::LOG).len(), 5);
+assert_eq!(format!("{wanted:?}"), "Events(Log | Poll)");
+assert_eq!(wanted.to_string(), "{log, poll}");
+assert_eq!((Events::ALL - Event::Log).len(), 5);
 assert_eq!(Highs::EVENTS, Events::ALL);
 ```
 
-`FEASIBLE` is any solution the solver found; `INCUMBENT` is one better than every one before, so the same solution
+`Feasible` is any solution the solver found; `Incumbent` is one better than every one before, so the same solution
 may arrive as both.
 
 ## Search handlers
@@ -480,7 +484,7 @@ struct CountPolls(usize);
 
 impl<B: Backend> Callback<B> for CountPolls {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn poll(&mut self, _: &mut B::Poll<'_>) {
         self.0 += 1;
@@ -491,7 +495,7 @@ struct StopAfter(Duration);
 
 impl<B: Backend> Callback<B> for StopAfter {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn poll(&mut self, ctx: &mut B::Poll<'_>) {
         if ctx.progress().elapsed >= self.0 {
@@ -531,7 +535,7 @@ needs no such type: the backend does not implement the trait, and a handler for 
 use culmen::prelude::*;
 
 assert_eq!(Highs::EVENTS, Events::ALL);
-assert!(culmen::Script::EVENTS.contains(Events::ALL));
+assert!(culmen::Script::EVENTS.contains_all(Events::ALL));
 
 /// Compiles only for a backend that takes lazy constraints.
 fn takes_lazy<B: LazyConstraints>() {}

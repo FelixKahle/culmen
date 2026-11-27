@@ -32,7 +32,7 @@ pub use context::{
     PriceMode, ProgressContext, SolutionContext, Unsupported,
 };
 pub use edit::{Edit, EditError};
-pub use events::{Events, EventsIter, LogLevel, Phase, Progress};
+pub use events::{Event, Events, EventsIter, LogLevel, Phase, Progress};
 pub use hooks::{CutHandler, HeuristicHandler, Hooks, LazyHandler, Pricer, Relay};
 pub use load::LoadError;
 pub use outcome::{Outcome, Solution, Solved, StopReason};

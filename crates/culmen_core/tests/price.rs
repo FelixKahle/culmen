@@ -14,7 +14,7 @@ use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use culmen_core::{
-    ActionError, Analysis, AnalysisError, Backend, Bounds, Callback, Col, Context, Duals, Events, Found, Hooks,
+    ActionError, Analysis, AnalysisError, Backend, Bounds, Callback, Col, Context, Duals, Event, Events, Found, Hooks,
     Integrality, LazyContext, LazyHandler, Linear, ModelClass, ModelClasses, NewCol, Outcome, Phase, PollContext,
     PriceContext, PriceMode, Priced, Pricer, Prices, Program, ProgramColumn, ProgramPlan, Progress, Row, Script,
     ScriptError, ScriptPrice, Sense, Settings, Solution, Solved, Solver, Step, StopReason, TiSlice, TiVec, Unsupported,
@@ -527,7 +527,7 @@ struct Interrupt;
 
 impl<B: Backend> Callback<B> for Interrupt {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn poll(&mut self, ctx: &mut B::Poll<'_>) {
         ctx.interrupt();

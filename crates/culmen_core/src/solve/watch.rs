@@ -11,7 +11,7 @@ use std::sync::Arc;
 use typed_index_collections::TiSlice;
 
 use super::context::{Context, LogContext, PollContext, SolutionContext};
-use crate::{Backend, Callback, Col, Events, LogLevel, Progress};
+use crate::{Backend, Callback, Col, Event, Events, LogLevel, Progress};
 
 /// A cooperative stop request, polled while a solve runs.
 ///
@@ -151,7 +151,7 @@ impl<O: Observer + ?Sized> Observer for &mut O {
 
 /// A stop and an observer as a [`Callback`] for every backend: what a [`Run`](crate::Run) runs before its callback.
 ///
-/// It polls the stop at every [`Events::POLL`], reports progress from polls and progress events at most once per
+/// It polls the stop at every [`Event::Poll`], reports progress from polls and progress events at most once per
 /// interval, reports each incumbent, and joins log chunks into lines, each without its `\n` or `\r\n`, even when the
 /// two halves of a `\r\n` arrive in different chunks. Code that drives a [`Backend`] directly registers it paired
 /// with a callback of its own, `(watch, mine)`, to keep this convenience while reaching every event, and calls
@@ -261,12 +261,12 @@ impl<'a> Watch<'a> {
 impl<B: Backend> Callback<B> for Watch<'_> {
     fn events(&self) -> Events {
         let watched = if self.observer.is_some() {
-            Events::LOG | Events::PROGRESS | Events::POLL | Events::INCUMBENT
+            Event::Log | Event::Progress | Event::Poll | Event::Incumbent
         } else {
             Events::NONE
         };
         if self.stop.is_some() {
-            watched | Events::POLL
+            watched | Event::Poll
         } else {
             watched
         }

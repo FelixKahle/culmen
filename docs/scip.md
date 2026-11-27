@@ -18,7 +18,7 @@ known only to a handler, cuts of your own, and column generation at every node o
 | `Scip::new()` | A backend with SCIP's default parameters. |
 | `Scip::with_options(options)` | A backend with the given `ScipOptions`. |
 | `options()`, `options_mut()` (`Configurable`, `Options = ScipOptions`) | The options, to read or to change between solves; `solver.options_mut()` reaches them through a `Solver`. |
-| `Scip::EVENTS` | Every observational event but `NATIVE`: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE` and `INCUMBENT`. |
+| `Scip::EVENTS` | Every observational event but `Native`: `Log`, `Progress`, `Poll`, `Feasible` and `Incumbent`. |
 | Search capabilities | All four: `LazyConstraints`, `UserCuts`, `Heuristics` and `Prices` ([Callback events](#callback-events)). |
 | `Scip::CLASSES` | `Lp`, `Milp`, `Qp` and `Miqp`; see [Quadratic programs](#quadratic-programs). |
 | `Scip::FEATURES` | None: no semi columns and no several objectives; see [Limitations](#limitations). |
@@ -338,15 +338,15 @@ instance:
 
 | Event or handler | SCIP plugin | Context | Beyond the trait |
 |---|---|---|---|
-| `LOG` | the instance's message handler: each info message and warning, a whole line | `ScipLog` | |
-| `POLL` | an event handler on each presolve round, focused node, solved node LP and solved node (`PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED`); `interrupt` calls `SCIPinterruptSolve` | `ScipPoll` | `event()`: a `ScipEvent` |
-| `PROGRESS` | the same event handler, at each poll | `ScipProgress` | `event()` |
-| `FEASIBLE`, `INCUMBENT` | the event handler on each solution SCIP stores (`POORSOLFOUND`, `BESTSOLFOUND`), a new best one as the incumbent too; the starts and carried solutions SCIP stored before it, as it catches its events | `ScipSolution` | |
+| `Log` | the instance's message handler: each info message and warning, a whole line | `ScipLog` | |
+| `Poll` | an event handler on each presolve round, focused node, solved node LP and solved node (`PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED`); `interrupt` calls `SCIPinterruptSolve` | `ScipPoll` | `event()`: a `ScipEvent` |
+| `Progress` | the same event handler, at each poll | `ScipProgress` | `event()` |
+| `Feasible`, `Incumbent` | the event handler on each solution SCIP stores (`POORSOLFOUND`, `BESTSOLFOUND`), a new best one as the incumbent too; the starts and carried solutions SCIP stored before it, as it catches its events | `ScipSolution` | |
 | `LazyHandler` | a constraint handler without constraints, checked and enforced after every other (`CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX`) | `ScipLazy` | `source()`: a `ScipLazySource`, `Check`, `Lp`, `Pseudo` or `Relaxation` |
 | `CutHandler` | a separator on each node's LP solution (`SEPAEXECLP`) | `ScipCut` | |
 | `HeuristicHandler` | a primal heuristic before and after each node (`HEUREXEC`) | `ScipHeuristic` | |
 | `Pricer` | a variable pricer, delayed, on each optimal or infeasible node LP (`PRICERREDCOST`, `PRICERFARKAS`) | `ScipPrice` | `local_bounds(col)`: the node's bounds of a column |
-| `NATIVE` | none | `Unsupported` | never delivered |
+| `Native` | none | `Unsupported` | never delivered |
 
 Every value a context reports is the program's: a candidate, a relaxation and a solution hold one value per column,
 read through SCIP's original variables whatever presolve did to them, and every objective value and bound is in the
@@ -754,7 +754,7 @@ the call or parameter and SCIP's return code, and the message is on standard err
   `ranging`, rays, `iis` or `feasibility_relaxation` method ([Analysis](analysis.md)).
 - **No partial heuristic solutions.** `ScipHeuristic` has no `supply_partial`; a partial solution is a sparse start
   ([Heuristic solutions](#heuristic-solutions)).
-- **No native events and no branching event.** `NATIVE` is `Unsupported`, and there is no event to branch on the
+- **No native events and no branching event.** `Native` is `Unsupported`, and there is no event to branch on the
   pricing problem, so branch-and-price branches on master columns only ([Pricing](#pricing)).
 - **No pricing on a quadratic objective.** `ScipError::PricingQuadratic` ([Pricing](#pricing)).
 - **An interrupt acts after the current LP.** SCIP's LP solver runs without events, so a stop asked for during one LP

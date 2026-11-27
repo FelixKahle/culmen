@@ -14,11 +14,11 @@ what Gurobi 12 would offer a backend written later.
 pub trait Backend: Sized {
     type Error: core::error::Error + Send + Sync + 'static;
     type Status: Debug + Clone + PartialEq + Send + 'static; // the solver's own status, kept for diagnostics
-    type Log<'a>: LogContext;             // Events::LOG
-    type Progress<'a>: ProgressContext;   // Events::PROGRESS
-    type Poll<'a>: PollContext;           // Events::POLL
-    type Solution<'a>: SolutionContext;   // Events::FEASIBLE and Events::INCUMBENT
-    type Native<'a>: Debug;               // Events::NATIVE: whatever only this solver reports
+    type Log<'a>: LogContext;             // Event::Log
+    type Progress<'a>: ProgressContext;   // Event::Progress
+    type Poll<'a>: PollContext;           // Event::Poll
+    type Solution<'a>: SolutionContext;   // Event::Feasible and Event::Incumbent
+    type Native<'a>: Debug;               // Event::Native: whatever only this solver reports
     const EVENTS: Events;                 // the observational events this backend delivers
     const CLASSES: ModelClasses;          // the model classes this backend solves
     const FEATURES: ProgramFeatures = ProgramFeatures::NONE; // the semi columns and objectives it takes
@@ -101,8 +101,8 @@ pub trait RelaxationAnalysis: Backend {
   (`HighsNative::CutPool`). Generic code (`impl<B: Backend> Callback<B> for …`) sees the traits, and backend code
   (`impl Callback<Highs> for …`) sees everything.
 - **The convenient path sits on top.** `Watch` (made from the `Stop` and the `Observer` of a `Run`) is an
-  ordinary `impl<B: Backend> Callback<B>`: it polls the stop at `POLL`, throttles `PROGRESS`/`POLL` into
-  `Observer::progress`, reports `INCUMBENT` as `Observer::improved`, and joins `LOG` chunks into lines. It works
+  ordinary `impl<B: Backend> Callback<B>`: it polls the stop at `Poll`, throttles `Progress`/`Poll` into
+  `Observer::progress`, reports `Incumbent` as `Observer::improved`, and joins `Log` chunks into lines. It works
   unchanged on every backend, and a `Solver` runs it before the callback registered on the run.
 - **Edits are a hook with a correct default.** A `Solver` that [edits its program](solving.md#editing-a-loaded-program)
   calls `edit` with the edited program and an `Edit` naming what changed: the columns whose bounds, costs or
@@ -182,17 +182,17 @@ backend declares or leaves out.
 
 | Core concept | HiGHS 1.16 (`culmen_highs`) | Gurobi 12 | SCIP 10 (`culmen_scip`) |
 |---|---|---|---|
-| `LOG`: a log chunk, its level | `kHighsCallbackLogging`: message, `log_type` (only field set) | `GRB_CB_MESSAGE`: `GRB_CB_MSG_STRING` | the instance's message handler (`SCIPmessagehdlrCreate`), buffered to whole lines: info messages as `Info`, warnings as `Warning` |
-| `PROGRESS`: the solver's own pace | `kHighsCallbackMipLogging` (fires when a MIP log line is printed) | `GRB_CB_MIP`: `MIP_OBJBST`, `MIP_OBJBND`, `MIP_NODCNT`, `MIP_ITRCNT`; `GRB_CB_SIMPLEX`, `GRB_CB_BARRIER` for LPs | the event handler at each poll below, with `SCIPgetPrimalbound`, `SCIPgetDualbound`, `SCIPgetNTotalNodes`, `SCIPgetNLPIterations` |
-| `POLL`: frequent, may interrupt | `kHighsCallbackSimplexInterrupt`, `kHighsCallbackIpmInterrupt`, `kHighsCallbackMipInterrupt`, `kHighsCallbackQpInterrupt`: `user_interrupt = 1` | `GRB_CB_POLLING` and every other `where`: `GRBterminate` | an event handler on `SCIP_EVENTTYPE_PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED`: `SCIPinterruptSolve` |
+| `Event::Log`: a log chunk, its level | `kHighsCallbackLogging`: message, `log_type` (only field set) | `GRB_CB_MESSAGE`: `GRB_CB_MSG_STRING` | the instance's message handler (`SCIPmessagehdlrCreate`), buffered to whole lines: info messages as `Info`, warnings as `Warning` |
+| `Event::Progress`: the solver's own pace | `kHighsCallbackMipLogging` (fires when a MIP log line is printed) | `GRB_CB_MIP`: `MIP_OBJBST`, `MIP_OBJBND`, `MIP_NODCNT`, `MIP_ITRCNT`; `GRB_CB_SIMPLEX`, `GRB_CB_BARRIER` for LPs | the event handler at each poll below, with `SCIPgetPrimalbound`, `SCIPgetDualbound`, `SCIPgetNTotalNodes`, `SCIPgetNLPIterations` |
+| `Event::Poll`: frequent, may interrupt | `kHighsCallbackSimplexInterrupt`, `kHighsCallbackIpmInterrupt`, `kHighsCallbackMipInterrupt`, `kHighsCallbackQpInterrupt`: `user_interrupt = 1` | `GRB_CB_POLLING` and every other `where`: `GRBterminate` | an event handler on `SCIP_EVENTTYPE_PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED`: `SCIPinterruptSolve` |
 | `Progress` fields | `running_time`, `mip_primal_bound`, `mip_dual_bound`, `mip_node_count`, `mip_total_lp_iterations`, `simplex_iteration_count`, `ipm_iteration_count` | `cbGet` codes above, `GRB_CB_RUNTIME` | the wall clock of the solve and the getters above, each in the stages SCIP reports it |
-| `FEASIBLE`: any new solution | `kHighsCallbackMipSolution`: `mip_solution`, `objective_function_value`; `kHighsCallbackQpFirstFeasiblePoint` once per QP solve, valued by the backend | `GRB_CB_MIPSOL`: `MIPSOL_SOL`, `MIPSOL_OBJ` | the event handler on `SCIP_EVENTTYPE_SOLFOUND`, and the solutions stored before it caught events (starts, the last solve's best) |
-| `INCUMBENT`: a better solution | `kHighsCallbackMipImprovingSolution`; an accepted user solution is reported at the next MIP poll, as HiGHS skips its solution callbacks for it | `GRB_CB_MIPSOL` when `MIPSOL_OBJ` beats `MIPSOL_OBJBST` | `SCIP_EVENTTYPE_BESTSOLFOUND` |
+| `Event::Feasible`: any new solution | `kHighsCallbackMipSolution`: `mip_solution`, `objective_function_value`; `kHighsCallbackQpFirstFeasiblePoint` once per QP solve, valued by the backend | `GRB_CB_MIPSOL`: `MIPSOL_SOL`, `MIPSOL_OBJ` | the event handler on `SCIP_EVENTTYPE_SOLFOUND`, and the solutions stored before it caught events (starts, the last solve's best) |
+| `Event::Incumbent`: a better solution | `kHighsCallbackMipImprovingSolution`; an accepted user solution is reported at the next MIP poll, as HiGHS skips its solution callbacks for it | `GRB_CB_MIPSOL` when `MIPSOL_OBJ` beats `MIPSOL_OBJBST` | `SCIP_EVENTTYPE_BESTSOLFOUND` |
 | `LazyConstraints`: cut off a candidate | none: `kHighsCallbackMipDefineLazyConstraints` exists in 1.16 but is never called, so not implemented | `GRB_CB_MIPSOL` (and `MIPNODE`): `GRBcblazy`, with `LazyConstraints = 1` | a constraint handler without constraints, checked and enforced last: `CONSCHECK` rejects, `CONSENFOLP` / `CONSENFOPS` / `CONSENFORELAX` add global linear constraints (`SCIPaddCons`, `CONSADDED`) |
 | `UserCuts`: cut off a node relaxation | none, so not implemented | `GRB_CB_MIPNODE` with `MIPNODE_STATUS == OPTIMAL`: `GRBcbget(MIPNODE_REL)`, `GRBcbcut` | a separator (`SEPAEXECLP`): `SCIPgetSolVal` of the LP, `SCIPaddRow` and `SCIPaddPoolCut` |
 | `Heuristics`: supply a solution | `kHighsCallbackMipUserSolution`: `user_solution` + `user_has_solution`; partial via `Highs_setCallbackSparseSolution` + `Highs_repairCallbackSolution` | `GRB_CB_MIPNODE` (and `MIP`): `GRBcbsolution` (partial values allowed), `GRBcbusesolution` | a primal heuristic (`HEUREXEC`) before and after each node: `SCIPcreateOrigSol` (`SCIPcreateSol` in a solve that prices), `SCIPtrySolFree`; no partial solution during the search, so `ScipHeuristic` has no `supply_partial` |
 | `Prices`: answer a node LP's duals with columns | none, so not implemented | none: Gurobi 12 has no pricing callback | a pricer plugin, delayed and active only in a solve with a pricer, whose rows are then modifiable (`SCIPincludePricerBasic`, `SCIPactivatePricer`, `SCIPsetConsModifiable`): `PRICERREDCOST` and `PRICERFARKAS` read `SCIPgetDualsolLinear` or `SCIPgetDualfarkasLinear`, then `SCIPcreateVar`, `SCIPaddPricedVar` and `SCIPaddCoefLinear`; refused on a program with a quadratic objective |
-| `NATIVE`: solver-only events | `kHighsCallbackMipGetCutPool` as `HighsNative::CutPool` (presolved-space cuts) | `GRB_CB_PRESOLVE`, `GRB_CB_MULTIOBJ`, `GRB_CB_IIS`, and `MIPNODE` node data beyond the relaxation | none in `culmen_scip`; any other event type (`SCIP_EVENTTYPE_*`), branching or node-selection data would fit |
+| `Event::Native`: solver-only events | `kHighsCallbackMipGetCutPool` as `HighsNative::CutPool` (presolved-space cuts) | `GRB_CB_PRESOLVE`, `GRB_CB_MULTIOBJ`, `GRB_CB_IIS`, and `MIPNODE` node data beyond the relaxation | none in `culmen_scip`; any other event type (`SCIP_EVENTTYPE_*`), branching or node-selection data would fit |
 
 HiGHS's threading is handled inside culmen_highs. The MIP kinds come from its serial search loop. Logging may come
 from task-pool threads. The trampoline serialises all calls behind a mutex, so callbacks are `Send` and the stop is

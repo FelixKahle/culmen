@@ -15,7 +15,7 @@
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
-use culmen_core::{Col, Context, Events, Found, PollContext, Progress, ProgressContext, SolutionContext, TiSlice};
+use culmen_core::{Col, Context, Event, Found, PollContext, Progress, ProgressContext, SolutionContext, TiSlice};
 use scip_sys::{
     SCIP, SCIP_EVENT, SCIP_EVENTDATA, SCIP_EVENTHDLR, SCIP_EVENTTYPE, SCIP_RETCODE, SCIP_Retcode_SCIP_OKAY,
     SCIP_Stage_SCIP_STAGE_EXITSOLVE, SCIP_Stage_SCIP_STAGE_TRANSFORMED, SCIPcatchEvent, SCIPdropEvent, SCIPeventGetSol,
@@ -134,8 +134,8 @@ impl Context for ScipProgress {
 
 impl ProgressContext for ScipProgress {}
 
-/// A solution SCIP stored, read in the program's columns: any one as [`Events::FEASIBLE`], a new best one also as
-/// [`Events::INCUMBENT`].
+/// A solution SCIP stored, read in the program's columns: any one as [`Event::Feasible`], a new best one also as
+/// [`Event::Incumbent`].
 #[derive(Debug)]
 pub struct ScipSolution<'a> {
     found: &'a Found,
@@ -166,7 +166,7 @@ impl Run<'_, '_> {
     /// Hands a poll and a progress report to the callback, as it asked; neither while it is busy.
     fn poll(&self, scip: *mut SCIP, event: ScipEvent) {
         let progress = self.progress(scip);
-        if self.wanted.contains(Events::POLL) {
+        if self.wanted.contains(Event::Poll) {
             let mut interrupt = false;
             let delivered = self.deliver(scip, |hooks| {
                 hooks.poll(&mut ScipPoll {
@@ -179,7 +179,7 @@ impl Run<'_, '_> {
                 self.request_stop(scip);
             }
         }
-        if self.wanted.contains(Events::PROGRESS) {
+        if self.wanted.contains(Event::Progress) {
             self.deliver(scip, |hooks| {
                 hooks.progress(&mut ScipProgress { progress, event });
             });
@@ -222,10 +222,10 @@ impl Run<'_, '_> {
     /// The events to catch for the events the callback asked for.
     const fn caught(&self) -> SCIP_EVENTTYPE {
         let mut mask = 0;
-        if self.wanted.contains(Events::POLL) || self.wanted.contains(Events::PROGRESS) {
+        if self.wanted.contains(Event::Poll) || self.wanted.contains(Event::Progress) {
             mask |= POLLING;
         }
-        if self.wanted.contains(Events::FEASIBLE) || self.wanted.contains(Events::INCUMBENT) {
+        if self.wanted.contains(Event::Feasible) || self.wanted.contains(Event::Incumbent) {
             mask |= SOLFOUND;
         }
         mask

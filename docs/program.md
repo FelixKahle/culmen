@@ -270,7 +270,7 @@ constraints would come as further classes, which a backend that does not declare
 use culmen::{ModelClass, ModelClasses};
 
 let linear = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]);
-let classes = linear | ModelClass::Qp.into();
+let classes = linear | ModelClass::Qp;
 assert!(classes.contains(ModelClass::Qp) && !classes.contains(ModelClass::Miqp));
 assert_eq!(classes & linear, linear);
 assert_eq!(classes.iter().collect::<Vec<_>>(), [ModelClass::Lp, ModelClass::Milp, ModelClass::Qp]);

@@ -7,18 +7,18 @@
 //!
 //! | HiGHS 1.16 callback | culmen event | context |
 //! |---|---|---|
-//! | `kHighsCallbackLogging` | [`Events::LOG`] | [`HighsLog`] |
-//! | `kHighsCallbackSimplexInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`HighsPollSource::Simplex`] |
-//! | `kHighsCallbackIpmInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`HighsPollSource::Ipm`] |
-//! | `kHighsCallbackMipInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`HighsPollSource::Mip`] |
-//! | `kHighsCallbackMipLogging` | [`Events::PROGRESS`] | [`HighsProgress`] |
-//! | `kHighsCallbackMipSolution` | [`Events::FEASIBLE`] | [`HighsSolution`] |
-//! | `kHighsCallbackMipImprovingSolution` | [`Events::INCUMBENT`] | [`HighsSolution`] |
+//! | `kHighsCallbackLogging` | [`Event::Log`] | [`HighsLog`] |
+//! | `kHighsCallbackSimplexInterrupt` | [`Event::Poll`] | [`HighsPoll`], [`HighsPollSource::Simplex`] |
+//! | `kHighsCallbackIpmInterrupt` | [`Event::Poll`] | [`HighsPoll`], [`HighsPollSource::Ipm`] |
+//! | `kHighsCallbackMipInterrupt` | [`Event::Poll`] | [`HighsPoll`], [`HighsPollSource::Mip`] |
+//! | `kHighsCallbackMipLogging` | [`Event::Progress`] | [`HighsProgress`] |
+//! | `kHighsCallbackMipSolution` | [`Event::Feasible`] | [`HighsSolution`] |
+//! | `kHighsCallbackMipImprovingSolution` | [`Event::Incumbent`] | [`HighsSolution`] |
 //! | `kHighsCallbackMipUserSolution` | the heuristic handler ([`Heuristics`](culmen_core::Heuristics)) | [`HighsHeuristic`] |
-//! | `kHighsCallbackMipGetCutPool` | [`Events::NATIVE`] | [`HighsNative::CutPool`] |
+//! | `kHighsCallbackMipGetCutPool` | [`Event::Native`] | [`HighsNative::CutPool`] |
 //! | `kHighsCallbackMipDefineLazyConstraints` | none | HiGHS 1.16 declares it and never calls it |
-//! | `kHighsCallbackQpFirstFeasiblePoint` | [`Events::FEASIBLE`] | [`HighsSolution`], no [`HighsMipData`] |
-//! | `kHighsCallbackQpInterrupt` | [`Events::POLL`] | [`HighsPoll`], [`HighsPollSource::Qp`] |
+//! | `kHighsCallbackQpFirstFeasiblePoint` | [`Event::Feasible`] | [`HighsSolution`], no [`HighsMipData`] |
+//! | `kHighsCallbackQpInterrupt` | [`Event::Poll`] | [`HighsPoll`], [`HighsPollSource::Qp`] |
 //!
 //! HiGHS has no user cuts and never calls its lazy-constraint callback, so the backend implements neither
 //! [`LazyConstraints`](culmen_core::LazyConstraints) nor [`UserCuts`](culmen_core::UserCuts), and a handler of either
@@ -27,7 +27,7 @@
 //! user-solution kind, the only context with [`HeuristicContext::supply`], and started only for a solve with a
 //! heuristic handler.
 //!
-//! The QP solver's first feasible point is a feasible solution of the loaded program, so it is [`Events::FEASIBLE`].
+//! The QP solver's first feasible point is a feasible solution of the loaded program, so it is [`Event::Feasible`].
 //! HiGHS's active-set QP solver works on the incumbent model itself, unpresolved and unscaled (`callSolveQp` in
 //! `Highs.cpp`, `solveQpAsm` in `QpAsmWrapper.cpp`), so the point holds one value per loaded column. `solveqp` in
 //! `a_quass.cpp` reports it only after the starting-point computation left the QP's status unset: the point HiGHS's LP
@@ -74,8 +74,8 @@ use std::time::Instant;
 
 use culmen_core::context::{check_entries, check_solution};
 use culmen_core::{
-    ActionError, Col, Context, Events, HeuristicContext, Hooks, LogContext, LogLevel, Phase, PollContext, Progress,
-    ProgressContext, SolutionContext, TiSlice,
+    ActionError, Col, Context, Event, Events, HeuristicContext, Hooks, LogContext, LogLevel, Phase, PollContext,
+    Progress, ProgressContext, SolutionContext, TiSlice,
 };
 use highs_sys::{
     Highs_repairCallbackSolution, Highs_setCallbackSparseSolution, HighsCallbackDataIn, HighsCallbackDataOut, HighsInt,
@@ -191,11 +191,11 @@ pub(crate) fn kinds(wanted: Events, heuristic: bool) -> Vec<c_int> {
         Kind::Poll(Poller::Qp),
     ];
     let by_event = [
-        (Events::PROGRESS, Kind::MipLogging),
-        (Events::FEASIBLE, Kind::MipSolution),
-        (Events::FEASIBLE, Kind::QpFirstFeasiblePoint),
-        (Events::INCUMBENT, Kind::MipImprovingSolution),
-        (Events::NATIVE, Kind::MipGetCutPool),
+        (Event::Progress, Kind::MipLogging),
+        (Event::Feasible, Kind::MipSolution),
+        (Event::Feasible, Kind::QpFirstFeasiblePoint),
+        (Event::Incumbent, Kind::MipImprovingSolution),
+        (Event::Native, Kind::MipGetCutPool),
     ];
     let chosen = by_event
         .into_iter()
@@ -392,7 +392,7 @@ fn poll(hook: &mut Hook<'_, '_>, call: &Call, poller: Poller, elapsed: Duration,
             iterations: count(field!(call, qpasm_iteration_count)),
         },
     };
-    if hook.wanted.contains(Events::POLL) {
+    if hook.wanted.contains(Event::Poll) {
         hook.hooks.poll(&mut HighsPoll {
             elapsed,
             source,
@@ -423,7 +423,7 @@ unsafe fn log(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     if log_type == HighsLogType::Error {
         hook.last_error = Some(text.trim_end().to_owned());
     }
-    if hook.wanted.contains(Events::LOG) {
+    if hook.wanted.contains(Event::Log) {
         hook.hooks.log(&mut HighsLog {
             text: &text,
             log_type,
@@ -524,7 +524,7 @@ fn report_offer(hook: &mut Hook<'_, '_>, call: &Call, elapsed: Duration) {
     }
     let Some(offer) = hook.offered.take() else { return };
     hook.incumbent = Some(offer.objective);
-    if hook.wanted.contains(Events::INCUMBENT) {
+    if hook.wanted.contains(Event::Incumbent) {
         let values = TiSlice::from_ref(offer.values.as_slice());
         let mut ctx = HighsSolution {
             elapsed,
@@ -1189,7 +1189,7 @@ pub struct HighsCutPool {
     pub mip: HighsMipData,
 }
 
-/// What only HiGHS reports, delivered as [`Events::NATIVE`].
+/// What only HiGHS reports, delivered as [`Event::Native`].
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum HighsNative {

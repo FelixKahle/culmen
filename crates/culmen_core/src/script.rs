@@ -10,10 +10,10 @@ use typed_index_collections::{TiSlice, TiVec};
 
 use crate::solve::context::{check_constraint, check_entries, check_solution};
 use crate::{
-    ActionError, AddedRow, Backend, Col, Cols, Constraint, Context, CutContext, Events, HeuristicContext, Heuristics,
-    Hooks, LazyConstraints, LazyContext, LogContext, LogLevel, ModelClasses, NewCol, Outcome, Phase, PollContext,
-    PriceContext, PriceMode, Priced, Prices, Program, ProgramFeatures, Progress, ProgressContext, Row, Sense, Settings,
-    Solution, SolutionContext, Solved, Start, Starts, StopReason, UserCuts,
+    ActionError, AddedRow, Backend, Col, Cols, Constraint, Context, CutContext, Event, Events, HeuristicContext,
+    Heuristics, Hooks, LazyConstraints, LazyContext, LogContext, LogLevel, ModelClasses, NewCol, Outcome, Phase,
+    PollContext, PriceContext, PriceMode, Priced, Prices, Program, ProgramFeatures, Progress, ProgressContext, Row,
+    Sense, Settings, Solution, SolutionContext, Solved, Start, Starts, StopReason, UserCuts,
 };
 
 /// A solution found during a solve, with where the solve stood when it was found: what a [`Script`] step reports, and
@@ -79,19 +79,19 @@ impl Step {
     /// one is registered.
     ///
     /// ```
-    /// use culmen_core::{Events, Step};
-    /// assert_eq!(Step::Note("presolve done".to_owned()).event(), Some(Events::NATIVE));
+    /// use culmen_core::{Event, Step};
+    /// assert_eq!(Step::Note("presolve done".to_owned()).event(), Some(Event::Native));
     /// ```
     #[must_use]
-    pub const fn event(&self) -> Option<Events> {
+    pub const fn event(&self) -> Option<Event> {
         Some(match self {
-            Self::Log { .. } => Events::LOG,
-            Self::Progress(_) => Events::PROGRESS,
-            Self::Poll(_) => Events::POLL,
-            Self::Feasible(_) => Events::FEASIBLE,
-            Self::Incumbent(_) => Events::INCUMBENT,
+            Self::Log { .. } => Event::Log,
+            Self::Progress(_) => Event::Progress,
+            Self::Poll(_) => Event::Poll,
+            Self::Feasible(_) => Event::Feasible,
+            Self::Incumbent(_) => Event::Incumbent,
             Self::Lazy(_) | Self::Cut { .. } | Self::Heuristic(_) | Self::Price { .. } => return None,
-            Self::Note(_) => Events::NATIVE,
+            Self::Note(_) => Event::Native,
         })
     }
 }

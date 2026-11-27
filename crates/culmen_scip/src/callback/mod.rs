@@ -7,10 +7,10 @@
 //!
 //! | SCIP 10 plugin | callback | culmen event or handler | context |
 //! |---|---|---|---|
-//! | message handler | info and warning messages | [`Events::LOG`] | [`ScipLog`] |
-//! | event handler | `PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED` | [`Events::POLL`], [`Events::PROGRESS`] | [`ScipPoll`], [`ScipProgress`] |
-//! | event handler | `POORSOLFOUND`, `BESTSOLFOUND` | [`Events::FEASIBLE`] | [`ScipSolution`] |
-//! | event handler | `BESTSOLFOUND` | [`Events::INCUMBENT`] | [`ScipSolution`] |
+//! | message handler | info and warning messages | [`Event::Log`] | [`ScipLog`] |
+//! | event handler | `PRESOLVEROUND`, `NODEFOCUSED`, `LPSOLVED`, `NODESOLVED` | [`Event::Poll`], [`Event::Progress`] | [`ScipPoll`], [`ScipProgress`] |
+//! | event handler | `POORSOLFOUND`, `BESTSOLFOUND` | [`Event::Feasible`] | [`ScipSolution`] |
+//! | event handler | `BESTSOLFOUND` | [`Event::Incumbent`] | [`ScipSolution`] |
 //! | constraint handler | `CONSCHECK`, `CONSENFOLP`, `CONSENFOPS`, `CONSENFORELAX` | [`LazyHandler`](culmen_core::LazyHandler) | [`ScipLazy`] |
 //! | separator | `SEPAEXECLP` | [`CutHandler`](culmen_core::CutHandler) | [`ScipCut`] |
 //! | primal heuristic | `HEUREXEC` | [`HeuristicHandler`](culmen_core::HeuristicHandler) | [`ScipHeuristic`] |
@@ -63,7 +63,7 @@ use std::time::Instant;
 
 use culmen_core::context::check_constraint;
 use culmen_core::{
-    ActionError, AddedRow, Col, Constraint, Events, Found, Hooks, LogLevel, Phase, Priced, Progress, Row, Sense,
+    ActionError, AddedRow, Col, Constraint, Event, Events, Found, Hooks, LogLevel, Phase, Priced, Progress, Row, Sense,
     TiSlice, TiVec,
 };
 pub use cut::ScipCut;
@@ -462,10 +462,10 @@ impl<'a, 'h> Run<'a, 'h> {
     }
 
     fn solution_now(&self, scip: *mut SCIP, found: &Found, best: bool) {
-        if self.wanted.contains(Events::FEASIBLE) {
+        if self.wanted.contains(Event::Feasible) {
             self.deliver(scip, |hooks| hooks.feasible(&mut ScipSolution::new(found)));
         }
-        if best && self.wanted.contains(Events::INCUMBENT) {
+        if best && self.wanted.contains(Event::Incumbent) {
             self.deliver(scip, |hooks| hooks.incumbent(&mut ScipSolution::new(found)));
         }
     }

@@ -21,16 +21,16 @@ Each step is one event, in the generic terms of [`Callback`](callbacks.md#callba
 
 | Step | Event or handler | Context offers |
 |---|---|---|
-| `Step::Log { elapsed, level, text }` | `LOG` | the chunk; line breaks in `text` end lines |
-| `Step::Progress(progress)` | `PROGRESS` | the progress |
-| `Step::Poll(progress)` | `POLL` | `interrupt()` |
-| `Step::Feasible(found)` | `FEASIBLE` | the solution |
-| `Step::Incumbent(found)` | `INCUMBENT` | the solution |
+| `Step::Log { elapsed, level, text }` | `Log` | the chunk; line breaks in `text` end lines |
+| `Step::Progress(progress)` | `Progress` | the progress |
+| `Step::Poll(progress)` | `Poll` | `interrupt()` |
+| `Step::Feasible(found)` | `Feasible` | the solution |
+| `Step::Incumbent(found)` | `Incumbent` | the solution |
 | `Step::Lazy(found)` | `LazyHandler` | the candidate; `add_lazy` |
 | `Step::Cut { progress, relaxation }` | `CutHandler` | the relaxation; `add_cut` |
 | `Step::Heuristic(progress)` | `HeuristicHandler` | `supply`, and `supply_partial` as an inherent method of `ScriptHeuristic` |
 | `Step::Price { progress, mode, duals }` | `Pricer` | a `ScriptPrice`: the mode, the program's sense, the duals, `tolerance()` of `ScriptPrice::TOLERANCE`; `add_col`, `branch_early`, `report_bound` |
-| `Step::Note(text)` | `NATIVE` | a `ScriptNote` with `text()` |
+| `Step::Note(text)` | `Native` | a `ScriptNote` with `text()` |
 
 A `Found` is `{ progress, objective, values }`. `step.event()` names a step's observational event kind, `None` for
 the four search steps.

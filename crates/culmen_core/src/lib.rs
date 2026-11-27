@@ -101,11 +101,12 @@ pub use script::{
     ScriptPoll, ScriptPrice, ScriptProgress, ScriptSolution, ScriptStatus, Step,
 };
 pub use solve::{
-    ActionError, AddedRow, Backend, Callback, Context, CutContext, CutHandler, Edit, EditError, Events, EventsIter,
-    HeuristicContext, HeuristicHandler, Heuristics, Hooks, Improvement, LazyConstraints, LazyContext, LazyHandler,
-    LoadError, LogContext, LogLevel, LogLine, Observer, Outcome, Phase, PollContext, PriceContext, PriceMode, Priced,
-    Pricer, Prices, Progress, ProgressContext, Relay, Run, Settings, Solution, SolutionContext, SolveError, Solved,
-    Solver, Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, UserCuts, Watch, stop_fn,
+    ActionError, AddedRow, Backend, Callback, Context, CutContext, CutHandler, Edit, EditError, Event, Events,
+    EventsIter, HeuristicContext, HeuristicHandler, Heuristics, Hooks, Improvement, LazyConstraints, LazyContext,
+    LazyHandler, LoadError, LogContext, LogLevel, LogLine, Observer, Outcome, Phase, PollContext, PriceContext,
+    PriceMode, Priced, Pricer, Prices, Progress, ProgressContext, Relay, Run, Settings, Solution, SolutionContext,
+    SolveError, Solved, Solver, Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, UserCuts,
+    Watch, stop_fn,
 };
 pub use solve::{
     Analysis, AnalysisError, Basis, BasisAnalysis, BasisStatus, Bound, Configurable, DualAnalysis, Duals, Iis,

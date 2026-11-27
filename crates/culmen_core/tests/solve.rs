@@ -15,10 +15,11 @@ use std::sync::atomic::AtomicBool;
 use proptest::prelude::*;
 
 use culmen_core::{
-    ActionError, AddedRow, Backend, Callback, Col, Context, CutContext, CutHandler, Events, Found, HeuristicContext,
-    HeuristicHandler, Heuristics, Hooks, Improvement, InvalidBounds, LazyConstraints, LazyContext, LazyHandler, Linear,
-    LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, PriceMode, ProgramPlan, Progress, Script,
-    ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, UserCuts, Var, bounds, stop_fn,
+    ActionError, AddedRow, Backend, Callback, Col, Context, CutContext, CutHandler, Event, Events, Found,
+    HeuristicContext, HeuristicHandler, Heuristics, Hooks, Improvement, InvalidBounds, LazyConstraints, LazyContext,
+    LazyHandler, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, PriceMode, ProgramPlan,
+    Progress, Script, ScriptStatus, Settings, Solution, SolutionContext, Solver, Step, StopReason, TiVec, UserCuts,
+    Var, bounds, stop_fn,
 };
 
 fn secs(s: u64) -> Duration {
@@ -346,7 +347,7 @@ struct PollCounter(usize);
 
 impl<B: Backend> Callback<B> for PollCounter {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn poll(&mut self, ctx: &mut B::Poll<'_>) {
         self.0 += 1;
@@ -421,7 +422,7 @@ fn test_settings_reach_the_backend_and_events_print_by_name() {
     solver.run().time_limit(secs(5)).settings(settings).solve().unwrap();
     let got = &solver.backend().record.settings[1];
     assert_eq!((got.time_limit, got.console), (None, true));
-    assert_eq!(format!("{:?}", Events::LOG | Events::NATIVE), "Events(LOG | NATIVE)");
+    assert_eq!(format!("{:?}", Event::Log | Event::Native), "Events(Log | Native)");
     assert_eq!(Script::EVENTS, Events::ALL);
 }
 
@@ -513,40 +514,40 @@ fn test_a_script_reports_the_last_work_its_steps_carried() {
 
 #[test]
 fn test_events_combine_and_iterate_one_by_one() {
-    let mut set = Events::LOG | Events::PROGRESS;
-    set |= Events::POLL;
+    let mut set = Event::Log | Event::Progress;
+    set |= Event::Poll;
     assert_eq!(set.len(), 3);
-    assert_eq!(set & Events::POLL, Events::POLL);
-    set &= Events::LOG | Events::POLL | Events::NATIVE;
-    assert_eq!(set, Events::LOG | Events::POLL);
-    assert_eq!(set.iter().collect::<Vec<_>>(), [Events::LOG, Events::POLL]);
-    assert_eq!(set.iter().rev().collect::<Vec<_>>(), [Events::POLL, Events::LOG]);
-    set.extend([Events::NATIVE, Events::FEASIBLE]);
-    assert_eq!(format!("{set:?}"), "Events(LOG | POLL | FEASIBLE | NATIVE)");
+    assert_eq!(set & Events::from(Event::Poll), Event::Poll.into());
+    set &= Event::Log | Event::Poll | Event::Native;
+    assert_eq!(set, Event::Log | Event::Poll);
+    assert_eq!(set.iter().collect::<Vec<_>>(), [Event::Log, Event::Poll]);
+    assert_eq!(set.iter().rev().collect::<Vec<_>>(), [Event::Poll, Event::Log]);
+    set.extend([Event::Native, Event::Feasible]);
+    assert_eq!(format!("{set:?}"), "Events(Log | Poll | Feasible | Native)");
     assert_eq!(Events::ALL.iter().len(), 6);
     assert_eq!(Events::ALL.into_iter().collect::<Events>(), Events::ALL);
     assert_eq!(format!("{:?}", Events::NONE), "Events()");
-    let mut iter = Events::LOG.iter();
+    let mut iter = Events::from(Event::Log).iter();
     assert_eq!(
         (iter.next(), iter.next(), iter.next_back()),
-        (Some(Events::LOG), None, None)
+        (Some(Event::Log), None, None)
     );
 }
 
-const SINGLE: [Events; 6] = [
-    Events::LOG,
-    Events::PROGRESS,
-    Events::POLL,
-    Events::FEASIBLE,
-    Events::INCUMBENT,
-    Events::NATIVE,
+const SINGLE: [Event; 6] = [
+    Event::Log,
+    Event::Progress,
+    Event::Poll,
+    Event::Feasible,
+    Event::Incumbent,
+    Event::Native,
 ];
 
 proptest! {
-    /// A set built from chosen single events iterates exactly those, in the order of the constants, both ways.
+    /// A set built from chosen events iterates exactly those, in the order of the variants, both ways.
     #[test]
     fn test_events_iterate_the_chosen_singles(chosen in prop::collection::vec(any::<bool>(), 6)) {
-        let singles: Vec<Events> = SINGLE.iter().zip(&chosen).filter(|&(_, &c)| c).map(|(&e, _)| e).collect();
+        let singles: Vec<Event> = SINGLE.iter().zip(&chosen).filter(|&(_, &c)| c).map(|(&e, _)| e).collect();
         let set: Events = singles.iter().copied().collect();
         prop_assert_eq!(set.iter().collect::<Vec<_>>(), singles.clone());
         prop_assert_eq!(set.iter().len(), singles.len());
@@ -559,7 +560,7 @@ proptest! {
         }
     }
 
-    /// The set operations hold each single event exactly as the boolean operation on its membership does.
+    /// The set operations hold each event exactly as the boolean operation on its membership does.
     #[test]
     fn test_events_set_operations_agree_with_membership(
         a in prop::collection::vec(any::<bool>(), 6),
@@ -577,6 +578,8 @@ proptest! {
             prop_assert_eq!((x & y).contains(*event), a[i] && b[i]);
             prop_assert_eq!((x - y).contains(*event), a[i] && !b[i]);
             prop_assert_eq!((!x).contains(*event), !a[i]);
+            prop_assert_eq!((x | *event).contains(*event), true);
+            prop_assert_eq!((x - *event).contains(*event), false);
         }
         prop_assert_eq!(!!x, x);
     }
@@ -585,11 +588,11 @@ proptest! {
 #[test]
 fn test_events_display_as_a_set_of_names() {
     assert_eq!(Events::NONE.to_string(), "{}");
-    assert_eq!((Events::NATIVE | Events::LOG).to_string(), "{LOG, NATIVE}");
+    assert_eq!((Event::Native | Event::Log).to_string(), "{log, native}");
     assert_eq!(Events::ALL.complement(), Events::NONE);
     assert_eq!(
-        (Events::ALL - Events::NATIVE).to_string(),
-        "{LOG, PROGRESS, POLL, FEASIBLE, INCUMBENT}"
+        (Events::ALL - Event::Native).to_string(),
+        "{log, progress, poll, feasible, incumbent}"
     );
 }
 

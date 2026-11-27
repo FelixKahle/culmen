@@ -66,7 +66,7 @@ impl fmt::Display for ProgramFeature {
 /// use culmen_core::{ProgramFeature, ProgramFeatures};
 ///
 /// const SEMI: ProgramFeatures = ProgramFeatures::of(&[ProgramFeature::SemiContinuous, ProgramFeature::SemiInteger]);
-/// let features = SEMI | ProgramFeature::MultipleObjectives.into();
+/// let features = SEMI | ProgramFeature::MultipleObjectives;
 /// assert!(features.contains(ProgramFeature::MultipleObjectives));
 /// assert!(!SEMI.contains(ProgramFeature::MultipleObjectives));
 /// assert_eq!(features & SEMI, SEMI);

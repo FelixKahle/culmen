@@ -94,7 +94,7 @@ impl fmt::Display for ModelClass {
 /// use culmen_core::{ModelClass, ModelClasses};
 ///
 /// const LINEAR: ModelClasses = ModelClasses::of(&[ModelClass::Lp, ModelClass::Milp]);
-/// let classes = LINEAR | ModelClass::Qp.into();
+/// let classes = LINEAR | ModelClass::Qp;
 /// assert!(classes.contains(ModelClass::Qp));
 /// assert!(!classes.contains(ModelClass::Miqp));
 /// assert_eq!(classes & LINEAR, LINEAR);

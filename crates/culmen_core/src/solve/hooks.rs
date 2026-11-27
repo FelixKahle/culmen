@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use crate::{Backend, Callback, Events, Heuristics, LazyConstraints, Priced, Prices, UserCuts};
+use crate::{Backend, Callback, Event, Events, Heuristics, LazyConstraints, Priced, Prices, UserCuts};
 
 /// What a solve asks about each candidate solution: lazy constraints that cut it off before the solver accepts it.
 ///
@@ -339,7 +339,7 @@ impl<'h, B: Backend> Hooks<'h, B> {
 
     /// Runs `call` on each callback that asks for `event`: the solver's own first, then the registered one, then the
     /// relayed hooks.
-    fn each(&mut self, event: Events, mut call: impl FnMut(&mut dyn Callback<B>)) {
+    fn each(&mut self, event: Event, mut call: impl FnMut(&mut dyn Callback<B>)) {
         if let Some(watch) = self.watch.as_deref_mut()
             && watch.events().contains(event)
         {
@@ -357,34 +357,34 @@ impl<'h, B: Backend> Hooks<'h, B> {
         }
     }
 
-    /// Hands a log chunk to each callback that asks for [`Events::LOG`].
+    /// Hands a log chunk to each callback that asks for [`Event::Log`].
     pub fn log(&mut self, ctx: &mut B::Log<'_>) {
-        self.each(Events::LOG, |c| c.log(ctx));
+        self.each(Event::Log, |c| c.log(ctx));
     }
 
-    /// Hands a progress report to each callback that asks for [`Events::PROGRESS`].
+    /// Hands a progress report to each callback that asks for [`Event::Progress`].
     pub fn progress(&mut self, ctx: &mut B::Progress<'_>) {
-        self.each(Events::PROGRESS, |c| c.progress(ctx));
+        self.each(Event::Progress, |c| c.progress(ctx));
     }
 
-    /// Hands a poll to each callback that asks for [`Events::POLL`].
+    /// Hands a poll to each callback that asks for [`Event::Poll`].
     pub fn poll(&mut self, ctx: &mut B::Poll<'_>) {
-        self.each(Events::POLL, |c| c.poll(ctx));
+        self.each(Event::Poll, |c| c.poll(ctx));
     }
 
-    /// Hands a feasible solution to each callback that asks for [`Events::FEASIBLE`].
+    /// Hands a feasible solution to each callback that asks for [`Event::Feasible`].
     pub fn feasible(&mut self, ctx: &mut B::Solution<'_>) {
-        self.each(Events::FEASIBLE, |c| c.feasible(ctx));
+        self.each(Event::Feasible, |c| c.feasible(ctx));
     }
 
-    /// Hands a new incumbent to each callback that asks for [`Events::INCUMBENT`].
+    /// Hands a new incumbent to each callback that asks for [`Event::Incumbent`].
     pub fn incumbent(&mut self, ctx: &mut B::Solution<'_>) {
-        self.each(Events::INCUMBENT, |c| c.incumbent(ctx));
+        self.each(Event::Incumbent, |c| c.incumbent(ctx));
     }
 
-    /// Hands a native event to each callback that asks for [`Events::NATIVE`].
+    /// Hands a native event to each callback that asks for [`Event::Native`].
     pub fn native(&mut self, ctx: &mut B::Native<'_>) {
-        self.each(Events::NATIVE, |c| c.native(ctx));
+        self.each(Event::Native, |c| c.native(ctx));
     }
 
     /// The sink of the columns the pricer adds, made for the loaded program: `Some` when a pricer is registered, or

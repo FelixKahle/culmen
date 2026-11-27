@@ -14,9 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use culmen_core::{
-    Backend, Bounds, Col, Context, Events, LinExpr, Linear, LoadError, Model, ModelClass, Outcome, Phase, PollContext,
-    Program, ProgramColumn, ProgramPlan, Progress, QuadExpr, Sense, Solution, SolutionContext, SolveError, Solved,
-    Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
+    Backend, Bounds, Col, Context, Event, Events, LinExpr, Linear, LoadError, Model, ModelClass, Outcome, Phase,
+    PollContext, Program, ProgramColumn, ProgramPlan, Progress, QuadExpr, Sense, Solution, SolutionContext, SolveError,
+    Solved, Solver, StopReason, TiSlice, TiVec, Var, stop_fn,
 };
 use culmen_highs::{Highs, HighsError, HighsOptions, HighsPollSource, LpSolver};
 use culmen_testing::reference::close;
@@ -362,22 +362,22 @@ struct Kinds(Events);
 
 impl culmen_core::Callback<Highs> for Kinds {
     fn log(&mut self, _: &mut culmen_highs::HighsLog<'_>) {
-        self.0 |= Events::LOG;
+        self.0 |= Event::Log;
     }
     fn progress(&mut self, _: &mut culmen_highs::HighsProgress) {
-        self.0 |= Events::PROGRESS;
+        self.0 |= Event::Progress;
     }
     fn poll(&mut self, _: &mut culmen_highs::HighsPoll<'_>) {
-        self.0 |= Events::POLL;
+        self.0 |= Event::Poll;
     }
     fn feasible(&mut self, _: &mut culmen_highs::HighsSolution<'_>) {
-        self.0 |= Events::FEASIBLE;
+        self.0 |= Event::Feasible;
     }
     fn incumbent(&mut self, _: &mut culmen_highs::HighsSolution<'_>) {
-        self.0 |= Events::INCUMBENT;
+        self.0 |= Event::Incumbent;
     }
     fn native(&mut self, _: &mut culmen_highs::HighsNative) {
-        self.0 |= Events::NATIVE;
+        self.0 |= Event::Native;
     }
 }
 
@@ -396,7 +396,7 @@ fn test_a_qp_solve_reports_its_log_its_polls_and_its_first_feasible_point() {
     let mut solver = Solver::new(Highs::new(), projection()).unwrap();
     let mut kinds = Kinds(Events::NONE);
     solver.run().callback(&mut kinds).solve().unwrap();
-    assert_eq!(kinds.0, Events::LOG | Events::POLL | Events::FEASIBLE);
+    assert_eq!(kinds.0, Event::Log | Event::Poll | Event::Feasible);
 }
 
 /// Every QP poll's source, interrupting at the first when asked to.

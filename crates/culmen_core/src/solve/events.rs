@@ -4,253 +4,111 @@
 //! The kinds of callback events, a set of them, and the progress every event carries.
 
 use core::fmt;
-use core::iter::FusedIterator;
-use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not, Sub, SubAssign};
 use core::time::Duration;
 
-use itertools::Itertools;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// A set of observational callback event kinds: what a [`Backend`](crate::Backend) supports ([`Backend::EVENTS`])
-/// and what a [`Callback`](crate::Callback) asks for ([`Callback::events`](crate::Callback::events)).
+/// A kind of observational callback event: what a [`Callback`](crate::Callback) method is called for.
+///
+/// The events that change the search (lazy constraints, user cuts, heuristic solutions, pricing) are not events of
+/// this kind: each is a handler registered on the [`Run`](crate::Run) of a solve, for a backend with its capability.
+///
+/// ```
+/// use culmen_core::Event;
+/// assert_eq!(Event::Incumbent.to_string(), "incumbent");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum Event {
+    /// A chunk of the solver's log.
+    Log,
+    /// A progress report the solver issues at its own pace, such as a line of its MIP log.
+    Progress,
+    /// A frequent poll at which a callback may interrupt the solve.
+    Poll,
+    /// Any feasible solution the solver found.
+    Feasible,
+    /// A new incumbent: a feasible solution better than every one before.
+    Incumbent,
+    /// An event only the backend knows, delivered with the backend's own context type.
+    Native,
+}
+
+impl Event {
+    /// Every event, in the order of their bits in [`Events`].
+    const ALL: [Self; 6] = [
+        Self::Log,
+        Self::Progress,
+        Self::Poll,
+        Self::Feasible,
+        Self::Incumbent,
+        Self::Native,
+    ];
+
+    /// The event's bit in an [`Events`].
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+
+    /// The event in one word.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Log => "log",
+            Self::Progress => "progress",
+            Self::Poll => "poll",
+            Self::Feasible => "feasible",
+            Self::Incumbent => "incumbent",
+            Self::Native => "native",
+        }
+    }
+}
+
+/// The event in one lower-case word, such as `incumbent`.
+impl fmt::Display for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// A set of [`Event`]s: what a [`Backend`](crate::Backend) delivers ([`Backend::EVENTS`]) and what a
+/// [`Callback`](crate::Callback) asks for ([`Callback::events`](crate::Callback::events)).
 ///
 /// A backend delivers an event only when it is in both sets, so a callback that asks for fewer events costs the
-/// solver less. The events that change the search (lazy constraints, user cuts, heuristic solutions, pricing) are not
-/// in this set: each is a handler registered on the [`Hooks`](crate::Hooks) of a solve, for a backend with its
-/// capability, so neither [`Events::ALL`] nor a complement can turn one on.
+/// solver less. No event that changes the search is in this set, so neither [`Events::ALL`] nor a complement can turn
+/// one on.
 ///
 /// [`Backend::EVENTS`]: crate::Backend::EVENTS
 ///
 /// ```
-/// use culmen_core::Events;
-/// let wanted = Events::LOG | Events::POLL;
-/// assert!(wanted.contains(Events::POLL));
-/// assert!(!wanted.contains(Events::NATIVE));
-/// assert_eq!(wanted & Events::POLL, Events::POLL);
-/// assert_eq!(wanted - Events::LOG, Events::POLL);
+/// use culmen_core::{Event, Events};
+///
+/// const WATCH: Events = Events::of(&[Event::Log, Event::Poll]);
+/// let wanted = Event::Log | Event::Poll;
+/// assert_eq!(wanted, WATCH);
+/// assert!(wanted.contains(Event::Poll));
+/// assert!(!wanted.contains(Event::Native));
+/// assert_eq!(wanted - Event::Log, Event::Poll.into());
 /// assert_eq!(!wanted, Events::ALL - wanted);
 /// assert_eq!(wanted.iter().collect::<Events>(), wanted);
-/// assert_eq!(format!("{wanted:?}"), "Events(LOG | POLL)");
-/// assert_eq!(wanted.to_string(), "{LOG, POLL}");
+/// assert_eq!(format!("{wanted:?}"), "Events(Log | Poll)");
+/// assert_eq!(wanted.to_string(), "{log, poll}");
 /// assert_eq!(Events::ALL.len(), 6);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct Events(u16);
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(from = "Vec<Event>", into = "Vec<Event>")
+)]
+pub struct Events(u8);
 
-impl Events {
-    /// No event.
-    pub const NONE: Self = Self(0);
-    /// A chunk of the solver's log.
-    pub const LOG: Self = Self(1);
-    /// A progress report the solver issues at its own pace, such as a line of its MIP log.
-    pub const PROGRESS: Self = Self(1 << 1);
-    /// A frequent poll at which a callback may interrupt the solve.
-    pub const POLL: Self = Self(1 << 2);
-    /// Any feasible solution the solver found.
-    pub const FEASIBLE: Self = Self(1 << 3);
-    /// A new incumbent: a feasible solution better than every one before.
-    pub const INCUMBENT: Self = Self(1 << 4);
-    /// An event only the backend knows, delivered with the backend's own context type.
-    pub const NATIVE: Self = Self(1 << 5);
-    /// Every event.
-    pub const ALL: Self = Self((1 << 6) - 1);
-
-    const NAMES: [(Self, &'static str); 6] = [
-        (Self::LOG, "LOG"),
-        (Self::PROGRESS, "PROGRESS"),
-        (Self::POLL, "POLL"),
-        (Self::FEASIBLE, "FEASIBLE"),
-        (Self::INCUMBENT, "INCUMBENT"),
-        (Self::NATIVE, "NATIVE"),
-    ];
-
-    /// The events in either set.
-    #[must_use]
-    pub const fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-
-    /// The events in both sets.
-    #[must_use]
-    pub const fn intersection(self, other: Self) -> Self {
-        Self(self.0 & other.0)
-    }
-
-    /// The events in this set and not in `other`.
-    #[must_use]
-    pub const fn difference(self, other: Self) -> Self {
-        Self(self.0 & !other.0)
-    }
-
-    /// The events not in this set: [`Events::ALL`] without them.
-    #[must_use]
-    pub const fn complement(self) -> Self {
-        Self::ALL.difference(self)
-    }
-
-    /// Whether every event of `other` is in this set.
-    #[must_use]
-    pub const fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
-    }
-
-    /// Whether the set is empty.
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// The number of events in the set.
-    #[must_use]
-    pub const fn len(self) -> usize {
-        self.0.count_ones() as usize
-    }
-
-    /// Each event of the set on its own, in the order of the constants above.
-    pub const fn iter(self) -> EventsIter {
-        EventsIter(self)
-    }
-
-    /// The name of a single event, as its constant is named; `None` for any other set.
-    const fn name(self) -> Option<&'static str> {
-        let mut i = 0;
-        while i < Self::NAMES.len() {
-            if Self::NAMES[i].0.0 == self.0 {
-                return Some(Self::NAMES[i].1);
-            }
-            i += 1;
-        }
-        None
-    }
-}
-
-impl BitOr for Events {
-    type Output = Self;
-    fn bitor(self, other: Self) -> Self {
-        self.union(other)
-    }
-}
-
-impl BitOrAssign for Events {
-    fn bitor_assign(&mut self, other: Self) {
-        *self = self.union(other);
-    }
-}
-
-impl BitAnd for Events {
-    type Output = Self;
-    fn bitand(self, other: Self) -> Self {
-        self.intersection(other)
-    }
-}
-
-impl BitAndAssign for Events {
-    fn bitand_assign(&mut self, other: Self) {
-        *self = self.intersection(other);
-    }
-}
-
-impl Sub for Events {
-    type Output = Self;
-    fn sub(self, other: Self) -> Self {
-        self.difference(other)
-    }
-}
-
-impl SubAssign for Events {
-    fn sub_assign(&mut self, other: Self) {
-        *self = self.difference(other);
-    }
-}
-
-impl Not for Events {
-    type Output = Self;
-    fn not(self) -> Self {
-        self.complement()
-    }
-}
-
-impl FromIterator<Self> for Events {
-    fn from_iter<I: IntoIterator<Item = Self>>(iter: I) -> Self {
-        iter.into_iter().fold(Self::NONE, Self::union)
-    }
-}
-
-impl Extend<Self> for Events {
-    fn extend<I: IntoIterator<Item = Self>>(&mut self, iter: I) {
-        *self = iter.into_iter().fold(*self, Self::union);
-    }
-}
-
-impl IntoIterator for Events {
-    type Item = Self;
-    type IntoIter = EventsIter;
-
-    fn into_iter(self) -> EventsIter {
-        self.iter()
-    }
-}
-
-impl fmt::Debug for Events {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Events(")?;
-        for (i, event) in self.iter().enumerate() {
-            if i > 0 {
-                f.write_str(" | ")?;
-            }
-            f.write_str(event.name().unwrap_or("?"))?;
-        }
-        f.write_str(")")
-    }
-}
-
-/// `{LOG, POLL}`, each event by the name of its constant; `{}` for none.
-impl fmt::Display for Events {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let names = self.iter().map(|event| event.name().unwrap_or("?"));
-        write!(f, "{{{}}}", names.format(", "))
-    }
-}
-
-/// The single events of an [`Events`] set, lowest first; made by [`Events::iter`].
+/// The events of an [`Events`] set, in the order of [`Event`]'s variants; made by [`Events::iter`].
 #[derive(Clone, Debug)]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct EventsIter(Events);
 
-impl Iterator for EventsIter {
-    type Item = Events;
-
-    fn next(&mut self) -> Option<Events> {
-        let rest = (self.0).0;
-        if rest == 0 {
-            return None;
-        }
-        let lowest = rest.isolate_lowest_one();
-        (self.0).0 = rest & !lowest;
-        Some(Events(lowest))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.0.len(), Some(self.0.len()))
-    }
-}
-
-impl DoubleEndedIterator for EventsIter {
-    fn next_back(&mut self) -> Option<Events> {
-        let rest = (self.0).0;
-        if rest == 0 {
-            return None;
-        }
-        let highest = rest.isolate_highest_one();
-        (self.0).0 = rest & !highest;
-        Some(Events(highest))
-    }
-}
-
-impl ExactSizeIterator for EventsIter {}
-
-impl FusedIterator for EventsIter {}
+crate::set::element_set!(Events, EventsIter, Event, u8, "events", "{:?}");
 
 /// The phase of a solve an event comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

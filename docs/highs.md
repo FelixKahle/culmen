@@ -13,7 +13,7 @@ it is `culmen::highs`, and its backend type is also `culmen::Highs` and in the p
 | `Highs::new()` | A backend with HiGHS's default options. |
 | `Highs::with_options(options)` | A backend with the given `HighsOptions`. |
 | `options()`, `options_mut()` (`Configurable`, `Options = HighsOptions`) | The options, to read or to change between solves; `solver.options_mut()` reaches them through a `Solver`. |
-| `Highs::EVENTS` | Every observational event: `LOG`, `PROGRESS`, `POLL`, `FEASIBLE`, `INCUMBENT` and `NATIVE`. |
+| `Highs::EVENTS` | Every observational event: `Log`, `Progress`, `Poll`, `Feasible`, `Incumbent` and `Native`. |
 | Search capabilities | `Heuristics` alone ([Heuristic solutions](#heuristic-solutions)); no `LazyConstraints`, `UserCuts` or `Prices` ([Limitations](#limitations)). |
 | `Highs::CLASSES` | `Lp`, `Milp` and `Qp`; see [Quadratic programs](#quadratic-programs). |
 | `culmen_highs::version()` | The version of the linked HiGHS; it displays as `1.16.x`. |
@@ -244,9 +244,9 @@ trusted:
 
 - **A poll, a first feasible point and the log.** HiGHS 1.16's active-set QP solver polls for an interrupt once its
   starting point is found and then at every iteration, and reports that starting point once. A QP solve therefore
-  delivers `POLL`, with `HighsPollSource::Qp { iterations }`, so a [`Stop`](callbacks.md#stop) ends it as
-  `Stopped { reason: Interrupted, .. }`; it delivers `FEASIBLE` once, for the starting point, valued by the backend
-  since HiGHS reports no objective with it; and `LOG`. It delivers no `PROGRESS` and no `INCUMBENT`, so an observer
+  delivers `Poll`, with `HighsPollSource::Qp { iterations }`, so a [`Stop`](callbacks.md#stop) ends it as
+  `Stopped { reason: Interrupted, .. }`; it delivers `Feasible` once, for the starting point, valued by the backend
+  since HiGHS reports no objective with it; and `Log`. It delivers no `Progress` and no `Incumbent`, so an observer
   sees no progress and no improvement. The time limit of the [`Settings`](solving.md#settings) applies as before.
 - **A row is always passed.** On a QP without rows HiGHS 1.16 starts from the unconstrained minimizer clamped into
   the bounds, and 1.15 reported that point optimal after no iteration when it was not. The backend passes such a QP
@@ -434,13 +434,13 @@ A `Callback<Highs>` and a `HeuristicHandler<Highs>` receive HiGHS's own context 
 
 | Event or handler | Context | HiGHS callback | Beyond the trait |
 |---|---|---|---|
-| `LOG` | `HighsLog` | `kHighsCallbackLogging` | `log_type()`: a `HighsLogType`, `Info`, `Detailed`, `Verbose`, `Warning` or `Error` |
-| `PROGRESS` | `HighsProgress` | `kHighsCallbackMipLogging`, when HiGHS writes a MIP log line | `mip()`: the `HighsMipData` |
-| `POLL` | `HighsPoll` | the simplex, interior-point, MIP and QP interrupt callbacks | `source()`: a `HighsPollSource`, `Simplex { iterations }`, `Ipm { iterations }`, `Mip(HighsMipData)` or `Qp { iterations }` |
-| `FEASIBLE` | `HighsSolution` | `kHighsCallbackMipSolution`, and `kHighsCallbackQpFirstFeasiblePoint` once per QP solve | `mip()`: the `HighsMipData`, `None` for the QP's point |
-| `INCUMBENT` | `HighsSolution` | `kHighsCallbackMipImprovingSolution` | `mip()` |
+| `Log` | `HighsLog` | `kHighsCallbackLogging` | `log_type()`: a `HighsLogType`, `Info`, `Detailed`, `Verbose`, `Warning` or `Error` |
+| `Progress` | `HighsProgress` | `kHighsCallbackMipLogging`, when HiGHS writes a MIP log line | `mip()`: the `HighsMipData` |
+| `Poll` | `HighsPoll` | the simplex, interior-point, MIP and QP interrupt callbacks | `source()`: a `HighsPollSource`, `Simplex { iterations }`, `Ipm { iterations }`, `Mip(HighsMipData)` or `Qp { iterations }` |
+| `Feasible` | `HighsSolution` | `kHighsCallbackMipSolution`, and `kHighsCallbackQpFirstFeasiblePoint` once per QP solve | `mip()`: the `HighsMipData`, `None` for the QP's point |
+| `Incumbent` | `HighsSolution` | `kHighsCallbackMipImprovingSolution` | `mip()` |
 | `HeuristicHandler` | `HighsHeuristic` | `kHighsCallbackMipUserSolution`, started only for a solve with a heuristic handler | `origin()`, a `HighsQueryOrigin`; `mip()`; `supply_partial(&entries)` |
-| `NATIVE` | `HighsNative` | `kHighsCallbackMipGetCutPool` | the [cut pool](#the-cut-pool) |
+| `Native` | `HighsNative` | `kHighsCallbackMipGetCutPool` | the [cut pool](#the-cut-pool) |
 | lazy constraints, cuts, pricing | none | none | `Highs` implements none of their capabilities, so their handlers do not compile ([Limitations](#limitations)) |
 
 `HighsMipData` is what every MIP callback reports, in the model's objective space, offset included:
@@ -475,7 +475,7 @@ struct Inspect {
 
 impl Callback<Highs> for Inspect {
     fn events(&self) -> Events {
-        Events::LOG | Events::POLL
+        Event::Log | Event::Poll
     }
     fn log(&mut self, ctx: &mut HighsLog<'_>) {
         if ctx.log_type() == HighsLogType::Warning {
@@ -526,7 +526,7 @@ HiGHS 1.16 does not define.
   call at the same query supplied.
 
 HiGHS calls neither solution callback for a solution it takes this way, so the backend reports it itself: once a
-MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as `INCUMBENT`, and so reaches the
+MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as `Incumbent`, and so reaches the
 [observer](callbacks.md#observer) too.
 
 ```rust
@@ -573,7 +573,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## The cut pool
 
-At `NATIVE`, HiGHS reports its cut pool after the root node, and again after each restart, as
+At `Native`, HiGHS reports its cut pool after the root node, and again after each restart, as
 `HighsNative::CutPool(pool)`. The pool is copied out of HiGHS, so it may be kept:
 
 | Field | Holds |

@@ -19,10 +19,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
 use culmen_core::{
-    ActionError, Bounds, Callback, Col, Context, CutContext, CutHandler, Events, HeuristicContext, HeuristicHandler,
-    Integrality, LazyContext, LazyHandler, Linear, NewCol, Outcome, Phase, PollContext, PriceContext, PriceMode,
-    Program, ProgramColumn, ProgramPlan, Row, Sense, Settings, Solution, SolutionContext, SolveError, Solved, Solver,
-    StopReason, TiVec, bounds,
+    ActionError, Bounds, Callback, Col, Context, CutContext, CutHandler, Event, Events, HeuristicContext,
+    HeuristicHandler, Integrality, LazyContext, LazyHandler, Linear, NewCol, Outcome, Phase, PollContext, PriceContext,
+    PriceMode, Program, ProgramColumn, ProgramPlan, Row, Sense, Settings, Solution, SolutionContext, SolveError,
+    Solved, Solver, StopReason, TiVec, bounds,
 };
 use culmen_scip::{
     Scip, ScipCut, ScipError, ScipEvent, ScipHeuristic, ScipLazy, ScipOptions, ScipPoll, ScipPrice, ScipProgress,
@@ -512,7 +512,7 @@ struct Interrupts {
 
 impl Roles for Interrupts {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -647,7 +647,7 @@ struct PollsWhilePricing {
 
 impl Roles for PollsWhilePricing {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -746,7 +746,7 @@ struct Phases {
 
 impl Roles for Phases {
     fn events(&self) -> Events {
-        Events::PROGRESS
+        Event::Progress.into()
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -794,7 +794,7 @@ struct Supplies {
 impl Roles for Supplies {
     const HEURISTIC: bool = true;
     fn events(&self) -> Events {
-        Events::FEASIBLE
+        Event::Feasible.into()
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.pricer.price_round(ctx);
@@ -1144,7 +1144,7 @@ struct SplitPricer {
 
 impl Roles for SplitPricer {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn price(&mut self, ctx: &mut ScipPrice<'_>) {
         self.rounds += 1;

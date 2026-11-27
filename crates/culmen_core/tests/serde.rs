@@ -14,9 +14,9 @@ use core::fmt::Debug;
 use core::time::Duration;
 
 use culmen_core::{
-    AbsoluteGap, Bounds, Col, Integrality, Linear, Model, ModelClass, ModelClasses, Outcome, Phase, PriceMode, Program,
-    ProgramError, ProgramPlan, Progress, RelativeGap, Row, Sense, Settings, Solution, Solved, StopReason, Var,
-    absolute_gap, bounds, relative_gap, threads,
+    AbsoluteGap, Bounds, Col, Event, Events, Integrality, Linear, Model, ModelClass, ModelClasses, Outcome, Phase,
+    PriceMode, Program, ProgramError, ProgramPlan, Progress, RelativeGap, Row, Sense, Settings, Solution, Solved,
+    StopReason, Var, absolute_gap, bounds, relative_gap, threads,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -63,6 +63,10 @@ fn test_plain_data_round_trips() {
     round_trip(&ModelClasses::of(&[ModelClass::Lp, ModelClass::Qp]));
     round_trip(&ModelClasses::NONE);
     round_trip(&ModelClasses::ALL);
+    round_trip(&Event::Incumbent);
+    round_trip(&(Event::Log | Event::Poll));
+    round_trip(&Events::NONE);
+    round_trip(&Events::ALL);
     round_trip(&Settings {
         time_limit: Some(Duration::from_millis(1500)),
         threads: Some(threads!(2)),
@@ -128,6 +132,10 @@ fn test_the_quadratic_part_is_checked_as_it_is_read() {
     assert_eq!(
         serde_json::to_string(&ModelClasses::of(&[ModelClass::Milp, ModelClass::Lp])).unwrap(),
         r#"["Lp","Milp"]"#
+    );
+    assert_eq!(
+        serde_json::to_string(&(Event::Poll | Event::Log)).unwrap(),
+        r#"["Log","Poll"]"#
     );
     let mut plan = ProgramPlan::from(sample_qp());
     plan.sense = Sense::Minimize;

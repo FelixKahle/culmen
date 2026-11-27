@@ -15,10 +15,11 @@ use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
 use culmen_core::{
-    ActionError, Backend, Callback, Col, Constraint, Context, CutContext, CutHandler, Events, Found, HeuristicContext,
-    HeuristicHandler, Heuristics, LazyConstraints, LazyContext, LazyHandler, LinExpr, Linear, LogContext, LogLevel,
-    Model, Observer, Outcome, Phase, PollContext, Program, ProgramPlan, ProgramRow, Progress, Script, Settings,
-    Solution, SolutionContext, SolveError, Solver, Step, StopReason, Term, TiSlice, TiVec, UserCuts, Var, relative_gap,
+    ActionError, Backend, Callback, Col, Constraint, Context, CutContext, CutHandler, Event, Events, Found,
+    HeuristicContext, HeuristicHandler, Heuristics, LazyConstraints, LazyContext, LazyHandler, LinExpr, Linear,
+    LogContext, LogLevel, Model, Observer, Outcome, Phase, PollContext, Program, ProgramPlan, ProgramRow, Progress,
+    Script, Settings, Solution, SolutionContext, SolveError, Solver, Step, StopReason, Term, TiSlice, TiVec, UserCuts,
+    Var, relative_gap,
 };
 use culmen_scip::{Emphasis, RetCode, Scip, ScipError, ScipEvent, ScipLazySource, ScipOptions};
 use culmen_testing::instances::assignment;
@@ -695,7 +696,7 @@ struct Incumbents(Vec<f64>);
 
 impl Callback<Scip> for Incumbents {
     fn events(&self) -> Events {
-        Events::INCUMBENT
+        Event::Incumbent.into()
     }
     fn incumbent(&mut self, ctx: &mut <Scip as Backend>::Solution<'_>) {
         self.0.push(ctx.objective());
@@ -814,7 +815,7 @@ struct InterruptWhen<F> {
 
 impl<F: FnMut(&Progress) -> bool + Send> Callback<Scip> for InterruptWhen<F> {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn poll(&mut self, ctx: &mut <Scip as Backend>::Poll<'_>) {
         self.polls.push((ctx.event(), ctx.progress()));
@@ -933,7 +934,7 @@ struct Reports(Vec<Progress>);
 
 impl Callback<Scip> for Reports {
     fn events(&self) -> Events {
-        Events::PROGRESS
+        Event::Progress.into()
     }
     fn progress(&mut self, ctx: &mut <Scip as Backend>::Progress<'_>) {
         self.0.push(ctx.progress());
@@ -983,7 +984,7 @@ struct Lines {
 
 impl Callback<Scip> for Lines {
     fn events(&self) -> Events {
-        Events::LOG
+        Event::Log.into()
     }
     fn log(&mut self, ctx: &mut <Scip as Backend>::Log<'_>) {
         self.chunks.push((ctx.level(), ctx.text().to_owned()));
@@ -1059,7 +1060,7 @@ fn test_log_lines_arrive_whole_and_reach_stdout_only_with_the_console() {
 }
 
 /// Panics at the first event of one kind.
-struct PanicAt(Events);
+struct PanicAt(Event);
 
 impl PanicAt {
     fn fire(&self) {
@@ -1069,7 +1070,7 @@ impl PanicAt {
 
 impl Callback<Scip> for PanicAt {
     fn events(&self) -> Events {
-        self.0
+        self.0.into()
     }
     fn log(&mut self, _: &mut <Scip as Backend>::Log<'_>) {
         self.fire();
@@ -1164,19 +1165,19 @@ impl Callback<Scip> for Seen {
         Events::ALL
     }
     fn log(&mut self, _: &mut <Scip as Backend>::Log<'_>) {
-        self.0 |= Events::LOG;
+        self.0 |= Event::Log;
     }
     fn progress(&mut self, _: &mut <Scip as Backend>::Progress<'_>) {
-        self.0 |= Events::PROGRESS;
+        self.0 |= Event::Progress;
     }
     fn poll(&mut self, _: &mut <Scip as Backend>::Poll<'_>) {
-        self.0 |= Events::POLL;
+        self.0 |= Event::Poll;
     }
     fn feasible(&mut self, _: &mut <Scip as Backend>::Solution<'_>) {
-        self.0 |= Events::FEASIBLE;
+        self.0 |= Event::Feasible;
     }
     fn incumbent(&mut self, _: &mut <Scip as Backend>::Solution<'_>) {
-        self.0 |= Events::INCUMBENT;
+        self.0 |= Event::Incumbent;
     }
 }
 
@@ -1211,7 +1212,7 @@ impl HeuristicHandler<Scip> for Hit {
 
 #[test]
 fn test_scips_events_are_exactly_the_events_it_delivers_and_every_handler_runs() {
-    assert_eq!(Scip::EVENTS, Events::ALL - Events::NATIVE);
+    assert_eq!(Scip::EVENTS, Events::ALL - Event::Native);
     let (program, _) = knapsack();
     let mut seen = Seen::default();
     let (mut lazy, mut cut, mut heuristic) = (Hit::default(), Hit::default(), Hit::default());
@@ -1308,7 +1309,7 @@ struct Solutions {
 
 impl Callback<Scip> for Solutions {
     fn events(&self) -> Events {
-        Events::FEASIBLE | Events::INCUMBENT
+        Event::Feasible | Event::Incumbent
     }
     fn feasible(&mut self, ctx: &mut <Scip as Backend>::Solution<'_>) {
         self.feasible.push((ctx.objective(), ctx.values().to_owned()));

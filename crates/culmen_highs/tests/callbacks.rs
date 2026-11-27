@@ -16,9 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use culmen_core::{
-    ActionError, Backend, Callback, Col, Context, Events, HeuristicContext, HeuristicHandler, Heuristics, Improvement,
-    LinExpr, Linear, LogLine, Model, Observer, Outcome, Phase, PollContext, Program, Progress, Settings, Solution,
-    SolutionContext, SolveError, Solved, Solver, StopReason, TiVec, Var, relative_gap,
+    ActionError, Backend, Callback, Col, Context, Event, Events, HeuristicContext, HeuristicHandler, Heuristics,
+    Improvement, LinExpr, Linear, LogLine, Model, Observer, Outcome, Phase, PollContext, Program, Progress, Settings,
+    Solution, SolutionContext, SolveError, Solved, Solver, StopReason, TiVec, Var, relative_gap,
 };
 use culmen_highs::{
     Highs, HighsError, HighsNative, HighsOptions, HighsPollSource, HighsQueryOrigin, HighsStatus, LpSolver, Switch,
@@ -631,7 +631,7 @@ fn test_poll_context_reports_mip_progress_in_generic_terms() {
     struct FirstMipPoll(Option<Progress>);
     impl Callback<Highs> for FirstMipPoll {
         fn events(&self) -> Events {
-            Events::POLL
+            Event::Poll.into()
         }
         fn poll(&mut self, ctx: &mut <Highs as Backend>::Poll<'_>) {
             if let HighsPollSource::Mip(mip) = ctx.source()
@@ -726,7 +726,7 @@ struct Nested {
 
 impl Callback<Highs> for Nested {
     fn events(&self) -> Events {
-        Events::POLL
+        Event::Poll.into()
     }
     fn poll(&mut self, ctx: &mut <Highs as Backend>::Poll<'_>) {
         if self.inner.is_none() && matches!(ctx.source(), HighsPollSource::Mip(_)) {
