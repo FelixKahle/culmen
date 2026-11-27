@@ -374,6 +374,9 @@ relaxation, a column priced in by column generation, a variable fixed in a dive.
 | `set_col_integrality([(col, integrality), ..])` | Columns' integrality. |
 | `set_row_bounds([(row, bounds), ..])` | Rows' bounds; `..`, `Bounds::FREE`, switches a row off. |
 | `add_row(row)`, `add_rows(rows)` | Appends rows and returns them: anything [`Model::add_constraint`](modelling.md#constraints) takes, a `Constraint`, a `(name, constraint)` pair or a `ProgramRow`. |
+| `set_sense(sense)` | The sense of the program's own objective; refused for a program with a quadratic part, which is convex for one sense only. |
+| `set_offset(offset)` | The constant of the program's own objective. |
+| `set_objective(sense, expr)` | The program's own objective whole, as `Model::set_objective` sets it: every cost (zero for a column the expression leaves out), the offset, the quadratic part and the sense. Further objectives stay. |
 | `add_col(column)`, `add_cols(columns)` | Appends columns and returns them: a `NewCol`, built as `NewCol::continuous().cost(2).entry(row, 1)` with its entries in existing rows, or a bare `ProgramColumn` in no row. |
 
 Every edit keeps these rules:

@@ -437,6 +437,36 @@ fn new_col(rows: usize) -> impl Strategy<Value = NewCol> {
     )
 }
 
+/// An offset: a small integer, one time in five NaN or an infinity.
+fn edit_offset() -> impl Strategy<Value = f64> {
+    prop_oneof![
+        4 => (-3i32..=3).prop_map(f64::from),
+        1 => prop_oneof![Just(f64::NAN), Just(f64::INFINITY), Just(f64::NEG_INFINITY)],
+    ]
+}
+
+/// Either sense.
+fn edit_sense() -> impl Strategy<Value = Sense> {
+    prop_oneof![Just(Sense::Minimize), Just(Sense::Maximize)]
+}
+
+/// A replaced objective whose terms name columns below `cols`: its sense, linear terms, constant, and mostly no
+/// squares.
+fn edit_objective(cols: usize) -> impl Strategy<Value = EditOp> {
+    let col = move || (0..cols).prop_map(Col::new);
+    let squares = prop_oneof![
+        2 => Just(Vec::new()),
+        1 => prop::collection::vec((col(), edit_number()), 1..=2),
+    ];
+    let terms = prop::collection::vec((col(), edit_number()), 0..=3);
+    (edit_sense(), terms, edit_offset(), squares).prop_map(|(sense, terms, constant, squares)| EditOp::Objective {
+        sense,
+        terms,
+        constant,
+        squares,
+    })
+}
+
 /// One edit whose ids lie below `cols + 2` columns and `rows + 2` rows, so some name nothing.
 fn edit_op(cols: usize, rows: usize) -> impl Strategy<Value = EditOp> {
     let (cols, rows) = (cols + 2, rows + 2);
@@ -449,6 +479,9 @@ fn edit_op(cols: usize, rows: usize) -> impl Strategy<Value = EditOp> {
         prop::collection::vec((row(), edit_bounds()), 0..=3).prop_map(EditOp::RowBounds),
         prop::collection::vec(new_row(cols), 0..=2).prop_map(EditOp::AddRows),
         prop::collection::vec(new_col(rows), 0..=2).prop_map(EditOp::AddCols),
+        edit_sense().prop_map(EditOp::Sense),
+        edit_offset().prop_map(EditOp::Offset),
+        edit_objective(cols),
     ]
 }
 
@@ -480,7 +513,7 @@ mod tests {
     fn test_edits_of_every_kind_are_both_accepted_and_refused() {
         let mut runner = TestRunner::deterministic();
         let strategy = with_edits(prop_oneof![small_lp(), small_semi(), small_qp()]);
-        let (mut accepted, mut refused) = ([0usize; 6], [0usize; 6]);
+        let (mut accepted, mut refused) = ([0usize; 9], [0usize; 9]);
         for _ in 0..2000 {
             let (program, ops) = strategy.new_tree(&mut runner).unwrap().current();
             for op in &ops {
@@ -491,6 +524,9 @@ mod tests {
                     EditOp::RowBounds(_) => 3,
                     EditOp::AddRows(_) => 4,
                     EditOp::AddCols(_) => 5,
+                    EditOp::Sense(_) => 6,
+                    EditOp::Offset(_) => 7,
+                    EditOp::Objective { .. } => 8,
                 };
                 match edit_plan(&program, op, ModelClasses::ALL, ProgramFeatures::ALL) {
                     Ok(_) => accepted[kind] += 1,

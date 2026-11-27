@@ -106,9 +106,9 @@ pub trait RelaxationAnalysis: Backend {
   unchanged on every backend, and a `Solver` runs it before the callback registered on the run.
 - **Edits are a hook with a correct default.** A `Solver` that [edits its program](solving.md#editing-a-loaded-program)
   calls `edit` with the edited program and an `Edit` naming what changed: the columns whose bounds, costs or
-  integrality changed, the rows whose bounds changed, or the rows or columns appended. Only a `Solver` makes an
-  `Edit`, and its variants are non-exhaustive, so a backend matches it (`Edit::ColBounds { cols, .. }`) and never
-  forges one. It calls `edit` only right after the backend held the program before the edit, and only with a class
+  integrality changed, the rows whose bounds changed, the rows or columns appended, the objective's sense or offset,
+  or the whole own objective. Only a `Solver` makes an `Edit`, and the enum is non-exhaustive, so a backend matches it
+  (`Edit::ColBounds { cols, .. }`) and never forges one. It calls `edit` only right after the backend held the program before the edit, and only with a class
   and features the backend declares. The default loads the program whole; a backend overrides it to change its model
   in place and keep its warm start, and falls back to `load` for any kind of `Edit` it does not handle, since the enum
   is non-exhaustive. When `edit` fails, the backend may hold anything: the `Solver` loads the program before the edit

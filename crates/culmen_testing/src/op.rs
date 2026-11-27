@@ -4,7 +4,7 @@
 //! Edits of a loaded program as plain data, so a property test can generate them, replay them on a
 //! [`Solver`] and judge them with the [reference](crate::reference::edit_plan).
 
-use culmen_core::{Backend, Bounds, Col, EditError, Integrality, NewCol, NewRow, Row, Solver};
+use culmen_core::{Backend, Bounds, Col, EditError, Integrality, NewCol, NewRow, QuadExpr, Row, Sense, Solver};
 
 /// One edit of a [`Solver`]'s program, one variant per edit method.
 #[derive(Clone, Debug, PartialEq)]
@@ -21,6 +21,21 @@ pub enum EditOp {
     AddRows(Vec<NewRow>),
     /// [`Solver::add_cols`].
     AddCols(Vec<NewCol>),
+    /// [`Solver::set_sense`].
+    Sense(Sense),
+    /// [`Solver::set_offset`].
+    Offset(f64),
+    /// [`Solver::set_objective`] of `Σ coefficient · col + constant + Σ q · col²` in `sense`.
+    Objective {
+        /// The sense.
+        sense: Sense,
+        /// The linear terms as `(col, coefficient)`, in order.
+        terms: Vec<(Col, f64)>,
+        /// The constant.
+        constant: f64,
+        /// The squares as `(col, q)`, each adding `q · col²`, in order.
+        squares: Vec<(Col, f64)>,
+    },
 }
 
 /// What an accepted edit returned.
@@ -48,6 +63,23 @@ impl EditOp {
             Self::RowBounds(bounds) => solver.set_row_bounds(bounds).map(|()| Applied::Changed),
             Self::AddRows(rows) => solver.add_rows(rows).map(|rows| Applied::Rows(rows.collect())),
             Self::AddCols(cols) => solver.add_cols(cols).map(|cols| Applied::Cols(cols.collect())),
+            Self::Sense(sense) => solver.set_sense(sense).map(|()| Applied::Changed),
+            Self::Offset(offset) => solver.set_offset(offset).map(|()| Applied::Changed),
+            Self::Objective {
+                sense,
+                terms,
+                constant,
+                squares,
+            } => {
+                let mut objective = QuadExpr::from(constant);
+                for (col, a) in terms {
+                    objective.linear.add_term(col, a);
+                }
+                for (col, q) in squares {
+                    objective.add_term(col, col, q);
+                }
+                solver.set_objective(sense, objective).map(|()| Applied::Changed)
+            }
         }
     }
 }

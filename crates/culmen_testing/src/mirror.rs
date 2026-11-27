@@ -67,6 +67,12 @@ pub enum Edited {
     NewRows(Vec<Row>),
     /// [`Edit::NewCols`].
     NewCols(Vec<Col>),
+    /// [`Edit::Sense`].
+    Sense,
+    /// [`Edit::Offset`].
+    Offset,
+    /// [`Edit::Objective`].
+    Objective,
     /// A kind this mirror does not know, by its `Debug` form.
     Other(String),
 }
@@ -81,6 +87,9 @@ impl Edited {
             Edit::RowBounds { rows, .. } => Self::RowBounds(rows.clone()),
             Edit::NewRows { rows, .. } => Self::NewRows(rows.into_iter().collect()),
             Edit::NewCols { cols, .. } => Self::NewCols(cols.into_iter().collect()),
+            Edit::Sense => Self::Sense,
+            Edit::Offset => Self::Offset,
+            Edit::Objective => Self::Objective,
             other => Self::Other(format!("{other:?}")),
         }
     }
@@ -176,6 +185,19 @@ fn changed_only_as_named(before: &Program, after: &Program, edit: &Edited) -> bo
             rows.iter().for_each(|&r| expected.rows.push(got.rows[r].clone()));
         }
         Edited::NewCols(cols) => return appended_columns(&mut expected, &got, cols) && expected == got,
+        Edited::Sense => expected.sense = got.sense,
+        Edited::Offset => expected.offset = got.offset,
+        Edited::Objective => {
+            expected.sense = got.sense;
+            expected.offset = got.offset;
+            expected.quadratic.clone_from(&got.quadratic);
+            if expected.columns.len() != got.columns.len() {
+                return false;
+            }
+            for (column, new) in expected.columns.iter_mut().zip(&got.columns) {
+                column.cost = new.cost;
+            }
+        }
         Edited::Other(_) => return true,
         _ => return false,
     }

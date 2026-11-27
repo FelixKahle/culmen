@@ -133,6 +133,140 @@ fn test_set_col_costs_changes_the_own_objective_and_takes_integers() {
 }
 
 #[test]
+fn test_set_sense_and_set_offset_change_only_the_own_objective_sense_and_offset() {
+    let mut solver = mirrored();
+    solver.set_sense(Sense::Maximize).unwrap();
+    let mut want = base_plan();
+    want.sense = Sense::Maximize;
+    let maximized = want.clone().build().unwrap();
+    assert_eq!(solver.program(), &maximized);
+    assert_eq!(last_call(&solver), &Call::Edit(Edited::Sense, maximized));
+    solver.set_offset(-2).unwrap();
+    want.offset = -2.0;
+    let want = want.build().unwrap();
+    assert_eq!(solver.program(), &want);
+    assert_eq!(last_call(&solver), &Call::Edit(Edited::Offset, want.clone()));
+    assert_eq!(
+        solver.set_offset(f64::INFINITY),
+        Err(EditError::NonFiniteOffset { value: f64::INFINITY })
+    );
+    assert_eq!(solver.program(), &want);
+    assert_in_sync(&solver);
+}
+
+#[test]
+fn test_set_objective_replaces_every_cost_the_offset_the_sense_and_the_quadratic_part() {
+    let (_, x, y, ..) = base();
+    let mut solver = mirrored();
+    solver
+        .set_objective(Sense::Maximize, 4 * y + 2 * y - x * x - 3)
+        .unwrap();
+    let mut want = base_plan();
+    want.sense = Sense::Maximize;
+    want.offset = -3.0;
+    want.columns[x].cost = 0.0;
+    want.columns[y].cost = 6.0;
+    want.quadratic = vec![(x, x, -1.0)];
+    let want = want.build().unwrap();
+    assert_eq!(solver.program(), &want);
+    assert_eq!(solver.program().class(), ModelClass::Qp);
+    assert_eq!(last_call(&solver), &Call::Edit(Edited::Objective, want));
+    assert_in_sync(&solver);
+
+    // A quadratic part convex for one sense is not concave for the other, so the sense alone cannot flip; the whole
+    // objective can, and back to linear.
+    assert_eq!(
+        solver.set_sense(Sense::Minimize),
+        Err(EditError::NonConvexObjective {
+            sense: Sense::Minimize,
+            col: x
+        })
+    );
+    solver.set_objective(Sense::Minimize, x * x + y).unwrap();
+    solver.set_objective(Sense::Minimize, 2.0 * x + 3.0 * y + 1).unwrap();
+    assert_eq!(solver.program(), &base().0);
+    assert_in_sync(&solver);
+}
+
+#[test]
+fn test_set_objective_refuses_what_a_model_would_and_changes_nothing() {
+    let (program, x, y, ..) = base();
+    let mut solver = mirrored();
+    let refusals: [(culmen_core::QuadExpr, Sense, Refusal); 6] = [
+        (
+            Col::new(5) + x * x,
+            Sense::Minimize,
+            EditError::UnknownCol { col: Col::new(5) },
+        ),
+        (
+            (x * 1e308 + x * 1e308).into(),
+            Sense::Minimize,
+            EditError::NonFiniteCost {
+                col: x,
+                value: f64::INFINITY,
+            },
+        ),
+        (
+            (y + f64::NEG_INFINITY).into(),
+            Sense::Minimize,
+            EditError::NonFiniteOffset {
+                value: f64::NEG_INFINITY,
+            },
+        ),
+        (
+            (f64::INFINITY * x * y).into(),
+            Sense::Minimize,
+            EditError::NonFiniteQuadCoefficient {
+                first: x,
+                second: y,
+                value: f64::INFINITY,
+            },
+        ),
+        (
+            x * x - y * y,
+            Sense::Minimize,
+            EditError::NonConvexObjective {
+                sense: Sense::Minimize,
+                col: y,
+            },
+        ),
+        (
+            (x * x).into(),
+            Sense::Maximize,
+            EditError::NonConvexObjective {
+                sense: Sense::Maximize,
+                col: x,
+            },
+        ),
+    ];
+    for (objective, sense, refusal) in refusals {
+        assert_eq!(solver.set_objective(sense, objective), Err(refusal));
+        assert_eq!(solver.program(), &program);
+    }
+    assert_in_sync(&solver);
+
+    // A square beside further objectives, and a quadratic part for a backend without QPs.
+    let mut m = Model::new();
+    let z = m.add_var(Var::continuous().upper(1));
+    m.minimize(z);
+    m.add_stage(culmen_core::Objective::maximize(z), culmen_core::Tolerance::EXACT);
+    let mut several = Solver::new(Script::optimal(0.0, vec![0.0]), m.build().unwrap()).unwrap();
+    assert_eq!(
+        several.set_objective(Sense::Minimize, z * z),
+        Err(EditError::QuadraticWithObjectives)
+    );
+    let mut lp = Solver::new(Plain::<false>::default(), program).unwrap();
+    assert_eq!(
+        lp.set_objective(Sense::Minimize, x * x),
+        Err(EditError::UnsupportedClass {
+            class: ModelClass::Qp,
+            supported: ModelClasses::of(&[ModelClass::Lp])
+        })
+    );
+    assert_eq!(lp.backend().loads, 1);
+}
+
+#[test]
 fn test_set_col_integrality_makes_an_lp_a_milp() {
     let (_, _, y, ..) = base();
     let mut solver = mirrored();
@@ -505,7 +639,7 @@ fn test_each_refusal_names_what_is_at_fault_and_changes_nothing() {
 
 #[test]
 fn test_every_edit_error_displays_its_sentence_and_its_source() {
-    let cases: [(EditError<ScriptError>, &str, bool); 9] = [
+    let cases: [(EditError<ScriptError>, &str, bool); 14] = [
         (
             EditError::UnknownCol { col: Col::new(3) },
             "Solver: the program has no Col(3)",
@@ -548,6 +682,41 @@ fn test_every_edit_error_displays_its_sentence_and_its_source() {
                 bounds: bounds!(0.0, 1.0),
             },
             "Solver: the semi column Col(2) would have the bounds [0, 1], not 0 < lower <= upper < +inf",
+            false,
+        ),
+        (
+            EditError::NonFiniteOffset { value: f64::NAN },
+            "Solver: the objective offset NaN is not finite",
+            false,
+        ),
+        (
+            EditError::NonFiniteQuadCoefficient {
+                first: Col::new(0),
+                second: Col::new(1),
+                value: f64::INFINITY,
+            },
+            "Solver: the quadratic coefficient inf of Col(0) · Col(1) is not finite",
+            false,
+        ),
+        (
+            EditError::NonConvexObjective {
+                sense: Sense::Minimize,
+                col: Col::new(1),
+            },
+            "Solver: the quadratic objective would not be convex in the block of Col(1)",
+            false,
+        ),
+        (
+            EditError::NonConvexObjective {
+                sense: Sense::Maximize,
+                col: Col::new(0),
+            },
+            "Solver: the quadratic objective would not be concave in the block of Col(0)",
+            false,
+        ),
+        (
+            EditError::QuadraticWithObjectives,
+            "Solver: the objective would have a quadratic part beside further objectives",
             false,
         ),
         (
@@ -848,6 +1017,7 @@ fn is_empty(op: &EditOp) -> bool {
         EditOp::RowBounds(items) => items.is_empty(),
         EditOp::AddRows(items) => items.is_empty(),
         EditOp::AddCols(items) => items.is_empty(),
+        EditOp::Sense(_) | EditOp::Offset(_) | EditOp::Objective { .. } => false,
     }
 }
 

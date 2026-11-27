@@ -379,13 +379,21 @@ pub struct Refused {
 /// - A new column is appended after every column, and each entry `(row, a)` adds the term `(column, a)` to `row`.
 /// - Every column's cost is finite, and a semi column's bounds are `lower ..= upper` with `0 < lower` and `upper`
 ///   finite. In every row, the coefficients of each column, added up in the order given, are finite.
+/// - The sense of the program's own objective may change only while it has no quadratic part, since the quadratic
+///   part a program holds is convex for its sense and a non-zero one is then not concave for the other. An offset is
+///   finite.
+/// - A replaced objective names only the program's columns; each column's cost is its coefficients added up in the
+///   order given, zero without one, and finite after every term; its constant is finite. Its squares' coefficients are
+///   finite, and so is each column's sum of them and twice that sum, its Hessian value; a sum is at least zero to
+///   minimize and at most zero to maximize, the convexity of a quadratic part of squares; and a non-zero sum is
+///   refused beside further objectives.
 /// - The backend solves the edited program's class (`classes`): an LP, or a MILP once a column is integer or semi,
 ///   a QP or MIQP alike with a quadratic objective. It takes its features (`features`): a semi-continuous or
 ///   semi-integer column, and the program's further objectives.
 ///
 /// The rules are judged here, without the checks of `culmen_core` that the code under test calls; the edited plan is
-/// then built into the program returned, and an edit changes nothing else a program is checked for (its offset, its
-/// quadratic part, its further objectives), so a plan these rules accept builds.
+/// then built into the program returned, and an edit changes nothing else a program is checked for, so a plan these
+/// rules accept builds.
 ///
 /// # Errors
 ///
@@ -424,6 +432,14 @@ pub fn edit_plan(
             }
         }
         EditOp::AddCols(new) => new.iter().try_for_each(|new| append_column(&mut plan, new, num_rows))?,
+        EditOp::Sense(sense) => set_sense(&mut plan, *sense)?,
+        EditOp::Offset(offset) => plan.offset = finite_offset(*offset)?,
+        EditOp::Objective {
+            sense,
+            terms,
+            constant,
+            squares,
+        } => replace_objective(&mut plan, *sense, terms, *constant, squares)?,
     }
     check_columns_and_rows(&plan)?;
     let (class, used) = class_and_features(&plan);
@@ -435,6 +451,109 @@ pub fn edit_plan(
     }
     let built = plan.build();
     Ok(built.unwrap_or_else(|e| panic!("the edit rules accept a plan Program::from_plan refuses: {e}")))
+}
+
+/// Sets the plan's sense.
+///
+/// # Errors
+///
+/// [`Refused`] when the sense changes beside a quadratic part.
+fn set_sense(plan: &mut ProgramPlan, sense: Sense) -> Result<(), Refused> {
+    if sense != plan.sense && !plan.quadratic.is_empty() {
+        return Err(refused(format!(
+            "a quadratic part kept while the sense becomes {sense:?}"
+        )));
+    }
+    plan.sense = sense;
+    Ok(())
+}
+
+/// The offset given.
+///
+/// # Errors
+///
+/// [`Refused`] when it is not finite.
+fn finite_offset(offset: f64) -> Result<f64, Refused> {
+    if offset.is_finite() {
+        Ok(offset)
+    } else {
+        Err(refused(format!("the offset {offset} is not finite")))
+    }
+}
+
+/// Replaces the plan's own objective with `Σ terms + constant + Σ q · col²` in `sense`.
+///
+/// # Errors
+///
+/// [`Refused`] for the first rule the objective breaks.
+fn replace_objective(
+    plan: &mut ProgramPlan,
+    sense: Sense,
+    terms: &[(Col, f64)],
+    constant: f64,
+    squares: &[(Col, f64)],
+) -> Result<(), Refused> {
+    let num_cols = plan.columns.len();
+    if let Some((col, _)) = terms.iter().chain(squares).find(|(col, _)| col.index() >= num_cols) {
+        return Err(refused(format!("the objective names {col:?}, which the program lacks")));
+    }
+    let mut costs = vec![0.0; num_cols];
+    for &(col, a) in terms {
+        costs[col.index()] += a;
+        if !costs[col.index()].is_finite() {
+            return Err(refused(format!(
+                "{col:?} costs {} in the objective",
+                costs[col.index()]
+            )));
+        }
+    }
+    let offset = finite_offset(constant)?;
+    let sums = square_sums(squares, sense)?;
+    if sums.values().any(|&q| q != 0.0) && plan.objectives.are_several() {
+        return Err(refused("a quadratic part beside further objectives"));
+    }
+    plan.sense = sense;
+    plan.offset = offset;
+    plan.columns
+        .iter_mut()
+        .zip(costs)
+        .for_each(|(column, cost)| column.cost = cost);
+    plan.quadratic = sums
+        .into_iter()
+        .filter(|&(_, q)| q != 0.0)
+        .map(|(col, q)| (col, col, q))
+        .collect();
+    Ok(())
+}
+
+/// Each column's squares' coefficients added up.
+///
+/// # Errors
+///
+/// [`Refused`] for a coefficient, a sum or twice a sum that is not finite, or a sum of the wrong sign for `sense`.
+fn square_sums(squares: &[(Col, f64)], sense: Sense) -> Result<BTreeMap<Col, f64>, Refused> {
+    if let Some((col, q)) = squares.iter().find(|(_, q)| !q.is_finite()) {
+        return Err(refused(format!("the square of {col:?} has the coefficient {q}")));
+    }
+    let mut sums: BTreeMap<Col, f64> = BTreeMap::new();
+    for &(col, q) in squares {
+        *sums.entry(col).or_insert(0.0) += q;
+    }
+    for (&col, &sum) in &sums {
+        if !(2.0 * sum).is_finite() {
+            return Err(refused(format!("the squares of {col:?} sum to {sum}")));
+        }
+        let convex = match sense {
+            Sense::Minimize => sum >= 0.0,
+            Sense::Maximize => sum <= 0.0,
+        };
+        if !convex {
+            return Err(refused(format!(
+                "the squares of {col:?} sum to {sum}, which {sense:?} refuses"
+            )));
+        }
+    }
+    Ok(sums)
 }
 
 /// Checks every cost, every semi column's bounds, and every row's coefficients added up per column.

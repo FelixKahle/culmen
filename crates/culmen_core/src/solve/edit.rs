@@ -8,17 +8,21 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use super::{Backend, Solver, lack};
-use crate::program::{BadColumn, BadTerm, bad_column, bad_term, merge_terms};
+use typed_index_collections::TiVec;
+
+use crate::program::{
+    BadColumn, BadTerm, OwnObjective, bad_column, bad_term, check_convex, hessian_value, merge_pairs, merge_terms,
+};
 use crate::{
     Bounds, Col, Cols, Integrality, InvalidBounds, ModelClass, ModelClasses, NewCol, NewRow, Program, ProgramColumn,
-    ProgramFeature, ProgramFeatures, ProgramRow, Row, Rows,
+    ProgramFeature, ProgramFeatures, ProgramRow, QuadExpr, QuadObjective, Quadratic, Row, Rows, Sense,
 };
 
 /// What one edit changed in a [`Solver`]'s program; the new values are read from the program.
 ///
 /// Only a [`Solver`] makes one, so its ids are the edited program's, sorted ascending, each once, and new rows and
 /// columns follow every one before them. [`Backend::edit`] receives it beside the edited program and matches it as
-/// `Edit::ColBounds { cols, .. }`; every variant is non-exhaustive, so a later version may add to it.
+/// `Edit::ColBounds { cols, .. }`; the enum is non-exhaustive, so a later version may add to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Edit {
@@ -58,6 +62,13 @@ pub enum Edit {
         /// The columns, the program's last.
         cols: Cols,
     },
+    /// The sense of the program's own objective was set.
+    Sense,
+    /// The offset of the program's own objective was set.
+    Offset,
+    /// The program's own objective was replaced: its sense, every column's cost, its offset and its quadratic part,
+    /// which may be the one it had.
+    Objective,
 }
 
 /// Why a [`Solver`] refused an edit.
@@ -116,6 +127,31 @@ pub enum EditError<E> {
         /// The bounds it would have.
         bounds: Bounds,
     },
+    /// An objective's offset is NaN or infinite.
+    NonFiniteOffset {
+        /// The offset given.
+        value: f64,
+    },
+    /// A quadratic coefficient of a new objective is NaN or infinite, as given or after the terms of its pair were
+    /// added up, or a square's coefficient is so large that its Hessian value, twice it, is infinite.
+    NonFiniteQuadCoefficient {
+        /// The first column of the pair.
+        first: Col,
+        /// The second column of the pair.
+        second: Col,
+        /// The coefficient, or a square's infinite Hessian value when the coefficient itself is finite.
+        value: f64,
+    },
+    /// The objective's quadratic part would not be convex for minimizing, or not concave for maximizing, within
+    /// [`Program::CONVEXITY_TOLERANCE`].
+    NonConvexObjective {
+        /// The sense the objective would have.
+        sense: Sense,
+        /// The smallest column of the first block of the Hessian that fails the check.
+        col: Col,
+    },
+    /// The objective would have a quadratic part beside further objectives, which are linear and need it linear too.
+    QuadraticWithObjectives,
     /// The backend does not solve the class the edited program would have.
     UnsupportedClass {
         /// The class the edited program would have.
@@ -153,6 +189,29 @@ impl<E: fmt::Display> fmt::Display for EditError<E> {
                 f,
                 "Solver: the semi column {col:?} would have the bounds {bounds}, not 0 < lower <= upper < +inf"
             ),
+            Self::NonFiniteOffset { value } => write!(f, "Solver: the objective offset {value} is not finite"),
+            Self::NonFiniteQuadCoefficient { first, second, value } => write!(
+                f,
+                "Solver: the quadratic coefficient {value} of {first:?} · {second:?} is not finite"
+            ),
+            Self::NonConvexObjective {
+                sense: Sense::Minimize,
+                col,
+            } => write!(
+                f,
+                "Solver: the quadratic objective would not be convex in the block of {col:?}"
+            ),
+            Self::NonConvexObjective {
+                sense: Sense::Maximize,
+                col,
+            } => write!(
+                f,
+                "Solver: the quadratic objective would not be concave in the block of {col:?}"
+            ),
+            Self::QuadraticWithObjectives => write!(
+                f,
+                "Solver: the objective would have a quadratic part beside further objectives"
+            ),
             Self::UnsupportedClass { class, supported } => {
                 write!(f, "Solver: the backend solves {supported}, not a {class}")
             }
@@ -174,6 +233,10 @@ impl<E: core::error::Error + 'static> core::error::Error for EditError<E> {
             | Self::NonFiniteCost { .. }
             | Self::NonFiniteCoefficient { .. }
             | Self::SemiBounds { .. }
+            | Self::NonFiniteOffset { .. }
+            | Self::NonFiniteQuadCoefficient { .. }
+            | Self::NonConvexObjective { .. }
+            | Self::QuadraticWithObjectives
             | Self::UnsupportedClass { .. }
             | Self::UnsupportedFeature { .. } => None,
         }
@@ -298,6 +361,80 @@ impl<B: Backend> Solver<B> {
         columns: impl IntoIterator<Item = C>,
     ) -> Result<Cols, EditError<B::Error>> {
         self.append_cols(columns.into_iter().map(Into::into).collect())
+    }
+
+    /// Sets the sense of the program's own objective, so the next solve minimizes or maximizes it.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Script, Sense, Solver, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous().upper(4));
+    /// m.minimize(x);
+    /// let mut solver = Solver::new(Script::optimal(0.0, vec![0.0]), m.build()?)?;
+    /// solver.set_sense(Sense::Maximize)?;
+    /// assert_eq!(solver.program().sense(), Sense::Maximize);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NonConvexObjective`] for a program with a quadratic part whose sense changes, since a quadratic
+    /// part convex for one sense is not concave for the other (replace the whole objective with
+    /// [`Solver::set_objective`] instead), before the backend sees the edit; [`EditError::Backend`] when the backend
+    /// refuses it, or refuses the program the solver loads first after an earlier failed edit.
+    pub fn set_sense(&mut self, sense: Sense) -> Result<(), EditError<B::Error>> {
+        self.sync().map_err(EditError::Backend)?;
+        check_convex(sense, self.program.quadratic(), self.program.num_cols())
+            .map_err(|col| EditError::NonConvexObjective { sense, col })?;
+        self.commit(Edit::Sense, |program| Undo::Sense(program.replace_sense(sense)))
+    }
+
+    /// Sets the constant added to the program's own objective.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NonFiniteOffset`] for an offset that is NaN or infinite, before the backend sees the edit;
+    /// [`EditError::Backend`] when the backend refuses it, or refuses the program the solver loads first after an
+    /// earlier failed edit.
+    pub fn set_offset(&mut self, offset: impl Into<f64>) -> Result<(), EditError<B::Error>> {
+        let offset = offset.into();
+        self.sync().map_err(EditError::Backend)?;
+        if !offset.is_finite() {
+            return Err(EditError::NonFiniteOffset { value: offset });
+        }
+        self.commit(Edit::Offset, |program| Undo::Offset(program.replace_offset(offset)))
+    }
+
+    /// Replaces the program's own objective, linear or quadratic, as [`Model::set_objective`](crate::Model::set_objective)
+    /// sets a model's: every column's cost becomes its coefficient in `objective`, zero when it has none, the
+    /// constant becomes the offset, and the quadratic part becomes `objective`'s. Further objectives stay as they are.
+    ///
+    /// ```
+    /// use culmen_core::{Linear, Model, Script, Sense, Solver, Var};
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous().upper(4));
+    /// let y = m.add_var(Var::continuous().upper(4));
+    /// m.minimize(x + y);
+    /// let mut solver = Solver::new(Script::optimal(0.0, vec![0.0, 0.0]), m.build()?)?;
+    /// solver.set_objective(Sense::Maximize, 2 * y - x * x + 1)?;
+    /// let program = solver.program();
+    /// assert_eq!((program.columns()[x].cost, program.columns()[y].cost, program.offset()), (0.0, 2.0, 1.0));
+    /// assert_eq!(program.quadratic().entries().collect::<Vec<_>>(), [(x, x, -1.0)]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Before the backend sees the edit: [`EditError::UnknownCol`] for a term naming a column the program does not
+    /// have, [`EditError::NonFiniteCost`] for a column whose coefficients, added up in the order given, are NaN or
+    /// infinite, [`EditError::NonFiniteOffset`] for a constant that is, [`EditError::NonFiniteQuadCoefficient`] for a
+    /// quadratic coefficient that is as given or added up per pair, [`EditError::NonConvexObjective`] for a quadratic
+    /// part that is not convex to minimize or concave to maximize, [`EditError::QuadraticWithObjectives`] for one
+    /// beside further objectives, and [`EditError::UnsupportedClass`] when the backend does not solve the class the
+    /// program would have. [`EditError::Backend`] when the backend refuses it, or refuses the program the solver
+    /// loads first after an earlier failed edit.
+    pub fn set_objective(&mut self, sense: Sense, objective: impl Quadratic) -> Result<(), EditError<B::Error>> {
+        self.replace_objective(sense, objective.into_quad_expr())
     }
 }
 
@@ -425,6 +562,41 @@ impl<B: Backend> Solver<B> {
         Ok(added)
     }
 
+    /// [`Solver::set_objective`] of an expression.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::set_objective`].
+    fn replace_objective(&mut self, sense: Sense, objective: QuadExpr) -> Result<(), EditError<B::Error>> {
+        self.sync().map_err(EditError::Backend)?;
+        let num_cols = self.program.num_cols();
+        let linear = &objective.linear;
+        let named = linear.terms.iter().map(|t| t.col);
+        let quad = objective.terms.iter().flat_map(|t| [t.first, t.second]);
+        if let Some(col) = named.chain(quad).find(|col| col.index() >= num_cols) {
+            return Err(EditError::UnknownCol { col });
+        }
+        let costs = own_costs(linear.terms.iter().map(|t| (t.col, t.coefficient)), num_cols)?;
+        if !linear.constant.is_finite() {
+            return Err(EditError::NonFiniteOffset { value: linear.constant });
+        }
+        let quadratic = own_quadratic(sense, &objective, num_cols)?;
+        if !quadratic.is_empty() && self.program.objectives().are_several() {
+            return Err(EditError::QuadraticWithObjectives);
+        }
+        let class = Program::class_of(self.program.integralities(), !quadratic.is_empty());
+        lack::<B>(class, self.program.features())?;
+        let own = OwnObjective {
+            sense,
+            costs,
+            offset: linear.constant,
+            quadratic,
+        };
+        self.commit(Edit::Objective, |program| {
+            Undo::Objective(Box::new(program.replace_objective(own)))
+        })
+    }
+
     /// Writes each value of `given` with `replace` as one edit, which `edit` names by the ids written, through
     /// [`Solver::commit`].
     ///
@@ -508,6 +680,7 @@ impl Edit {
             Self::RowBounds { rows } => rows.is_empty(),
             Self::NewRows { rows } => rows.is_empty(),
             Self::NewCols { cols } => cols.is_empty(),
+            Self::Sense | Self::Offset | Self::Objective => false,
         }
     }
 }
@@ -523,6 +696,12 @@ enum Undo {
     ColIntegrality(Vec<(Col, Integrality)>),
     /// These rows' bounds before.
     RowBounds(Vec<(Row, Bounds)>),
+    /// The sense before.
+    Sense(Sense),
+    /// The offset before.
+    Offset(f64),
+    /// The program's own objective before.
+    Objective(Box<OwnObjective>),
     /// The counts before rows or columns were appended.
     Appended {
         /// The number of columns before.
@@ -555,9 +734,69 @@ impl Undo {
             Self::ColCosts(old) => restore(program, old, Program::replace_col_cost),
             Self::ColIntegrality(old) => restore(program, old, Program::replace_col_integrality),
             Self::RowBounds(old) => restore(program, old, Program::replace_row_bounds),
+            Self::Sense(sense) => {
+                program.replace_sense(sense);
+            }
+            Self::Offset(offset) => {
+                program.replace_offset(offset);
+            }
+            Self::Objective(own) => {
+                program.replace_objective(*own);
+            }
             Self::Appended { cols, rows } => program.truncate(cols, rows),
         }
     }
+}
+
+/// Each of `num_cols` columns' cost in an objective of these terms: its coefficients added up in the order given,
+/// zero for a column without one.
+///
+/// # Errors
+///
+/// [`EditError::NonFiniteCost`] for the first term after which its column's sum is NaN or infinite.
+///
+/// # Panics
+///
+/// When a term names a column beyond `num_cols`.
+fn own_costs<E>(terms: impl Iterator<Item = (Col, f64)>, num_cols: usize) -> Result<TiVec<Col, f64>, EditError<E>> {
+    let mut costs: TiVec<Col, f64> = core::iter::repeat_n(0.0, num_cols).collect();
+    for (col, coefficient) in terms {
+        costs[col] += coefficient;
+        if !costs[col].is_finite() {
+            return Err(EditError::NonFiniteCost { col, value: costs[col] });
+        }
+    }
+    Ok(costs)
+}
+
+/// The quadratic part of `objective` in `sense` over `num_cols` columns, canonical and checked as a program checks
+/// its own.
+///
+/// # Errors
+///
+/// [`EditError::NonFiniteQuadCoefficient`] for the first coefficient that is not finite as given or added up per
+/// pair, a square's Hessian value included, else [`EditError::NonConvexObjective`].
+fn own_quadratic<E>(sense: Sense, objective: &QuadExpr, num_cols: usize) -> Result<QuadObjective, EditError<E>> {
+    let terms: Vec<(Col, Col, f64)> = objective
+        .terms
+        .iter()
+        .map(|t| (t.first, t.second, t.coefficient))
+        .collect();
+    let finite = |(first, second, value): (Col, Col, f64)| {
+        if value.is_finite() {
+            Ok(())
+        } else {
+            Err(EditError::NonFiniteQuadCoefficient { first, second, value })
+        }
+    };
+    terms.iter().copied().try_for_each(finite)?;
+    // A square's Hessian value is twice its coefficient, so a finite sum may still overflow it.
+    merge_pairs(terms.iter().copied())
+        .into_iter()
+        .try_for_each(|entry| finite((entry.0, entry.1, hessian_value(entry))))?;
+    let quadratic = QuadObjective::from_terms(terms);
+    check_convex(sense, &quadratic, num_cols).map_err(|col| EditError::NonConvexObjective { sense, col })?;
+    Ok(quadratic)
 }
 
 /// The values given, each id once with the last value given for it, in the order of the ids.

@@ -922,7 +922,7 @@ impl Counts {
 }
 
 /// HiGHS's number for an objective sense.
-const fn objective_sense(sense: Sense) -> HighsInt {
+pub(crate) const fn objective_sense(sense: Sense) -> HighsInt {
     match sense {
         Sense::Minimize => kHighsObjSenseMinimize,
         Sense::Maximize => kHighsObjSenseMaximize,

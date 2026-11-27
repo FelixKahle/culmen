@@ -12,8 +12,8 @@
 use core::time::Duration;
 
 use culmen_core::{
-    Bounds, Col, LinExpr, Linear, Model, Outcome, Program, ProgramColumn, ProgramPlan, Sense, Settings, Solution,
-    Solved, Solver, StopReason, Var, bounds, relative_gap, solutions,
+    Bounds, Col, LinExpr, Linear, Model, ModelClass, Outcome, Program, ProgramColumn, ProgramPlan, Sense, Settings,
+    Solution, Solved, Solver, StopReason, Var, bounds, relative_gap, solutions,
 };
 use culmen_scip::{Emphasis, Scip, ScipOptions, ScipStatus, Status};
 
@@ -539,4 +539,25 @@ fn test_threads_a_seed_and_the_console_setting_are_accepted() {
     };
     let solved = solve_with(Scip::new(), program, settings);
     assert_close(optimum(&solved).objective, 2.9);
+}
+
+#[test]
+fn test_the_objective_edits_reach_each_hand_worked_optimum() {
+    // Minimize x + 2y over x + y >= 1, x, y in [0, 4] with x whole: 1 at (1, 0). Maximized: 12 at (4, 4).
+    let mut m = Model::new();
+    let x = m.add_var(Var::integer().upper(4));
+    let y = m.add_var(Var::continuous().upper(4));
+    m.add_constraint((x + y).geq(1));
+    m.minimize(x + 2 * y);
+    let mut solver = Solver::new(Scip::new(), m.build().unwrap()).unwrap();
+    let best = |solver: &mut Solver<Scip>| optimum(&solver.solve().unwrap()).objective;
+    assert!((best(&mut solver) - 1.0).abs() < 1e-9);
+    solver.set_sense(Sense::Maximize).unwrap();
+    assert!((best(&mut solver) - 12.0).abs() < 1e-9);
+    solver.set_offset(-2).unwrap();
+    assert!((best(&mut solver) - 10.0).abs() < 1e-9);
+    // Minimize (x - 2)² + y = x² - 4x + 4 + y: 0 at (2, 0), a MIQP.
+    solver.set_objective(Sense::Minimize, x * x - 4 * x + 4 + y).unwrap();
+    assert!(best(&mut solver).abs() < 1e-6);
+    assert_eq!(solver.program().class(), ModelClass::Miqp);
 }

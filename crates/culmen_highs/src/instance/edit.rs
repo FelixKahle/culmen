@@ -7,10 +7,11 @@
 use culmen_core::{Bounds, Col, Cols, Integrality, Program, Row, Rows};
 use highs_sys::{
     Highs_addCols, Highs_addRows, Highs_changeColsBoundsBySet, Highs_changeColsCostBySet,
-    Highs_changeColsIntegralityByRange, Highs_changeColsIntegralityBySet, Highs_changeRowsBoundsBySet, HighsInt,
+    Highs_changeColsIntegralityByRange, Highs_changeColsIntegralityBySet, Highs_changeObjectiveOffset,
+    Highs_changeObjectiveSense, Highs_changeRowsBoundsBySet, HighsInt,
 };
 
-use super::{Instance, index, var_type};
+use super::{Instance, index, objective_sense, var_type};
 use crate::{CallStatus, Dimension, HighsError};
 
 impl Instance {
@@ -123,6 +124,30 @@ impl Instance {
             )
         };
         edited(status, "Highs_changeRowsBoundsBySet")
+    }
+
+    /// Sets the objective sense of the model HiGHS holds to `program`'s.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Edit`] when HiGHS refuses the change.
+    pub(crate) fn change_sense(&mut self, program: &Program) -> Result<(), HighsError> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live and borrowed exclusively; the sense is one of HiGHS's two constants.
+        let status = unsafe { Highs_changeObjectiveSense(self.raw(), objective_sense(program.sense())) };
+        edited(status, "Highs_changeObjectiveSense")
+    }
+
+    /// Sets the objective offset of the model HiGHS holds to `program`'s.
+    ///
+    /// # Errors
+    ///
+    /// [`HighsError::Edit`] when HiGHS refuses the change.
+    pub(crate) fn change_offset(&mut self, program: &Program) -> Result<(), HighsError> {
+        debug_assert!(!self.raw().is_null(), "Instance: the HiGHS instance is null");
+        // SAFETY: the instance is live and borrowed exclusively.
+        let status = unsafe { Highs_changeObjectiveOffset(self.raw(), program.offset()) };
+        edited(status, "Highs_changeObjectiveOffset")
     }
 
     /// Appends `rows`, the last rows of `program`, to the model HiGHS holds, which holds `program`'s rows before

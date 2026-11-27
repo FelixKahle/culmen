@@ -240,10 +240,12 @@ impl Highs {
     /// Changes HiGHS's model, which is the program before `edit`, into `program`.
     ///
     /// Bounds, costs, integrality and row bounds change through HiGHS's `BySet` calls, rows and columns are appended
-    /// with `Highs_addRows` and `Highs_addCols`, and further objectives are passed again after a change of costs or
-    /// columns, since HiGHS 1.16 neither reads the costs into them nor extends them. A QP without rows carries a free
-    /// row HiGHS needs (see [`Padding`]); rows appended to it, and any edit this version does not know, load the
-    /// program whole.
+    /// with `Highs_addRows` and `Highs_addCols`, the objective's sense and offset change through
+    /// `Highs_changeObjectiveSense` and `Highs_changeObjectiveOffset`, and further objectives are passed again after a
+    /// change of costs, columns, sense or offset, since HiGHS 1.16 neither reads the own objective into them nor
+    /// extends them. A replaced objective changes in place when its quadratic part stays as `before` held it, and
+    /// loads the program whole when that part changed. A QP without rows carries a free row HiGHS needs (see
+    /// [`Padding`]); rows appended to it, and any edit this version does not know, load the program whole.
     ///
     /// # Errors
     ///
@@ -255,7 +257,7 @@ impl Highs {
     ///
     /// When `edit` names an id `program` lacks, or rows or columns that are not its last: when `program` is not the
     /// model HiGHS holds changed as `edit` names.
-    fn apply(&mut self, program: &Program, edit: &Edit) -> Result<(), HighsError> {
+    fn apply(&mut self, program: &Program, edit: &Edit, before: Option<&Loaded>) -> Result<(), HighsError> {
         match edit {
             Edit::ColBounds { cols, .. } => {
                 check_semi_upper(program)?;
@@ -276,6 +278,21 @@ impl Highs {
             Edit::NewCols { cols, .. } => {
                 check_semi_upper(program)?;
                 self.instance.add_cols(program, cols)?;
+                self.pass_further_objectives(program)
+            }
+            Edit::Sense => {
+                self.instance.change_sense(program)?;
+                self.pass_further_objectives(program)
+            }
+            Edit::Offset => {
+                self.instance.change_offset(program)?;
+                self.pass_further_objectives(program)
+            }
+            Edit::Objective if before.is_some_and(|loaded| loaded.quadratic == *program.quadratic()) => {
+                self.instance.change_sense(program)?;
+                self.instance.change_offset(program)?;
+                let cols: Vec<Col> = program.cols().collect();
+                self.instance.change_col_costs(program, &cols)?;
                 self.pass_further_objectives(program)
             }
             _ => self.load(program),
@@ -678,16 +695,18 @@ impl Backend for Highs {
     }
 
     /// Changes HiGHS's model in place, so the next run starts from the basis of the last: bounds, costs and
-    /// integrality through HiGHS's `BySet` calls, new rows and columns through `Highs_addRows` and `Highs_addCols`.
-    /// Rows added to a QP without rows, and any edit this version does not know, load the program whole.
+    /// integrality through HiGHS's `BySet` calls, new rows and columns through `Highs_addRows` and `Highs_addCols`,
+    /// the objective's sense and offset through `Highs_changeObjectiveSense` and `Highs_changeObjectiveOffset`. A
+    /// replaced objective whose quadratic part changed, rows added to a QP without rows, and any edit this version
+    /// does not know load the program whole.
     ///
     /// # Panics
     ///
     /// When `program` is not the loaded program changed as `edit` names, which a [`Solver`](culmen_core::Solver)
     /// never hands it.
     fn edit(&mut self, program: &Program, edit: &Edit) -> Result<(), HighsError> {
-        self.loaded = None;
-        self.apply(program, edit)?;
+        let before = self.loaded.take();
+        self.apply(program, edit, before.as_ref())?;
         self.loaded = Some(Loaded::of(program));
         Ok(())
     }

@@ -22,6 +22,7 @@ use typed_index_collections::{TiSlice, TiVec};
 
 pub use bounds::{Bounds, Integrality, InvalidBounds, Sense};
 pub use class::{ModelClass, ModelClasses, ModelClassesIter};
+pub(crate) use edit::OwnObjective;
 pub use features::{ProgramFeature, ProgramFeatures, ProgramFeaturesIter};
 pub use ids::{Col, Cols, Row, Rows};
 pub use lp_file::LpFileError;
@@ -186,8 +187,13 @@ impl Program {
     }
 
     /// The class the program would have with columns of these integralities, as many as it would have.
-    pub(crate) fn class_with(&self, mut integralities: impl Iterator<Item = Integrality>) -> ModelClass {
-        match (integralities.any(Integrality::is_discrete), self.quadratic.is_empty()) {
+    pub(crate) fn class_with(&self, integralities: impl Iterator<Item = Integrality>) -> ModelClass {
+        Self::class_of(integralities, !self.quadratic.is_empty())
+    }
+
+    /// The class of a program with columns of these integralities and a quadratic part when `quadratic`.
+    pub(crate) fn class_of(mut integralities: impl Iterator<Item = Integrality>, quadratic: bool) -> ModelClass {
+        match (integralities.any(Integrality::is_discrete), !quadratic) {
             (false, true) => ModelClass::Lp,
             (true, true) => ModelClass::Milp,
             (false, false) => ModelClass::Qp,
@@ -210,7 +216,7 @@ impl Program {
     }
 
     /// Each column's integrality, in order.
-    fn integralities(&self) -> impl Iterator<Item = Integrality> + '_ {
+    pub(crate) fn integralities(&self) -> impl Iterator<Item = Integrality> + '_ {
         self.columns.iter().map(|c| c.integrality)
     }
 

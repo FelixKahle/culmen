@@ -10,8 +10,9 @@
 use core::mem;
 
 use itertools::Itertools;
+use typed_index_collections::TiVec;
 
-use super::{Bounds, Col, Integrality, NewCol, Program, ProgramRow, Row};
+use super::{Bounds, Col, Integrality, NewCol, Program, ProgramRow, QuadObjective, Row, Sense};
 
 impl Program {
     /// Sets a column's bounds and returns the bounds it had.
@@ -48,6 +49,36 @@ impl Program {
     /// When the program has no row `row`.
     pub(crate) fn replace_row_bounds(&mut self, row: Row, bounds: Bounds) -> Bounds {
         mem::replace(&mut self.row_bounds[row], bounds)
+    }
+
+    /// Sets the sense of the program's own objective and returns the sense it had.
+    pub(crate) const fn replace_sense(&mut self, sense: Sense) -> Sense {
+        mem::replace(&mut self.sense, sense)
+    }
+
+    /// Sets the offset of the program's own objective and returns the offset it had.
+    pub(crate) const fn replace_offset(&mut self, offset: f64) -> f64 {
+        mem::replace(&mut self.offset, offset)
+    }
+
+    /// Replaces the program's own objective and returns the one it had.
+    ///
+    /// # Panics
+    ///
+    /// When `objective` holds fewer costs than the program has columns.
+    pub(crate) fn replace_objective(&mut self, objective: OwnObjective) -> OwnObjective {
+        let costs = self
+            .columns
+            .iter_mut()
+            .zip(objective.costs)
+            .map(|(column, cost)| mem::replace(&mut column.cost, cost))
+            .collect();
+        OwnObjective {
+            sense: self.replace_sense(objective.sense),
+            costs,
+            offset: self.replace_offset(objective.offset),
+            quadratic: mem::replace(&mut self.quadratic, objective.quadratic),
+        }
     }
 
     /// Appends rows, as [`Program::from_plan`] appends a plan's.
@@ -136,6 +167,15 @@ impl Program {
         self.entry_cols = cols;
         self.entry_values = values;
     }
+}
+
+/// A program's own objective: its sense, one cost per column, its offset and its quadratic part.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct OwnObjective {
+    pub(crate) sense: Sense,
+    pub(crate) costs: TiVec<Col, f64>,
+    pub(crate) offset: f64,
+    pub(crate) quadratic: QuadObjective,
 }
 
 #[cfg(test)]

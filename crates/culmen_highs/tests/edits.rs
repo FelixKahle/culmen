@@ -12,8 +12,8 @@
 
 use culmen_core::{
     Analysis, AnalysisError, Backend, Bounds, Col, EditError, Integrality, LinExpr, Linear, Model, ModelClass, NewCol,
-    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Settings, Solution, SolveError, Solver, Tolerance, Var,
-    bounds, relative_gap,
+    Objective, Outcome, Program, ProgramColumn, ProgramPlan, Sense, Settings, Solution, SolveError, Solver, Tolerance,
+    Var, bounds, relative_gap,
 };
 use culmen_highs::{Highs, HighsError, HighsOptions};
 use culmen_testing::instances::assignment;
@@ -96,6 +96,50 @@ fn test_a_chain_of_edits_reaches_each_hand_worked_optimum() {
         solver.program().row(cut).entries().collect::<Vec<_>>(),
         [(x, 1.0), (y, 1.0), (z, 1.0)]
     );
+}
+
+#[test]
+fn test_the_objective_is_edited_in_place_and_a_new_quadratic_part_reloads() {
+    // Minimize x + 2y over x + y >= 1, x, y in [0, 4]: 1 at (1, 0). Maximized: 12 at (4, 4).
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(4));
+    let y = m.add_var(Var::continuous().upper(4));
+    m.add_constraint((x + y).geq(1));
+    m.minimize(x + 2 * y);
+    let mut solver = Solver::new(Mirror::new(Highs::new()), m.build().unwrap()).unwrap();
+    assert!(close(optimum(&mut solver), 1.0, 1e-9));
+    solver.set_sense(Sense::Maximize).unwrap();
+    assert!(close(optimum(&mut solver), 12.0, 1e-9));
+    solver.set_offset(-2).unwrap();
+    assert!(close(optimum(&mut solver), 10.0, 1e-9));
+    // Maximize 3x - y + 1: 13 at (4, 0), in place since the quadratic part stays empty.
+    solver.set_objective(Sense::Maximize, 3 * x - y + 1).unwrap();
+    assert!(close(optimum(&mut solver), 13.0, 1e-9));
+    // Minimize (x - 2)² + y = x² - 4x + 4 + y: 0 at (2, 0), a QP HiGHS loads whole.
+    solver.set_objective(Sense::Minimize, x * x - 4 * x + 4 + y).unwrap();
+    assert!(close(optimum(&mut solver), 0.0, 1e-7));
+    // Back to minimizing x + 2y.
+    solver.set_objective(Sense::Minimize, x + 2 * y).unwrap();
+    assert!(close(optimum(&mut solver), 1.0, 1e-9));
+    assert_eq!(solver.backend().held(), Some(solver.program()));
+}
+
+#[test]
+fn test_a_sense_edit_beside_further_objectives_passes_them_again() {
+    // Minimize x + y, then maximize x, over x, y in [0, 1]: (0, 0). With the own objective maximized: (1, 1).
+    let mut m = Model::new();
+    let x = m.add_var(Var::continuous().upper(1));
+    let y = m.add_var(Var::continuous().upper(1));
+    m.minimize(x + y);
+    m.add_stage(Objective::maximize(x), Tolerance::EXACT);
+    let mut solver = Solver::new(Highs::new(), m.build().unwrap()).unwrap();
+    assert!(close(optimum(&mut solver), 0.0, 1e-9));
+    solver.set_sense(Sense::Maximize).unwrap();
+    assert!(close(optimum(&mut solver), 2.0, 1e-9));
+    solver.set_offset(0.5).unwrap();
+    assert!(close(optimum(&mut solver), 2.5, 1e-9));
+    solver.set_objective(Sense::Minimize, y - x).unwrap();
+    assert!(close(optimum(&mut solver), -1.0, 1e-9));
 }
 
 #[test]
