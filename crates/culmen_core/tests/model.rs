@@ -44,7 +44,7 @@ fn test_plan_merges_repeated_terms_and_drops_zeros() {
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::continuous().cost(1.0));
     let y = plan.col(ProgramColumn::binary().cost(2.0));
-    let r = plan.row(bounds!(0.0, 4.0), [(y, 1.0), (x, 2.0), (x, -2.0), (y, 0.5)]);
+    let r = plan.row((bounds!(0.0, 4.0), [(y, 1.0), (x, 2.0), (x, -2.0), (y, 0.5)]));
     let program = plan.build().unwrap();
     assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(y, 1.5)]);
     assert_eq!(program.num_entries(), 1);
@@ -127,12 +127,34 @@ fn test_columns_are_built_by_chaining_with_the_defaults_their_integrality_names(
 }
 
 #[test]
+fn test_a_plan_row_is_given_as_the_record_or_its_parts_named_or_not() {
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous());
+    let parts = plan.row((bounds!(0.0, 1.0), vec![(x, 2.0)]));
+    let named = plan.row(("cap", .., [(x, 1.0)]));
+    let record = plan.row(ProgramRow {
+        bounds: Bounds::FREE,
+        terms: vec![(x, 1.0)],
+        name: Some("cap".to_owned()),
+    });
+    assert_eq!(
+        plan.rows[parts],
+        ProgramRow {
+            bounds: bounds!(0.0, 1.0),
+            terms: vec![(x, 2.0)],
+            name: None
+        }
+    );
+    assert_eq!(plan.rows[named], plan.rows[record]);
+}
+
+#[test]
 fn test_plan_names_the_first_defect() {
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::free().cost(f64::NAN));
     assert!(matches!(plan.clone().build(), Err(ProgramError::NonFiniteCost { col, .. }) if col == x));
     plan.columns[x].cost = 1.0;
-    let r = plan.row(Bounds::FREE, [(x, f64::INFINITY)]);
+    let r = plan.row((Bounds::FREE, [(x, f64::INFINITY)]));
     assert_eq!(
         plan.clone().build(),
         Err(ProgramError::NonFiniteCoefficient {
@@ -742,7 +764,7 @@ fn test_a_point_with_a_nan_is_infinitely_far_from_feasible() {
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0)));
     let y = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0)));
-    plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0)]);
+    plan.row((bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0)]));
     let program = plan.build().unwrap();
     assert_eq!(
         program.max_violation(TiSlice::from_ref(&[0.5, f64::NAN])),

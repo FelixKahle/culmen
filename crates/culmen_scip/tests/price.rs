@@ -314,7 +314,7 @@ fn cutting_stock(integer: bool) -> (Program, Vec<NewCol>) {
             .zip(&patterns)
             .map(|(&col, p)| (col, p[piece]))
             .filter(|&(_, a)| a != 0.0);
-        plan.row(Bounds::at_least(demand).unwrap(), terms);
+        plan.row((Bounds::at_least(demand).unwrap(), terms));
     }
     (plan.build().unwrap(), columns)
 }
@@ -436,8 +436,8 @@ fn max_fixture() -> (Program, Vec<NewCol>) {
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
     let x2 = plan.col(columns[0].column.clone());
-    plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x2, 1.0)]);
-    plan.row(bounds!(1.0, f64::INFINITY), []);
+    plan.row((bounds!(f64::NEG_INFINITY, 4.0), [(x2, 1.0)]));
+    plan.row((bounds!(1.0, f64::INFINITY), []));
     (plan.build().unwrap(), columns)
 }
 
@@ -725,7 +725,7 @@ fn test_a_column_without_an_upper_bound_is_priced_in() {
     // Minimize x + y over x + y >= 3, with y priced in [0, +inf) at cost 1/2: y = 3, worth 3/2.
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::continuous().cost(1.0));
-    plan.row(bounds!(3.0, f64::INFINITY), [(x, 1.0)]);
+    plan.row((bounds!(3.0, f64::INFINITY), [(x, 1.0)]));
     let program = plan.build().unwrap();
     let y = column(0.5, Bounds::NON_NEGATIVE, false, &[(Row::new(0), 1.0)]);
     let watched = vec![column(1.0, Bounds::NON_NEGATIVE, false, &[(Row::new(0), 1.0)]), y];
@@ -766,7 +766,7 @@ fn test_an_lp_whose_priced_column_is_integer_reports_its_search_as_a_mip() {
     // LP takes y = 3/2, and SCIP branches on y to the optimum 2 (y = 1, x = 1/2, or y = 2).
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::continuous().cost(2.0));
-    plan.row(bounds!(1.5, f64::INFINITY), [(x, 1.0)]);
+    plan.row((bounds!(1.5, f64::INFINITY), [(x, 1.0)]));
     let program = plan.build().unwrap();
     let y = column(1.0, Bounds::NON_NEGATIVE, true, &[(Row::new(0), 1.0)]);
     let watched = vec![column(2.0, Bounds::NON_NEGATIVE, false, &[(Row::new(0), 1.0)]), y];
@@ -913,7 +913,7 @@ fn test_a_pricing_solve_starts_from_a_start_over_the_programs_columns() {
 fn test_pricing_a_program_with_a_quadratic_objective_is_refused_before_scip_runs() {
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::continuous().bounds(bounds!(0.0, 4.0)));
-    plan.row(bounds!(1.0, f64::INFINITY), [(x, 1.0)]);
+    plan.row((bounds!(1.0, f64::INFINITY), [(x, 1.0)]));
     plan.quadratic = vec![(x, x, 1.0)];
     let program = plan.build().unwrap();
     let mut solver = Solver::new(Scip::new(), program).unwrap();
@@ -1093,7 +1093,7 @@ fn test_a_degenerate_node_lp_hands_out_duals_that_price_its_bounds() {
     plan.sense = Sense::Maximize;
     let x0 = plan.col(ProgramColumn::continuous().cost(2.0).bounds(bounds!(0.0, 2.0)));
     let x2 = plan.col(ProgramColumn::continuous().bounds(bounds!(0.0, 1.0)));
-    plan.row(bounds!(0.0, 0.0), [(x0, -1.0), (x2, -1.0)]);
+    plan.row((bounds!(0.0, 0.0), [(x0, -1.0), (x2, -1.0)]));
     let program = plan.build().unwrap();
     for presolve in [true, false] {
         let x1 = column(0.0, bounds!(0.0, 1.0), false, &[(Row::new(0), 1.0)]);
@@ -1119,7 +1119,7 @@ fn test_no_cut_from_the_objective_over_the_columns_held_cuts_off_a_column_pricin
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
     let x2 = plan.col(ProgramColumn::continuous().cost(-2.0).bounds(bounds!(0.0, 1.0)));
-    plan.row(bounds!(1.0, f64::INFINITY), [(x2, 1.0)]);
+    plan.row((bounds!(1.0, f64::INFINITY), [(x2, 1.0)]));
     let program = plan.build().unwrap();
     let r = Row::new(0);
     let x1 = column(3.0, bounds!(0.0, 1.0), false, &[(r, -2.0)]);

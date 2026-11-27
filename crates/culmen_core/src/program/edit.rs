@@ -148,8 +148,8 @@ mod tests {
         let mut plan = ProgramPlan::new();
         let x = plan.col(ProgramColumn::continuous().cost(1.0));
         let y = plan.col(ProgramColumn::continuous().cost(2.0));
-        plan.row(bounds!(0.0, 4.0), [(x, 1.0), (y, 1.0)]);
-        plan.row(Bounds::FREE, [(x, -1.0)]);
+        plan.row((bounds!(0.0, 4.0), [(x, 1.0), (y, 1.0)]));
+        plan.row((Bounds::FREE, [(x, -1.0)]));
         plan.build().unwrap()
     }
 

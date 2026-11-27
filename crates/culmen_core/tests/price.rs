@@ -59,8 +59,8 @@ fn small() -> Program {
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::continuous().cost(1.0));
     let y = plan.col(ProgramColumn::continuous().cost(1.0));
-    plan.row(bounds!(1.0, f64::INFINITY), [(x, 1.0), (y, 1.0)]);
-    plan.row(bounds!(f64::NEG_INFINITY, 3.0), [(x, 1.0)]);
+    plan.row((bounds!(1.0, f64::INFINITY), [(x, 1.0), (y, 1.0)]));
+    plan.row((bounds!(f64::NEG_INFINITY, 3.0), [(x, 1.0)]));
     plan.build().unwrap()
 }
 
@@ -144,7 +144,7 @@ fn cutting_stock() -> (Program, Vec<culmen_core::NewCol>) {
         .enumerate()
         .map(|(piece, demand)| {
             let terms = cols.iter().zip(&start).map(|(&col, p)| (col, p[piece]));
-            plan.row(demand, terms.filter(|&(_, a)| a != 0.0))
+            plan.row((demand, terms.filter(|&(_, a)| a != 0.0)))
         })
         .collect();
     let withheld = [
@@ -248,8 +248,8 @@ fn farkas_then_max() -> (Program, Vec<culmen_core::NewCol>) {
     let mut plan = ProgramPlan::new();
     plan.sense = Sense::Maximize;
     let x2 = plan.col(ProgramColumn::continuous().cost(2.0).bounds(bounds!(0.0, 10.0)));
-    let r0 = plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x2, 1.0)]);
-    let r1 = plan.row(bounds!(1.0, f64::INFINITY), []);
+    let r0 = plan.row((bounds!(f64::NEG_INFINITY, 4.0), [(x2, 1.0)]));
+    let r1 = plan.row((bounds!(1.0, f64::INFINITY), []));
     let col = |cost, entries: Vec<(Row, f64)>| culmen_core::NewCol {
         column: ProgramColumn::continuous().cost(cost).bounds(bounds!(0.0, 10.0)),
         entries,
@@ -930,7 +930,7 @@ fn test_improves_reads_the_reduced_cost_by_the_bounds_the_sense_and_the_mode() {
         let mut plan = ProgramPlan::new();
         plan.sense = sense;
         let x = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0)));
-        plan.row(bounds!(1.0, 1.0), [(x, 1.0)]);
+        plan.row((bounds!(1.0, 1.0), [(x, 1.0)]));
         let steps = vec![price(mode, [2.0])];
         let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), plan.build().unwrap()).unwrap();
         let mut judge = Judge(cases.to_vec(), Vec::new());

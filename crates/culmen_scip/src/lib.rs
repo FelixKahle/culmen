@@ -648,8 +648,8 @@ mod tests {
     fn one_column() -> (Scip, Program) {
         let mut plan = ProgramPlan::new();
         let x = plan.col(ProgramColumn::continuous().cost(1.0));
-        plan.row(bounds!(1.0, f64::INFINITY), [(x, 1.0)]);
-        plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 2.0)]);
+        plan.row((bounds!(1.0, f64::INFINITY), [(x, 1.0)]));
+        plan.row((bounds!(f64::NEG_INFINITY, 4.0), [(x, 2.0)]));
         let program = plan.build().unwrap();
         let mut scip = Scip::new();
         scip.load(&program).unwrap();
@@ -770,7 +770,7 @@ mod tests {
         let mut plan = ProgramPlan::new();
         plan.sense = culmen_core::Sense::Maximize;
         let x = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 1.0)));
-        plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0)]);
+        plan.row((bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0)]));
         let program = plan.build().unwrap();
         let mut scip = Scip::new();
         scip.load(&program).unwrap();

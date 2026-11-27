@@ -31,7 +31,7 @@ impl Program {
     /// let mut plan = ProgramPlan::new();
     /// plan.sense = Sense::Maximize;
     /// let x = plan.col(ProgramColumn::binary().cost(3.0));
-    /// plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]);
+    /// plan.row((bounds!(f64::NEG_INFINITY, 1.0), [(x, 2.0)]));
     /// let text = plan.clone().build()?.to_lp_string()?;
     /// assert!(text.starts_with("Maximize\n obj: 3 x0\nSubject To\n r0: 2 x0 <= 1\n"));
     ///

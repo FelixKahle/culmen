@@ -20,8 +20,9 @@ A `ProgramPlan` is a program as plain data, with `pub` fields, checked into a `P
 | `quadratic` | The objective's quadratic terms as `(Col, Col, f64)`, each `(i, j, q)` adding `q · xᵢ · xⱼ`; empty for a linear objective. See [The quadratic part](#the-quadratic-part). |
 | `objectives` | Further linear objectives and how they combine, `Objectives::Single` for none. See [Several objectives](#several-objectives). |
 
-`plan.col(column)` pushes a column and returns its `Col`; `plan.row(bounds, terms)` pushes an unnamed row and
-returns its `Row`, its bounds anything that converts into `Bounds` (`..` for a free row). A `ProgramColumn` is built
+`plan.col(column)` pushes a `ProgramColumn` and returns its `Col`; `plan.row(row)` pushes a `ProgramRow` and returns
+its `Row`. A row is given as the record or as its parts: `(bounds, terms)` for an unnamed row, `(name, bounds, terms)`
+for a named one, the bounds anything that converts into `Bounds` (`..` for a free row). A `ProgramColumn` is built
 by chaining, as a [`Var`](modelling.md#variables) is: `ProgramColumn::continuous()`, `free()`, `integer()`,
 `binary()`, `semi_continuous()` or `semi_integer()`, costing nothing and in the bounds its integrality names
 (`[0, +inf)`, `(-inf, +inf)`, `[0, 1]` for a binary) until `.cost(..)`, `.bounds(..)` and `.name(..)` say otherwise.
@@ -36,9 +37,8 @@ fn main() -> Result<(), culmen::ProgramError> {
     plan.sense = Sense::Maximize;
     let x = plan.col(ProgramColumn::continuous().cost(3).name("x"));
     let y = plan.col(ProgramColumn::continuous().cost(2));
-    let total = plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]);
-    plan.row(bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0), (x, 0.5), (x, -0.5)]);
-    plan.rows[total].name = Some("total".into());
+    let total = plan.row(("total", bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]));
+    plan.row((bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0), (x, 0.5), (x, -0.5)]));
 
     let program = plan.build()?;
     assert_eq!((program.num_cols(), program.num_rows(), program.num_entries()), (2, 2, 4));
@@ -179,7 +179,7 @@ fn main() -> Result<(), culmen::ProgramError> {
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::binary().cost(1.0));
     let y = plan.col(ProgramColumn::binary().cost(1.0));
-    let r = plan.row(bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]);
+    let r = plan.row((bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]));
     let program = plan.build()?;
 
     let row = program.row(r);
@@ -452,7 +452,7 @@ use culmen::{Col, ProgramColumn, ProgramError, ProgramPlan, Row, bounds};
 
 let mut plan = ProgramPlan::new();
 let x = plan.col(ProgramColumn::binary().cost(1.0));
-plan.row(bounds!(0.0, 1.0), [(x, 1.0), (Col::new(7), 1.0)]);
+plan.row((bounds!(0.0, 1.0), [(x, 1.0), (Col::new(7), 1.0)]));
 assert_eq!(plan.build(), Err(ProgramError::UnknownCol { row: Row::new(0), col: Col::new(7) }));
 ```
 

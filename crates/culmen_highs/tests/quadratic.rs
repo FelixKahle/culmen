@@ -202,9 +202,9 @@ fn test_a_qp_optimum_highs_cannot_support_is_not_reported_optimal() {
         })
         .collect();
     let exactly_12 = Bounds::new(12.0, 12.0).unwrap();
-    plan.row(exactly_12, [(x[0], 2.0), (x[1], -3.0), (x[2], -1.0), (x[3], -3.0)]);
+    plan.row((exactly_12, [(x[0], 2.0), (x[1], -3.0), (x[2], -1.0), (x[3], -3.0)]));
     let range = Bounds::new(-0.5, 3.5).unwrap();
-    plan.row(range, [(x[0], 1.0), (x[1], -2.0), (x[2], 1.0), (x[3], 1.0)]);
+    plan.row((range, [(x[0], 1.0), (x[1], -2.0), (x[2], 1.0), (x[3], 1.0)]));
     plan.quadratic = vec![
         (x[0], x[0], 4.55),
         (x[0], x[1], -9.0),
@@ -247,7 +247,7 @@ fn test_a_bounded_qp_reported_unbounded_is_refused() {
             )
         })
         .collect();
-    plan.row(Bounds::new(-1.0, 0.0).unwrap(), [(x[1], -2.0), (x[3], -1.0)]);
+    plan.row((Bounds::new(-1.0, 0.0).unwrap(), [(x[1], -2.0), (x[3], -1.0)]));
     plan.quadratic = vec![
         (x[0], x[0], 5.05),
         (x[0], x[1], 3.0),
@@ -286,11 +286,11 @@ fn test_a_qp_optimum_is_valued_as_its_point() {
             )
         })
         .collect();
-    plan.row(
+    plan.row((
         Bounds::new(-13.0, -11.0).unwrap(),
         [(x[0], -3.0), (x[1], -3.0), (x[2], 3.0), (x[3], 2.0)],
-    );
-    plan.row(Bounds::new(0.0, 2.0).unwrap(), [(x[1], 1.0), (x[2], -1.0), (x[3], 3.0)]);
+    ));
+    plan.row((Bounds::new(0.0, 2.0).unwrap(), [(x[1], 1.0), (x[2], -1.0), (x[3], 3.0)]));
     plan.quadratic = vec![
         (x[0], x[0], 0.55),
         (x[0], x[1], -1.0),

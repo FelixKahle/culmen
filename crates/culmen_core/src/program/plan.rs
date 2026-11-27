@@ -251,6 +251,27 @@ pub struct ProgramRow {
     pub name: Option<String>,
 }
 
+/// An unnamed row of its bounds and terms.
+impl<B: Into<Bounds>, T: IntoIterator<Item = (Col, f64)>> From<(B, T)> for ProgramRow {
+    fn from((bounds, terms): (B, T)) -> Self {
+        Self {
+            bounds: bounds.into(),
+            terms: terms.into_iter().collect(),
+            name: None,
+        }
+    }
+}
+
+/// A named row of its bounds and terms.
+impl<N: Into<String>, B: Into<Bounds>, T: IntoIterator<Item = (Col, f64)>> From<(N, B, T)> for ProgramRow {
+    fn from((name, bounds, terms): (N, B, T)) -> Self {
+        Self {
+            name: Some(name.into()),
+            ..(bounds, terms).into()
+        }
+    }
+}
+
 /// A program as plain data, checked into a [`Program`] by [`ProgramPlan::build`].
 ///
 /// Its objective is `Σ cost · x + Σ q · xᵢ · xⱼ + offset`, the quadratic terms `(i, j, q)` in
@@ -264,8 +285,8 @@ pub struct ProgramRow {
 /// plan.sense = Sense::Maximize;
 /// let x = plan.col(ProgramColumn::continuous().cost(3.0));
 /// let y = plan.col(ProgramColumn::continuous().cost(2.0));
-/// plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]);
-/// plan.row(bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0)]);
+/// plan.row((bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0)]));
+/// plan.row((bounds!(f64::NEG_INFINITY, 6.0), [(x, 1.0), (y, 3.0)]));
 /// let program = plan.build()?;
 /// assert_eq!((program.num_cols(), program.num_rows()), (2, 2));
 /// # Ok::<(), culmen_core::ProgramError>(())
@@ -314,22 +335,21 @@ impl ProgramPlan {
         self.columns.push_and_get_key(column)
     }
 
-    /// Adds an unnamed row and returns its handle.
+    /// Adds a row and returns its handle: a [`ProgramRow`], or its parts as `(bounds, terms)` for an unnamed row and
+    /// `(name, bounds, terms)` for a named one, the bounds anything that converts into [`Bounds`].
     ///
     /// ```
-    /// use culmen_core::{Bounds, ProgramColumn, ProgramPlan};
+    /// use culmen_core::{Bounds, ProgramColumn, ProgramPlan, bounds};
     ///
     /// let mut plan = ProgramPlan::new();
-    /// let x = plan.col(ProgramColumn::binary().cost(1.0));
-    /// let free = plan.row(.., [(x, 1.0)]);
+    /// let x = plan.col(ProgramColumn::binary().cost(1));
+    /// let free = plan.row((.., [(x, 1.0)]));
+    /// let cap = plan.row(("cap", bounds!(0.0, 1.0), [(x, 2.0)]));
     /// assert_eq!(plan.rows[free].bounds, Bounds::FREE);
+    /// assert_eq!(plan.rows[cap].name.as_deref(), Some("cap"));
     /// ```
-    pub fn row(&mut self, bounds: impl Into<Bounds>, terms: impl IntoIterator<Item = (Col, f64)>) -> Row {
-        self.rows.push_and_get_key(ProgramRow {
-            bounds: bounds.into(),
-            terms: terms.into_iter().collect(),
-            name: None,
-        })
+    pub fn row(&mut self, row: impl Into<ProgramRow>) -> Row {
+        self.rows.push_and_get_key(row.into())
     }
 
     /// Checks every number and every handle, every semi column's bounds, the convexity of the quadratic part and its

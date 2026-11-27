@@ -189,8 +189,8 @@ fn test_a_free_row_binds_nothing_and_a_ranged_row_binds_both_sides() {
         plan.sense = sense;
         let x = plan.col(ProgramColumn::continuous().cost(2.0).bounds(bounds!(0.0, 2.0)));
         let y = plan.col(ProgramColumn::continuous().cost(1.0));
-        plan.row(Bounds::FREE, [(x, 1.0), (y, -1.0)]);
-        plan.row(bounds!(1.0, 3.0), [(x, 1.0), (y, 1.0)]);
+        plan.row((Bounds::FREE, [(x, 1.0), (y, -1.0)]));
+        plan.row((bounds!(1.0, 3.0), [(x, 1.0), (y, 1.0)]));
         (plan.build().unwrap(), x, y)
     };
     let (max, x, y) = program(Sense::Maximize);
@@ -508,9 +508,9 @@ fn test_columns_and_rows_may_share_a_name_and_go_without_one() {
     let y = plan.col(named("twin"));
     let z = plan.col(named(""));
     let w = plan.col(ProgramColumn::continuous().cost(1.0).bounds(bounds!(0.0, 0.5)));
-    let row = plan.row(bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0), (z, 1.0)]);
+    let row = plan.row((bounds!(f64::NEG_INFINITY, 4.0), [(x, 1.0), (y, 1.0), (z, 1.0)]));
     plan.rows[row].name = Some("twin".to_owned());
-    let other = plan.row(bounds!(f64::NEG_INFINITY, 10.0), [(w, 1.0)]);
+    let other = plan.row((bounds!(f64::NEG_INFINITY, 10.0), [(w, 1.0)]));
     plan.rows[other].name = Some("twin".to_owned());
     let solved = solve(plan.build().unwrap());
     assert_close(optimum(&solved).objective, 4.5);

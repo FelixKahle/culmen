@@ -541,7 +541,7 @@ fn small_program() -> impl Strategy<Value = Program> {
                 plan.col(culmen_core::ProgramColumn::continuous().cost(1.0).bounds(b));
             });
             rows.into_iter().for_each(|(b, terms)| {
-                plan.row(b, terms.into_iter().map(|(j, a)| (Col::new(j), f64::from(a))));
+                plan.row((b, terms.into_iter().map(|(j, a)| (Col::new(j), f64::from(a)))));
             });
             plan.build().unwrap()
         })

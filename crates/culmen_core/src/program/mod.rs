@@ -53,7 +53,7 @@ pub use row::{RowEntries, RowView};
 /// plan.sense = Sense::Maximize;
 /// let x = plan.col(ProgramColumn::binary().cost(5.0));
 /// let y = plan.col(ProgramColumn::binary().cost(4.0));
-/// let r = plan.row(bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0), (x, 0.0)]);
+/// let r = plan.row((bounds!(f64::NEG_INFINITY, 1.0), [(x, 1.0), (y, 1.0), (x, 0.0)]));
 /// let program = plan.build()?;
 /// assert!(program.class().is_discrete());
 /// assert_eq!(program.row(r).entries().collect::<Vec<_>>(), [(x, 1.0), (y, 1.0)]);

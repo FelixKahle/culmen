@@ -19,7 +19,7 @@ use super::{Bounds, Col};
 /// let mut plan = ProgramPlan::new();
 /// let x = plan.col(ProgramColumn::binary().cost(1.0));
 /// let y = plan.col(ProgramColumn::binary().cost(1.0));
-/// let r = plan.row(bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]);
+/// let r = plan.row((bounds!(0.0, 1.0), [(y, 2.0), (x, 1.0)]));
 /// let program = plan.build()?;
 /// let row = program.row(r);
 /// assert_eq!((row.bounds(), row.name(), row.len()), (bounds!(0.0, 1.0), None, 2));

@@ -217,12 +217,12 @@ fn test_numbers_scip_would_read_as_infinite_are_refused_where_they_stand() {
 
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::free().cost(1.0));
-    let row = plan.row(bounds!(-1e21, 0.0), [(x, 1.0)]);
+    let row = plan.row((bounds!(-1e21, 0.0), [(x, 1.0)]));
     assert_eq!(load(plan), refused(Number::RowBound(row), -1e21));
 
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::continuous().cost(1.0));
-    let row = plan.row(bounds!(0.0, 1.0), [(x, 3e20)]);
+    let row = plan.row((bounds!(0.0, 1.0), [(x, 3e20)]));
     assert_eq!(load(plan), refused(Number::Coefficient { row, col: x }, 3e20));
 
     let mut plan = ProgramPlan::new();
@@ -268,7 +268,7 @@ fn test_a_name_holding_a_nul_byte_is_refused_for_its_column_or_row() {
 
     let mut plan = ProgramPlan::new();
     let x = plan.col(ProgramColumn::continuous().cost(1.0));
-    let row = plan.row(bounds!(0.0, 1.0), [(x, 1.0)]);
+    let row = plan.row((bounds!(0.0, 1.0), [(x, 1.0)]));
     plan.rows[row].name = Some("r\0w".to_owned());
     let program = plan.build().unwrap();
     assert_eq!(
