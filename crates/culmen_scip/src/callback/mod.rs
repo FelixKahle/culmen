@@ -383,8 +383,9 @@ impl<'a, 'h> Run<'a, 'h> {
     /// Keeps the first error a plugin met and asks SCIP to stop, for a callback that must not return an error code:
     /// SCIP leaves a constraint handler's enforcement on an error code without undoing its delay of the handler's
     /// constraint updates (`cons.c:3525-3531` of SCIP 10.0.2), which outlives the solve and aborts a debug SCIP at the
-    /// next one (`cons.c:2524`), and leaves a pricer's columns in its pricing store (`solve.c:2323`), which aborts a
-    /// debug SCIP as it frees the store (`pricestore.c:142`). The solve fails with the error once `SCIPsolve` has
+    /// next one (`cons.c:2524`), leaves a pricer's columns in its pricing store (`solve.c:2323`), which aborts a
+    /// debug SCIP as it frees the store (`pricestore.c:142`), and leaves a separator's cuts in its separation store
+    /// (`solve.c:1794`, `solve.c:1895`), which aborts a debug SCIP as it frees that store (`sepastore.c:125`). The solve fails with the error once `SCIPsolve` has
     /// returned, whatever SCIP's status.
     fn stop_with(&self, scip: *mut SCIP, error: ScipError) -> SCIP_RETCODE {
         self.error.borrow_mut().get_or_insert(error);
