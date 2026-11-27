@@ -3,7 +3,7 @@
 
 //! Shared test infrastructure of culmen, used only as a dev-dependency: an exact reference solver for tiny
 //! problems, property-test strategies that generate them, the window a solver's optimum may take under its tolerances,
-//! harder instances for the solver tests, rules a constraint handler enforces and the reference filters by, and for editing a loaded program: edits as data, a reference model of their
+//! harder instances for the solver tests, and for editing a loaded program: edits as data, a reference model of their
 //! rules, and a recording backend that fails on demand.
 
 #![cfg_attr(
@@ -15,6 +15,5 @@ pub mod instances;
 pub mod mirror;
 pub mod op;
 pub mod reference;
-pub mod rules;
 pub mod strategy;
 pub mod tolerance;

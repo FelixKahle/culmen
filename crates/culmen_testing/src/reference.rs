@@ -67,82 +67,9 @@ pub fn solve(program: &Program) -> Reference {
         .collect();
     assert!(semi.len() <= 12, "too many semi columns to enumerate their choices");
     (0..1u32 << semi.len())
-        .map(|on| solve_box(&chosen(program, &semi, on), &|_| true))
+        .map(|on| solve_box(&chosen(program, &semi, on)))
         .reduce(|a, b| better(program.sense(), a, b))
         .unwrap_or(Reference::Infeasible)
-}
-
-/// Solves a tiny LP or MILP exactly over the points whose integer part `keep` accepts: the optimum of the program
-/// with every integer point `keep` rejects removed before the continuous part is solved. `keep` is handed the values
-/// of the program's integer columns, in the order of the columns, so for a program without continuous columns the
-/// whole point. A rule a constraint handler enforces is such a `keep`.
-///
-/// # Panics
-///
-/// As [`solve`]; and for a program with a semi column, whose integer part this does not split.
-#[must_use]
-pub fn solve_where(program: &Program, keep: &dyn Fn(&[i64]) -> bool) -> Reference {
-    assert!(
-        program.quadratic().is_empty(),
-        "the reference solves linear objectives only, and this program has a quadratic one"
-    );
-    assert!(
-        program.cols().all(|col| !program.columns()[col].integrality.is_semi()),
-        "solve_where takes no semi columns"
-    );
-    solve_box(program, keep)
-}
-
-/// Every point of a tiny program without continuous columns that satisfies its bounds, its rows and `keep`, in the
-/// order of an odometer over the columns, the first column turning fastest.
-///
-/// # Panics
-///
-/// When a column is not integer, has an infinite bound, or the box holds more than 10 000 points.
-#[must_use]
-pub fn accepted_points(program: &Program, keep: &dyn Fn(&[i64]) -> bool) -> Vec<Vec<i64>> {
-    let cols: Vec<usize> = (0..program.num_cols()).collect();
-    assert!(
-        cols.iter().all(|&j| is_integer(program, j))
-            && program.cols().all(|c| !program.columns()[c].integrality.is_semi()),
-        "accepted_points takes integer columns only"
-    );
-    let ranges = integer_ranges(program, &cols);
-    if ranges.iter().any(|&(l, u)| l > u) {
-        return Vec::new();
-    }
-    let points = ranges
-        .iter()
-        .try_fold(1_i64, |n, &(l, u)| n.checked_mul(u.checked_sub(l)?.checked_add(1)?));
-    assert!(
-        points.is_some_and(|points| points <= 10_000),
-        "the box is too large to list its points"
-    );
-    let mut accepted = Vec::new();
-    let mut point: Vec<i64> = ranges.iter().map(|&(l, _)| l).collect();
-    loop {
-        if keep(&point) && meets_rows(program, &point) {
-            accepted.push(point.clone());
-        }
-        if !advance(&mut point, &ranges) {
-            break;
-        }
-    }
-    accepted
-}
-
-/// Whether an integer point satisfies every row of the program, exactly.
-fn meets_rows(program: &Program, point: &[i64]) -> bool {
-    program.rows().all(|row| {
-        let activity: BigRational = program
-            .row(row)
-            .entries()
-            .map(|(col, a)| exact(a) * BigRational::from_integer(BigInt::from(point[col.index()])))
-            .sum();
-        let bounds = program.row_bounds()[row];
-        let (lower, upper) = (bounds.lower(), bounds.upper());
-        (lower == f64::NEG_INFINITY || activity >= exact(lower)) && (upper == f64::INFINITY || activity <= exact(upper))
-    })
 }
 
 /// The better of two references under `sense`; a feasible one beats an infeasible one.
@@ -182,12 +109,12 @@ fn chosen(program: &Program, semi: &[Col], on: u32) -> Program {
     plan.build().expect("the choice of a valid program is valid")
 }
 
-/// Solves a tiny LP or MILP without semi columns exactly, over the integer points `keep` accepts.
+/// Solves a tiny LP or MILP without semi columns exactly.
 ///
 /// # Panics
 ///
 /// When a column has an infinite bound, or the integer box holds more than a million points.
-fn solve_box(program: &Program, keep: &dyn Fn(&[i64]) -> bool) -> Reference {
+fn solve_box(program: &Program) -> Reference {
     let ints: Vec<usize> = (0..program.num_cols()).filter(|&j| is_integer(program, j)).collect();
     let conts: Vec<usize> = (0..program.num_cols()).filter(|&j| !is_integer(program, j)).collect();
     let ranges = integer_ranges(program, &ints);
@@ -205,9 +132,7 @@ fn solve_box(program: &Program, keep: &dyn Fn(&[i64]) -> bool) -> Reference {
     let mut best: Option<BigRational> = None;
     let mut point: Vec<i64> = ranges.iter().map(|&(l, _)| l).collect();
     loop {
-        if keep(&point)
-            && let Some(value) = best_continuous(program, &ints, &point, &conts)
-        {
+        if let Some(value) = best_continuous(program, &ints, &point, &conts) {
             let better = best.as_ref().is_none_or(|b| match program.sense() {
                 Sense::Minimize => value < *b,
                 Sense::Maximize => value > *b,
@@ -667,7 +592,7 @@ pub fn close(a: f64, b: f64, tolerance: f64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use culmen_core::{LinExpr, Linear, Model, ModelClass, ProgramFeature, Var, bounds};
+    use culmen_core::{Linear, Model, ModelClass, ProgramFeature, Var, bounds};
 
     use super::*;
 
@@ -701,57 +626,6 @@ mod tests {
         m.add_constraint((x + y).equals(1.5));
         assert_eq!(solve(&m.build().unwrap()), Reference::Infeasible);
         assert!(close(1.0, 1.0 + 1e-9, 1e-6));
-    }
-
-    #[test]
-    fn test_solve_where_keeps_only_the_integer_points_the_rule_accepts() {
-        // Three columns in {0, 1, 2}, pairwise different, x0 + x1 >= 2, maximize x0 + 2x1 + 3x2: of the six orders,
-        // (0, 2, 1) is the best that meets the row, worth 7; without the rule (2, 2, 2) is worth 12.
-        let mut m = Model::new();
-        let x = m.add_vars(3, |_| Var::integer().bounds(0, 2));
-        m.add_constraint((x[0] + x[1]).geq(2));
-        m.maximize(x[0] + 2.0 * x[1] + 3.0 * x[2]);
-        let program = m.build().unwrap();
-        let different = |p: &[i64]| crate::rules::all_different(&[0, 1, 2], p);
-        assert_eq!(solve_where(&program, &different).objective(), Some(7.0));
-        assert_eq!(solve(&program).objective(), Some(12.0));
-
-        // Binaries with an even sum of at most 3, maximize 3x1 + 2x2 + 2x3 + x4: two of them, x1 and x2, worth 5.
-        let mut m = Model::new();
-        let x = m.add_vars(4, |_| Var::binary());
-        m.add_constraint(LinExpr::sum(x.iter().copied()).leq(3));
-        m.maximize(3.0 * x[0] + 2.0 * x[1] + 2.0 * x[2] + x[3]);
-        let even = |p: &[i64]| crate::rules::even_parity(&[0, 1, 2, 3], p);
-        assert_eq!(solve_where(&m.build().unwrap(), &even).objective(), Some(5.0));
-
-        // A binary x and a continuous y in [0, 1], maximize x + y, with x = 0 the rule: the integer part is x alone.
-        let mut m = Model::new();
-        let x = m.add_var(Var::binary());
-        let y = m.add_var(Var::continuous().upper(1));
-        m.maximize(x + y);
-        let program = m.build().unwrap();
-        assert_eq!(solve_where(&program, &|p: &[i64]| p[0] == 0).objective(), Some(1.0));
-        assert_eq!(solve_where(&program, &|_: &[i64]| false), Reference::Infeasible);
-    }
-
-    #[test]
-    fn test_accepted_points_lists_the_points_of_the_rows_and_the_rule() {
-        // Two binaries, different, at least one of them: (1, 0) and (0, 1), the first column turning fastest.
-        let mut m = Model::new();
-        let x = m.add_vars(2, |_| Var::binary());
-        m.add_constraint((x[0] + x[1]).geq(1));
-        let program = m.build().unwrap();
-        let different = |p: &[i64]| crate::rules::all_different(&[0, 1], p);
-        assert_eq!(accepted_points(&program, &different), [vec![1, 0], vec![0, 1]]);
-        assert_eq!(
-            accepted_points(&program, &|_: &[i64]| true),
-            [vec![1, 0], vec![0, 1], vec![1, 1]]
-        );
-        // A row no point meets leaves none.
-        let mut m = Model::new();
-        let x = m.add_var(Var::integer().bounds(0, 3));
-        m.add_constraint(x.equals(1.5));
-        assert!(accepted_points(&m.build().unwrap(), &|_: &[i64]| true).is_empty());
     }
 
     #[test]
