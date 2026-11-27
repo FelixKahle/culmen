@@ -14,7 +14,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use culmen_core::backend::Found;
+use culmen_core::script::Found;
 use culmen_core::script::{Script, Step};
 use culmen_core::{
     ActionError, Backend, Callback, Col, Constraint, Context, CutContext, CutHandler, Event, Events, HeuristicContext,

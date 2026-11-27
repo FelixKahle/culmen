@@ -15,7 +15,6 @@
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
-use culmen_core::backend::Found;
 use culmen_core::{Col, Context, Event, PollContext, Progress, ProgressContext, SolutionContext, TiSlice};
 use scip_sys::{
     SCIP, SCIP_EVENT, SCIP_EVENTDATA, SCIP_EVENTHDLR, SCIP_EVENTTYPE, SCIP_RETCODE, SCIP_Retcode_SCIP_OKAY,
@@ -24,7 +23,7 @@ use scip_sys::{
     SCIPincludeEventhdlrBasic, SCIPsetEventhdlrExit, SCIPsetEventhdlrInit,
 };
 
-use super::{Delivered, Run, Slot, slot};
+use super::{Delivered, Found, Run, Slot, slot};
 use crate::ScipError;
 use crate::error::check;
 

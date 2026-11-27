@@ -32,7 +32,7 @@ Each step is one event, in the generic terms of [`Callback`](callbacks.md#callba
 | `Step::Price { progress, mode, duals }` | `Pricer` | a `ScriptPrice`: the mode, the program's sense, the duals, `tolerance()` of `ScriptPrice::TOLERANCE`; `add_col`, `branch_early`, `report_bound` |
 | `Step::Note(text)` | `Native` | a `ScriptNote` with `text()` |
 
-A `Found` is `{ progress, objective, values }`. `step.event()` names a step's observational event kind, `None` for
+A `Found`, in `culmen::script` beside `Step`, is `{ progress, objective, values }`. `step.event()` names a step's observational event kind, `None` for
 the four search steps.
 
 The script behaves as a solver would:
@@ -61,7 +61,7 @@ use std::time::Duration;
 
 use culmen::prelude::*;
 use culmen::Phase;
-use culmen::backend::Found;
+use culmen::script::Found;
 use culmen::script::{Script, ScriptStatus, Step};
 
 /// The code under test: solve with a time limit and a stop, and return the best objective found.
@@ -110,8 +110,8 @@ use std::time::Duration;
 
 use culmen::prelude::*;
 use culmen::{ActionError, Phase};
-use culmen::backend::{AddedRow, Found};
-use culmen::script::{Script, Step};
+use culmen::backend::AddedRow;
+use culmen::script::{Found, Script, Step};
 
 struct NotBoth {
     x: Col,

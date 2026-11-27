@@ -14,7 +14,8 @@ use std::sync::atomic::AtomicBool;
 
 use proptest::prelude::*;
 
-use culmen_core::backend::{AddedRow, Found, Hooks};
+use culmen_core::backend::{AddedRow, Hooks};
+use culmen_core::script::Found;
 use culmen_core::script::{Script, ScriptStatus, Step};
 use culmen_core::{
     ActionError, Backend, Callback, Col, Context, CutContext, CutHandler, Event, Events, HeuristicContext,

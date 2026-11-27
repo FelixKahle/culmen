@@ -62,7 +62,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 
 use culmen_core::backend::check_constraint;
-use culmen_core::backend::{AddedRow, Found, Hooks, Priced};
+use culmen_core::backend::{AddedRow, Hooks, Priced};
 use culmen_core::{ActionError, Col, Constraint, Event, Events, LogLevel, Phase, Progress, Row, Sense, TiSlice, TiVec};
 pub use cut::ScipCut;
 pub use events::{ScipEvent, ScipPoll, ScipProgress, ScipSolution};
@@ -92,6 +92,16 @@ pub(crate) type Payload = Box<dyn Any + Send>;
 
 /// What every plugin of an instance reaches: one per instance, at one address from the instance's creation until
 /// after SCIP is freed.
+/// A solution SCIP stored, read in the program's columns, with where the solve stood when SCIP stored it.
+#[derive(Debug)]
+pub(crate) struct Found {
+    pub(crate) progress: Progress,
+    /// The objective value, offset included.
+    pub(crate) objective: f64,
+    /// One value per column of the program and every column priced so far.
+    pub(crate) values: TiVec<Col, f64>,
+}
+
 #[derive(Debug)]
 pub(crate) struct Slot {
     /// The instance, which a message handler's call does not name.

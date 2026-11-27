@@ -13,7 +13,8 @@
 use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use culmen_core::backend::{Found, Hooks, Priced, Unsupported};
+use culmen_core::backend::{Hooks, Priced, Unsupported};
+use culmen_core::script::Found;
 use culmen_core::script::{Script, ScriptError, ScriptPrice, Step};
 use culmen_core::{
     ActionError, Analysis, AnalysisError, Backend, Bounds, Callback, Col, Context, Duals, Event, Events, Integrality,

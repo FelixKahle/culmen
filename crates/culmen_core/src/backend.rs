@@ -36,21 +36,6 @@
 //! after a solve that ended as they prove, a basis or weights that fit the program. Called otherwise, it may fail or
 //! give an unspecified result, never undefined behaviour.
 
-use typed_index_collections::TiVec;
-
 pub use crate::solve::{
     AddedRow, Edit, Hooks, Priced, Relay, Unsupported, Watch, check_constraint, check_entries, check_solution,
 };
-use crate::{Col, Progress};
-
-/// A solution found during a solve, with where the solve stood when it was found: what a [`Script`](crate::script::Script) step reports, and
-/// what a backend may keep of a solution it delivers to a callback later.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Found {
-    /// Where the solve stands.
-    pub progress: Progress,
-    /// The objective value, offset included.
-    pub objective: f64,
-    /// One value per column.
-    pub values: TiVec<Col, f64>,
-}

@@ -8,13 +8,24 @@ use core::time::Duration;
 
 use typed_index_collections::{TiSlice, TiVec};
 
-use crate::backend::{AddedRow, Found, Hooks, Priced, check_constraint, check_entries, check_solution};
+use crate::backend::{AddedRow, Hooks, Priced, check_constraint, check_entries, check_solution};
 use crate::{
     ActionError, Backend, Col, Cols, Constraint, Context, CutContext, Event, Events, HeuristicContext, Heuristics,
     LazyConstraints, LazyContext, LogContext, LogLevel, ModelClasses, NewCol, Outcome, Phase, PollContext,
     PriceContext, PriceMode, Prices, Program, ProgramFeatures, Progress, ProgressContext, Row, Sense, Settings,
     Solution, SolutionContext, Solved, Start, Starts, StopReason, UserCuts,
 };
+
+/// A solution a [`Step`] reports, with where the solve stood when it was found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Found {
+    /// Where the solve stands.
+    pub progress: Progress,
+    /// The objective value, offset included.
+    pub objective: f64,
+    /// One value per column.
+    pub values: TiVec<Col, f64>,
+}
 
 /// One event a [`Script`] delivers, in the generic terms of [`Callback`](crate::Callback) and the search handlers.
 #[derive(Clone, Debug, PartialEq)]

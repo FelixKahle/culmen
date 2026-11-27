@@ -456,7 +456,7 @@ impl<B: RelaxationAnalysis> RelaxationAnalysis for Mirror<B> {
 mod tests {
     use core::time::Duration;
 
-    use culmen_core::backend::Found;
+    use culmen_core::script::Found;
     use culmen_core::script::{Script, Step};
     use culmen_core::{EditError, LazyContext, LazyHandler, Linear, Model, Outcome, Phase, Progress, Solver, Var};
 
