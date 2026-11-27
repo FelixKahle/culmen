@@ -9,7 +9,6 @@
 //! `cargo run -p culmen --example column_generation`
 
 use culmen::prelude::*;
-use culmen::{Integrality, NewCol};
 
 /// The width of a roll.
 const ROLL: f64 = 100.0;

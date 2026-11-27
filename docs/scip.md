@@ -530,7 +530,7 @@ own off.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{ActionError, TiVec};
+use culmen::ActionError;
 
 struct Offer {
     values: Option<TiVec<Col, f64>>,
@@ -634,7 +634,6 @@ then optimal.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::NewCol;
 
 /// Adds every pattern of the pool, not added yet, that improves the node LP. The pool holds every pattern the
 /// master lacks, so the pricing is exact and never adds a held column.

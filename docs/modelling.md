@@ -81,7 +81,7 @@ objective), and it uses the [feature](program.md#features) `SemiContinuous` or `
 
 ```rust
 use culmen::prelude::*;
-use culmen::{Integrality, ModelClass, ModelError};
+use culmen::{ModelClass, ModelError};
 
 fn main() -> Result<(), ModelError> {
     let mut m = Model::new();
@@ -182,7 +182,6 @@ objective setters take `impl Quadratic`.
 
 ```rust
 use culmen::prelude::*;
-use culmen::QuadExpr;
 
 let mut m = Model::new();
 let x = m.add_var(Var::free());

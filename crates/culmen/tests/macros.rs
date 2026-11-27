@@ -9,8 +9,8 @@
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
 
+use culmen::ProgramError;
 use culmen::prelude::*;
-use culmen::{Integrality, ProgramError, QuadExpr};
 
 #[test]
 fn test_assignment_written_both_ways_builds_the_same_program() {

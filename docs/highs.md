@@ -532,7 +532,7 @@ MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as 
 ```rust
 use culmen::prelude::*;
 use culmen::highs::{HighsHeuristic, HighsQueryOrigin};
-use culmen::{ActionError, TiVec};
+use culmen::ActionError;
 
 struct Start {
     values: Option<TiVec<Col, f64>>,

@@ -7,9 +7,9 @@ of the plain data.
 
 ## The `Script` backend
 
-`culmen::script::Script` is an in-memory [backend](backends.md) that delivers a fixed list of `Step`s to the callback and the
-[search handlers](callbacks.md#search-handlers) and then ends with a fixed `Outcome`. It supports every event and has
-every search capability (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`), so it drives the whole callback
+`culmen::script::Script` is an in-memory [backend](backends.md) that delivers a fixed list of `Step`s to the callback
+and the [search handlers](callbacks.md#search-handlers) and then ends with a fixed `Outcome`. It supports every event
+and has every search capability (`LazyConstraints`, `UserCuts`, `Heuristics`, `Prices`), so it drives the whole callback
 layer, and it needs no native code; it runs under Miri.
 
 | Constructor | Script |
@@ -163,7 +163,7 @@ program the columns it added.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceMode};
+use culmen::Phase;
 use culmen::script::{Script, Step};
 
 /// Adds the pattern when it improves, else reports a bound and stops pricing.

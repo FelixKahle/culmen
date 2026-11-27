@@ -419,7 +419,7 @@ refuses to price a program with a quadratic objective.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceMode};
+use culmen::Phase;
 use culmen::script::{Script, Step};
 
 /// Adds every pattern of the pool, not added yet, that improves the node LP.
@@ -534,11 +534,11 @@ that never got its line break.
 
 ## `Unsupported`
 
-A backend that cannot deliver an observational event leaves it out of `Backend::EVENTS` and names `Unsupported` as
-its context type. `Unsupported` is an enum with no values: a callback method for that event compiles, but it can never
-be called, since no context can be made. SCIP names it for its native event. A search capability a backend lacks
-needs no such type: the backend does not implement the trait, and a handler for it does not compile
-([Search handlers](#search-handlers)).
+A backend that cannot deliver an observational event leaves it out of `Backend::EVENTS` and names
+`culmen::backend::Unsupported` as its context type. `Unsupported` is an enum with no values: a callback method for that
+event compiles, but it can never be called, since no context can be made. SCIP names it for its native event. A search
+capability a backend lacks needs no such type: the backend does not implement the trait, and a handler for it does not
+compile ([Search handlers](#search-handlers)).
 
 ```rust
 use culmen::prelude::*;
@@ -558,13 +558,13 @@ quadratic objective with a typed error before it solves.
 
 ## Panics and threads
 
-- **A panic in an observer, a stop, a callback or a handler never aborts the process.** It stops the solve as soon as the
-  solver allows and then continues unwinding out of `solve`. The backend stays usable: the next solve
-  on the same `Solver` runs normally. Catch it with `std::panic::catch_unwind` around the solve, if you need to.
+- **A panic in an observer, a stop, a callback or a handler never aborts the process.** It stops the solve as soon as
+  the solver allows and then continues unwinding out of `solve`. The backend stays usable: the next solve on the same
+  `Solver` runs normally. Catch it with `std::panic::catch_unwind` around the solve, if you need to.
 - **Calls never overlap.** A backend calls one callback or handler method at a time, and only while `solve` runs.
 - **They may come from another thread.** A backend may call back from a thread other than the one that called
-  `solve`, so `Callback`, every handler and `Observer` are `Send` and `Stop` is `Sync`. HiGHS, for one, may write log lines from
-  its worker threads; it serialises every call behind a lock.
+  `solve`, so `Callback`, every handler and `Observer` are `Send` and `Stop` is `Sync`. HiGHS, for one, may write log
+  lines from its worker threads; it serialises every call behind a lock.
 
 ## See also
 

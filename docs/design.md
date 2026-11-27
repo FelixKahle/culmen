@@ -75,6 +75,18 @@ Constructors take what converts into their input without loss, so a caller passe
 `Bounds` where a `Var` is wanted, and an owned or borrowed value alike. A conversion that can fail is never implicit;
 it is a `TryFrom` or a `new` returning `Result`, so the refusal is visible where the value is made.
 
+## One address per item
+
+Each public item has one path, chosen by who names it. The crate root holds what code that models and solves names:
+the model and the program, `Solver` and `Run`, settings and outcomes, the callback and handler traits, the context
+traits a handler calls, the capability traits a generic bound names (`LazyConstraints`, `DualAnalysis`, …), the
+analyses' data and the errors. `Backend` is there too, since generic consumer code bounds on it. `culmen::script` holds
+the scripted test backend and what only it needs; `culmen::backend` holds what only code implementing or driving a
+backend names (`Hooks`, `Relay`, `Edit`, `Priced`, `Watch`, `Found`, `Unsupported`, the `check_*` helpers). Each
+solver's own types are at the root of its crate, `culmen::highs` or `culmen::scip`, and a submodule holds only free
+functions whose names read right with it (`culmen::highs::files::read`). Nothing is re-exported a second time for
+convenience; the prelude, a glob of root items and the backend types, is the one exception.
+
 ## Which types may grow: `#[non_exhaustive]`
 
 Whether a public type is `#[non_exhaustive]` follows from what a user does with it, the same in every crate:

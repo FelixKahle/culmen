@@ -19,7 +19,6 @@
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, PriceMode};
 
 /// The width of a roll.
 const ROLL: f64 = 100.0;

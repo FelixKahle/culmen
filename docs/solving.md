@@ -144,7 +144,7 @@ do until an edit.
 
 ```rust
 use culmen::prelude::*;
-use culmen::{Improvement, StartError};
+use culmen::StartError;
 
 #[derive(Default)]
 struct First(Option<f64>);
@@ -403,7 +403,7 @@ next call that runs the backend loads it first. [HiGHS](highs.md#editing-a-loade
 
 ```rust
 use culmen::prelude::*;
-use culmen::{EditError, NewCol};
+use culmen::EditError;
 
 /// The optimal objective of the next solve.
 fn best(solver: &mut Solver<Highs>) -> Result<f64, Box<dyn std::error::Error>> {
@@ -463,7 +463,7 @@ are the program's from then on:
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{NewCol, Phase, PriceMode};
+use culmen::Phase;
 use culmen::script::{Script, Step};
 
 /// Prices one column in at every price step.

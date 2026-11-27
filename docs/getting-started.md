@@ -40,17 +40,19 @@ Depend on `culmen` only. It re-exports everything a model and a solve need; the 
 With `default-features = false` you get the modelling layer, the program and the solve API without a solver: enough to
 build and inspect models, write LP files, or drive a backend of your own.
 
-`culmen::prelude` holds what a model and a solve need: `Model`, `Var`, `LinExpr`, `QuadExpr`, `Linear`, `Quadratic`,
-`Constraint`, `Objective`, `Tolerance`, `Bounds`, `Col`, `Row`, `Program`, `Sense`, `Solver`, `Settings`, `Start`,
-`Outcome`, `Solution`, `Solved`, `SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`, `LogLine`,
-`Stop`, `Callback`, `Backend`, `Events`, `IndexSet`, `VarMap`, `ConstraintMap`, the functions
-`product`, `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`, `absolute_gap!`, `weight!`, `threads!`
-and `solutions!`, the [context traits](callbacks.md#contexts) a callback or handler calls (`Context`, `LogContext`,
-`PollContext`, `LazyContext` and the rest) with `Unsupported`, the [search capabilities and their
+`culmen::prelude` holds what nearly every program that models and solves names: `Model`, `Var`, `LinExpr`,
+`QuadExpr`, `Linear`, `Quadratic`, `Constraint`, `Objective`, `Tolerance`, `Bounds`, `Col`, `Row`, `Integrality`,
+`NewCol`, `TiVec`, `TiSlice`, `Program`, `Sense`, `Solver`, `Settings`, `Start`, `Outcome`, `Solution`, `Solved`,
+`SolveError`, `StopReason`, `Observer`, `Progress`, `Improvement`, `LogLine`, `Stop`, `Backend`, `IndexSet`, `VarMap`,
+`ConstraintMap`, the functions `product`, `set` and `stop_fn`, the literal macros `bounds!`, `relative_gap!`,
+`absolute_gap!`, `weight!`, `threads!` and `solutions!`, `Callback` with `Event` and `Events`, the
+[context traits](callbacks.md#contexts) a callback or handler calls (`Context`, `LogContext`, `PollContext`,
+`LazyContext` and the rest) with the `PriceMode` a pricer reads, the [search capabilities and their
 handlers](callbacks.md#search-handlers) (`LazyConstraints` and `LazyHandler`, `UserCuts` and `CutHandler`,
 `Heuristics` and `HeuristicHandler`, `Prices` and `Pricer`), and, with their features, `Highs`, `Scip` and the
-modelling macros. Everything else
-is at the crate root, `culmen::…`.
+modelling macros. Everything else a consumer names is at the crate root, `culmen::…`; the scripted test backend is in
+`culmen::script`, what only a backend author names in `culmen::backend`, and each solver's own types in
+`culmen::highs` and `culmen::scip`.
 
 ## Choosing a backend
 

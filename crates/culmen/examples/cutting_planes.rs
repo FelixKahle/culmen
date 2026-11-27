@@ -7,7 +7,6 @@
 //! `cargo run -p culmen --example cutting_planes`
 
 use culmen::prelude::*;
-use culmen::{Integrality, TiSlice};
 
 /// Each item's name, value and weight.
 const ITEMS: [(&str, f64, f64); 8] = [
