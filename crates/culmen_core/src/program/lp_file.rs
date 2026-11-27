@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 
 use typed_index_collections::TiVec;
@@ -341,27 +341,46 @@ impl Wanted {
 ///
 /// # Panics
 ///
-/// Never: each text taken rules out at most one of a line's candidates, so one of the first `taken + 1` is free.
+/// Never: each text taken rules out at most one of a line's candidates, so one of the first `taken + 1` from any
+/// start is free.
 fn unique(wanted: Vec<Wanted>, reserved: &[&str]) -> Vec<String> {
+    labelled(wanted, reserved).0
+}
+
+/// The labels [`unique`] gives, and how many candidates were tried for them.
+///
+/// # Panics
+///
+/// Never, as [`unique`] states.
+fn labelled(wanted: Vec<Wanted>, reserved: &[&str]) -> (Vec<String>, usize) {
     let mut taken: HashSet<String> = reserved.iter().map(|&r| r.to_owned()).collect();
     let mut labels: Vec<Option<String>> = wanted
         .iter()
         .map(|line| (line.named && line.fits(&line.base, &taken)).then(|| line.claim(line.base.clone(), &mut taken)))
         .collect();
+    // The first candidate not yet tried for each base and suffixes: a candidate tried before was taken then, and what
+    // is taken stays taken, so every one before it is still taken.
+    let mut next: HashMap<(&str, &[&str]), usize> = HashMap::new();
+    let mut tried = 0;
     for (line, label) in wanted.iter().zip(&mut labels) {
         if label.is_none() {
-            let candidates = (0..=taken.len()).map(|k| match k {
-                0 => line.base.clone(),
-                k => format!("{}~{k}", line.base),
+            let first = next.entry((line.base.as_str(), line.suffixes)).or_insert(0);
+            let candidates = (*first..=*first + taken.len()).map(|k| match k {
+                0 => (k, line.base.clone()),
+                k => (k, format!("{}~{k}", line.base)),
             });
-            let mut free = candidates.filter(|candidate| line.fits(candidate, &taken));
-            let chosen = free
+            let mut free = candidates.filter(|(_, candidate)| {
+                tried += 1;
+                line.fits(candidate, &taken)
+            });
+            let (k, chosen) = free
                 .next()
                 .expect("Labels: one of the first `taken + 1` candidates is free");
+            *first = k + 1;
             *label = Some(line.claim(chosen, &mut taken));
         }
     }
-    labels.into_iter().flatten().collect()
+    (labels.into_iter().flatten().collect(), tried)
 }
 
 /// Writes ` c what` for the first term of a sum and ` + c what` or ` - c what` for any other, `-c` first when
@@ -450,5 +469,25 @@ impl core::error::Error for LpFileError {
             Self::UnsupportedFeature { .. } => None,
             Self::Write(error) => Some(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lines_named_alike_are_labelled_apart_with_a_few_tries_each() {
+        const LINES: usize = 3_000;
+        let wanted = (0..LINES)
+            .map(|_| Wanted::new(Some("flow"), "flow".to_owned(), &[""]))
+            .collect();
+        let (labels, tried) = labelled(wanted, &[]);
+        let expected: Vec<String> = core::iter::once("flow".to_owned())
+            .chain((1..LINES).map(|k| format!("flow~{k}")))
+            .collect();
+        assert_eq!(labels, expected);
+        // Each line after the first tries the candidates its base has not handed out yet: one, not all before it.
+        assert!(tried <= 2 * LINES, "{tried} candidates tried for {LINES} lines");
     }
 }
