@@ -317,7 +317,8 @@ Each returns the objective's `ObjectiveId`; the model's own objective, set by `m
 `Objective::minimize(expr)` or `Objective::maximize(expr)`. A stage has no weight and a weighted objective no
 tolerance, so neither can be given where it would go unused; a model that ranks some objectives one way and some the
 other is refused by `build` with `ModelError::MixedObjectives`, naming the first objective ranked unlike the first
-ranked one.
+ranked one, and a tolerance or weight of the own objective without a further objective with
+`ModelError::RankAlone`.
 
 The objectives are linear: beside a further objective, `build` refuses a quadratic term in the own objective with
 `ModelError::QuadraticWithObjectives`. The program records them as its [`Objectives`](program.md#several-objectives),

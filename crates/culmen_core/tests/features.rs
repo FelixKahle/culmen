@@ -283,13 +283,38 @@ fn test_a_model_refuses_stages_beside_weighted_objectives_naming_the_first_of_th
             combination: Combination::Lexicographic,
         }
     );
+}
 
-    // Without a further objective the own objective's rank is never used, and nothing is mixed.
+#[test]
+fn test_a_model_refuses_a_rank_of_its_own_objective_without_a_further_one() {
     let mut single = Model::new();
     let z = single.add_var(Var::continuous().upper(1));
     single.minimize(z);
-    single.set_objective_weight(weight!(3.0));
     assert_eq!(single.build().unwrap().objectives(), &Objectives::Single);
+
+    single.set_objective_weight(weight!(3.0));
+    let alone = ModelError::RankAlone {
+        combination: Combination::Blended,
+    };
+    assert_eq!(single.build().unwrap_err(), alone);
+    assert_eq!(
+        alone.to_string(),
+        "Model: the model's own objective has a weight, but no further objective is blended with it"
+    );
+
+    single.set_objective_tolerance(Tolerance::EXACT);
+    let alone = ModelError::RankAlone {
+        combination: Combination::Lexicographic,
+    };
+    assert_eq!(single.build().unwrap_err(), alone);
+    assert_eq!(
+        alone.to_string(),
+        "Model: the model's own objective has a tolerance, but no further objective is a stage after it"
+    );
+
+    // A further objective of the rank's kind gives the rank its use.
+    single.add_stage(Objective::minimize(-z), Tolerance::EXACT);
+    assert!(single.build().is_ok());
 }
 
 #[test]

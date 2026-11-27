@@ -455,13 +455,14 @@ impl Model {
     }
 
     /// How far later stages of a lexicographic solve may move the model's own objective from its optimum;
-    /// [`Tolerance::EXACT`] until set. [`Model::build`] refuses it beside weighted objectives.
+    /// [`Tolerance::EXACT`] until set. [`Model::build`] refuses it beside weighted objectives and without a further
+    /// objective.
     pub const fn set_objective_tolerance(&mut self, tolerance: Tolerance) {
         self.first = Some(Rank::Tolerance(tolerance));
     }
 
     /// The weight of the model's own objective in a blend; [`Weight::ONE`] until set. [`Model::build`] refuses it
-    /// beside stages.
+    /// beside stages and without a further objective.
     pub const fn set_objective_weight(&mut self, weight: Weight) {
         self.first = Some(Rank::Weight(weight));
     }
@@ -501,7 +502,8 @@ impl Model {
     /// whose bounds are not `lower ..= upper` with `0 < lower` and `upper` finite, a non-finite objective or
     /// constraint coefficient or constant, a handle the model did not hand out, a quadratic objective that is not
     /// convex to minimize or concave to maximize, as [`Program::CONVEXITY_TOLERANCE`] states, a quadratic objective
-    /// beside further objectives, or stages beside weighted objectives.
+    /// beside further objectives, stages beside weighted objectives, or a rank of the model's own objective without a
+    /// further one.
     pub fn build(&self) -> Result<Program, ModelError> {
         let mut plan = ProgramPlan {
             sense: self.sense,
@@ -558,7 +560,7 @@ impl Model {
     /// # Errors
     ///
     /// [`ModelError::MixedObjectives`] for the first objective whose rank belongs to the other combination than the
-    /// first ranked objective's, else [`ModelError::UnknownVar`], [`ModelError::FurtherCoefficient`] or
+    /// first ranked objective's, [`ModelError::RankAlone`] for a rank of the model's own objective alone, else [`ModelError::UnknownVar`], [`ModelError::FurtherCoefficient`] or
     /// [`ModelError::FurtherConstant`] for the first further objective at fault.
     fn build_objectives(&self) -> Result<Objectives, ModelError> {
         let Some(combination) = self.combination()? else {
@@ -611,10 +613,16 @@ impl Model {
     ///
     /// # Errors
     ///
-    /// [`ModelError::MixedObjectives`] for the first objective whose rank belongs to the other combination.
+    /// [`ModelError::MixedObjectives`] for the first objective whose rank belongs to the other combination,
+    /// [`ModelError::RankAlone`] for a rank of the model's own objective without a further one.
     fn combination(&self) -> Result<Option<Combination>, ModelError> {
         if self.further.is_empty() {
-            return Ok(None);
+            return match self.first {
+                Some(rank) => Err(ModelError::RankAlone {
+                    combination: rank.combination(),
+                }),
+                None => Ok(None),
+            };
         }
         let ranks = self.first.into_iter().map(|rank| (ObjectiveId::FIRST, rank));
         let mut ranks = ranks.chain(

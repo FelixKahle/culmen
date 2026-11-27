@@ -174,6 +174,13 @@ pub enum ModelError {
         /// The combination of the first ranked objective, which the objectives before this one keep.
         combination: Combination,
     },
+    /// The model's own objective is ranked, with [`Model::set_objective_weight`](crate::Model::set_objective_weight)
+    /// or [`Model::set_objective_tolerance`](crate::Model::set_objective_tolerance), but the model has no further
+    /// objective, so the rank would go unused.
+    RankAlone {
+        /// The combination the rank belongs to.
+        combination: Combination,
+    },
 }
 
 impl fmt::Display for ModelError {
@@ -247,6 +254,18 @@ impl fmt::Display for ModelError {
             } => write!(
                 f,
                 "Model: {objective:?} is a stage with a tolerance, but the objectives before it are weighted in a blend"
+            ),
+            Self::RankAlone {
+                combination: Combination::Lexicographic,
+            } => write!(
+                f,
+                "Model: the model's own objective has a tolerance, but no further objective is a stage after it"
+            ),
+            Self::RankAlone {
+                combination: Combination::Blended,
+            } => write!(
+                f,
+                "Model: the model's own objective has a weight, but no further objective is blended with it"
             ),
         }
     }
