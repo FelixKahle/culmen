@@ -72,10 +72,11 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
-use culmen_core::context::{check_entries, check_solution};
+use culmen_core::backend::Hooks;
+use culmen_core::backend::{check_entries, check_solution};
 use culmen_core::{
-    ActionError, Col, Context, Event, Events, HeuristicContext, Hooks, LogContext, LogLevel, Phase, PollContext,
-    Progress, ProgressContext, SolutionContext, TiSlice,
+    ActionError, Col, Context, Event, Events, HeuristicContext, LogContext, LogLevel, Phase, PollContext, Progress,
+    ProgressContext, SolutionContext, TiSlice,
 };
 use highs_sys::{
     Highs_repairCallbackSolution, Highs_setCallbackSparseSolution, HighsCallbackDataIn, HighsCallbackDataOut, HighsInt,

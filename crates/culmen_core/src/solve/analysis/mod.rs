@@ -4,8 +4,8 @@
 //! What a solve reports beyond its outcome: duals, the basis, ranging, rays, an IIS and a feasibility relaxation.
 //!
 //! The types here are solver-neutral plain data read with the program's handles. Each analysis is a
-//! [`Solver`](crate::Solver) method that exists only for a backend implementing its trait in
-//! [`capability`](crate::capability); the solver checks every request the same way for every backend (the analysis
+//! [`Solver`](crate::Solver) method that exists only for a backend implementing its trait, such as
+//! [`DualAnalysis`](crate::DualAnalysis); the solver checks every request the same way for every backend (the analysis
 //! is defined for the program's class, a basis or weights fit the program, the solve it reads exists) and only then
 //! asks the backend.
 

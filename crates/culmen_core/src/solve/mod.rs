@@ -5,8 +5,8 @@
 
 mod analysis;
 mod backend;
-pub mod capability;
-pub mod context;
+mod capability;
+mod context;
 mod edit;
 mod events;
 mod hooks;
@@ -29,7 +29,7 @@ pub use capability::{
 };
 pub use context::{
     ActionError, AddedRow, Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext,
-    PriceMode, ProgressContext, SolutionContext, Unsupported,
+    PriceMode, ProgressContext, SolutionContext, Unsupported, check_constraint, check_entries, check_solution,
 };
 pub use edit::{Edit, EditError};
 pub use events::{Event, Events, EventsIter, LogLevel, Phase, Progress};

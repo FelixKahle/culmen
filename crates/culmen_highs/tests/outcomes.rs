@@ -219,7 +219,9 @@ fn test_errors_name_the_dimension_and_the_model_status() {
 fn test_solving_before_loading_is_refused() {
     let mut highs = Highs::new();
     assert_eq!(
-        highs.solve(&Settings::new(), culmen_core::Hooks::new()).unwrap_err(),
+        highs
+            .solve(&Settings::new(), culmen_core::backend::Hooks::new())
+            .unwrap_err(),
         HighsError::NotLoaded
     );
 }

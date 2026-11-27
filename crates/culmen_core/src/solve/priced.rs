@@ -10,13 +10,14 @@ use crate::{ActionError, Col, Cols, ModelClass, ModelClasses, NewCol, Program};
 /// added column to, so that the [`Solver`](crate::Solver) can append them to its program.
 ///
 /// The [`Solver`](crate::Solver) makes one for each solve and hands it to [`Backend::solve`](crate::Backend::solve) in
-/// the [`Hooks`](crate::Hooks), where a backend that prices takes it ([`Hooks::take_priced`](crate::Hooks::take_priced));
-/// code that drives a backend directly makes its own, registers it with the pricer in
-/// [`Hooks::register_pricer`](crate::Hooks::register_pricer), and owns the columns it holds afterwards
-/// ([`Priced::into_cols`]).
+/// the [`Hooks`](crate::backend::Hooks), where a backend that prices takes it
+/// ([`Hooks::take_priced`](crate::backend::Hooks::take_priced)); code that drives a backend directly makes its own,
+/// registers it with the pricer in [`Hooks::register_pricer`](crate::backend::Hooks::register_pricer), and owns the
+/// columns it holds afterwards ([`Priced::into_cols`]).
 ///
 /// ```
-/// use culmen_core::{Backend, Col, Linear, Model, NewCol, Priced, Var};
+/// use culmen_core::{Backend, Col, Linear, Model, NewCol, Var};
+/// use culmen_core::backend::Priced;
 /// use culmen_core::script::Script;
 ///
 /// let mut m = Model::new();

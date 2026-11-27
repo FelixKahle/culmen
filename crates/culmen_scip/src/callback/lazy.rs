@@ -35,7 +35,8 @@
 use core::ffi::{c_int, c_uint};
 use core::ptr::{self, NonNull};
 
-use culmen_core::{ActionError, AddedRow, Col, Constraint, Context, LazyContext, Progress, TiSlice};
+use culmen_core::backend::AddedRow;
+use culmen_core::{ActionError, Col, Constraint, Context, LazyContext, Progress, TiSlice};
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_CONSHDLR, SCIP_LOCKTYPE, SCIP_RESULT, SCIP_RETCODE, SCIP_Result_SCIP_CONSADDED,
     SCIP_Result_SCIP_CUTOFF, SCIP_Result_SCIP_FEASIBLE, SCIP_Result_SCIP_INFEASIBLE, SCIP_Retcode_SCIP_OKAY, SCIP_SOL,

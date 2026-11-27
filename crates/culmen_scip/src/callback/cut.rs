@@ -21,7 +21,8 @@
 use core::ffi::{c_int, c_uint};
 use core::ptr::{self, NonNull};
 
-use culmen_core::{ActionError, AddedRow, Col, Constraint, Context, CutContext, Progress, TiSlice};
+use culmen_core::backend::AddedRow;
+use culmen_core::{ActionError, Col, Constraint, Context, CutContext, Progress, TiSlice};
 use scip_sys::{
     SCIP, SCIP_RESULT, SCIP_RETCODE, SCIP_ROW, SCIP_Result_SCIP_CUTOFF, SCIP_Result_SCIP_DIDNOTFIND,
     SCIP_Result_SCIP_DIDNOTRUN, SCIP_Result_SCIP_SEPARATED, SCIP_Retcode_SCIP_OKAY, SCIP_SEPA, SCIP_VAR,

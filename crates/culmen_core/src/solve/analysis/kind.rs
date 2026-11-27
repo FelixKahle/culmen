@@ -12,9 +12,9 @@ use crate::{ModelClass, ModelClasses, ProgramFeature, ProgramFeatures};
 
 /// What a [`Solver`](crate::Solver) can report beyond a solve's [`Outcome`](crate::Outcome).
 ///
-/// A backend provides an analysis by implementing its trait in [`capability`](crate::capability); each analysis is
-/// defined only for the [`classes`](Analysis::classes) of program where its mathematics holds. It names the analysis
-/// in an [`AnalysisError`](crate::AnalysisError). The enum is non-exhaustive: a new analysis is a new variant.
+/// A backend provides an analysis by implementing its trait, such as [`DualAnalysis`](crate::DualAnalysis); each
+/// analysis is defined only for the [`classes`](Analysis::classes) of program where its mathematics holds. It names the
+/// analysis in an [`AnalysisError`](crate::AnalysisError). The enum is non-exhaustive: a new analysis is a new variant.
 ///
 /// ```
 /// use culmen_core::{Analysis, ModelClass};

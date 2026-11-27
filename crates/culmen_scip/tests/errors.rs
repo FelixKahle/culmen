@@ -11,8 +11,9 @@
 
 use core::num::NonZeroU64;
 
+use culmen_core::backend::Hooks;
 use culmen_core::{
-    Backend, Col, Hooks, Linear, LoadError, Model, Program, ProgramColumn, ProgramFeature, ProgramPlan, Row, Settings,
+    Backend, Col, Linear, LoadError, Model, Program, ProgramColumn, ProgramFeature, ProgramPlan, Row, Settings,
     SolveError, Solver, Start, Starts, Var, bounds,
 };
 use culmen_scip::{Number, ParamValue, RetCode, Scip, ScipError, ScipOptions};

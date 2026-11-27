@@ -6,17 +6,19 @@
 use core::fmt;
 
 use super::context::{LogContext, PollContext, ProgressContext, SolutionContext};
-use crate::{Edit, Event, Events, Hooks, ModelClasses, Program, ProgramFeatures, Settings, Solved};
+use super::{Edit, Hooks};
+use crate::{Event, Events, ModelClasses, Program, ProgramFeatures, Settings, Solved};
 
 /// A solver culmen can drive: it loads a [`Program`], solves it under [`Settings`], and calls the [`Hooks`] of the
 /// solve as the search goes.
 ///
 /// The trait is open: any crate may implement it for its solver. Each associated context type implements the
 /// solver-neutral trait of its event and may offer more as inherent methods; an observational event the solver cannot
-/// deliver takes [`Unsupported`](crate::Unsupported) and is left out of [`Backend::EVENTS`]. The classes of program it
-/// solves are [`Backend::CLASSES`]. What changes the search (lazy constraints, user cuts, heuristic solutions,
-/// pricing), taking a start and the analyses are the traits of [`capability`](crate::capability), each with its own
-/// contract.
+/// deliver takes [`Unsupported`](crate::backend::Unsupported) and is left out of [`Backend::EVENTS`]. The classes of
+/// program it solves are [`Backend::CLASSES`]. What changes the search (lazy constraints, user cuts, heuristic
+/// solutions, pricing), taking a start and the analyses are capability traits of their own
+/// ([`LazyConstraints`](crate::LazyConstraints), [`Starts`](crate::Starts), [`DualAnalysis`](crate::DualAnalysis) and
+/// their siblings), each with its own contract; the [`backend`](crate::backend) module states what they share.
 ///
 /// # Contract
 ///

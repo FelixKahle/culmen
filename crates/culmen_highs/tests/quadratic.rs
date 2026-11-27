@@ -352,7 +352,7 @@ fn test_highs_itself_cannot_solve_a_miqp() {
     let mut highs = Highs::new();
     highs.load(&miqp()).unwrap();
     let error = highs
-        .solve(&culmen_core::Settings::new(), culmen_core::Hooks::new())
+        .solve(&culmen_core::Settings::new(), culmen_core::backend::Hooks::new())
         .unwrap_err();
     assert!(matches!(error, HighsError::Run { .. }), "{error:?}");
 }

@@ -166,9 +166,10 @@ pub use callback::{
     ScipCut, ScipEvent, ScipHeuristic, ScipLazy, ScipLazySource, ScipLog, ScipPoll, ScipPrice, ScipProgress,
     ScipSolution,
 };
+use culmen_core::backend::{Hooks, Unsupported};
 use culmen_core::{
-    Backend, Configurable, Event, Events, Heuristics, Hooks, LazyConstraints, ModelClasses, Outcome, Prices, Program,
-    Settings, Solved, Start, Starts, Unsupported, UserCuts,
+    Backend, Configurable, Event, Events, Heuristics, LazyConstraints, ModelClasses, Outcome, Prices, Program,
+    Settings, Solved, Start, Starts, UserCuts,
 };
 pub use error::{Number, RetCode, ScipError};
 pub use options::{Emphasis, ParamValue, ScipOptions, ScipParam};
@@ -576,7 +577,8 @@ mod tests {
     use core::num::NonZeroU64;
     use core::time::Duration;
 
-    use culmen_core::{Priced, ProgramColumn, ProgramPlan, absolute_gap, bounds, relative_gap, threads};
+    use culmen_core::backend::Priced;
+    use culmen_core::{ProgramColumn, ProgramPlan, absolute_gap, bounds, relative_gap, threads};
 
     use super::*;
 

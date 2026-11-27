@@ -17,13 +17,13 @@
 //!   compare them into a [`Constraint`], and [`Model::add_var_map`] keys a family by domain keys. A product of
 //!   columns is a [`QuadTerm`], and a convex quadratic objective a [`QuadExpr`]; constraints stay linear.
 //! - **The solver is a seam.** A [`Backend`] loads a [`Program`] and solves it under [`Settings`], calling a
-//!   [`Callback`] with one typed context per observational event kind ([`Events`]); what it cannot deliver it
-//!   declares, and its context for that event is [`Unsupported`], so such a callback never runs. What changes the
-//!   search is a capability of its own ([`LazyConstraints`], [`UserCuts`], [`Heuristics`], [`Prices`]), and the
-//!   matching handler ([`LazyHandler`], [`CutHandler`], [`HeuristicHandler`], [`Pricer`]) can be registered on the
-//!   [`Run`] of a solve only for a backend that has it. It declares the [`ModelClasses`] it solves, and
-//!   [`Solver::new`] refuses a program of any other [`ModelClass`] with a typed [`LoadError`]. Whatever a solver
-//!   offers beyond the neutral contexts is on its own context types.
+//!   [`Callback`] with one typed context per observational event kind ([`Events`]); what it cannot deliver it declares,
+//!   and its context for that event is [`Unsupported`](backend::Unsupported), so such a callback never runs. What
+//!   changes the search is a capability of its own ([`LazyConstraints`], [`UserCuts`], [`Heuristics`], [`Prices`]), and
+//!   the matching handler ([`LazyHandler`], [`CutHandler`], [`HeuristicHandler`], [`Pricer`]) can be registered on the
+//!   [`Run`] of a solve only for a backend that has it. It declares the [`ModelClasses`] it solves, and [`Solver::new`]
+//!   refuses a program of any other [`ModelClass`] with a typed [`LoadError`]. Whatever a solver offers beyond the
+//!   neutral contexts is on its own context types.
 //! - **A solve is a value.** A [`Solver`] holds a loaded backend; [`Solver::solve`] solves under the backend's
 //!   defaults, and [`Solver::run`] configures one solve with [`Settings`], a [`Stop`], an [`Observer`], a callback,
 //!   a start and handlers. Each returns [`Solved`]: a generic [`Outcome`] and the backend's own status.
@@ -75,6 +75,7 @@
     allow(clippy::missing_panics_doc, reason = "test assertions are the statement")
 )]
 
+pub mod backend;
 mod gap;
 mod model;
 mod program;
@@ -96,19 +97,16 @@ pub use program::{
     ProgramColumn, ProgramError, ProgramFeature, ProgramFeatures, ProgramFeaturesIter, ProgramPlan, ProgramRow,
     QuadEntries, QuadObjective, Row, RowEntries, RowMatrix, RowView, Rows, Sense, Stage, Tolerance, Weight, Weighted,
 };
-pub use script::Found;
 pub use solve::{
-    ActionError, AddedRow, Backend, Callback, Context, CutContext, CutHandler, Edit, EditError, Event, Events,
-    EventsIter, HeuristicContext, HeuristicHandler, Heuristics, Hooks, Improvement, LazyConstraints, LazyContext,
-    LazyHandler, LoadError, LogContext, LogLevel, LogLine, Observer, Outcome, Phase, PollContext, PriceContext,
-    PriceMode, Priced, Pricer, Prices, Progress, ProgressContext, Relay, Run, Settings, Solution, SolutionContext,
-    SolveError, Solved, Solver, Start, StartEntries, StartError, Stop, StopFn, StopReason, Unsupported, UserCuts,
-    Watch, stop_fn,
+    ActionError, Backend, Callback, Context, CutContext, CutHandler, EditError, Event, Events, EventsIter,
+    HeuristicContext, HeuristicHandler, Heuristics, Improvement, LazyConstraints, LazyContext, LazyHandler, LoadError,
+    LogContext, LogLevel, LogLine, Observer, Outcome, Phase, PollContext, PriceContext, PriceMode, Pricer, Prices,
+    Progress, ProgressContext, Run, Settings, Solution, SolutionContext, SolveError, Solved, Solver, Start,
+    StartEntries, StartError, Stop, StopFn, StopReason, UserCuts, stop_fn,
 };
 pub use solve::{
     Analysis, AnalysisError, Basis, BasisAnalysis, BasisStatus, Bound, Configurable, DualAnalysis, Duals, Iis,
     IisAnalysis, InvalidPenalty, Limit, Line, Misfit, Penalty, Ranged, Ranging, RangingAnalysis, RayAnalysis,
     RelaxationAnalysis, Relaxed, Side, Starts, Table, Violation, Violations, Weights,
 };
-pub use solve::{capability, context};
 pub use typed_index_collections::{TiSlice, TiVec};

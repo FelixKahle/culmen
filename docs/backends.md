@@ -27,7 +27,7 @@ pub trait Backend: Sized {
     fn solve(&mut self, settings: &Settings, hooks: Hooks<'_, Self>) -> Result<Solved<Self::Status>, Self::Error>;
 }
 
-// Capabilities beyond the seam, each a trait the backend implements or leaves out (culmen_core::capability).
+// Capabilities beyond the seam, each a trait the backend implements or leaves out (at the crate root).
 pub trait Configurable: Backend {         // options of its own; Solver::options and options_mut
     type Options: Debug;
     fn options(&self) -> &Self::Options;
@@ -58,9 +58,9 @@ pub trait RelaxationAnalysis: Backend {
 ```
 
 - **Observational events are typed and queryable.** A backend lists the observational events it delivers in
-  `Backend::EVENTS`. For one it cannot deliver it names `culmen_core::Unsupported` as the context type: an enum with
-  no values, so a callback method for that event compiles but can never run. SCIP, for instance, names `Unsupported`
-  for `Native`.
+  `Backend::EVENTS`. For one it cannot deliver it names `culmen_core::backend::Unsupported` as the context type: an enum
+  with no values, so a callback method for that event compiles but can never run. SCIP, for instance, names
+  `Unsupported` for `Native`.
 - **Search events are capability traits.** Lazy constraints, user cuts, heuristic solutions and pricing change what a
   solver searches, so a backend implements `LazyConstraints`, `UserCuts`, `Heuristics` or `Prices` for each it
   delivers, naming the context of its handler there, and the method that registers the handler (`Run::lazy` and so
@@ -79,11 +79,11 @@ pub trait RelaxationAnalysis: Backend {
   `ScipOptions`; the `Script` has none and implements nothing, so `options_mut()` on a `Solver<Script>` does not
   compile.
 - **Model classes are declared.** A backend lists the classes it solves (`ModelClass::Lp`, `Milp`, `Qp`, `Miqp`)
-  in `Backend::CLASSES`. `Solver::new` reads it before `load`, for every backend alike, and refuses any other class
-  with `LoadError::UnsupportedClass { class, supported }`, so `load` never re-checks the class. Features beyond the class
+  in `Backend::CLASSES`. `Solver::new` reads it before `load`, for every backend alike, and refuses any other class with
+  `LoadError::UnsupportedClass { class, supported }`, so `load` never re-checks the class. Features beyond the class
   (semi columns, multiple objectives) are declared alike in `Backend::FEATURES` and refused with
-  `LoadError::UnsupportedFeature`. Classes and features are properties of a program, which edits change, so they
-  stay run-time refusals.
+  `LoadError::UnsupportedFeature`. Classes and features are properties of a program, which edits change, so they stay
+  run-time refusals.
 - **Starts and analyses are capability traits.** A backend that takes a start implements `Starts`, and
   `Run::start` exists only for such a backend, so a start is never handed to one that would drop it. A backend
   that reports an analysis after a solve implements its trait (`DualAnalysis`, `BasisAnalysis`, `RangingAnalysis`,
@@ -105,14 +105,14 @@ pub trait RelaxationAnalysis: Backend {
   `Observer::progress`, reports `Incumbent` as `Observer::improved`, and joins `Log` chunks into lines. It works
   unchanged on every backend, and a `Solver` runs it before the callback registered on the run.
 - **Edits are a hook with a correct default.** A `Solver` that [edits its program](solving.md#editing-a-loaded-program)
-  calls `edit` with the edited program and an `Edit` naming what changed: the columns whose bounds, costs or
-  integrality changed, the rows whose bounds changed, the rows or columns appended, the objective's sense or offset,
-  or the whole own objective. Only a `Solver` makes an `Edit`, and the enum is non-exhaustive, so a backend matches it
-  (`Edit::ColBounds { cols, .. }`) and never forges one. It calls `edit` only right after the backend held the program before the edit, and only with a class
-  and features the backend declares. The default loads the program whole; a backend overrides it to change its model
-  in place and keep its warm start, and falls back to `load` for any kind of `Edit` it does not handle, since the enum
-  is non-exhaustive. When `edit` fails, the backend may hold anything: the `Solver` loads the program before the edit
-  again.
+  calls `edit` with the edited program and an `Edit` naming what changed: the columns whose bounds, costs or integrality
+  changed, the rows whose bounds changed, the rows or columns appended, the objective's sense or offset, or the whole
+  own objective. Only a `Solver` makes an `Edit`, and the enum is non-exhaustive, so a backend matches it
+  (`Edit::ColBounds { cols, .. }`) and never forges one. It calls `edit` only right after the backend held the program
+  before the edit, and only with a class and features the backend declares. The default loads the program whole; a
+  backend overrides it to change its model in place and keep its warm start, and falls back to `load` for any kind of
+  `Edit` it does not handle, since the enum is non-exhaustive. When `edit` fails, the backend may hold anything: the
+  `Solver` loads the program before the edit again.
 - **Priced columns go to a sink the caller owns.** The sink, a `Priced` made for the loaded program, travels in the
   hooks with the pricer: a backend that `Prices` takes it with `hooks.take_priced()` before it solves, `Some` exactly
   when a pricer is registered, and hands every column the pricer adds to `Priced::push`, which checks it (rows the
@@ -214,12 +214,11 @@ already allow a solver that calls back from other threads.
 | `solution_limit` (improving solutions) | `mip_max_improving_sols` | none: `SolutionLimit` counts every solution, so a Gurobi backend would count improvements in its callback and stop there | `limits/bestsol` (one above `i32::MAX` is refused) |
 | `console` | `log_to_console` (the log always reaches the callback) | `LogToConsole` (with `OutputFlag = 1`) | the message handler writes to standard output and standard error too (the log always reaches the callback) |
 
-Every backend also has typed options for the rest (`culmen_highs::HighsOptions` covers HiGHS's documented
-options as typed fields, except those `Settings` types) and a raw name/value escape hatch (`HighsOptions::option`); `culmen_scip::ScipOptions` has
-SCIP's three emphasis settings as typed fields and every other parameter by name (`ScipOptions::param`, set with
-`SCIPsetIntParam` and friends). A Gurobi backend would do the same with `GRBsetintparam` / `GRBsetdblparam` /
-`GRBsetstrparam`.
-`Settings` apply after the backend's options, so a per-solve setting always wins.
+Every backend also has typed options for the rest (`culmen_highs::HighsOptions` covers HiGHS's documented options as
+typed fields, except those `Settings` types) and a raw name/value escape hatch (`HighsOptions::option`);
+`culmen_scip::ScipOptions` has SCIP's three emphasis settings as typed fields and every other parameter by name
+(`ScipOptions::param`, set with `SCIPsetIntParam` and friends). A Gurobi backend would do the same with `GRBsetintparam`
+/ `GRBsetdblparam` / `GRBsetstrparam`. `Settings` apply after the backend's options, so a per-solve setting always wins.
 
 ## Outcomes and statuses
 
@@ -254,9 +253,10 @@ arrays. `solve` sets parameters from its own typed `GurobiOptions`, then from `S
 `GRBsetcallbackfunc` trampoline for the run, and maps `where` codes to events as in the table above. Its context types
 would be `GurobiMessage`, `GurobiMip`, `GurobiMipSol` and `GurobiMipNode`. `GurobiMipNode` would implement `CutContext`
 and `HeuristicContext` and offer `cbGet` codes as inherent methods. `EVENTS` would be `Events::ALL`; it would implement
-`LazyConstraints`, `UserCuts` and `Heuristics` and not `Prices`; and `CLASSES` would be `ModelClasses::ALL`, the quadratic part passed with `GRBaddqpterms`. None of this needs a change to
-culmen_core. SCIP needed more plumbing, since its callbacks are plugins (an event handler, a message handler, a
-constraint handler, a separator, a heuristic and a pricer, each included in the `SCIP*`), but each plugin maps onto the
-event kinds above; `culmen_scip` includes them in every instance and delivers every generic event that way
-([SCIP](scip.md#callback-events)). Pricing is the one part of the seam the pricer needed in culmen_core: the sink
-`Priced` in the hooks beside the pricer, since the columns a solve prices outlive it.
+`LazyConstraints`, `UserCuts` and `Heuristics` and not `Prices`; and `CLASSES` would be `ModelClasses::ALL`, the
+quadratic part passed with `GRBaddqpterms`. None of this needs a change to culmen_core. SCIP needed more plumbing, since
+its callbacks are plugins (an event handler, a message handler, a constraint handler, a separator, a heuristic and a
+pricer, each included in the `SCIP*`), but each plugin maps onto the event kinds above; `culmen_scip` includes them in
+every instance and delivers every generic event that way ([SCIP](scip.md#callback-events)). Pricing is the one part of
+the seam the pricer needed in culmen_core: the sink `Priced` in the hooks beside the pricer, since the columns a solve
+prices outlive it.

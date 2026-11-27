@@ -45,9 +45,10 @@ use core::ptr::{self, NonNull};
 use std::collections::BTreeMap;
 use std::ffi::CString;
 
+use culmen_core::backend::Priced;
 use culmen_core::{
-    ActionError, Bounds, Col, Context, Integrality, NewCol, PriceContext, PriceMode, Priced, Progress, Row, Sense,
-    TiSlice, TiVec,
+    ActionError, Bounds, Col, Context, Integrality, NewCol, PriceContext, PriceMode, Progress, Row, Sense, TiSlice,
+    TiVec,
 };
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_LPSolStat_SCIP_LPSOLSTAT_OPTIMAL, SCIP_PRICER, SCIP_RESULT, SCIP_RETCODE,

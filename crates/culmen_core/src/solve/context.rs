@@ -29,7 +29,7 @@ pub trait Context {
     fn progress(&self) -> Progress;
 }
 
-/// A chunk of the solver's log. A line may arrive in several chunks; [`Watch`](crate::Watch) joins them.
+/// A chunk of the solver's log. A line may arrive in several chunks; [`Watch`](crate::backend::Watch) joins them.
 pub trait LogContext: Context {
     /// The text as the solver wrote it, line breaks included.
     fn text(&self) -> &str;

@@ -5,7 +5,8 @@
 
 use core::fmt;
 
-use crate::{Backend, Callback, Event, Events, Heuristics, LazyConstraints, Priced, Prices, UserCuts};
+use super::Priced;
+use crate::{Backend, Callback, Event, Events, Heuristics, LazyConstraints, Prices, UserCuts};
 
 /// What a solve asks about each candidate solution: lazy constraints that cut it off before the solver accepts it.
 ///
@@ -235,7 +236,8 @@ impl<B: Prices, P: Pricer<B>> PriceSlot<B> for P {
 /// exists only for a backend with the capability, so a handler the backend would ignore does not compile:
 ///
 /// ```compile_fail,E0599
-/// use culmen_core::{Col, Hooks, LazyConstraints, LazyContext, LazyHandler, Linear, Unsupported};
+/// use culmen_core::{Col, LazyConstraints, LazyContext, LazyHandler, Linear};
+/// use culmen_core::backend::{Hooks, Unsupported};
 /// # use culmen_core::{Backend, Events, ModelClasses, Program, Settings, Solved};
 /// # #[derive(Debug)] struct Plain;
 /// # impl Backend for Plain {

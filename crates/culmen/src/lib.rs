@@ -224,11 +224,10 @@ pub mod prelude {
         Settings, Solution, SolveError, Solved, Solver, Start, Stop, StopReason, Tolerance, Var, VarMap, absolute_gap,
         bounds, product, relative_gap, set, solutions, stop_fn, threads, weight,
     };
-    // A generic callback or handler calls its contexts through these traits, and a backend names `Unsupported` for an
-    // event it cannot deliver.
+    // A generic callback or handler calls its contexts through these traits.
     pub use culmen_core::{
         Context, CutContext, HeuristicContext, LazyContext, LogContext, PollContext, PriceContext, ProgressContext,
-        SolutionContext, Unsupported,
+        SolutionContext,
     };
     // The search capabilities a backend may have, and the handler each one takes.
     pub use culmen_core::{

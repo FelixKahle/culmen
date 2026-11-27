@@ -14,12 +14,13 @@ use std::sync::atomic::AtomicBool;
 
 use proptest::prelude::*;
 
+use culmen_core::backend::{AddedRow, Found, Hooks};
 use culmen_core::script::{Script, ScriptStatus, Step};
 use culmen_core::{
-    ActionError, AddedRow, Backend, Callback, Col, Context, CutContext, CutHandler, Event, Events, Found,
-    HeuristicContext, HeuristicHandler, Heuristics, Hooks, Improvement, InvalidBounds, LazyConstraints, LazyContext,
-    LazyHandler, Linear, LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, PriceMode, ProgramPlan,
-    Progress, Settings, Solution, SolutionContext, Solver, StopReason, TiVec, UserCuts, Var, bounds, stop_fn,
+    ActionError, Backend, Callback, Col, Context, CutContext, CutHandler, Event, Events, HeuristicContext,
+    HeuristicHandler, Heuristics, Improvement, InvalidBounds, LazyConstraints, LazyContext, LazyHandler, Linear,
+    LogLevel, LogLine, Model, Observer, Outcome, Phase, PollContext, PriceMode, ProgramPlan, Progress, Settings,
+    Solution, SolutionContext, Solver, StopReason, TiVec, UserCuts, Var, bounds, stop_fn,
 };
 
 fn secs(s: u64) -> Duration {
@@ -647,10 +648,10 @@ fn test_a_callbacks_row_is_checked_with_its_coefficients_added_up() {
     let x = Col::new(0);
     let twice = (1e308 * x + 1e308 * x).leq(1.0);
     assert_eq!(
-        culmen_core::context::check_constraint(&twice, 1),
+        culmen_core::backend::check_constraint(&twice, 1),
         Err(ActionError::NonFinite { col: x })
     );
     // Terms that cancel are fine: the row is `0 x <= 1`.
     let cancel = (1e308 * x - 1e308 * x).leq(1.0);
-    assert!(culmen_core::context::check_constraint(&cancel, 1).is_ok());
+    assert!(culmen_core::backend::check_constraint(&cancel, 1).is_ok());
 }

@@ -6,9 +6,10 @@
 use core::fmt;
 use core::time::Duration;
 
+use super::{Hooks, Watch};
 use crate::{
-    Backend, Callback, CutHandler, HeuristicHandler, Heuristics, Hooks, LazyConstraints, LazyHandler, Observer, Pricer,
-    Prices, Settings, SolveError, Solved, Solver, Start, Starts, Stop, UserCuts, Watch,
+    Backend, Callback, CutHandler, HeuristicHandler, Heuristics, LazyConstraints, LazyHandler, Observer, Pricer,
+    Prices, Settings, SolveError, Solved, Solver, Start, Starts, Stop, UserCuts,
 };
 
 /// Checks a start against the solver's program and hands it to the backend; set only where `B` [`Starts`].

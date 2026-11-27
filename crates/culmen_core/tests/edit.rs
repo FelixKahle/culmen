@@ -16,11 +16,12 @@ use core::fmt;
 use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use culmen_core::backend::Unsupported;
 use culmen_core::script::{Script, ScriptError};
 use culmen_core::{
     Backend, Bounds, Col, Constraint, EditError, Events, Integrality, InvalidBounds, LinExpr, Linear, Model,
     ModelClass, ModelClasses, NewCol, NewRow, Outcome, Program, ProgramColumn, ProgramFeature, ProgramFeatures,
-    ProgramPlan, ProgramRow, Row, Sense, Settings, SolveError, Solved, Solver, Term, Unsupported, Var, bounds,
+    ProgramPlan, ProgramRow, Row, Sense, Settings, SolveError, Solved, Solver, Term, Var, bounds,
 };
 use culmen_testing::mirror::{Call, Edited, Faults, Mirror, MirrorError};
 use culmen_testing::op::{Applied, EditOp};
@@ -787,7 +788,7 @@ impl<const MILP: bool> Backend for Plain<MILP> {
         Ok(())
     }
 
-    fn solve(&mut self, _: &Settings, _: culmen_core::Hooks<'_, Self>) -> Result<Solved<()>, Never> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::backend::Hooks<'_, Self>) -> Result<Solved<()>, Never> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),

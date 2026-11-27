@@ -22,7 +22,7 @@
 use core::ffi::{c_char, c_uint};
 use core::ptr::{self, NonNull};
 
-use culmen_core::context::check_solution;
+use culmen_core::backend::check_solution;
 use culmen_core::{ActionError, Col, Context, HeuristicContext, Progress, TiSlice};
 use scip_sys::{
     SCIP, SCIP_HEUR, SCIP_HEURTIMING, SCIP_HEURTIMING_AFTERNODE, SCIP_HEURTIMING_BEFORENODE, SCIP_RESULT, SCIP_RETCODE,

@@ -13,11 +13,12 @@ use core::fmt;
 use core::time::Duration;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use culmen_core::backend::Unsupported;
 use culmen_core::script::Script;
 use culmen_core::{
     Backend, Col, Events, LinExpr, Linear, LoadError, Model, ModelClass, ModelClasses, ModelError, ModelVar, Outcome,
     Program, ProgramColumn, ProgramError, ProgramPlan, QuadExpr, QuadTerm, Quadratic, Sense, Settings, Solved, Solver,
-    Term, TiSlice, TiVec, Unsupported, Var,
+    Term, TiSlice, TiVec, Var,
 };
 use proptest::prelude::*;
 
@@ -545,7 +546,7 @@ impl Backend for LinearOnly {
         }
     }
 
-    fn solve(&mut self, _: &Settings, _: culmen_core::Hooks<'_, Self>) -> Result<Solved<()>, NoColumns> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::backend::Hooks<'_, Self>) -> Result<Solved<()>, NoColumns> {
         Ok(Solved {
             outcome: Outcome::Infeasible,
             status: (),

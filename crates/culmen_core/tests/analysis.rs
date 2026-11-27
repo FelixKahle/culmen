@@ -13,12 +13,13 @@ use core::cell::RefCell;
 use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use culmen_core::backend::Unsupported;
 use culmen_core::script::ScriptError;
 use culmen_core::{
     Analysis, AnalysisError, Backend, Basis, BasisAnalysis, BasisStatus, Bound, Col, DualAnalysis, Duals, Iis,
     IisAnalysis, InvalidPenalty, Limit, Line, Linear, Misfit, Model, ModelClass, ModelClasses, Outcome, Penalty,
     Program, ProgramPlan, Ranged, Ranging, RangingAnalysis, RayAnalysis, RelaxationAnalysis, Relaxed, Row, Settings,
-    Solution, Solved, Solver, Table, TiVec, Unsupported, Var, Violation, Weights, penalty,
+    Solution, Solved, Solver, Table, TiVec, Var, Violation, Weights, penalty,
 };
 use proptest::prelude::*;
 
@@ -62,7 +63,7 @@ impl Backend for Canned {
         Ok(())
     }
 
-    fn solve(&mut self, _: &Settings, _: culmen_core::Hooks<'_, Self>) -> Result<Solved<()>, ScriptError> {
+    fn solve(&mut self, _: &Settings, _: culmen_core::backend::Hooks<'_, Self>) -> Result<Solved<()>, ScriptError> {
         assert!(!self.panics, "Canned: a callback panicked");
         Ok(Solved {
             outcome: self.outcome.clone(),

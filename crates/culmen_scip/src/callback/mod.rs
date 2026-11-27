@@ -61,11 +61,9 @@ use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
 
-use culmen_core::context::check_constraint;
-use culmen_core::{
-    ActionError, AddedRow, Col, Constraint, Event, Events, Found, Hooks, LogLevel, Phase, Priced, Progress, Row, Sense,
-    TiSlice, TiVec,
-};
+use culmen_core::backend::check_constraint;
+use culmen_core::backend::{AddedRow, Found, Hooks, Priced};
+use culmen_core::{ActionError, Col, Constraint, Event, Events, LogLevel, Phase, Progress, Row, Sense, TiSlice, TiVec};
 pub use cut::ScipCut;
 pub use events::{ScipEvent, ScipPoll, ScipProgress, ScipSolution};
 pub use heuristic::ScipHeuristic;

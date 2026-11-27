@@ -32,7 +32,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Found, Phase};
+use culmen::Phase;
+use culmen::backend::Found;
 use culmen::script::{Script, Step};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -91,7 +92,8 @@ order), and the `text`. The solver writes its log in chunks; the observer receiv
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Found, LogLevel, Phase};
+use culmen::{LogLevel, Phase};
+use culmen::backend::Found;
 use culmen::script::{Script, Step};
 
 #[derive(Default)]
@@ -254,7 +256,8 @@ activates its pricer for a pricer, never for a callback that asks for events.
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Found, Phase};
+use culmen::Phase;
+use culmen::backend::Found;
 use culmen::script::{Script, Step};
 
 /// Forbids taking both items, a conflict only the handler knows, on any backend that takes lazy constraints.

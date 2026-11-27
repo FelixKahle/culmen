@@ -19,7 +19,8 @@ use core::ptr::{self, NonNull};
 
 use std::time::Instant;
 
-use culmen_core::{Col, Hooks, Priced, QuadObjective, Row, Solution, Start, TiVec};
+use culmen_core::backend::{Hooks, Priced};
+use culmen_core::{Col, QuadObjective, Row, Solution, Start, TiVec};
 use scip_sys::{
     SCIP, SCIP_CONS, SCIP_Retcode_SCIP_OKAY, SCIP_SOL, SCIP_Stage_SCIP_STAGE_PROBLEM, SCIP_VAR, SCIPactivatePricer,
     SCIPaddSolFree, SCIPcheckSol, SCIPcheckSolOrig, SCIPcreate, SCIPcreatePartialSol, SCIPcreateProbBasic,

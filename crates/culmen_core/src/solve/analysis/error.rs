@@ -12,7 +12,7 @@ use crate::{Col, ModelClass, Program, ProgramFeature};
 ///
 /// Every check but the backend's own is the same for every backend: the solver makes it before the backend is asked.
 /// Whether the backend provides the analysis at all is no refusal here: the [`Solver`](crate::Solver) method exists
-/// only for a backend that implements the analysis's trait in [`capability`](crate::capability).
+/// only for a backend that implements the analysis's trait, such as [`DualAnalysis`](crate::DualAnalysis).
 ///
 /// ```
 /// use culmen_core::{Analysis, AnalysisError, ModelClass};

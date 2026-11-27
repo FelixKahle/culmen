@@ -60,7 +60,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{Found, Phase};
+use culmen::Phase;
+use culmen::backend::Found;
 use culmen::script::{Script, ScriptStatus, Step};
 
 /// The code under test: solve with a time limit and a stop, and return the best objective found.
@@ -108,7 +109,8 @@ each event can be checked against the record. Here a lazy-constraint handler for
 use std::time::Duration;
 
 use culmen::prelude::*;
-use culmen::{ActionError, AddedRow, Found, Phase};
+use culmen::{ActionError, Phase};
+use culmen::backend::{AddedRow, Found};
 use culmen::script::{Script, Step};
 
 struct NotBoth {

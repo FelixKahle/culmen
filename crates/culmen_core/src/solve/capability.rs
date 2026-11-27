@@ -1,29 +1,8 @@
 // Copyright (c) 2026 Felix Kahle
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a backend can do beyond [`Backend`]: options of its own, the handlers that change its search, take a start,
-//! and the analyses after a solve.
-//!
-//! Each capability is a trait a backend implements or does not, and each method that needs one, a
-//! [`Solver`](crate::Solver) method or a registration on [`Hooks`](crate::Hooks), exists only for a backend that has
-//! it, so asking a backend for what it cannot do does not compile: a lazy-constraint handler registered for a backend
-//! without [`LazyConstraints`] is a compile error, not a solve that ignores it and reports the relaxation's optimum.
-//! What depends on the program or on the solve (an analysis defined for the program's class, a solve to read, a basis
-//! that fits, a column a pricer adds) stays a run-time refusal, checked the same way for every backend.
-//!
-//! # Contract
-//!
-//! A backend with a search capability calls the registered handler through its [`Hooks`](crate::Hooks), only while
-//! [`Backend::solve`] runs, never two handlers or a handler and a callback at once, and only when the hooks have a
-//! handler of that kind ([`Hooks::wants_lazy`](crate::Hooks::wants_lazy) and its siblings). A solve without a handler
-//! of a kind behaves as if the backend lacked the capability, and gives up nothing for it.
-//!
-//! A [`Solver`](crate::Solver) calls an analysis method only for an analysis defined for the program's class
-//! ([`Analysis::classes`](crate::Analysis::classes)) and features ([`Analysis::refused`](crate::Analysis::refused)),
-//! with the loaded program, and only in the state its [`Solver`](crate::Solver) method documents:
-//! [`DualAnalysis::duals`] and [`RangingAnalysis::ranging`] after a solve that ended optimal,
-//! [`BasisAnalysis::basis`] after a solve, the rays after a solve that ended as they prove, a basis or weights that fit
-//! the program. Called otherwise, it may fail or give an unspecified result, never undefined behaviour.
+//! The capability traits: what a backend can do beyond [`Backend`], each a trait it implements or leaves out. The
+//! [`backend`](crate::backend) module states what they share.
 
 use core::fmt;
 
@@ -90,11 +69,11 @@ pub trait Heuristics: Backend {
 /// [`PriceMode::Farkas`](crate::PriceMode::Farkas), with every program row's multiplier in the convention of
 /// [`PriceContext::duals`]. It ends pricing at a node only after a round that added no column and did not branch
 /// early, and counts the node LP as a bound only then. Every column the pricer adds goes through [`Priced::push`] of
-/// the sink [`Hooks::take_priced`](crate::Hooks::take_priced) gives, enters the search with its cost, bounds,
+/// the sink [`Hooks::take_priced`](crate::backend::Hooks::take_priced) gives, enters the search with its cost, bounds,
 /// integrality and entries, stays for the rest of the solve, and is part of every point the backend reports
 /// afterwards.
 ///
-/// [`Priced::push`]: crate::Priced::push
+/// [`Priced::push`]: crate::backend::Priced::push
 #[diagnostic::on_unimplemented(message = "`{Self}` does not price columns")]
 pub trait Prices: Backend {
     /// The context of a pricing round: a node LP whose duals the pricer answers with columns.
