@@ -18,7 +18,8 @@ pub(super) type HandStart<B> = fn(&mut Solver<B>, &Start) -> Result<(), SolveErr
 /// One solve of a [`Solver`] to configure, made by [`Solver::run`] and run by [`Run::solve`].
 ///
 /// Each method replaces what it sets and leaves the rest as it was, so the last call of a method is the one that
-/// counts; [`Run::settings`] sets every setting, the time limit included, and [`Run::time_limit`] sets only that.
+/// counts. A time limit given with [`Run::time_limit`] is the solve's time limit wherever the call stands, before
+/// or after [`Run::settings`].
 /// The methods that register a start or a handler exist only for a backend with the capability, so a handler the
 /// backend would ignore does not compile.
 ///
@@ -52,6 +53,8 @@ pub(super) type HandStart<B> = fn(&mut Solver<B>, &Start) -> Result<(), SolveErr
 pub struct Run<'s, 'h, B: Backend> {
     solver: &'s mut Solver<B>,
     settings: Settings,
+    /// The limit given with [`Run::time_limit`], which the solve uses in place of `settings.time_limit`.
+    time_limit: Option<Duration>,
     stop: Option<&'h dyn Stop>,
     observer: Option<&'h mut dyn Observer>,
     progress_interval: Duration,
@@ -65,6 +68,7 @@ impl<'s, 'h, B: Backend> Run<'s, 'h, B> {
         Self {
             solver,
             settings: Settings::new(),
+            time_limit: None,
             stop: None,
             observer: None,
             progress_interval: Watch::DEFAULT_PROGRESS_INTERVAL,
@@ -73,17 +77,17 @@ impl<'s, 'h, B: Backend> Run<'s, 'h, B> {
         }
     }
 
-    /// Solves under every setting of `settings`, its time limit included: a time limit set before with
-    /// [`Run::time_limit`] is replaced, and one set after replaces `settings.time_limit`.
+    /// Solves under every setting of `settings`. Its time limit holds unless [`Run::time_limit`] gives one, in
+    /// which case that one holds, whichever of the two calls comes first.
     pub const fn settings(mut self, settings: Settings) -> Self {
         self.settings = settings;
         self
     }
 
-    /// The wall-clock time the solve may take, replacing only the time limit: the other settings given before with
-    /// [`Run::settings`] stay, and a later [`Run::settings`] replaces this time limit with its own.
+    /// The wall-clock time the solve may take, whatever time limit [`Run::settings`] carries and whether it is called
+    /// before or after; the other settings stay.
     pub const fn time_limit(mut self, limit: Duration) -> Self {
-        self.settings.time_limit = Some(limit);
+        self.time_limit = Some(limit);
         self
     }
 
@@ -131,8 +135,12 @@ impl<'s, 'h, B: Backend> Run<'s, 'h, B> {
     /// When the observer, the callback or a handler panics: the panic continues once the solver has stopped.
     pub fn solve(self) -> Result<Solved<B::Status>, SolveError<B::Error>> {
         let mut watch = Watch::new(self.stop, self.observer, self.progress_interval);
+        let mut settings = self.settings;
+        if self.time_limit.is_some() {
+            settings.time_limit = self.time_limit;
+        }
         self.solver
-            .execute(&self.settings, &mut watch, self.start.as_ref(), self.hooks)
+            .execute(&settings, &mut watch, self.start.as_ref(), self.hooks)
     }
 }
 
@@ -191,6 +199,7 @@ impl<B: Backend> fmt::Debug for Run<'_, '_, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Run")
             .field("settings", &self.settings)
+            .field("time_limit", &self.time_limit)
             .field("stop", &self.stop.is_some())
             .field("observer", &self.observer.is_some())
             .field("progress_interval", &self.progress_interval)

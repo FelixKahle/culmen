@@ -420,10 +420,25 @@ fn test_settings_reach_the_backend_and_events_print_by_name() {
         (got.time_limit, got.console, got.threads.map(|t| t.get())),
         (Some(secs(5)), true, Some(3))
     );
-    // Settings given after a time limit replace it with their own, here none.
-    solver.run().time_limit(secs(5)).settings(settings).solve().unwrap();
-    let got = &solver.backend().record.settings[1];
-    assert_eq!((got.time_limit, got.console), (None, true));
+    // A time limit given on the run holds over the settings' own, whichever call comes first.
+    let settings = Settings {
+        time_limit: Some(secs(9)),
+        ..settings
+    };
+    solver.run().settings(settings.clone()).solve().unwrap();
+    solver
+        .run()
+        .time_limit(secs(5))
+        .settings(settings.clone())
+        .solve()
+        .unwrap();
+    solver.run().settings(settings).time_limit(secs(5)).solve().unwrap();
+    let limits: Vec<_> = solver.backend().record.settings[1..]
+        .iter()
+        .map(|s| s.time_limit)
+        .collect();
+    assert_eq!(limits, [Some(secs(9)), Some(secs(5)), Some(secs(5))]);
+    assert!(solver.backend().record.settings[2].console);
     assert_eq!(format!("{:?}", Event::Log | Event::Native), "Events(Log | Native)");
     assert_eq!(Script::EVENTS, Events::ALL);
 }

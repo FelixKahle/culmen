@@ -107,7 +107,7 @@ sets, so the last call of a method is the one that counts:
 | Method | Sets | For |
 |---|---|---|
 | `.settings(settings)` | Every setting at once, from a [`Settings`](#settings), its time limit included: a time limit set before is replaced. | every backend |
-| `.time_limit(duration)` | The wall-clock time the solve may take, and nothing else: the other settings stay, and a later `.settings(..)` replaces it. | every backend |
+| `.time_limit(duration)` | The wall-clock time the solve may take, and nothing else: the other settings stay, and it holds whether `.settings(..)` comes before or after. | every backend |
 | `.stop(&stop)` | The [`Stop`](callbacks.md#stop) polled while the solve runs. | every backend |
 | `.observer(&mut observer)` | The [`Observer`](callbacks.md#observer) of progress, improving solutions and log lines. | every backend |
 | `.progress_interval(duration)` | The least time between two progress reports; one second unless set. | every backend |
