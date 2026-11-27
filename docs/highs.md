@@ -527,9 +527,11 @@ during root-node evaluation, `point` a `HighsRootNodePoint` naming HiGHS's numbe
   column's bounds or integrality, and when HiGHS finds no feasible completion. A refused call leaves what an earlier
   call at the same query supplied.
 
-HiGHS calls neither solution callback for a solution it takes this way, so the backend reports it itself: once a
-MIP poll shows the supplied solution's objective as HiGHS's best, it arrives as `Incumbent`, and so reaches the
-[observer](callbacks.md#observer) too.
+HiGHS calls neither solution callback for a solution it takes this way, so the backend reports it itself: HiGHS
+checks the solution as soon as the query returns, so when the next MIP poll shows HiGHS's best objective moved with no
+solution of HiGHS's own reported between, the supplied solution was taken, and it arrives as `Incumbent`, valued with
+the program's own objective, and so reaches the [observer](callbacks.md#observer) too. This holds with several
+objectives as well, where HiGHS's best objective is a stage's or the blend's.
 
 ```rust
 use culmen::prelude::*;
