@@ -474,9 +474,13 @@ fn edit_op(cols: usize, rows: usize) -> impl Strategy<Value = EditOp> {
     let row = move || (0..rows).prop_map(Row::new);
     prop_oneof![
         prop::collection::vec((col(), edit_bounds()), 0..=3).prop_map(EditOp::ColBounds),
+        prop::collection::vec((col(), edit_number()), 0..=3).prop_map(EditOp::ColLower),
+        prop::collection::vec((col(), edit_number()), 0..=3).prop_map(EditOp::ColUpper),
         prop::collection::vec((col(), edit_number()), 0..=3).prop_map(EditOp::ColCosts),
         prop::collection::vec((col(), edit_integrality()), 0..=3).prop_map(EditOp::ColIntegrality),
         prop::collection::vec((row(), edit_bounds()), 0..=3).prop_map(EditOp::RowBounds),
+        prop::collection::vec((row(), edit_number()), 0..=3).prop_map(EditOp::RowLower),
+        prop::collection::vec((row(), edit_number()), 0..=3).prop_map(EditOp::RowUpper),
         prop::collection::vec(new_row(cols), 0..=2).prop_map(EditOp::AddRows),
         prop::collection::vec(new_col(rows), 0..=2).prop_map(EditOp::AddCols),
         edit_sense().prop_map(EditOp::Sense),
@@ -513,7 +517,7 @@ mod tests {
     fn test_edits_of_every_kind_are_both_accepted_and_refused() {
         let mut runner = TestRunner::deterministic();
         let strategy = with_edits(prop_oneof![small_lp(), small_semi(), small_qp()]);
-        let (mut accepted, mut refused) = ([0usize; 9], [0usize; 9]);
+        let (mut accepted, mut refused) = ([0usize; 13], [0usize; 13]);
         for _ in 0..2000 {
             let (program, ops) = strategy.new_tree(&mut runner).unwrap().current();
             for op in &ops {
@@ -527,6 +531,10 @@ mod tests {
                     EditOp::Sense(_) => 6,
                     EditOp::Offset(_) => 7,
                     EditOp::Objective { .. } => 8,
+                    EditOp::ColLower(_) => 9,
+                    EditOp::ColUpper(_) => 10,
+                    EditOp::RowLower(_) => 11,
+                    EditOp::RowUpper(_) => 12,
                 };
                 match edit_plan(&program, op, ModelClasses::ALL, ProgramFeatures::ALL) {
                     Ok(_) => accepted[kind] += 1,

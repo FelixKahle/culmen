@@ -111,6 +111,22 @@ pub enum EditError<E> {
         /// What is wrong with its bounds.
         source: InvalidBounds,
     },
+    /// A column's bounds with one end set and the other kept, by [`Solver::set_col_lower`] or
+    /// [`Solver::set_col_upper`], would be invalid.
+    ColEnd {
+        /// The column.
+        col: Col,
+        /// What is wrong with the bounds it would have.
+        source: InvalidBounds,
+    },
+    /// A row's bounds with one end set and the other kept, by [`Solver::set_row_lower`] or
+    /// [`Solver::set_row_upper`], would be invalid.
+    RowEnd {
+        /// The row.
+        row: Row,
+        /// What is wrong with the bounds it would have.
+        source: InvalidBounds,
+    },
     /// A semi-continuous or semi-integer column would have bounds that are not `lower ..= upper` with `0 < lower` and
     /// `upper` finite.
     SemiBounds {
@@ -177,6 +193,18 @@ impl<E: fmt::Display> fmt::Display for EditError<E> {
                 f,
                 "Solver: the bounds of the new {row:?}, its constant moved into them, are invalid: {source}"
             ),
+            Self::ColEnd { col, source } => {
+                write!(
+                    f,
+                    "Solver: {col:?} with one end set would have invalid bounds: {source}"
+                )
+            }
+            Self::RowEnd { row, source } => {
+                write!(
+                    f,
+                    "Solver: {row:?} with one end set would have invalid bounds: {source}"
+                )
+            }
             Self::SemiBounds { col, bounds } => write!(
                 f,
                 "Solver: the semi column {col:?} would have the bounds {bounds}, not 0 < lower <= upper < +inf"
@@ -218,7 +246,7 @@ impl<E: fmt::Display> fmt::Display for EditError<E> {
 impl<E: core::error::Error + 'static> core::error::Error for EditError<E> {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            Self::RowBounds { source, .. } => Some(source),
+            Self::RowBounds { source, .. } | Self::ColEnd { source, .. } | Self::RowEnd { source, .. } => Some(source),
             Self::Backend(error) => Some(error),
             Self::UnknownCol { .. }
             | Self::UnknownRow { .. }
@@ -252,6 +280,51 @@ impl<B: Backend> Solver<B> {
         bounds: impl IntoIterator<Item = (Col, T)>,
     ) -> Result<(), EditError<B::Error>> {
         self.apply_col_bounds(latest(bounds.into_iter().map(|(col, bounds)| (col, bounds.into()))))
+    }
+
+    /// Sets the lower bounds of columns, all or none, keeping their upper bounds, the last bound given for a column
+    /// holding: gurobipy's `x.LB = 1` is `solver.set_col_lower([(x, 1)])`.
+    ///
+    /// ```
+    /// use culmen_core::{Model, Solver, Var};
+    /// use culmen_core::script::Script;
+    /// let mut m = Model::new();
+    /// let x = m.add_var(Var::continuous().upper(4));
+    /// let mut solver = Solver::new(Script::optimal(0.0, vec![0.0]), m.build()?)?;
+    /// solver.set_col_lower([(x, 1)])?;
+    /// assert_eq!(solver.program().columns()[x].bounds.lower(), 1.0);
+    /// assert_eq!(solver.program().columns()[x].bounds.upper(), 4.0);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::UnknownCol`] for a column the program does not have, [`EditError::ColEnd`] for a column whose
+    /// bounds would be invalid, [`EditError::SemiBounds`] for a semi column given bounds it may not have, all before
+    /// the backend sees the edit; [`EditError::Backend`] when the backend refuses it, or refuses the program the
+    /// solver loads first after an earlier failed edit.
+    pub fn set_col_lower<T: Into<f64>>(
+        &mut self,
+        lower: impl IntoIterator<Item = (Col, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        let lower = latest(lower.into_iter().map(|(col, lower)| (col, lower.into())));
+        let bounds = col_ends(&self.program, lower, |lower, bounds| Bounds::new(lower, bounds.upper()))?;
+        self.apply_col_bounds(bounds)
+    }
+
+    /// Sets the upper bounds of columns, all or none, keeping their lower bounds, the last bound given for a column
+    /// holding.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::set_col_lower`].
+    pub fn set_col_upper<T: Into<f64>>(
+        &mut self,
+        upper: impl IntoIterator<Item = (Col, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        let upper = latest(upper.into_iter().map(|(col, upper)| (col, upper.into())));
+        let bounds = col_ends(&self.program, upper, |upper, bounds| Bounds::new(bounds.lower(), upper))?;
+        self.apply_col_bounds(bounds)
     }
 
     /// Sets the costs of columns in the program's own objective, all or none, the last cost given for a column
@@ -298,6 +371,37 @@ impl<B: Backend> Solver<B> {
         bounds: impl IntoIterator<Item = (Row, T)>,
     ) -> Result<(), EditError<B::Error>> {
         self.apply_row_bounds(latest(bounds.into_iter().map(|(row, bounds)| (row, bounds.into()))))
+    }
+
+    /// Sets the lower bounds of rows, all or none, keeping their upper bounds, the last bound given for a row holding.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::UnknownRow`] for a row the program does not have, [`EditError::RowEnd`] for a row whose bounds
+    /// would be invalid, both before the backend sees the edit; [`EditError::Backend`] when the backend refuses it,
+    /// or refuses the program the solver loads first after an earlier failed edit.
+    pub fn set_row_lower<T: Into<f64>>(
+        &mut self,
+        lower: impl IntoIterator<Item = (Row, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        let lower = latest(lower.into_iter().map(|(row, lower)| (row, lower.into())));
+        let bounds = row_ends(&self.program, lower, |lower, bounds| Bounds::new(lower, bounds.upper()))?;
+        self.apply_row_bounds(bounds)
+    }
+
+    /// Sets the upper bounds of rows, all or none, keeping their lower bounds, the last bound given for a row
+    /// holding: gurobipy's `c.RHS = 4` on a `≤` row is `solver.set_row_upper([(c, 4)])`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solver::set_row_lower`].
+    pub fn set_row_upper<T: Into<f64>>(
+        &mut self,
+        upper: impl IntoIterator<Item = (Row, T)>,
+    ) -> Result<(), EditError<B::Error>> {
+        let upper = latest(upper.into_iter().map(|(row, upper)| (row, upper.into())));
+        let bounds = row_ends(&self.program, upper, |upper, bounds| Bounds::new(bounds.lower(), upper))?;
+        self.apply_row_bounds(bounds)
     }
 
     /// Appends a row and returns it: a [`Constraint`](crate::Constraint), a named one as `(name, constraint)`, or a
@@ -799,6 +903,52 @@ fn latest<I: Ord, V>(given: impl IntoIterator<Item = (I, V)>) -> BTreeMap<I, V> 
         latest.insert(id, value);
         latest
     })
+}
+
+/// Each column's bounds with the end given set by `set` and the other kept.
+///
+/// # Errors
+///
+/// [`EditError::UnknownCol`] for the first column the program lacks, else [`EditError::ColEnd`] for the first whose
+/// bounds `set` refuses.
+fn col_ends<E>(
+    program: &Program,
+    ends: BTreeMap<Col, f64>,
+    set: fn(f64, Bounds) -> Result<Bounds, InvalidBounds>,
+) -> Result<BTreeMap<Col, Bounds>, EditError<E>> {
+    known_cols(&ends, program.num_cols())?;
+    ends.into_iter()
+        .map(|(col, end)| {
+            let bounds = set(end, program.columns()[col].bounds);
+            bounds
+                .map(|bounds| (col, bounds))
+                .map_err(|source| EditError::ColEnd { col, source })
+        })
+        .collect()
+}
+
+/// Each row's bounds with the end given set by `set` and the other kept.
+///
+/// # Errors
+///
+/// [`EditError::UnknownRow`] for the first row the program lacks, else [`EditError::RowEnd`] for the first whose
+/// bounds `set` refuses.
+fn row_ends<E>(
+    program: &Program,
+    ends: BTreeMap<Row, f64>,
+    set: fn(f64, Bounds) -> Result<Bounds, InvalidBounds>,
+) -> Result<BTreeMap<Row, Bounds>, EditError<E>> {
+    if let Some((&row, _)) = ends.range(Row::new(program.num_rows())..).next() {
+        return Err(EditError::UnknownRow { row });
+    }
+    ends.into_iter()
+        .map(|(row, end)| {
+            let bounds = set(end, program.row(row).bounds());
+            bounds
+                .map(|bounds| (row, bounds))
+                .map_err(|source| EditError::RowEnd { row, source })
+        })
+        .collect()
 }
 
 /// Checks that every column `given` names is one of the program's `num_cols`.

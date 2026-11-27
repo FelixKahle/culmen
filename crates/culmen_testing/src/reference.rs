@@ -414,6 +414,8 @@ pub fn edit_plan(
         EditOp::ColBounds(given) => given
             .iter()
             .try_for_each(|&(c, b)| column(&mut plan, c).map(|c| c.bounds = b))?,
+        EditOp::ColLower(given) => col_ends(&mut plan, given, true)?,
+        EditOp::ColUpper(given) => col_ends(&mut plan, given, false)?,
         EditOp::ColCosts(given) => given
             .iter()
             .try_for_each(|&(c, v)| column(&mut plan, c).map(|c| c.cost = v))?,
@@ -425,6 +427,8 @@ pub fn edit_plan(
         EditOp::RowBounds(given) => given
             .iter()
             .try_for_each(|&(r, b)| row(&mut plan, r).map(|r| r.bounds = b))?,
+        EditOp::RowLower(given) => row_ends(&mut plan, given, true)?,
+        EditOp::RowUpper(given) => row_ends(&mut plan, given, false)?,
         EditOp::AddRows(new) => {
             for new in new {
                 let row = plan_row(new, num_cols)?;
@@ -451,6 +455,62 @@ pub fn edit_plan(
     }
     let built = plan.build();
     Ok(built.unwrap_or_else(|e| panic!("the edit rules accept a plan Program::from_plan refuses: {e}")))
+}
+
+/// Sets the lower end, or the upper when not `lower`, of the bounds of each column `given` names to the last end
+/// given for it, keeping the other end.
+///
+/// # Errors
+///
+/// [`Refused`] for a column the plan lacks, or as [`one_end`].
+fn col_ends(plan: &mut ProgramPlan, given: &[(Col, f64)], lower: bool) -> Result<(), Refused> {
+    if let Some((c, _)) = given.iter().find(|(c, _)| c.index() >= plan.columns.len()) {
+        return Err(refused(format!("the program has no {c:?}")));
+    }
+    let last: BTreeMap<Col, f64> = given.iter().copied().collect();
+    for (c, end) in last {
+        let bounds = &mut plan.columns[c].bounds;
+        *bounds = one_end(*bounds, end, lower)?;
+    }
+    Ok(())
+}
+
+/// [`col_ends`] for rows.
+///
+/// # Errors
+///
+/// [`Refused`] for a row the plan lacks, or as [`one_end`].
+fn row_ends(plan: &mut ProgramPlan, given: &[(Row, f64)], lower: bool) -> Result<(), Refused> {
+    if let Some((r, _)) = given.iter().find(|(r, _)| r.index() >= plan.rows.len()) {
+        return Err(refused(format!("the program has no {r:?}")));
+    }
+    let last: BTreeMap<Row, f64> = given.iter().copied().collect();
+    for (r, end) in last {
+        let bounds = &mut plan.rows[r].bounds;
+        *bounds = one_end(*bounds, end, lower)?;
+    }
+    Ok(())
+}
+
+/// `bounds` with its lower end, or its upper when not `lower`, set to `end`.
+///
+/// # Errors
+///
+/// [`Refused`] when an end is NaN, the lower end is `+∞` or the upper `-∞`, or the lower end exceeds the upper.
+///
+/// # Panics
+///
+/// When `Bounds::new` refuses ends these rules accept.
+fn one_end(bounds: Bounds, end: f64, lower: bool) -> Result<Bounds, Refused> {
+    let (l, u) = if lower {
+        (end, bounds.upper())
+    } else {
+        (bounds.lower(), end)
+    };
+    if l.is_nan() || u.is_nan() || l == f64::INFINITY || u == f64::NEG_INFINITY || l > u {
+        return Err(refused(format!("one end set gives the bounds {l} ..= {u}")));
+    }
+    Ok(Bounds::new(l, u).unwrap_or_else(|e| panic!("the edit rules accept bounds Bounds::new refuses: {e}")))
 }
 
 /// Sets the plan's sense.

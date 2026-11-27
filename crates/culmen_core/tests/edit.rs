@@ -121,6 +121,51 @@ fn test_set_col_bounds_changes_only_those_bounds_and_the_last_given_holds() {
 }
 
 #[test]
+fn test_one_end_of_a_bound_changes_and_the_other_is_kept() {
+    let (_, x, y, cap, floor) = base();
+    let mut solver = mirrored();
+    solver.set_col_lower([(x, 5), (x, 1)]).unwrap();
+    solver.set_col_upper([(y, 2)]).unwrap();
+    solver.set_row_upper([(cap, 4)]).unwrap();
+    solver.set_row_lower([(floor, -2)]).unwrap();
+    let mut want = base_plan();
+    want.columns[x].bounds = bounds!(1.0, 4.0);
+    want.columns[y].bounds = bounds!(0.0, 2.0);
+    want.rows[cap].bounds = bounds!(f64::NEG_INFINITY, 4.0);
+    want.rows[floor].bounds = bounds!(-2.0, f64::INFINITY);
+    let want = want.build().unwrap();
+    assert_eq!(solver.program(), &want);
+    assert_eq!(
+        last_call(&solver),
+        &Call::Edit(Edited::RowBounds(vec![floor]), want.clone())
+    );
+    assert_in_sync(&solver);
+
+    // An end beyond the other is refused, all or none, before the backend sees it.
+    let refused = solver.set_col_upper([(y, 3.0), (x, 0.5)]);
+    assert_eq!(
+        refused,
+        Err(EditError::ColEnd {
+            col: x,
+            source: InvalidBounds::Empty { lower: 1.0, upper: 0.5 }
+        })
+    );
+    assert_eq!(
+        solver.set_row_lower([(cap, f64::INFINITY)]),
+        Err(EditError::RowEnd {
+            row: cap,
+            source: InvalidBounds::LowerIsPlusInfinity
+        })
+    );
+    assert_eq!(
+        solver.set_col_lower([(Col::new(9), 0)]),
+        Err(EditError::UnknownCol { col: Col::new(9) })
+    );
+    assert_eq!(solver.program(), &want);
+    assert_in_sync(&solver);
+}
+
+#[test]
 fn test_set_col_costs_changes_the_own_objective_and_takes_integers() {
     let (_, _, y, ..) = base();
     let mut solver = mirrored();
@@ -640,7 +685,7 @@ fn test_each_refusal_names_what_is_at_fault_and_changes_nothing() {
 
 #[test]
 fn test_every_edit_error_displays_its_sentence_and_its_source() {
-    let cases: [(EditError<ScriptError>, &str, bool); 14] = [
+    let cases: [(EditError<ScriptError>, &str, bool); 16] = [
         (
             EditError::UnknownCol { col: Col::new(3) },
             "Solver: the program has no Col(3)",
@@ -675,6 +720,22 @@ fn test_every_edit_error_displays_its_sentence_and_its_source() {
             },
             "Solver: the bounds of the new Row(4), its constant moved into them, are invalid: Bounds: the lower end 3 \
              exceeds the upper end 1",
+            true,
+        ),
+        (
+            EditError::ColEnd {
+                col: Col::new(1),
+                source: InvalidBounds::Empty { lower: 5.0, upper: 4.0 },
+            },
+            "Solver: Col(1) with one end set would have invalid bounds: Bounds: the lower end 5 exceeds the upper end 4",
+            true,
+        ),
+        (
+            EditError::RowEnd {
+                row: Row::new(0),
+                source: InvalidBounds::LowerIsPlusInfinity,
+            },
+            "Solver: Row(0) with one end set would have invalid bounds: Bounds: the lower end is +inf",
             true,
         ),
         (
@@ -1013,6 +1074,8 @@ fn returned(op: &EditOp, before: &Program, after: &Program) -> Applied {
 fn is_empty(op: &EditOp) -> bool {
     match op {
         EditOp::ColBounds(items) => items.is_empty(),
+        EditOp::ColLower(items) | EditOp::ColUpper(items) => items.is_empty(),
+        EditOp::RowLower(items) | EditOp::RowUpper(items) => items.is_empty(),
         EditOp::ColCosts(items) => items.is_empty(),
         EditOp::ColIntegrality(items) => items.is_empty(),
         EditOp::RowBounds(items) => items.is_empty(),

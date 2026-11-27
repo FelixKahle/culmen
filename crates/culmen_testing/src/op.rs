@@ -11,12 +11,20 @@ use culmen_core::{Backend, Bounds, Col, EditError, Integrality, NewCol, NewRow, 
 pub enum EditOp {
     /// [`Solver::set_col_bounds`].
     ColBounds(Vec<(Col, Bounds)>),
+    /// [`Solver::set_col_lower`].
+    ColLower(Vec<(Col, f64)>),
+    /// [`Solver::set_col_upper`].
+    ColUpper(Vec<(Col, f64)>),
     /// [`Solver::set_col_costs`].
     ColCosts(Vec<(Col, f64)>),
     /// [`Solver::set_col_integrality`].
     ColIntegrality(Vec<(Col, Integrality)>),
     /// [`Solver::set_row_bounds`].
     RowBounds(Vec<(Row, Bounds)>),
+    /// [`Solver::set_row_lower`].
+    RowLower(Vec<(Row, f64)>),
+    /// [`Solver::set_row_upper`].
+    RowUpper(Vec<(Row, f64)>),
     /// [`Solver::add_rows`].
     AddRows(Vec<NewRow>),
     /// [`Solver::add_cols`].
@@ -58,9 +66,13 @@ impl EditOp {
     pub fn apply<B: Backend>(&self, solver: &mut Solver<B>) -> Result<Applied, EditError<B::Error>> {
         match self.clone() {
             Self::ColBounds(bounds) => solver.set_col_bounds(bounds).map(|()| Applied::Changed),
+            Self::ColLower(lower) => solver.set_col_lower(lower).map(|()| Applied::Changed),
+            Self::ColUpper(upper) => solver.set_col_upper(upper).map(|()| Applied::Changed),
             Self::ColCosts(costs) => solver.set_col_costs(costs).map(|()| Applied::Changed),
             Self::ColIntegrality(integrality) => solver.set_col_integrality(integrality).map(|()| Applied::Changed),
             Self::RowBounds(bounds) => solver.set_row_bounds(bounds).map(|()| Applied::Changed),
+            Self::RowLower(lower) => solver.set_row_lower(lower).map(|()| Applied::Changed),
+            Self::RowUpper(upper) => solver.set_row_upper(upper).map(|()| Applied::Changed),
             Self::AddRows(rows) => solver.add_rows(rows).map(|rows| Applied::Rows(rows.collect())),
             Self::AddCols(cols) => solver.add_cols(cols).map(|cols| Applied::Cols(cols.collect())),
             Self::Sense(sense) => solver.set_sense(sense).map(|()| Applied::Changed),
