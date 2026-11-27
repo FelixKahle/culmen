@@ -443,7 +443,8 @@ impl Backend for Scip {
     /// When a callback or handler panics, once SCIP has stopped.
     fn solve(&mut self, settings: &Settings, mut hooks: Hooks<'_, Self>) -> Result<Solved<ScipStatus>, ScipError> {
         let instance = self.instance.as_mut().ok_or(ScipError::NotLoaded)?;
-        let priced = hooks.take_priced();
+        // A relay may hand a sink without a pricer, so the pricer decides, not the sink.
+        let priced = if hooks.wants_price() { hooks.take_priced() } else { None };
         let pricing = priced.is_some();
         if pricing && instance.quadratic() {
             return Err(ScipError::PricingQuadratic);

@@ -114,10 +114,11 @@ pub trait RelaxationAnalysis: Backend {
   error in every backend that overrides `edit`, never a silent reload. When `edit` fails, the backend may hold
   anything: the `Solver` loads the program before the edit again.
 - **Priced columns go to a sink the caller owns.** The sink, a `Priced` made for the loaded program, travels in the
-  hooks with the pricer: a backend that `Prices` takes it with `hooks.take_priced()` before it solves, `Some` exactly
-  when a pricer is registered, and hands every column the pricer adds to `Priced::push`, which checks it (rows the
-  program has, finite numbers, bounds that hold zero, no semi column, a class the backend solves) and returns its id,
-  the next after the program's columns and every one priced before. The core owns the checks and the numbering, so
+  hooks with the pricer: a backend that `Prices` asks `hooks.wants_price()` whether a pricer is registered or relayed
+  (a relay may carry a sink without one), takes the sink with `hooks.take_priced()` before it solves, and hands every
+  column the pricer adds to `Priced::push`, which checks it (rows the program has, finite numbers, bounds that hold
+  zero, no semi column, a class the backend solves) and returns its id, the next after the program's columns and
+  every one priced before. The core owns the checks and the numbering, so
   every backend refuses the same columns the same way. A `Solver` gives its own sink, appends the columns to its
   program however `solve` ends, unwinding included, and loads the grown program at its next call; code that drives a
   backend directly registers its own with the pricer, `Hooks::register_pricer(pricer, priced)`, and takes the columns

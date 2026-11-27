@@ -18,8 +18,9 @@ use core::time::Duration;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
+use culmen_core::backend::{Hooks, Priced, Relay};
 use culmen_core::{
-    ActionError, Bounds, Callback, Col, Context, CutContext, CutHandler, Event, Events, HeuristicContext,
+    ActionError, Backend, Bounds, Callback, Col, Context, CutContext, CutHandler, Event, Events, HeuristicContext,
     HeuristicHandler, Integrality, LazyContext, LazyHandler, Linear, NewCol, Outcome, Phase, PollContext, PriceContext,
     PriceMode, Program, ProgramColumn, ProgramPlan, Row, Sense, Settings, Solution, SolutionContext, SolveError,
     Solved, Solver, StopReason, TiVec, bounds,
@@ -927,6 +928,56 @@ fn test_pricing_a_program_with_a_quadratic_objective_is_refused_before_scip_runs
     // Without pricing the same solver solves it: x = 1, x² = 1.
     let solved = solver.run().settings(limited(true)).solve().unwrap();
     assert!(close(optimal(solved.outcome).objective, 1.0, 1e-6));
+}
+
+/// A relay that holds no handler, as a wrapping backend relays the hooks of a solve without one.
+struct NoHandlers;
+
+impl Callback<Scip> for NoHandlers {}
+
+impl Relay<Scip> for NoHandlers {
+    fn wants_lazy(&self) -> bool {
+        false
+    }
+    fn lazy(&mut self, _: &mut ScipLazy<'_>) {
+        unreachable!("no lazy-constraint handler is relayed")
+    }
+    fn wants_cut(&self) -> bool {
+        false
+    }
+    fn cut(&mut self, _: &mut ScipCut<'_>) {
+        unreachable!("no cut handler is relayed")
+    }
+    fn wants_heuristic(&self) -> bool {
+        false
+    }
+    fn heuristic(&mut self, _: &mut ScipHeuristic<'_>) {
+        unreachable!("no heuristic handler is relayed")
+    }
+    fn wants_price(&self) -> bool {
+        false
+    }
+    fn price(&mut self, _: &mut ScipPrice<'_>) {
+        unreachable!("no pricer is relayed")
+    }
+}
+
+#[test]
+fn test_a_relayed_sink_without_a_pricer_does_not_price() {
+    let mut plan = ProgramPlan::new();
+    let x = plan.col(ProgramColumn::continuous().bounds(bounds!(0.0, 4.0)));
+    plan.row((bounds!(1.0, f64::INFINITY), [(x, 1.0)]));
+    plan.quadratic = vec![(x, x, 1.0)];
+    let program = plan.build().unwrap();
+    let mut scip = Scip::new();
+    scip.load(&program).unwrap();
+    let mut priced = Priced::new(&program, Scip::CLASSES);
+    let mut relay = NoHandlers;
+    let solved = scip.solve(&limited(true), Hooks::relay(&mut relay, Some(&mut priced)));
+    // Nothing prices, so the quadratic objective is solved as without the sink: x = 1, x² = 1.
+    let solved = solved.unwrap();
+    assert!(close(optimal(solved.outcome).objective, 1.0, 1e-6));
+    assert_eq!(priced.num_cols(), program.num_cols());
 }
 
 /// Tries the refusals SCIP adds to the core's at the first round, then prices as a `Pricer`.

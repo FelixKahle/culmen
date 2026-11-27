@@ -389,9 +389,11 @@ impl<'h, B: Backend> Hooks<'h, B> {
         self.each(Event::Native, |c| c.native(ctx));
     }
 
-    /// The sink of the columns the pricer adds, made for the loaded program: `Some` when a pricer is registered, or
-    /// relayed with a sink, the first time it is asked for, and `None` after and for hooks without a pricer. A
-    /// backend that prices takes it once, before it solves, and hands every column the pricer adds to it.
+    /// The sink of the columns the pricer adds, made for the loaded program: `Some` the first time it is asked for
+    /// when a pricer is registered or the hooks relay with a sink, and `None` after and for any other hooks. A relay's
+    /// sink comes whether or not the relay holds a pricer, so a backend that `Prices` decides by
+    /// [`Hooks::wants_price`] whether it prices, takes the sink once, before it solves, and hands every column the
+    /// pricer adds to it.
     pub fn take_priced(&mut self) -> Option<&'h mut Priced> {
         if self.pricer.is_none() && self.relay.is_none() {
             return None;
