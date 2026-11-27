@@ -143,27 +143,19 @@ impl fmt::Display for Status {
 pub struct ScipStatus {
     /// SCIP's solving status.
     pub status: Status,
-    /// The best bound SCIP proved on the objective, offset included, in the program's sense; `None` when SCIP proved
-    /// none, as for an infeasible program.
-    pub dual_bound: Option<f64>,
-    /// The number of branch-and-bound nodes, across restarts.
-    pub nodes: u64,
-    /// The number of LP iterations.
-    pub lp_iterations: u64,
     /// The number of feasible solutions SCIP found, its heuristics' and the starts it accepted included.
     pub solutions_found: u64,
 }
 
-/// The generic outcome of a solve SCIP ended with `status`, its best solution `best`.
+/// The generic outcome of a solve SCIP ended with `status`, its best solution `best` and its best bound `bound`.
 ///
 /// # Errors
 ///
 /// [`ScipError::Failed`] for [`Status::Unknown`] and an undefined status, for [`Status::Optimal`] without a
 /// solution, and for [`Status::GapLimit`] without a solution or a bound.
-pub(crate) fn outcome(status: &ScipStatus, best: Option<Solution>) -> Result<Outcome, ScipError> {
-    let failed = || ScipError::Failed { status: status.status };
-    let bound = status.dual_bound;
-    match status.status {
+pub(crate) fn outcome(status: Status, best: Option<Solution>, bound: Option<f64>) -> Result<Outcome, ScipError> {
+    let failed = || ScipError::Failed { status };
+    match status {
         Status::Optimal => best.map(Outcome::Optimal).ok_or_else(failed),
         Status::GapLimit => match (best, bound) {
             (Some(solution), Some(bound)) => Ok(Outcome::GapReached { solution, bound }),
@@ -210,16 +202,6 @@ mod tests {
         ),
         (scip_sys::SCIP_Status_SCIP_STATUS_RESTARTLIMIT, Status::RestartLimit),
     ];
-
-    fn status(status: Status, dual_bound: Option<f64>) -> ScipStatus {
-        ScipStatus {
-            status,
-            dual_bound,
-            nodes: 0,
-            lp_iterations: 0,
-            solutions_found: 0,
-        }
-    }
 
     fn point() -> Solution {
         Solution {
@@ -280,14 +262,11 @@ mod tests {
                 Status::Terminate | Status::RestartLimit => stopped(R::Other),
                 Status::Other(_) => unreachable!("every status of SCIP 10 is named"),
             };
-            let got = [
-                outcome(&status(code, Some(2.5)), Some(point())),
-                outcome(&status(code, Some(2.5)), None),
-            ];
+            let got = [outcome(code, Some(point()), Some(2.5)), outcome(code, None, Some(2.5))];
             assert_eq!(got, expected, "{code:?}");
         }
         assert_eq!(
-            outcome(&status(Status::Other(5), None), Some(point())),
+            outcome(Status::Other(5), Some(point()), None),
             Err(ScipError::Failed {
                 status: Status::Other(5)
             })
@@ -297,13 +276,13 @@ mod tests {
     #[test]
     fn test_a_reached_gap_without_a_bound_proves_nothing_and_a_stop_keeps_a_missing_bound() {
         assert_eq!(
-            outcome(&status(Status::GapLimit, None), Some(point())),
+            outcome(Status::GapLimit, Some(point()), None),
             Err(ScipError::Failed {
                 status: Status::GapLimit
             })
         );
         assert_eq!(
-            outcome(&status(Status::TimeLimit, None), None),
+            outcome(Status::TimeLimit, None, None),
             Ok(Outcome::Stopped {
                 reason: StopReason::TimeLimit,
                 best: None,

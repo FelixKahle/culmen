@@ -132,7 +132,8 @@ pub struct PriceRound {
 /// [`ProgramFeature`](crate::ProgramFeature) and start, recording each start in [`Record::starts`], since it replays
 /// rather than solves, so it exercises the whole callback layer without a solver, and it runs under Miri. A poll that
 /// interrupts ends the solve at once as [`StopReason::Interrupted`], with the last incumbent and the last bound
-/// reported before. The outcome and the elapsed time count every step, whichever events the callback asks for and
+/// reported before. A solve reports as its work the last node and iteration counts its steps' progress carried. The
+/// outcome, the elapsed time and the work count every step, whichever events the callback asks for and
 /// whichever handlers are registered. A price step's columns are checked and numbered by the solve's [`Priced`], and
 /// every later step counts them; the scripted points and outcome are taken as given, so they hold one value per
 /// column the solve would have.
@@ -287,6 +288,8 @@ struct Run {
     best: Option<Solution>,
     bound: Option<f64>,
     elapsed: Duration,
+    nodes: Option<u64>,
+    iterations: Option<u64>,
 }
 
 impl Run {
@@ -313,6 +316,8 @@ impl Run {
 
     fn advance(&mut self, progress: &Progress) {
         self.bound = progress.bound.or(self.bound);
+        self.nodes = progress.nodes.or(self.nodes);
+        self.iterations = progress.iterations.or(self.iterations);
         self.elapsed = self.elapsed.max(progress.elapsed);
     }
 }
@@ -387,6 +392,8 @@ impl Backend for Script {
                     outcome,
                     status: ScriptStatus::Interrupted { step: index },
                     elapsed: run.elapsed,
+                    nodes: run.nodes,
+                    iterations: run.iterations,
                 });
             }
         }
@@ -394,6 +401,8 @@ impl Backend for Script {
             outcome: self.end.clone(),
             status: ScriptStatus::Finished,
             elapsed: run.elapsed,
+            nodes: run.nodes,
+            iterations: run.iterations,
         })
     }
 }

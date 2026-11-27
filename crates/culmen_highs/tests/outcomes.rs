@@ -84,6 +84,9 @@ fn test_lp_optimum_and_status_with_offset() {
     );
     assert_eq!(solved.status.mip_gap, None);
     assert!(solved.status.simplex_iterations > 0);
+    // An LP runs no branch and bound, and its iterations are the simplex's.
+    assert_eq!(solved.nodes, None);
+    assert_eq!(solved.iterations, Some(solved.status.simplex_iterations));
 }
 
 #[test]
@@ -424,6 +427,9 @@ fn test_a_node_limit_stops_a_mip_at_the_node_limit_however_it_is_set() {
         .solve()
         .unwrap();
     assert_eq!(stop_reason(&in_settings), StopReason::NodeLimit, "{in_settings:?}");
+    // A MIP's work is its nodes, at least the one the limit allows, and its LP iterations.
+    assert!(in_settings.nodes.is_some_and(|n| n >= 1), "{in_settings:?}");
+    assert!(in_settings.iterations.is_some_and(|n| n > 0), "{in_settings:?}");
     let by_name = HighsOptions::default().option("mip_max_nodes", 1);
     let solved = Solver::new(Highs::with_options(by_name), hard_mip())
         .unwrap()

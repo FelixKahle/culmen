@@ -172,7 +172,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!(
         "{} patterns priced in {} rounds over {} nodes",
-        patterns.priced, patterns.rounds, solved.status.nodes
+        patterns.priced,
+        patterns.rounds,
+        solved.nodes.unwrap_or(0)
     );
     let program = master.program();
     for col in program.cols() {

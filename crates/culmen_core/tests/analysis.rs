@@ -67,6 +67,8 @@ impl Backend for Canned {
             outcome: self.outcome.clone(),
             status: (),
             elapsed: Duration::ZERO,
+            nodes: None,
+            iterations: None,
         })
     }
 }

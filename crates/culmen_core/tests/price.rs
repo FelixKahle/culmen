@@ -737,6 +737,8 @@ impl Backend for SelfPricing {
             outcome: Outcome::Optimal(Solution { objective: 0.0, values }),
             status: (),
             elapsed: Duration::ZERO,
+            nodes: None,
+            iterations: None,
         })
     }
 }

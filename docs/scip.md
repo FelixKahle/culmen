@@ -197,10 +197,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | Field | Holds |
 |---|---|
 | `status` | SCIP's `Status`: every value of `SCIP_STATUS` in SCIP 10, and `Other(u32)` for a value SCIP 10 does not define. |
-| `dual_bound` | The best bound SCIP proved, offset included, in the program's sense; `None` when it proved none. |
-| `nodes` | The branch-and-bound nodes, across restarts. |
-| `lp_iterations` | The LP iterations. |
 | `solutions_found` | The feasible solutions SCIP found, its heuristics', the starts and the carried solutions included. |
+
+The work every backend reports is in `Solved` itself: `nodes`, SCIP's branch-and-bound nodes across restarts (`1` for
+an LP, which SCIP solves at the root of its tree), and `iterations`, its LP iterations. The best bound is in the
+`Outcome`, for a reached gap and a stop.
 
 `Status` displays in SCIP's own wording (`SCIPstatusName`): `"optimal solution found"`, `"gap limit reached"`.
 
@@ -240,7 +241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let status = &solved.status;
     assert_eq!(status.status, Status::Optimal);
     assert_eq!(status.status.to_string(), "optimal solution found");
-    assert!((status.dual_bound.ok_or("no bound")? - 22.0).abs() < 1e-9);
+    assert_eq!(solved.nodes, Some(1));
     assert!((solved.outcome.objective().ok_or("no solution")? - 22.0).abs() < 1e-9);
     Ok(())
 }

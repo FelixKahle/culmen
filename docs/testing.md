@@ -38,8 +38,9 @@ the four search steps.
 The script behaves as a solver would:
 
 - An observational step reaches the callback only when the callback asks for its kind, and a search step reaches
-  only a handler of its kind registered on the solve's `Run`, as with any backend. The outcome and the elapsed time
-  count every step, whatever the callback asks for and whichever handlers are registered.
+  only a handler of its kind registered on the solve's `Run`, as with any backend. The outcome, the elapsed time and
+  the work (`Solved::nodes` and `iterations`, the last counts a step's progress carried) count every step, whatever
+  the callback asks for and whichever handlers are registered.
 - A poll that interrupts ends the solve at once as `Outcome::Stopped` with `StopReason::Interrupted`, the last
   incumbent delivered before as `best` and the last bound reported as `bound`.
 - Actions are checked as a solver's would be ([`ActionError`](callbacks.md#contexts)) and recorded in

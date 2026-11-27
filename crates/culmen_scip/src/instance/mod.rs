@@ -387,24 +387,27 @@ impl Instance {
 
     /// SCIP's account of the last solve.
     pub(crate) fn status(&self) -> ScipStatus {
-        let count = |n: i64| u64::try_from(n).unwrap_or(0);
         // SAFETY: the instance is live; the getters read the statistics of the last solve.
-        let (status, dual_bound, nodes, lp_iterations, solutions_found) = unsafe {
-            (
-                SCIPgetStatus(self.raw()),
-                SCIPgetDualbound(self.raw()),
-                SCIPgetNTotalNodes(self.raw()),
-                SCIPgetNLPIterations(self.raw()),
-                SCIPgetNSolsFound(self.raw()),
-            )
-        };
+        let (status, solutions_found) = unsafe { (SCIPgetStatus(self.raw()), SCIPgetNSolsFound(self.raw())) };
         ScipStatus {
             status: Status::from_raw(status),
-            dual_bound: self.finite(dual_bound),
-            nodes: count(nodes),
-            lp_iterations: count(lp_iterations),
-            solutions_found: count(solutions_found),
+            solutions_found: u64::try_from(solutions_found).unwrap_or(0),
         }
+    }
+
+    /// The best bound the last solve proved on the objective, offset included, in the program's sense; `None` when it
+    /// proved none, as for an infeasible program.
+    pub(crate) fn dual_bound(&self) -> Option<f64> {
+        // SAFETY: the instance is live; the getter reads the last solve's bound.
+        self.finite(unsafe { SCIPgetDualbound(self.raw()) })
+    }
+
+    /// The branch-and-bound nodes of the last solve, across restarts, and its LP iterations.
+    pub(crate) fn work(&self) -> (u64, u64) {
+        let count = |n: i64| u64::try_from(n).unwrap_or(0);
+        // SAFETY: the instance is live; the getters read the statistics of the last solve.
+        let (nodes, iterations) = unsafe { (SCIPgetNTotalNodes(self.raw()), SCIPgetNLPIterations(self.raw())) };
+        (count(nodes), count(iterations))
     }
 
     /// The best solution of the last solve, its objective in the program's sense with the offset; `None` when SCIP

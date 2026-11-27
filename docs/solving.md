@@ -276,6 +276,8 @@ A solve returns `Result<Solved<B::Status>, SolveError<B::Error>>`. `Solved` is p
 | `outcome` | How the solve ended, as an `Outcome`. |
 | `status` | The backend's own status, for diagnostics; for HiGHS a [`HighsStatus`](highs.md#statuses-and-outcomes), for SCIP a [`ScipStatus`](scip.md#statuses-and-outcomes). |
 | `elapsed` | The wall-clock time of the solve. |
+| `nodes` | The branch-and-bound nodes the solve explored; `None` when it ran no branch and bound or the backend does not count them. |
+| `iterations` | The iterations of the LP and QP algorithms the solve ran, summed over every node; `None` when the backend does not count them. |
 
 `Outcome` holds exactly what each ending proves:
 

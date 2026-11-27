@@ -160,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `model` | The `ModelStatus`: every value of HiGHS's `HighsModelStatus`, and `Other(i32)` for a value HiGHS 1.16 does not define. |
 | `primal`, `dual` | Whether a primal or dual solution exists: a `SolutionStatus`, `None`, `Infeasible` or `Feasible`. |
 | `mip_gap` | HiGHS's relative MIP gap; `None` for an LP or when HiGHS reports none. |
-| `mip_nodes`, `simplex_iterations`, `ipm_iterations`, `qp_iterations` | The work done. |
+| `simplex_iterations`, `ipm_iterations`, `qp_iterations` | The iterations of each solver, a MIP's simplex iterations over all its nodes. `Solved::iterations` sums every solver's, crossover and PDLP included, and `Solved::nodes` counts a MIP's nodes (`None` for a program without integer columns). |
 | `primal_dual_objective_error` | HiGHS's relative primal-dual objective error, `\|P - D\| / (1 + \|P\| + \|D\|)`; `None` when it computed none, as for a MIP. |
 | `last_error` | The last error line of HiGHS's log, if it wrote one. |
 

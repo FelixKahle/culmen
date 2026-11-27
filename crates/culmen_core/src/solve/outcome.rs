@@ -115,7 +115,7 @@ pub enum StopReason {
     Other,
 }
 
-/// A finished solve: its outcome, the backend's own status for diagnostics, and the time it took.
+/// A finished solve: its outcome, the backend's own status for diagnostics, the time it took and the work it did.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Solved<S> {
@@ -125,4 +125,10 @@ pub struct Solved<S> {
     pub status: S,
     /// The wall-clock time of the solve.
     pub elapsed: Duration,
+    /// The number of branch-and-bound nodes the solve explored; `None` when it ran no branch and bound, as a backend
+    /// that solves an LP without a search tree, or the backend does not count them.
+    pub nodes: Option<u64>,
+    /// The number of iterations of the LP and QP algorithms the solve ran (simplex, interior point and any other),
+    /// summed over every node; `None` when the backend does not count them.
+    pub iterations: Option<u64>,
 }

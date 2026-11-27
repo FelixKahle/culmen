@@ -241,9 +241,11 @@ SCIP's three emphasis settings as typed fields and every other parameter by name
 | `Err(backend error)` | `NotSet`, `LoadError`, `ModelError`, `PresolveError`, `SolveError`, `PostsolveError`, a value HiGHS 1.16 does not define, or a failed run; for a QP also `Optimal` at a point holding NaN or with a relative primal-dual objective error above `1e-5`, and `Unbounded` with every column bounded (`HighsError::UnsoundQp`) | `GRB_NUMERIC`, `GRB_LOADED` after optimize, an error code | `UNKNOWN` after solve or a status SCIP 10 does not define, `OPTIMAL` without a solution or `GAPLIMIT` without a solution or bound (`ScipError::Failed`), a best solution SCIP's own `SCIPcheckSolOrig` finds infeasible (`ScipError::InfeasibleBest`), a `SCIP_RETCODE` error |
 
 A `Stopped` outcome carries the best solution when the solver holds a feasible one, and the best bound for a MIP.
-`Solved::status` keeps the native status for diagnostics. For HiGHS that is `HighsStatus`: run status, model status,
-primal and dual solution status, MIP gap, nodes, iterations, and the last error line of the log; for SCIP it is
-`ScipStatus`: SCIP's status, dual bound, nodes, LP iterations and solutions found.
+The work of a solve is neutral: `Solved::nodes` and `Solved::iterations`, each `None` when the backend counts none
+(HiGHS counts no nodes for an LP, which it solves without a search tree; Gurobi's `NodeCount` and `IterCount` plus
+`BarIterCount` would fill them). `Solved::status` keeps the native status for diagnostics. For HiGHS that is
+`HighsStatus`: run status, model status, primal and dual solution status, MIP gap, the iterations of each solver, and
+the last error line of the log; for SCIP it is `ScipStatus`: SCIP's status and the solutions found.
 
 ## What a Gurobi backend would be
 

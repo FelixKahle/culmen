@@ -313,7 +313,6 @@ impl Highs {
             primal: SolutionStatus::from_raw(self.instance.info_int(c"primal_solution_status").unwrap_or(0)),
             dual: SolutionStatus::from_raw(self.instance.info_int(c"dual_solution_status").unwrap_or(0)),
             mip_gap: gap,
-            mip_nodes: count(self.instance.info_i64(c"mip_node_count")),
             simplex_iterations: count(self.instance.info_int(c"simplex_iteration_count").map(i64::from)),
             ipm_iterations: count(self.instance.info_int(c"ipm_iteration_count").map(i64::from)),
             qp_iterations: count(self.instance.info_int(c"qp_iteration_count").map(i64::from)),
@@ -325,14 +324,39 @@ impl Highs {
         }
     }
 
-    /// The generic outcome of a run HiGHS reports as `status`.
+    /// The branch-and-bound nodes of the last run, `None` for a program without integer columns, which HiGHS solves
+    /// without a search tree; and the iterations of every LP and QP solver it ran, `None` when HiGHS counted none.
+    fn work(&self, loaded: &Loaded) -> (Option<u64>, Option<u64>) {
+        let nodes = self
+            .instance
+            .info_i64(c"mip_node_count")
+            .filter(|_| loaded.is_mip)
+            .and_then(|n| u64::try_from(n).ok());
+        // HiGHS counts a MIP's LP iterations over all nodes in `simplex_iteration_count`, and marks a count it did not
+        // keep, or one beyond its integers, with -1.
+        let names = [
+            c"simplex_iteration_count",
+            c"ipm_iteration_count",
+            c"crossover_iteration_count",
+            c"pdlp_iteration_count",
+            c"qp_iteration_count",
+        ];
+        let counted: Vec<u64> = names
+            .into_iter()
+            .filter_map(|name| self.instance.info_int(name).and_then(|n| u64::try_from(n).ok()))
+            .collect();
+        let iterations = (!counted.is_empty()).then(|| counted.iter().sum());
+        (nodes, iterations)
+    }
+
+    /// The generic outcome of a run HiGHS reports as `status`, after `nodes` branch-and-bound nodes.
     ///
     /// # Errors
     ///
     /// [`HighsError::Run`] when HiGHS failed, or reports an optimum without a solution; [`HighsError::UnsoundQp`]
     /// when it reports a QP optimal with a primal-dual objective error above the options'
     /// [`qp_objective_error`](HighsOptions::qp_objective_error), or unbounded although every column is bounded.
-    fn outcome(&self, loaded: &Loaded, status: &HighsStatus) -> Result<Outcome, HighsError> {
+    fn outcome(&self, loaded: &Loaded, status: &HighsStatus, nodes: Option<u64>) -> Result<Outcome, HighsError> {
         if status.run == CallStatus::Error {
             return Err(run_failed(status));
         }
@@ -343,7 +367,7 @@ impl Highs {
             return Err(HighsError::UnsoundQp(why));
         }
         let bound = self.mip_bound(loaded);
-        match self.ending(status) {
+        match self.ending(status, nodes) {
             Ending::Optimal => best
                 .map(|solution| optimum(solution, bound))
                 .ok_or_else(|| run_failed(status)),
@@ -372,8 +396,8 @@ impl Highs {
             .all(|(&lower, &upper)| lower <= 0.0 && 0.0 <= upper)
     }
 
-    /// How a run HiGHS reports with `status` ended, in culmen's terms.
-    fn ending(&self, status: &HighsStatus) -> Ending {
+    /// How a run HiGHS reports with `status` ended after `nodes` branch-and-bound nodes, in culmen's terms.
+    fn ending(&self, status: &HighsStatus, nodes: Option<u64>) -> Ending {
         match status.model {
             ModelStatus::Optimal => Ending::Optimal,
             ModelStatus::ModelEmpty => Ending::Empty,
@@ -385,7 +409,7 @@ impl Highs {
             ModelStatus::IterationLimit => Ending::Stopped(StopReason::IterationLimit),
             ModelStatus::ObjectiveBound | ModelStatus::ObjectiveTarget => Ending::Stopped(StopReason::ObjectiveLimit),
             ModelStatus::MemoryLimit => Ending::Stopped(StopReason::MemoryLimit),
-            ModelStatus::SolutionLimit => Ending::Stopped(self.search_limit(status.mip_nodes)),
+            ModelStatus::SolutionLimit => Ending::Stopped(self.search_limit(nodes.unwrap_or(0))),
             ModelStatus::Unknown | ModelStatus::HighsInterrupt => Ending::Stopped(StopReason::Other),
             ModelStatus::NotSet
             | ModelStatus::LoadError
@@ -690,11 +714,14 @@ impl Backend for Highs {
             resume_unwind(payload);
         }
         let status = self.status(loaded, ran.run, ran.last_error);
-        let outcome = self.outcome(loaded, &status)?;
+        let (nodes, iterations) = self.work(loaded);
+        let outcome = self.outcome(loaded, &status, nodes)?;
         Ok(Solved {
             outcome,
             status,
             elapsed: ran.elapsed,
+            nodes,
+            iterations,
         })
     }
 }
@@ -854,7 +881,6 @@ mod tests {
             primal: SolutionStatus::Feasible,
             dual: SolutionStatus::Feasible,
             mip_gap: None,
-            mip_nodes: 0,
             simplex_iterations: 0,
             ipm_iterations: 0,
             qp_iterations: 3,

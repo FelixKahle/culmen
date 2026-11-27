@@ -57,9 +57,6 @@ fn test_statuses_codes_and_versions_round_trip() {
     }
     round_trip(&ScipStatus {
         status: Status::NodeLimit,
-        dual_bound: None,
-        nodes: 3,
-        lp_iterations: 17,
         solutions_found: 1,
     });
     round_trip(&culmen_scip::version());

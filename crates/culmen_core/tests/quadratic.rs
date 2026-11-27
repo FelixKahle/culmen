@@ -547,6 +547,8 @@ impl Backend for LinearOnly {
             outcome: Outcome::Infeasible,
             status: (),
             elapsed: Duration::ZERO,
+            nodes: None,
+            iterations: None,
         })
     }
 }

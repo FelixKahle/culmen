@@ -364,6 +364,8 @@ impl Backend for Plain {
             outcome: Outcome::Infeasible,
             status: (),
             elapsed: Duration::ZERO,
+            nodes: None,
+            iterations: None,
         })
     }
 }

@@ -95,6 +95,8 @@ fn test_plain_data_round_trips() {
         outcome: Outcome::Infeasible,
         status: 8_i32,
         elapsed: Duration::from_secs(1),
+        nodes: Some(3),
+        iterations: None,
     });
 }
 

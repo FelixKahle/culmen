@@ -466,11 +466,14 @@ impl Backend for Scip {
                 objective: best.objective,
             });
         }
-        let outcome: Outcome = status::outcome(&status, best)?;
+        let outcome: Outcome = status::outcome(status.status, best, instance.dual_bound())?;
+        let (nodes, iterations) = instance.work();
         Ok(Solved {
             outcome,
             status,
             elapsed,
+            nodes: Some(nodes),
+            iterations: Some(iterations),
         })
     }
 }

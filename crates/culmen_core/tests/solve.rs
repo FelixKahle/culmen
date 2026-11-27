@@ -489,6 +489,29 @@ fn test_a_script_outcome_does_not_depend_on_the_events_asked_for() {
 }
 
 #[test]
+fn test_a_script_reports_the_last_work_its_steps_carried() {
+    let (m, ..) = two_binaries();
+    let at = |nodes, iterations| {
+        Step::Progress(Progress {
+            nodes,
+            iterations,
+            ..mip(1, None, None)
+        })
+    };
+    let steps = vec![at(Some(3), Some(40)), at(Some(7), None), at(None, None)];
+    let mut solver = Solver::new(Script::new(steps, Outcome::Infeasible), m.build().unwrap()).unwrap();
+    let solved = solver.solve().unwrap();
+    assert_eq!((solved.nodes, solved.iterations), (Some(7), Some(40)));
+    let mut idle = Solver::new(
+        Script::new(Vec::new(), Outcome::Infeasible),
+        two_binaries().0.build().unwrap(),
+    )
+    .unwrap();
+    let solved = idle.solve().unwrap();
+    assert_eq!((solved.nodes, solved.iterations), (None, None));
+}
+
+#[test]
 fn test_events_combine_and_iterate_one_by_one() {
     let mut set = Events::LOG | Events::PROGRESS;
     set |= Events::POLL;

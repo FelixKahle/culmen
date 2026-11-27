@@ -46,10 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(format!("{covers} rounds added more covers than {} items have", ITEMS.len()).into());
         }
         let (relaxed, iterations) = solve(&mut solver)?;
-        println!(
-            "relaxation {:.3} after {iterations} simplex iterations",
-            relaxed.objective
-        );
+        println!("relaxation {:.3} after {iterations} LP iterations", relaxed.objective);
         let Some(cover) = violated_cover(&take, &relaxed.values) else {
             break;
         };
@@ -74,11 +71,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Solves and returns the optimal solution and the simplex iterations the solve took.
+/// Solves and returns the optimal solution and the LP iterations the solve took, zero when the backend counted none.
 fn solve(solver: &mut Solver<Highs>) -> Result<(Solution, u64), Box<dyn std::error::Error>> {
     let solved = solver.solve()?;
     match solved.outcome {
-        Outcome::Optimal(solution) => Ok((solution, solved.status.simplex_iterations)),
+        Outcome::Optimal(solution) => Ok((solution, solved.iterations.unwrap_or(0))),
         other => Err(format!("no optimum: {other:?}").into()),
     }
 }

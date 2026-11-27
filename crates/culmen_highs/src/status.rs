@@ -207,9 +207,8 @@ pub struct HighsStatus {
     pub dual: SolutionStatus,
     /// The MIP's relative gap as HiGHS computed it; `None` for an LP or when HiGHS reports none.
     pub mip_gap: Option<f64>,
-    /// The number of branch-and-bound nodes.
-    pub mip_nodes: u64,
-    /// The number of simplex iterations.
+    /// The number of simplex iterations, a MIP's over all its nodes; [`Solved::iterations`](culmen_core::Solved) sums
+    /// every solver's.
     pub simplex_iterations: u64,
     /// The number of interior-point iterations.
     pub ipm_iterations: u64,

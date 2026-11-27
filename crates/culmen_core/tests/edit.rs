@@ -631,6 +631,8 @@ impl<const MILP: bool> Backend for Plain<MILP> {
             outcome: Outcome::Infeasible,
             status: (),
             elapsed: Duration::ZERO,
+            nodes: None,
+            iterations: None,
         })
     }
 }

@@ -53,7 +53,7 @@ fn assert_close(got: f64, want: f64) {
 }
 
 #[test]
-fn test_an_lp_maximum_includes_the_offset_and_the_dual_bound_meets_it() {
+fn test_an_lp_maximum_includes_the_offset_and_reports_its_work() {
     // Maximize 3x + 2y + 10 subject to x + y <= 4, x + 3y <= 6, x, y >= 0: x = 4, y = 0, objective 22.
     let mut m = Model::new();
     let x = m.add_var(Var::continuous());
@@ -67,8 +67,10 @@ fn test_an_lp_maximum_includes_the_offset_and_the_dual_bound_meets_it() {
     assert_close(best.values[x], 4.0);
     assert_close(best.values[y], 0.0);
     assert_eq!(solved.status.status, Status::Optimal);
-    assert_close(solved.status.dual_bound.unwrap(), 22.0);
     assert!(solved.status.solutions_found >= 1);
+    // SCIP solves an LP at the root of its tree.
+    assert_eq!(solved.nodes, Some(1));
+    assert!(solved.iterations.is_some());
 }
 
 #[test]
