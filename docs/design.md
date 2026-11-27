@@ -87,31 +87,42 @@ solver's own types are at the root of its crate, `culmen::highs` or `culmen::sci
 functions whose names read right with it (`culmen::highs::files::read`). Nothing is re-exported a second time for
 convenience; the prelude, a glob of root items and the backend types, is the one exception.
 
-## Which types may grow: `#[non_exhaustive]`
+## Public types are exhaustive
 
-Whether a public type is `#[non_exhaustive]` follows from what a user does with it, the same in every crate:
+Every public enum and every public struct is exhaustive, in every crate: none is marked non-exhaustive, and none
+will be.
 
-- **A struct with `pub` fields is never non-exhaustive.** Plain data is built with a struct literal and
-  `..Default::default()` and taken apart by destructuring, and Rust forbids both outside the crate for a
-  non-exhaustive struct. A new field is therefore a breaking change, made only in a breaking release. A struct with
-  private fields needs no attribute.
-- **An error enum is non-exhaustive**, and so is every enum that only an error carries as its detail
-  (`InvalidBounds`, `Misfit`, `Table`, `ExprPlace`, `UnsoundQp`, `Dimension`, `Number`, …). A check or a backend
-  learns new refusals; a caller matches the ones it handles and passes the rest on. Inside its crate the match stays
-  exhaustive, so an error's `Display` remains one exhaustive table.
-- **An enum that lists an open set of kinds is non-exhaustive**: a solver's own statuses, return codes, option values
-  and log or poll kinds (`ModelStatus`, `CallStatus`, `LpSolver`, `HighsPollSource`, `Status`, `RetCode`, `Emphasis`,
-  `ParamValue`, …), which grow with the solver's versions, and culmen's own lists of kinds that a further feature
-  adds to (`ModelClass`, `ProgramFeature`, `Analysis`, `Phase`, `StopReason`, `Edit`, `Step`, `ScipEvent`,
-  `ScipLazySource`, `HighsNative`, `ModelFormat`). Code that must handle every kind is told so by a declared set
-  instead (`Backend::CLASSES`, `FEATURES`), which refuses what it does not list.
-- **An enum whose variants its meaning closes stays exhaustive**, so that code which must handle every case is
-  checked to: `Sense`, `Integrality`, `Outcome`, `Objectives`, `Combination`, `PriceMode`, `Start`, `NewRow`,
-  `Side`, `Bound`, `Line`, `BasisStatus`, `LogLevel`, `ScriptStatus`, `Switch`, and `Unsupported`, which
-  has no variant. A new variant there changes what every match must do, so it is a breaking change by design.
+- **A consumer's `match` is checked.** A `match` on an error, a status, an `Edit` or a `StopReason` names every
+  variant and needs no wildcard arm, so the compiler tells the code that matches when a variant appears. A wildcard
+  arm written only to satisfy a non-exhaustive enum would hide that variant, and a backend that loaded the program
+  whole for an `Edit` it did not know would hide it as a silent loss of its warm start.
+- **Growth is a breaking release.** A new variant, a new field or a new error is a breaking change, made only in a
+  breaking release, which for culmen at 0.x is a minor version bump: a `0.5` dependency never sees a variant `0.5`
+  did not have. Plain data with `pub` fields keeps its struct literal and `..Default::default()` outside its crate,
+  and every error's `Display` stays one exhaustive table.
+- **What must be closed at run time is a declared set.** A backend lists the classes and features it takes
+  (`Backend::CLASSES`, `FEATURES`), and the `Solver` refuses any other with a typed error, so a class a later version
+  adds is refused by a backend that does not declare it rather than reaching it.
 
-`culmen_testing` is not published and is used only inside the workspace, where a change and every match it breaks
-land in one commit; it follows the rules for structs and leaves its enums exhaustive.
+### A solver's own codes
+
+An enum that mirrors a solver's codes (`ModelStatus`, `CallStatus`, `SolutionStatus`, `HighsLogType`,
+`HighsQueryOrigin`, `Status`, `RetCode`) lists every value of the solver version its `-sys` crate builds, with the
+header that defines them named in its docs. Converting a C integer into it is still a partial function, so the
+conversion is total and honest:
+
+- **A value the pinned headers rule out is a typed error.** The conversion returns the backend's error carrying the
+  raw value, `HighsError::Unlisted { code, raw }` or `ScipError::Unlisted { code, raw }`, where `code` names the
+  enumeration (`HighsCode`, `ScipCode`). It never panics, and it never maps the value onto a listed variant: an
+  unknown model status is not a failure, an unknown solution status is not "none", an unknown call status is not an
+  error code. A value HiGHS passes to a callback is held like a panic, stops the run at the next poll, and fails the
+  solve with that error once HiGHS returns; inside an action, which can only return an `ActionError`, it is the
+  `Refused` reason, which names the value.
+- **A value that is open-ended in normal operation is a variant.** Where the solver itself documents values beyond
+  a fixed list, the enum carries them in an explicit variant holding the raw value, whose docs say when it occurs.
+  No enum of HiGHS 1.16 or SCIP 10 that culmen reads needs one today.
+- **An enum that only goes into the solver** (`LpSolver`, `PresolveMode`, `Emphasis`, `ParamValue`, …) has no
+  conversion from the solver, and is exhaustive like any other.
 
 ## The solver-neutral seam
 

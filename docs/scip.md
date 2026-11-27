@@ -196,7 +196,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Field | Holds |
 |---|---|
-| `status` | SCIP's `Status`: every value of `SCIP_STATUS` in SCIP 10, and `Other(u32)` for a value SCIP 10 does not define. |
+| `status` | SCIP's `Status`: every value of `SCIP_STATUS` in SCIP 10. |
 | `solutions_found` | The feasible solutions SCIP found, its heuristics', the starts and the carried solutions included. |
 
 The work every backend reports is in `Solved` itself: `nodes`, SCIP's branch-and-bound nodes across restarts (`1` for
@@ -217,7 +217,7 @@ an LP, which SCIP solves at the root of its tree), and `iterations`, its LP iter
 | `SolutionLimit`, `BestSolutionLimit` | `Stopped { SolutionLimit }` |
 | `PrimalLimit`, `DualLimit` | `Stopped { ObjectiveLimit }` |
 | `Terminate`, `RestartLimit` | `Stopped { Other }` |
-| `Unknown`, `Other(_)`, or `Optimal` / `GapLimit` without a solution or bound | `Err(ScipError::Failed)` |
+| `Unknown`, or `Optimal` / `GapLimit` without a solution or bound | `Err(ScipError::Failed)` |
 
 A `Stopped` outcome carries SCIP's best solution when it holds one, and its dual bound. A solve reports a best
 solution, an optimum or a reached gap only after SCIP's own check (`SCIPcheckSolOrig`) finds that solution feasible in
@@ -715,9 +715,9 @@ a second `Scip`, which excludes every pattern the master holds.
 | `PricingQuadratic` | A solve with a pricer was given a program with a quadratic objective. |
 | `BranchEarly` | A pricer ended pricing early where SCIP has no integer column left to branch on. |
 | `InfeasibleBest { status, objective }` | SCIP's own check finds its best solution infeasible in the original problem; the solution is not reported. |
+| `Unlisted { code, raw }` | SCIP returned a return code or status (`code`, a `ScipCode`) that SCIP 10 does not define, which the pinned SCIP never does ([Design](design.md#public-types-are-exhaustive)). |
 
-`RetCode` is every error value of `SCIP_RETCODE` (`NoMemory`, `LpError`, `InvalidCall`, `ParameterUnknown`, …) and
-`Other(i32)` for one SCIP 10 does not define.
+`RetCode` is every error value of `SCIP_RETCODE` (`NoMemory`, `LpError`, `InvalidCall`, `ParameterUnknown`, …).
 
 ```rust
 use culmen::prelude::*;

@@ -107,12 +107,12 @@ pub trait RelaxationAnalysis: Backend {
 - **Edits are a hook with a correct default.** A `Solver` that [edits its program](solving.md#editing-a-loaded-program)
   calls `edit` with the edited program and an `Edit` naming what changed: the columns whose bounds, costs or integrality
   changed, the rows whose bounds changed, the rows or columns appended, the objective's sense or offset, or the whole
-  own objective. Only a `Solver` makes an `Edit`, and the enum is non-exhaustive, so a backend matches it
-  (`Edit::ColBounds { cols, .. }`) and never forges one. It calls `edit` only right after the backend held the program
-  before the edit, and only with a class and features the backend declares. The default loads the program whole; a
-  backend overrides it to change its model in place and keep its warm start, and falls back to `load` for any kind of
-  `Edit` it does not handle, since the enum is non-exhaustive. When `edit` fails, the backend may hold anything: the
-  `Solver` loads the program before the edit again.
+  own objective. A `Solver` calls `edit` only right after the backend held the program before the edit, and only with
+  a class and features the backend declares. The default loads the program whole; a backend overrides it to change its
+  model in place and keep its warm start. The override matches every variant of `Edit` by name, with no wildcard arm,
+  and calls `load` itself for each one it does not change in place, so a variant a later version adds is a compile
+  error in every backend that overrides `edit`, never a silent reload. When `edit` fails, the backend may hold
+  anything: the `Solver` loads the program before the edit again.
 - **Priced columns go to a sink the caller owns.** The sink, a `Priced` made for the loaded program, travels in the
   hooks with the pricer: a backend that `Prices` takes it with `hooks.take_priced()` before it solves, `Some` exactly
   when a pricer is registered, and hands every column the pricer adds to `Priced::push`, which checks it (rows the
@@ -237,7 +237,7 @@ typed fields, except those `Settings` types) and a raw name/value escape hatch (
 | `Infeasible` | `Infeasible` | `GRB_INFEASIBLE` | `INFEASIBLE` |
 | `Unbounded` | `Unbounded` | `GRB_UNBOUNDED` | `UNBOUNDED` |
 | `InfeasibleOrUnbounded` | `UnboundedOrInfeasible` | `GRB_INF_OR_UNBD` | `INFORUNBD` |
-| `Err(backend error)` | `NotSet`, `LoadError`, `ModelError`, `PresolveError`, `SolveError`, `PostsolveError`, a value HiGHS 1.16 does not define, or a failed run; for a QP also `Optimal` at a point holding NaN or with a relative primal-dual objective error above `1e-5`, and `Unbounded` with every column bounded (`HighsError::UnsoundQp`) | `GRB_NUMERIC`, `GRB_LOADED` after optimize, an error code | `UNKNOWN` after solve or a status SCIP 10 does not define, `OPTIMAL` without a solution or `GAPLIMIT` without a solution or bound (`ScipError::Failed`), a best solution SCIP's own `SCIPcheckSolOrig` finds infeasible (`ScipError::InfeasibleBest`), a `SCIP_RETCODE` error |
+| `Err(backend error)` | `NotSet`, `LoadError`, `ModelError`, `PresolveError`, `SolveError`, `PostsolveError`, a value HiGHS 1.16 does not define (`HighsError::Unlisted`), or a failed run; for a QP also `Optimal` at a point holding NaN or with a relative primal-dual objective error above `1e-5`, and `Unbounded` with every column bounded (`HighsError::UnsoundQp`) | `GRB_NUMERIC`, `GRB_LOADED` after optimize, an error code | `UNKNOWN` after solve, a status SCIP 10 does not define (`ScipError::Unlisted`), `OPTIMAL` without a solution or `GAPLIMIT` without a solution or bound (`ScipError::Failed`), a best solution SCIP's own `SCIPcheckSolOrig` finds infeasible (`ScipError::InfeasibleBest`), a `SCIP_RETCODE` error |
 
 A `Stopped` outcome carries the best solution when the solver holds a feasible one, and the best bound for a MIP.
 The work of a solve is neutral: `Solved::nodes` and `Solved::iterations`, each `None` when the backend counts none

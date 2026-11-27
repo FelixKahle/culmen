@@ -157,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | Field | Holds |
 |---|---|
 | `run` | What `Highs_run` returned: a `CallStatus`, `Ok`, `Warning` or `Error`. |
-| `model` | The `ModelStatus`: every value of HiGHS's `HighsModelStatus`, and `Other(i32)` for a value HiGHS 1.16 does not define. |
+| `model` | The `ModelStatus`: every `kHighsModelStatus*` value of HiGHS 1.16. |
 | `primal`, `dual` | Whether a primal or dual solution exists: a `SolutionStatus`, `None`, `Infeasible` or `Feasible`. |
 | `mip_gap` | HiGHS's relative MIP gap; `None` for an LP or when HiGHS reports none. |
 | `simplex_iterations`, `ipm_iterations`, `qp_iterations` | The iterations of each solver, a MIP's simplex iterations over all its nodes. `Solved::iterations` sums every solver's, crossover and PDLP included, and `Solved::nodes` counts a MIP's nodes (`None` for a program without integer columns). |
@@ -405,6 +405,7 @@ from.
 | `Analysis(Analysis)` | HiGHS refused or failed an analysis, as a basis it finds singular ([Analysis](analysis.md#highs)). |
 | `AnalysisFeature { analysis, feature }` | HiGHS 1.16 gets the analysis wrong for a program with the feature, as a feasibility relaxation with semi columns ([Analysis](analysis.md#highs)). |
 | `Relaxation` | The options set `solve_relaxation` for a MIP, which would report the relaxation's optimum as the program's ([Options](#options)). |
+| `Unlisted { code, raw }` | HiGHS passed or returned a value of one of its enumerations (`code`, a `HighsCode`) that HiGHS 1.16 does not define, which the pinned HiGHS never does ([Design](design.md#public-types-are-exhaustive)). |
 
 ```rust
 use culmen::prelude::*;
@@ -514,8 +515,7 @@ Backend>::Poll<'_>`; they are the same type.
 HiGHS implements `Heuristics`: at its user-solution callback it asks a registered `HeuristicHandler<Highs>` for a
 solution of its own. `HighsHeuristic::origin()` says where in the
 search it asks: `HighsQueryOrigin::AfterSetup`, once the MIP solver is set up; `BeforeDive`; `EvaluateRootNode(point)`,
-during root-node evaluation, `point` a `HighsRootNodePoint` naming HiGHS's numbered point; or `Other(i32)` for a value
-HiGHS 1.16 does not define.
+during root-node evaluation, `point` a `HighsRootNodePoint` naming HiGHS's numbered point.
 
 - `ctx.supply(&values)` offers a value for every column. The values are checked first: one finite value per column,
   or `ActionError::Length` or `ActionError::NonFinite`. HiGHS then checks the solution against the model and keeps
@@ -583,8 +583,7 @@ At `Native`, HiGHS reports its cut pool after the root node, and again after eac
 | `mip` | The `HighsMipData` at the time. |
 
 The cuts range over the presolved problem HiGHS's MIP solver works on, not over the program you loaded, so their columns
-are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your program by mistake. `HighsNative` is
-`#[non_exhaustive]`, so a `match` on it needs a `_` arm.
+are `ReducedCol`, a distinct handle type: a cut cannot be read as a row of your program by mistake.
 
 ## Limitations
 

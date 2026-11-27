@@ -323,7 +323,7 @@ assert_eq!((stopped.solution(), stopped.bound()), (None, Some(10.0)));
 `StopReason` says why a `Stopped` solve stopped: `TimeLimit`, `Interrupted` (a [stop](callbacks.md#stop) or a
 callback asked), `NodeLimit`, `SolutionLimit`, `IterationLimit`, `ObjectiveLimit` (a bound or target set in the
 backend's options), `MemoryLimit`, or `Other`, when the solver did not name a reason; then the backend's status says
-more. The enum is `#[non_exhaustive]`: a later version may add reasons, so a `match` on it needs a `_` arm.
+more.
 
 ## Reading a solution
 

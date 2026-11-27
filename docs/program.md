@@ -263,8 +263,7 @@ one interval; further objectives do not change the class, and are a [feature](#f
 
 `is_discrete()` and `is_quadratic()` read the two properties back, and a class displays as its abbreviation: `LP`,
 `MILP`, `QP`, `MIQP`. A backend declares the classes it solves as a `ModelClasses` set, and
-[`Solver::new`](solving.md#model-classes-and-refusal) refuses any other. `ModelClass` is non-exhaustive: quadratic
-constraints would come as further classes, which a backend that does not declare them refuses.
+[`Solver::new`](solving.md#model-classes-and-refusal) refuses any other.
 
 ```rust
 use culmen::{ModelClass, ModelClasses};
@@ -290,7 +289,7 @@ and `contains_all` (a set), `union`, `intersection`, `difference` and `complemen
 `SemiContinuous` and `SemiInteger` for a column of that kind, `MultipleObjectives` for a further objective. A
 [start](solving.md#starts) is no feature: it belongs to a solve, and a backend takes one by implementing `Starts`. A
 backend declares the features it takes in `Backend::FEATURES`, and
-[`Solver::new`](solving.md#model-classes-and-refusal) refuses a program using any other. `ProgramFeature` is non-exhaustive; `ProgramFeatures` is a set like `ModelClasses`, with the same methods.
+[`Solver::new`](solving.md#model-classes-and-refusal) refuses a program using any other. `ProgramFeatures` is a set like `ModelClasses`, with the same methods.
 
 ```rust
 use culmen::prelude::*;
